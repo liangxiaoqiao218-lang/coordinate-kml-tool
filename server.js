@@ -1,0 +1,339 @@
+import "dotenv/config";
+import express from "express";
+import multer from "multer";
+import OpenAI from "openai";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import Tesseract from "tesseract.js";
+
+const app = express();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 12 * 1024 * 1024
+  }
+});
+const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
+
+app.use(express.static(__dirname));
+
+function normalizeText(text) {
+  return String(text || "")
+    .replace(/[，]/g, ",")
+    .replace(/[º˚]/g, "°")
+    .replace(/[‘’´`′]/g, "'")
+    .replace(/[“”″]/g, '"')
+    .replace(/\b0\b/g, "O");
+}
+
+function decimalFromDms(degrees, minutes, seconds, direction) {
+  const deg = Number(degrees);
+  const min = Number(minutes);
+  const sec = Number(seconds);
+
+  if (!Number.isFinite(deg) || !Number.isFinite(min) || !Number.isFinite(sec)) {
+    return null;
+  }
+
+  let value = Math.abs(deg) + min / 60 + sec / 3600;
+  const dir = String(direction || "").toUpperCase();
+
+  if (["S", "W", "O"].includes(dir)) {
+    value = -value;
+  }
+
+  return String(value);
+}
+
+function parseCompactDmsToken(token, fallbackDirection) {
+  const cleaned = normalizeText(token)
+    .replace(/\s+/g, "")
+    .replace(/[|[\]_=]/g, "")
+    .replace(/LONGITUDE|LATITUDE|POINT|N°|NO\.?/gi, "");
+  const directionMatch = cleaned.match(/[NSEWO]$/i);
+  const direction = (directionMatch ? directionMatch[0] : fallbackDirection || "").toUpperCase();
+  const body = cleaned.replace(/[NSEWO]$/i, "").replace(/['"]$/, "");
+
+  let match = body.match(/^(\d{1,3})°(\d{1,2})'(\d{1,4}(?:\.\d+)?)"?$/);
+  if (match) {
+    const seconds = !match[3].includes(".") && match[3].length === 4
+      ? `${match[3].slice(0, 2)}.${match[3].slice(2)}`
+      : match[3];
+
+    return {
+      value: decimalFromDms(match[1], match[2], seconds, direction),
+      direction
+    };
+  }
+
+  match = body.match(/^(\d{1,3})°(\d{2})(\d{2})(\d{2,3})$/);
+  if (match) {
+    return {
+      value: decimalFromDms(match[1], match[2], `${match[3]}.${match[4]}`, direction),
+      direction
+    };
+  }
+
+  match = body.match(/^(\d{1,3})°(\d{2})(\d{1,2})\.(\d+)$/);
+  if (match) {
+    return {
+      value: decimalFromDms(match[1], match[2], `${match[3]}.${match[4]}`, direction),
+      direction
+    };
+  }
+
+  match = body.match(/^(\d{1,3})°(\d{2})'?(?:(\d{1,2})(\d{2})|(\d{1,2})\.(\d+))$/);
+  if (match) {
+    const seconds = match[3] ? `${match[3]}.${match[4]}` : `${match[5]}.${match[6]}`;
+
+    return {
+      value: decimalFromDms(match[1], match[2], seconds, direction),
+      direction
+    };
+  }
+
+  return null;
+}
+
+function extractDecimalCoordinateLines(text) {
+  const lines = normalizeText(text)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const coordinateLines = [];
+
+  for (const line of lines) {
+    const match = line.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+
+    if (!match) {
+      continue;
+    }
+
+    const longitudeText = match[1].trim();
+    const latitudeText = match[2].trim();
+    const longitude = Number(longitudeText);
+    const latitude = Number(latitudeText);
+
+    if (Math.abs(longitude) <= 180 && Math.abs(latitude) <= 90) {
+      coordinateLines.push(`${longitudeText},${latitudeText}`);
+    }
+  }
+
+  return coordinateLines;
+}
+
+function extractDmsCoordinateLines(text) {
+  const lines = normalizeText(text)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const coordinateLines = [];
+  const dmsTokenPattern = /\d{1,3}\s*°\s*(?:\d{1,2}\s*'\s*\d{1,4}(?:\.\d+)?|\d{3,7}(?:\.\d+)?)\s*["']?\s*[NSEWO]?/gi;
+
+  for (const line of lines) {
+    if (/annoter|tourner|rechercher|partager|hectares/i.test(line)) {
+      continue;
+    }
+
+    const tokens = line.match(dmsTokenPattern) || [];
+
+    if (tokens.length < 2) {
+      continue;
+    }
+
+    const parsed = tokens
+      .map((token, index) => parseCompactDmsToken(token, index === 0 ? "N" : "O"))
+      .filter(Boolean)
+      .filter(item => item.value !== null);
+
+    if (parsed.length < 2) {
+      continue;
+    }
+
+    const latitude = parsed.find(item => ["N", "S"].includes(item.direction)) || parsed[0];
+    const longitude = parsed.find(item => ["E", "W", "O"].includes(item.direction)) || parsed[1];
+
+    if (!latitude || !longitude) {
+      continue;
+    }
+
+    const lonNumber = Number(longitude.value);
+    const latNumber = Number(latitude.value);
+
+    if (Math.abs(lonNumber) <= 180 && Math.abs(latNumber) <= 90) {
+      coordinateLines.push(`${longitude.value},${latitude.value}`);
+    }
+  }
+
+  return coordinateLines;
+}
+
+function extractCoordinateLines(text) {
+  const decimalLines = extractDecimalCoordinateLines(text);
+
+  if (decimalLines.length > 0) {
+    return decimalLines.join("\n");
+  }
+
+  const dmsLines = extractDmsCoordinateLines(text);
+
+  return dmsLines.length > 0 ? dmsLines.join("\n") : noCoordinatesText;
+}
+
+function getOpenAIErrorMessage(error) {
+  const status = error.status ? `HTTP ${error.status}` : "";
+  const code = error.code ? `code=${error.code}` : "";
+  const type = error.type ? `type=${error.type}` : "";
+  const message = error.message || "未知错误";
+
+  return [status, code, type, message].filter(Boolean).join(" | ");
+}
+
+app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) => {
+  console.log("---- 收到识别请求 ----");
+  console.log("是否收到图片：", Boolean(req.file));
+
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        error: "后端没有收到图片，请重新选择图片上传。",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+
+    console.log("图片文件名：", req.file.originalname);
+    console.log("图片类型：", req.file.mimetype);
+    console.log("图片大小：", `${req.file.size} bytes`);
+    console.log("使用模型：", model);
+
+    if (!process.env.OPENAI_API_KEY) {
+      console.log("未配置 OPENAI_API_KEY，自动切换到本地 OCR 兜底识别。");
+
+      const result = await Tesseract.recognize(req.file.buffer, "eng", {
+        logger: info => console.log(info.status, info.progress)
+      });
+      const rawText = result.data.text || "";
+      const coordinates = extractCoordinateLines(rawText);
+
+      console.log("本地 OCR 返回的原始内容：");
+      console.log(rawText);
+      console.log("坐标提取结果：");
+      console.log(coordinates);
+
+      return res.json({
+        model: "local-tesseract-fallback",
+        rawText,
+        coordinates,
+        precisionMode: "local-ocr-dms-fallback",
+        warning: "未配置 OPENAI_API_KEY，当前使用本地 OCR 兜底识别。复杂图片建议使用人工协助或配置 OpenAI API Key。"
+      });
+    }
+
+    const imageBase64 = req.file.buffer.toString("base64");
+    const imageDataUrl = `data:${req.file.mimetype};base64,${imageBase64}`;
+
+    console.log("base64 image_url 已生成，长度：", imageDataUrl.length);
+    console.log("正在调用 OpenAI...");
+
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+
+    const response = await openai.responses.create({
+      model,
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `你是矿业坐标识别助手。请只识别图片中的坐标表区域，忽略水印、表格线、页眉页脚、手机底部菜单、Annoter、Tourner、Rechercher、Partager、Hectares 等无关文字。
+
+重点处理：
+1. 坐标表通常包含 N° / Latitude / Longitude 三列。
+2. Latitude 是纬度，Longitude 是经度。
+3. 支持十进制度和度分秒 DMS。
+4. 支持 N/S/E/W。
+5. 法语 O 或 Ouest = West = 西经 = 负经度。
+6. Latitude nord = 北纬 = 正纬度。
+7. Longitude ouest = 西经 = 负经度。
+8. 如果方向字母被 OCR 漏掉，但表头是 Longitude 或 Longitude ouest，经度应按西经负号处理。
+9. 如果秒的小数点、分秒符号被 OCR 粘连，例如 11°342050'N，应理解为 11°34'20.50"N；8°502258'O 应理解为 8°50'22.58"O。
+
+输出必须只返回：
+经度,纬度
+经度,纬度
+
+不要解释，不要表头，不要点号。不要压缩小数位。无法识别有效坐标时，只输出：${noCoordinatesText}`
+            },
+            {
+              type: "input_image",
+              image_url: imageDataUrl,
+              detail: "high"
+            }
+          ]
+        }
+      ]
+    });
+
+    console.log("调用 OpenAI 是否成功：是");
+
+    const rawText = response.output_text || "";
+    const coordinates = extractCoordinateLines(rawText);
+
+    console.log("OpenAI 返回的原始内容：");
+    console.log(rawText);
+    console.log("坐标提取结果：");
+    console.log(coordinates);
+
+    res.json({
+      model,
+      rawText,
+      coordinates,
+      precisionMode: "preserve-original-decimals-and-parse-dms"
+    });
+  } catch (error) {
+    const errorMessage = getOpenAIErrorMessage(error);
+
+    console.error("AI 识别失败，尝试本地 OCR 兜底。真实错误信息：", errorMessage);
+
+    try {
+      if (!req.file) {
+        throw error;
+      }
+
+      const result = await Tesseract.recognize(req.file.buffer, "eng", {
+        logger: info => console.log(info.status, info.progress)
+      });
+      const rawText = result.data.text || "";
+      const coordinates = extractCoordinateLines(rawText);
+
+      res.json({
+        model: "local-tesseract-fallback",
+        rawText,
+        coordinates,
+        precisionMode: "local-ocr-dms-fallback",
+        warning: `AI 识别失败，已改用本地 OCR 兜底。AI 错误：${errorMessage}`
+      });
+    } catch (fallbackError) {
+      console.error(fallbackError);
+      res.status(500).json({
+        error: `${errorMessage}；本地 OCR 兜底也失败：${fallbackError.message || "未知错误"}`,
+        rawText: "",
+        coordinates: ""
+      });
+    }
+  }
+});
+
+const port = process.env.PORT || 3000;
+
+app.listen(port, () => {
+  console.log(`坐标工具已启动：http://localhost:${port}`);
+  console.log(`当前视觉模型：${model}`);
+  console.log("坐标识别模式：裁剪图片区域 + DMS 兜底解析。");
+});
