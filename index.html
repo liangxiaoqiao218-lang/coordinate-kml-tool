@@ -69,18 +69,23 @@
       background: #dbe6f5;
     }
 
-    .copy-overlay {
+    .workspace-tools {
       position: absolute;
       top: 10px;
       right: 10px;
       z-index: 1;
+      display: flex;
+      gap: 6px;
+    }
+
+    .workspace-tools .icon-button {
       box-shadow: 0 1px 4px rgba(15, 23, 42, 0.16);
     }
 
     textarea {
       width: 100%;
       min-height: 340px;
-      padding: 14px 58px 14px 14px;
+      padding: 58px 14px 14px 14px;
       resize: vertical;
       border: 1px solid #cbd5e1;
       border-radius: 8px;
@@ -198,11 +203,34 @@
     }
 
     .message {
+      display: none;
       min-height: 24px;
       margin-top: 12px;
       color: #166534;
       font-size: 14px;
       line-height: 1.5;
+    }
+
+    .toast {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      z-index: 20;
+      display: none;
+      max-width: min(92vw, 420px);
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: #14532d;
+      color: #ffffff;
+      font-size: 14px;
+      line-height: 1.4;
+      text-align: center;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
+      transform: translateX(-50%);
+    }
+
+    .toast.error {
+      background: #991b1b;
     }
 
     .upload-message {
@@ -374,7 +402,11 @@
 -6.74805556,10.79444444
 -6°55'10.1944'',10°30'43.0143''
 -6°55.169907',10°30.716905'"></textarea>
-      <button type="button" class="icon-button copy-overlay" onclick="copyContent()" title="复制内容" aria-label="复制内容">⧉</button>
+      <div class="workspace-tools">
+        <button type="button" class="icon-button" onclick="undoLastChange()" title="撤销上一步" aria-label="撤销上一步">↶</button>
+        <button type="button" class="icon-button" onclick="confirmClearContent()" title="清空内容" aria-label="清空内容">×</button>
+        <button type="button" class="icon-button" onclick="copyContent()" title="复制内容" aria-label="复制内容">⧉</button>
+      </div>
     </div>
     <button type="button" class="primary-action" onclick="downloadKml()">生成KML文件并下载</button>
 
@@ -414,11 +446,11 @@
 
     <div class="buttons">
       <button type="button" onclick="normalizeCoordinates()">标准化坐标</button>
-      <button type="button" class="secondary" onclick="clearContent()">清空内容</button>
       <button type="button" class="support" onclick="showManualSupport()">人工协助识别</button>
     </div>
 
     <div id="message" class="message"></div>
+    <div id="toast" class="toast"></div>
 
     <div id="supportPanel" class="panel support-panel">
       <h2>人工协助识别</h2>
@@ -463,19 +495,53 @@
     const exportType = document.getElementById("exportType");
     const imageInput = document.getElementById("imageInput");
     const message = document.getElementById("message");
+    const toast = document.getElementById("toast");
     const uploadMessage = document.getElementById("uploadMessage");
     const supportPanel = document.getElementById("supportPanel");
     const debugPanel = document.getElementById("debugPanel");
     const debugText = document.getElementById("debugText");
     const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
     const MANUAL_CONTACT_TEXT = "微信 Mir-2188";
+    const historyStack = [];
+    let clearConfirmTimer = null;
 
     imageInput.addEventListener("change", recognizeImage);
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
 
     function showMessage(text, isError = false) {
-      message.textContent = text;
-      message.style.color = isError ? "#b91c1c" : "#166534";
+      if (!text) {
+        toast.style.display = "none";
+        toast.textContent = "";
+        return;
+      }
+
+      toast.textContent = text;
+      toast.className = isError ? "toast error" : "toast";
+      toast.style.display = "block";
+
+      clearTimeout(showMessage.timer);
+      showMessage.timer = setTimeout(() => {
+        toast.style.display = "none";
+      }, 2000);
+    }
+
+    function rememberState() {
+      historyStack.push(input.value);
+
+      if (historyStack.length > 20) {
+        historyStack.shift();
+      }
+    }
+
+    function undoLastChange() {
+      if (historyStack.length === 0) {
+        showMessage("没有可撤销的上一步。", true);
+        return;
+      }
+
+      input.value = historyStack.pop();
+      input.focus();
+      showMessage("已撤销上一步。");
     }
 
     function clearUploadMessage() {
@@ -827,6 +893,7 @@
         return;
       }
 
+      rememberState();
       input.value = pairs
         .map(pair => formatPairForDisplay(pair, coordinateFormat.value))
         .join("\n");
@@ -886,8 +953,7 @@
         return null;
       }
 
-      const selectedFormat = coordinateFormat.value;
-      const formats = [selectedFormat, ...["dms", "dm", "degree"].filter(format => format !== selectedFormat)];
+      const formats = ["dms", "dm", "degree"];
 
       for (const format of formats) {
         const tokens = extractCoordinateTokens(text, format);
@@ -1025,7 +1091,27 @@
       await copyText(input.value, "内容已复制。");
     }
 
+    function confirmClearContent() {
+      if (!input.value.trim()) {
+        showMessage("当前已经是空的。", true);
+        return;
+      }
+
+      if (clearConfirmTimer) {
+        clearTimeout(clearConfirmTimer);
+        clearConfirmTimer = null;
+        clearContent();
+        return;
+      }
+
+      showMessage("再次点击清空按钮确认清空。", true);
+      clearConfirmTimer = setTimeout(() => {
+        clearConfirmTimer = null;
+      }, 3000);
+    }
+
     function clearContent() {
+      rememberState();
       input.value = "";
       showMessage("内容已清空。");
       input.focus();
@@ -1039,6 +1125,7 @@
         return;
       }
 
+      rememberState();
       input.value = pairs.map(pair => `${pair.longitude},${pair.latitude}`).join("\n");
       coordinateFormat.value = "degree";
       showMessage(`已标准化 ${pairs.length} 组坐标，统一为经度,纬度。`);
@@ -1222,7 +1309,9 @@ ${placemarks}
           return;
         }
 
+        rememberState();
         input.value = finalCoordinates;
+        coordinateFormat.value = "degree";
         input.focus();
         showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。");
       } catch (error) {
