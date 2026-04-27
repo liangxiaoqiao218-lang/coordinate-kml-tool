@@ -115,8 +115,9 @@ function extractDecimalCoordinateLines(text) {
       continue;
     }
 
-    const longitudeText = match[1].trim();
-    const latitudeText = match[2].trim();
+    const fixedPair = fixLikelyLatLonOrder(match[1].trim(), match[2].trim());
+    const longitudeText = fixedPair.longitudeText;
+    const latitudeText = fixedPair.latitudeText;
     const longitude = Number(longitudeText);
     const latitude = Number(latitudeText);
 
@@ -126,6 +127,30 @@ function extractDecimalCoordinateLines(text) {
   }
 
   return coordinateLines;
+}
+
+function fixLikelyLatLonOrder(firstText, secondText) {
+  const first = Number(firstText);
+  const second = Number(secondText);
+
+  if (
+    Number.isFinite(first)
+    && Number.isFinite(second)
+    && first > 0
+    && second < 0
+    && Math.abs(first) <= 90
+    && Math.abs(second) <= 90
+  ) {
+    return {
+      longitudeText: secondText,
+      latitudeText: firstText
+    };
+  }
+
+  return {
+    longitudeText: firstText,
+    latitudeText: secondText
+  };
 }
 
 function parseSpaceBrokenDecimalLine(line) {
@@ -215,6 +240,15 @@ function extractCoordinateLines(text) {
   return dmsLines.length > 0 ? dmsLines.join("\n") : noCoordinatesText;
 }
 
+function countCoordinateRows(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => line !== noCoordinatesText)
+    .length;
+}
+
 function getOpenAIErrorMessage(error) {
   const status = error.status ? `HTTP ${error.status}` : "";
   const code = error.code ? `code=${error.code}` : "";
@@ -276,8 +310,87 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
       baseURL: openAIBaseURL
     });
 
+    const createVisionRequest = modelName => openai.chat.completions.create({
+      model: modelName,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `你是矿业坐标识别助手。请只识别图片中的坐标表区域，忽略水印、表格线、页眉页脚、手机底部菜单、Annoter、Tourner、Rechercher、Partager、Hectares 等无关文字。
+
+重点处理：
+1. 坐标表通常包含 Point / N° / Latitude / Longitude 三列。
+2. Latitude 是纬度，Longitude 是经度。
+3. 支持十进制度和度分秒 DMS。
+4. 支持 N/S/E/W。
+5. 法语 O 或 Ouest = West = 西经 = 负经度。
+6. Latitude nord = 北纬 = 正纬度。
+7. Longitude ouest = 西经 = 负经度。
+8. 如果方向字母被 OCR 漏掉，但表头是 Longitude 或 Longitude ouest，经度应按西经负号处理。
+9. 如果秒的小数点、分秒符号被 OCR 粘连，例如 11°342050'N，应理解为 11°34'20.50"N；8°502258'O 应理解为 8°50'22.58"O。
+10. 必须按 Point 编号逐行读取，Point 1、2、3、4 都要输出，不能漏掉中间行或最后一行。
+11. 输出顺序必须是 Longitude,Latitude，也就是经度在前、纬度在后。Latitude nord 不能放在第一列。
+12. 如果表头是 Longitude ouest，所有经度都必须是负数。
+
+输出必须只返回：
+经度,纬度
+经度,纬度
+
+不要解释，不要表头，不要点号。不要压缩小数位。无法识别有效坐标时，只输出：${noCoordinatesText}`
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: imageDataUrl
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    let response = await createVisionRequest(model);
+    let usedModel = model;
+
+    console.log("调用 OpenAI 是否成功：是");
+
+    let rawText = response.choices?.[0]?.message?.content || "";
+    let coordinates = extractCoordinateLines(rawText);
+    const ocrRetryModel = process.env.OPENAI_OCR_MODEL || (openAIBaseURL.includes("dashscope") ? "qwen-vl-ocr" : "");
+
+    if (countCoordinateRows(coordinates) < 4 && ocrRetryModel && ocrRetryModel !== model) {
+      console.log(`识别结果少于 4 组，使用 OCR 模型重试：${ocrRetryModel}`);
+      const retryResponse = await createVisionRequest(ocrRetryModel);
+      const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
+      const retryCoordinates = extractCoordinateLines(retryRawText);
+
+      if (countCoordinateRows(retryCoordinates) > countCoordinateRows(coordinates)) {
+        rawText = retryRawText;
+        coordinates = retryCoordinates;
+        usedModel = ocrRetryModel;
+      }
+    }
+
+    if (countCoordinateRows(coordinates) < 4) {
+      console.log("AI 识别少于 4 组，追加本地 OCR 对比行数。");
+      const localResult = await Tesseract.recognize(req.file.buffer, "eng", {
+        logger: info => console.log(info.status, info.progress)
+      });
+      const localRawText = localResult.data.text || "";
+      const localCoordinates = extractCoordinateLines(localRawText);
+
+      if (countCoordinateRows(localCoordinates) > countCoordinateRows(coordinates)) {
+        rawText = localRawText;
+        coordinates = localCoordinates;
+        usedModel = `${usedModel}+local-ocr-more-rows`;
+      }
+    }
+
+    /*
     const response = await openai.chat.completions.create({
-      model,
+      model: usedModel,
       messages: [
         {
           role: "user",
@@ -296,6 +409,9 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 7. Longitude ouest = 西经 = 负经度。
 8. 如果方向字母被 OCR 漏掉，但表头是 Longitude 或 Longitude ouest，经度应按西经负号处理。
 9. 如果秒的小数点、分秒符号被 OCR 粘连，例如 11°342050'N，应理解为 11°34'20.50"N；8°502258'O 应理解为 8°50'22.58"O。
+10. 必须按 Point 编号逐行读取，Point 1、2、3、4 都要输出，不能漏掉中间行或最后一行。
+11. 输出顺序必须是 Longitude,Latitude，也就是经度在前、纬度在后。Latitude nord 不能放在第一列。
+12. 如果表头是 Longitude ouest，所有经度都必须是负数。
 
 输出必须只返回：
 经度,纬度
@@ -319,6 +435,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
     const rawText = response.choices?.[0]?.message?.content || "";
     const coordinates = extractCoordinateLines(rawText);
 
+    */
     console.log("OpenAI 返回的原始内容：");
     console.log(rawText);
     console.log("坐标提取结果：");
