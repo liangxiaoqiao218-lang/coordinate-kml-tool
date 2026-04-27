@@ -826,6 +826,32 @@
       return coordinateLines.join("\n");
     }
 
+    function extractProjectedCoordinateLines(text) {
+      const lines = String(text || "").split(/\r?\n/);
+      const coordinateLines = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        if (!trimmed || /annoter|tourner|rechercher|partager|hectares|latitude|longitude/i.test(trimmed)) {
+          continue;
+        }
+
+        const numbers = trimmed.match(/[-+]?\d+(?:\.\d+)?/g) || [];
+        const largeNumbers = numbers.filter(value => Math.abs(Number(value)) > 180);
+
+        if (largeNumbers.length >= 2) {
+          coordinateLines.push(`${largeNumbers[0]},${largeNumbers[1]}`);
+        }
+      }
+
+      return coordinateLines.join("\n");
+    }
+
+    function hasProjectedCoordinateRows(text) {
+      return Boolean(extractProjectedCoordinateLines(text).trim());
+    }
+
     function countCoordinateRows(text) {
       return String(text || "")
         .split(/\r?\n/)
@@ -1144,6 +1170,11 @@
       const pairs = getCoordinatePairs();
 
       if (pairs.length === 0) {
+        if (hasProjectedCoordinateRows(input.value)) {
+          showMessage("识别到 X/Y 平面坐标，不能直接标准化为经纬度。请先确认坐标系或使用人工协助转换。", true);
+          return;
+        }
+
         showMessage("没有找到可识别的坐标。", true);
         return;
       }
@@ -1212,6 +1243,11 @@
       const selectedType = exportType.value;
 
       if (pairs.length === 0) {
+        if (hasProjectedCoordinateRows(input.value)) {
+          showMessage("识别到 X/Y 平面坐标，不能直接生成 KML。请先确认坐标系或使用人工协助转换。", true);
+          return;
+        }
+
         showMessage("没有找到可生成 KML 的坐标。", true);
         return;
       }
@@ -1283,11 +1319,10 @@ ${placemarks}
       showMessage("正在上传图片……");
 
       try {
-        const croppedFile = await cropImageForCoordinateTable(file);
         const formData = new FormData();
-        formData.append("image", croppedFile);
+        formData.append("image", file);
 
-        appendDebug(`已自动裁剪识别范围\n裁剪后大小：${Math.round(croppedFile.size / 1024)} KB`);
+        appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
         appendDebug("正在调用识别接口");
         showMessage("正在调用识别接口……");
 
@@ -1308,8 +1343,10 @@ ${placemarks}
         const preservedCoordinates = extractCoordinatesPreservePrecision(data.rawText);
         const dmsCoordinates = extractDmsCoordinates(data.rawText);
         const recognizedLines = extractRecognizedCoordinateLines(data.rawText);
+        const projectedLines = extractProjectedCoordinateLines(data.rawText);
         const finalCoordinates = chooseBestCoordinateResult([
           recognizedLines,
+          projectedLines,
           data.coordinates || "",
           preservedCoordinates,
           dmsCoordinates
@@ -1317,6 +1354,7 @@ ${placemarks}
 
         appendDebug(`识别原文：\n${data.rawText || "无"}`);
         appendDebug(`原样坐标行：\n${recognizedLines || "无"}`);
+        appendDebug(`X/Y平面坐标提取结果：\n${projectedLines || "无"}`);
         appendDebug(`后端坐标提取结果：\n${data.coordinates || "无"}`);
         appendDebug(`前端保精度提取结果：\n${preservedCoordinates || "无"}`);
         appendDebug(`前端DMS兜底提取结果：\n${dmsCoordinates || "无"}`);
@@ -1338,7 +1376,11 @@ ${placemarks}
         rememberState();
         input.value = finalCoordinates;
         input.focus();
-        showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。");
+        if (hasProjectedCoordinateRows(finalCoordinates)) {
+          showMessage("已识别到 X/Y 平面坐标，请先确认坐标系后再转换成经纬度。", true);
+        } else {
+          showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。");
+        }
       } catch (error) {
         appendDebug(`错误信息：${error.message}`);
         showMessage(`识别失败：${error.message}`, true);

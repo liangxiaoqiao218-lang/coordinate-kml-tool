@@ -319,27 +319,36 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
           content: [
             {
               type: "text",
-              text: `你是矿业坐标识别助手。请只识别图片中的坐标表区域，忽略水印、表格线、页眉页脚、手机底部菜单、Annoter、Tourner、Rechercher、Partager、Hectares 等无关文字。
+              text: `你是矿业坐标识别助手。请从图片中找到真正的坐标表，并只返回坐标行。图片可能是完整文件、手机截图、扫描件、带水印图片、长表、局部表格或带菜单按钮的截图。
 
-重点处理：
-1. 坐标表通常包含 Point / N° / Latitude / Longitude 三列。
-2. Latitude 是纬度，Longitude 是经度。
-3. 支持十进制度和度分秒 DMS。
-4. 支持 N/S/E/W。
-5. 法语 O 或 Ouest = West = 西经 = 负经度。
-6. Latitude nord = 北纬 = 正纬度。
-7. Longitude ouest = 西经 = 负经度。
-8. 如果方向字母被 OCR 漏掉，但表头是 Longitude 或 Longitude ouest，经度应按西经负号处理。
-9. 如果秒的小数点、分秒符号被 OCR 粘连，例如 11°342050'N，应理解为 11°34'20.50"N；8°502258'O 应理解为 8°50'22.58"O。
-10. 必须按 Point 编号逐行读取，Point 1、2、3、4 都要输出，不能漏掉中间行或最后一行。
-11. 输出顺序必须是 Longitude,Latitude，也就是经度在前、纬度在后。Latitude nord 不能放在第一列。
-12. 如果表头是 Longitude ouest，所有经度都必须是负数。
+必须忽略：
+水印、背景字、页眉页脚、表格线、手机状态栏、底部菜单、Annoter、Tourner、Rechercher、Partager、Hectares、签名、正文段落。
 
-输出必须只返回：
-经度,纬度
-经度,纬度
+必须支持这些表格类型：
+1. Point / N° / LATITUDE / LONGITUDE。
+2. Point / Latitude nord / Longitude ouest。
+3. Point A-Z 或 1-99 的长表。
+4. Nord / Est 表头，结合 N/S/E/W 判断纬度和经度。
+5. X / Y 或 Liste des Coordonnées 平面坐标表。
+6. 十进制度、度分、度分秒 DMS。
+7. N/S/E/W，法语 O / Ouest = West = 西经。
+8. Latitude nord = 北纬；Longitude ouest = 西经。
 
-不要解释，不要表头，不要点号。不要压缩小数位。无法识别有效坐标时，只输出：${noCoordinatesText}`
+输出规则：
+1. 识别出什么格式，就保留什么格式。不要把度分秒自动转换成十进制度。
+2. 每一行只输出一组坐标，格式固定为：经度,纬度。
+3. 如果表格是 X/Y 平面坐标，每一行输出：X,Y，保留原数字。
+4. 如果原图没有 N/W/O 字母，但表头写了 Latitude nord / Longitude ouest，需要在输出中补上 N 和 W，或用负号表达西经。
+5. 必须按 Point 编号逐行输出，不能漏掉第一行、中间行或最后一行。看到 4 个点就输出 4 行；看到 A-Z 就输出 A-Z 对应的全部行。
+6. 不要输出点号、表头、解释文字、Markdown、编号、空行。
+7. 不要压缩小数位，不要改写原始精度。
+
+示例：
+09°01'13.67"W,11°43'16.45"N
+08°53'32.66"W,11°52'11.93"N
+642405.693,1051600.499
+
+无法识别有效坐标时，只输出：${noCoordinatesText}`
             },
             {
               type: "image_url",
