@@ -39,10 +39,48 @@
       font-weight: 700;
     }
 
+    .workspace-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .workspace-head label {
+      margin-bottom: 8px;
+    }
+
+    .textarea-wrap {
+      position: relative;
+    }
+
+    .icon-button {
+      width: 40px;
+      min-height: 40px;
+      padding: 0;
+      border-radius: 8px;
+      background: #e8eef7;
+      color: #1f2937;
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .icon-button:hover {
+      background: #dbe6f5;
+    }
+
+    .copy-overlay {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.16);
+    }
+
     textarea {
       width: 100%;
       min-height: 340px;
-      padding: 14px;
+      padding: 14px 58px 14px 14px;
       resize: vertical;
       border: 1px solid #cbd5e1;
       border-radius: 8px;
@@ -65,6 +103,17 @@
       border: 1px solid #d8e0ec;
       border-radius: 8px;
       background: #ffffff;
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .settings-grid .panel {
+      margin-top: 0;
     }
 
     .upload-box {
@@ -134,6 +183,18 @@
 
     button.support:hover {
       background: #166534;
+    }
+
+    .primary-action {
+      width: 100%;
+      min-height: 52px;
+      margin-top: 10px;
+      font-size: 17px;
+      background: #145de8;
+    }
+
+    .primary-action:hover {
+      background: #0f4fc7;
     }
 
     .message {
@@ -289,6 +350,7 @@
       }
 
       .buttons,
+      .settings-grid,
       .support-actions {
         grid-template-columns: 1fr;
       }
@@ -304,19 +366,43 @@
     <h1>坐标转 KML 小工具</h1>
     <p class="intro">上传矿业坐标图片或手动粘贴坐标。自动识别不准时，可以转人工协助整理成 KML 可用坐标。</p>
 
-    <label for="coordinateInput">坐标工作区</label>
-    <textarea id="coordinateInput" placeholder="示例：
+    <div class="workspace-head">
+      <label for="coordinateInput">坐标工作区</label>
+    </div>
+    <div class="textarea-wrap">
+      <textarea id="coordinateInput" placeholder="示例：
 -6.74805556,10.79444444
--6.74711111,10.79322222
--6.74633333,10.79288888"></textarea>
+-6°55'10.1944'',10°30'43.0143''
+-6°55.169907',10°30.716905'"></textarea>
+      <button type="button" class="icon-button copy-overlay" onclick="copyContent()" title="复制内容" aria-label="复制内容">⧉</button>
+    </div>
+    <button type="button" class="primary-action" onclick="downloadKml()">生成KML文件并下载</button>
 
-    <div class="panel">
-      <label for="exportType">导出类型</label>
-      <select id="exportType">
-        <option value="Polygon" selected>面 Polygon（默认，矿区范围）</option>
-        <option value="LineString">线 LineString</option>
-        <option value="Point">点位 Point</option>
-      </select>
+    <div class="settings-grid">
+      <div class="panel">
+        <label for="coordinateFormat">输入格式</label>
+        <select id="coordinateFormat">
+          <option value="dms" selected>度分秒（默认）</option>
+          <option value="dm">度分</option>
+          <option value="degree">度</option>
+        </select>
+      </div>
+      <div class="panel">
+        <label for="coordinateOrder">输入顺序</label>
+        <select id="coordinateOrder">
+          <option value="auto" selected>自动判断</option>
+          <option value="lnglat">经度,纬度</option>
+          <option value="latlng">纬度,经度</option>
+        </select>
+      </div>
+      <div class="panel">
+        <label for="exportType">导出类型</label>
+        <select id="exportType">
+          <option value="Polygon" selected>面 Polygon（默认，矿区范围）</option>
+          <option value="LineString">线 LineString</option>
+          <option value="Point">点位 Point</option>
+        </select>
+      </div>
     </div>
 
     <div class="panel upload-box">
@@ -327,11 +413,8 @@
     </div>
 
     <div class="buttons">
-      <button type="button" onclick="copyContent()">复制内容</button>
-      <button type="button" class="secondary" onclick="clearContent()">清空内容</button>
       <button type="button" onclick="normalizeCoordinates()">标准化坐标</button>
-      <button type="button" onclick="swapCoordinates()">交换经纬度</button>
-      <button type="button" onclick="downloadKml()">生成KML文件并下载</button>
+      <button type="button" class="secondary" onclick="clearContent()">清空内容</button>
       <button type="button" class="support" onclick="showManualSupport()">人工协助识别</button>
     </div>
 
@@ -366,8 +449,8 @@
 
     <section class="help">
       <strong>坐标说明：</strong><br />
-      每行一组坐标，格式为：经度,纬度。<br />
-      标准化只会清理空格和分隔符，不会改变小数位数。<br />
+      每行一组坐标，支持度、度分、度分秒，标准化后统一为：经度,纬度。<br />
+      标准化会把输入格式转换成十进制度，并合并原来的交换经纬度功能。<br />
       生成 KML 时也会保留输入区中的原始小数精度。<br />
       Polygon 会按输入顺序连线，并自动把最后一个点连接回第一个点。
     </section>
@@ -375,6 +458,8 @@
 
   <script>
     const input = document.getElementById("coordinateInput");
+    const coordinateFormat = document.getElementById("coordinateFormat");
+    const coordinateOrder = document.getElementById("coordinateOrder");
     const exportType = document.getElementById("exportType");
     const imageInput = document.getElementById("imageInput");
     const message = document.getElementById("message");
@@ -721,17 +806,132 @@
       const pairs = [];
 
       for (const line of lines) {
-        const match = line.match(/(-?\d+(?:\.\d+)?)\s*[,，\s]\s*(-?\d+(?:\.\d+)?)/);
+        const pair = parseCoordinateLine(line);
 
-        if (match) {
-          pairs.push({
-            longitude: cleanNumberText(match[1]),
-            latitude: cleanNumberText(match[2])
-          });
+        if (pair) {
+          pairs.push(pair);
         }
       }
 
       return pairs;
+    }
+
+    function parseCoordinateLine(line) {
+      const text = String(line || "")
+        .replace(/经纬度|经度|纬度|longitude|latitude|lon|lat/gi, " ")
+        .replace(/[：:]/g, " ")
+        .trim();
+
+      if (!text) {
+        return null;
+      }
+
+      const selectedFormat = coordinateFormat.value;
+      const formats = [selectedFormat, ...["dms", "dm", "degree"].filter(format => format !== selectedFormat)];
+
+      for (const format of formats) {
+        const tokens = extractCoordinateTokens(text, format);
+
+        if (tokens.length >= 2) {
+          return assignCoordinatePair(tokens[0], tokens[1]);
+        }
+      }
+
+      return null;
+    }
+
+    function extractCoordinateTokens(text, format) {
+      const tokenPatterns = {
+        dms: /[NSEWO]?\s*[-+]?\d{1,3}\s*[°º]\s*\d{1,2}\s*['′’]\s*\d{1,2}(?:\.\d+)?\s*(?:"|''|″|”)?\s*[NSEWO]?/gi,
+        dm: /[NSEWO]?\s*[-+]?\d{1,3}\s*[°º]\s*\d{1,2}(?:\.\d+)?\s*['′’]?\s*[NSEWO]?/gi,
+        degree: /[NSEWO]?\s*[-+]?\d+(?:\.\d+)?\s*[NSEWO]?/gi
+      };
+      const matches = text.match(tokenPatterns[format]) || [];
+
+      return matches
+        .map(token => parseCoordinateToken(token, format))
+        .filter(Boolean);
+    }
+
+    function parseCoordinateToken(token, format) {
+      const normalized = String(token || "")
+        .toUpperCase()
+        .replace(/OUEST/g, "O")
+        .replace(/WEST/g, "W")
+        .replace(/[º]/g, "°")
+        .replace(/[′’]/g, "'")
+        .replace(/[″”]/g, '"');
+      const directionMatch = normalized.match(/[NSEWO]/);
+      const direction = directionMatch ? directionMatch[0] : "";
+      const numbers = normalized.match(/[-+]?\d+(?:\.\d+)?/g) || [];
+
+      if ((format === "dms" && numbers.length < 3) || (format === "dm" && numbers.length < 2) || numbers.length < 1) {
+        return null;
+      }
+
+      const degrees = Number(numbers[0]);
+      const minutes = Number(numbers[1] || 0);
+      const seconds = Number(numbers[2] || 0);
+
+      if (!Number.isFinite(degrees) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+        return null;
+      }
+
+      let value = Math.abs(degrees) + minutes / 60 + seconds / 3600;
+
+      if (degrees < 0 || direction === "S" || direction === "W" || direction === "O") {
+        value = -value;
+      }
+
+      let axis = null;
+
+      if (direction === "N" || direction === "S") {
+        axis = "lat";
+      } else if (direction === "E" || direction === "W" || direction === "O") {
+        axis = "lon";
+      } else if (Math.abs(value) > 90) {
+        axis = "lon";
+      }
+
+      return {
+        value,
+        text: String(value),
+        axis
+      };
+    }
+
+    function assignCoordinatePair(first, second) {
+      let longitude = first;
+      let latitude = second;
+      const order = coordinateOrder.value;
+
+      if (order === "latlng") {
+        longitude = second;
+        latitude = first;
+      } else if (order === "auto") {
+        if (first.axis === "lat" && second.axis === "lon") {
+          longitude = second;
+          latitude = first;
+        } else if (first.axis === "lon" && second.axis === "lat") {
+          longitude = first;
+          latitude = second;
+        } else if (first.value > 0 && second.value < 0) {
+          longitude = second;
+          latitude = first;
+        } else if (first.value < 0 && second.value > 0) {
+          longitude = first;
+          latitude = second;
+        }
+      }
+
+      if (Math.abs(longitude.value) > 180 || Math.abs(latitude.value) > 90) {
+        return null;
+      }
+
+      return {
+        longitude: longitude.text,
+        latitude: latitude.text
+      };
     }
 
     function coordinatesAreSame(a, b) {
@@ -780,19 +980,7 @@
       }
 
       input.value = pairs.map(pair => `${pair.longitude},${pair.latitude}`).join("\n");
-      showMessage(`已标准化 ${pairs.length} 组坐标，未改变小数位数。`);
-    }
-
-    function swapCoordinates() {
-      const pairs = getCoordinatePairs();
-
-      if (pairs.length === 0) {
-        showMessage("没有找到可识别的坐标。", true);
-        return;
-      }
-
-      input.value = pairs.map(pair => `${pair.latitude},${pair.longitude}`).join("\n");
-      showMessage(`已交换 ${pairs.length} 组坐标，未改变小数位数。`);
+      showMessage(`已标准化 ${pairs.length} 组坐标，统一为经度,纬度。`);
     }
 
     function escapeXml(text) {
