@@ -42,7 +42,7 @@ function decimalFromDms(degrees, minutes, seconds, direction) {
   let value = Math.abs(deg) + min / 60 + sec / 3600;
   const dir = String(direction || "").toUpperCase();
 
-  if (["S", "W", "O"].includes(dir)) {
+  if (["S", "W", "O"].includes(dir) || (!dir && deg < 0)) {
     value = -value;
   }
 
@@ -58,7 +58,7 @@ function parseCompactDmsToken(token, fallbackDirection) {
   const direction = (directionMatch ? directionMatch[0] : fallbackDirection || "").toUpperCase();
   const body = cleaned.replace(/[NSEWO]$/i, "").replace(/['"]$/, "");
 
-  let match = body.match(/^(\d{1,3})°(\d{1,2})'(\d{1,4}(?:\.\d+)?)"?$/);
+  let match = body.match(/^([-+]?\d{1,3})°(\d{1,2})'(\d{1,4}(?:\.\d+)?)"?$/);
   if (match) {
     const seconds = !match[3].includes(".") && match[3].length === 4
       ? `${match[3].slice(0, 2)}.${match[3].slice(2)}`
@@ -70,7 +70,7 @@ function parseCompactDmsToken(token, fallbackDirection) {
     };
   }
 
-  match = body.match(/^(\d{1,3})°(\d{2})(\d{2})(\d{2,3})$/);
+  match = body.match(/^([-+]?\d{1,3})°(\d{2})(\d{2})(\d{2,3})$/);
   if (match) {
     return {
       value: decimalFromDms(match[1], match[2], `${match[3]}.${match[4]}`, direction),
@@ -78,7 +78,7 @@ function parseCompactDmsToken(token, fallbackDirection) {
     };
   }
 
-  match = body.match(/^(\d{1,3})°(\d{2})(\d{1,2})\.(\d+)$/);
+  match = body.match(/^([-+]?\d{1,3})°(\d{2})(\d{1,2})\.(\d+)$/);
   if (match) {
     return {
       value: decimalFromDms(match[1], match[2], `${match[3]}.${match[4]}`, direction),
@@ -86,7 +86,7 @@ function parseCompactDmsToken(token, fallbackDirection) {
     };
   }
 
-  match = body.match(/^(\d{1,3})°(\d{2})'?(?:(\d{1,2})(\d{2})|(\d{1,2})\.(\d+))$/);
+  match = body.match(/^([-+]?\d{1,3})°(\d{2})'?(?:(\d{1,2})(\d{2})|(\d{1,2})\.(\d+))$/);
   if (match) {
     const seconds = match[3] ? `${match[3]}.${match[4]}` : `${match[5]}.${match[6]}`;
 
@@ -188,7 +188,7 @@ function extractDmsCoordinateLines(text) {
     .map(line => line.trim())
     .filter(Boolean);
   const coordinateLines = [];
-  const dmsTokenPattern = /\d{1,3}\s*°\s*(?:\d{1,2}\s*'\s*\d{1,4}(?:\.\d+)?|\d{3,7}(?:\.\d+)?)\s*["']?\s*[NSEWO]?/gi;
+  const dmsTokenPattern = /[-+]?\d{1,3}\s*°\s*(?:\d{1,2}\s*'\s*\d{1,4}(?:\.\d+)?|\d{3,7}(?:\.\d+)?)\s*["']?\s*[NSEWO]?/gi;
 
   for (const line of lines) {
     if (/annoter|tourner|rechercher|partager|hectares/i.test(line)) {
@@ -201,8 +201,9 @@ function extractDmsCoordinateLines(text) {
       continue;
     }
 
+    const looksLikeLonLat = /,/.test(line) || /^\s*[-+]\s*\d/.test(line);
     const parsed = tokens
-      .map((token, index) => parseCompactDmsToken(token, index === 0 ? "N" : "O"))
+      .map((token, index) => parseCompactDmsToken(token, looksLikeLonLat ? "" : (index === 0 ? "N" : "O")))
       .filter(Boolean)
       .filter(item => item.value !== null);
 
@@ -210,8 +211,8 @@ function extractDmsCoordinateLines(text) {
       continue;
     }
 
-    const latitude = parsed.find(item => ["N", "S"].includes(item.direction)) || parsed[0];
-    const longitude = parsed.find(item => ["E", "W", "O"].includes(item.direction)) || parsed[1];
+    const latitude = parsed.find(item => ["N", "S"].includes(item.direction)) || (looksLikeLonLat ? parsed[1] : parsed[0]);
+    const longitude = parsed.find(item => ["E", "W", "O"].includes(item.direction)) || (looksLikeLonLat ? parsed[0] : parsed[1]);
 
     if (!latitude || !longitude) {
       continue;
