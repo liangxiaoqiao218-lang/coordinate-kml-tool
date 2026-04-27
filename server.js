@@ -14,6 +14,7 @@ const upload = multer({
   }
 });
 const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const openAIBaseURL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
@@ -271,17 +272,18 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
     console.log("正在调用 OpenAI...");
 
     const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: openAIBaseURL
     });
 
-    const response = await openai.responses.create({
+    const response = await openai.chat.completions.create({
       model,
-      input: [
+      messages: [
         {
           role: "user",
           content: [
             {
-              type: "input_text",
+              type: "text",
               text: `你是矿业坐标识别助手。请只识别图片中的坐标表区域，忽略水印、表格线、页眉页脚、手机底部菜单、Annoter、Tourner、Rechercher、Partager、Hectares 等无关文字。
 
 重点处理：
@@ -302,9 +304,10 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 不要解释，不要表头，不要点号。不要压缩小数位。无法识别有效坐标时，只输出：${noCoordinatesText}`
             },
             {
-              type: "input_image",
-              image_url: imageDataUrl,
-              detail: "high"
+              type: "image_url",
+              image_url: {
+                url: imageDataUrl
+              }
             }
           ]
         }
@@ -313,7 +316,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 
     console.log("调用 OpenAI 是否成功：是");
 
-    const rawText = response.output_text || "";
+    const rawText = response.choices?.[0]?.message?.content || "";
     const coordinates = extractCoordinateLines(rawText);
 
     console.log("OpenAI 返回的原始内容：");
