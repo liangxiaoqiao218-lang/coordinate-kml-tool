@@ -106,7 +106,9 @@ function extractDecimalCoordinateLines(text) {
   const coordinateLines = [];
 
   for (const line of lines) {
-    const match = line.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+    const match = line.match(/^(-?\d+(?:\.\d+)?)\s*[,，]\s*(-?\d+(?:\.\d+)?)$/)
+      || line.match(/^(-?\d+\.\d+)\s+(-?\d+\.\d+)$/)
+      || parseSpaceBrokenDecimalLine(line);
 
     if (!match) {
       continue;
@@ -123,6 +125,35 @@ function extractDecimalCoordinateLines(text) {
   }
 
   return coordinateLines;
+}
+
+function parseSpaceBrokenDecimalLine(line) {
+  if (/[°掳'"NSEWO]/i.test(line)) {
+    return null;
+  }
+
+  const match = String(line || "")
+    .trim()
+    .match(/^([+-]?)\s*(\d{1,3})\s+(\d{4,})\s+([+-]?)\s*(\d{1,2})\s+(\d{4,})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const longitudeText = `${match[1] || ""}${match[2]}.${match[3]}`;
+  const latitudeText = `${match[4] || ""}${match[5]}.${match[6]}`;
+  const longitude = Number(longitudeText);
+  const latitude = Number(latitudeText);
+
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
+    return null;
+  }
+
+  if (Math.abs(longitude) > 180 || Math.abs(latitude) > 90) {
+    return null;
+  }
+
+  return [line, longitudeText, latitudeText];
 }
 
 function extractDmsCoordinateLines(text) {
