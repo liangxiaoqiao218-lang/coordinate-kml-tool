@@ -803,6 +803,29 @@
       return coordinates.join("\n");
     }
 
+    function extractRecognizedCoordinateLines(text) {
+      const lines = String(text || "")
+        .replace(/[º˚]/g, "°")
+        .replace(/[‘’´`′]/g, "'")
+        .replace(/[“”″]/g, '"')
+        .split(/\r?\n/);
+      const coordinateLines = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        if (!trimmed || /annoter|tourner|rechercher|partager|hectares|point|latitude|longitude/i.test(trimmed)) {
+          continue;
+        }
+
+        if (parseCoordinateLine(trimmed)) {
+          coordinateLines.push(trimmed.replace(/\s*,\s*/g, ","));
+        }
+      }
+
+      return coordinateLines.join("\n");
+    }
+
     function countCoordinateRows(text) {
       return String(text || "")
         .split(/\r?\n/)
@@ -1284,13 +1307,16 @@ ${placemarks}
 
         const preservedCoordinates = extractCoordinatesPreservePrecision(data.rawText);
         const dmsCoordinates = extractDmsCoordinates(data.rawText);
+        const recognizedLines = extractRecognizedCoordinateLines(data.rawText);
         const finalCoordinates = chooseBestCoordinateResult([
+          recognizedLines,
           data.coordinates || "",
           preservedCoordinates,
           dmsCoordinates
         ]);
 
         appendDebug(`识别原文：\n${data.rawText || "无"}`);
+        appendDebug(`原样坐标行：\n${recognizedLines || "无"}`);
         appendDebug(`后端坐标提取结果：\n${data.coordinates || "无"}`);
         appendDebug(`前端保精度提取结果：\n${preservedCoordinates || "无"}`);
         appendDebug(`前端DMS兜底提取结果：\n${dmsCoordinates || "无"}`);
@@ -1311,7 +1337,6 @@ ${placemarks}
 
         rememberState();
         input.value = finalCoordinates;
-        coordinateFormat.value = "degree";
         input.focus();
         showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。");
       } catch (error) {
