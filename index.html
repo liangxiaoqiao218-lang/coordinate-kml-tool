@@ -380,11 +380,11 @@
 
     <div class="settings-grid">
       <div class="panel">
-        <label for="coordinateFormat">输入格式</label>
+        <label for="coordinateFormat">格式转换</label>
         <select id="coordinateFormat">
-          <option value="dms" selected>度分秒（默认）</option>
-          <option value="dm">度分</option>
-          <option value="degree">度</option>
+          <option value="dms" selected>转为度分秒（默认）</option>
+          <option value="dm">转为度分</option>
+          <option value="degree">转为度</option>
         </select>
       </div>
       <div class="panel">
@@ -449,8 +449,8 @@
 
     <section class="help">
       <strong>坐标说明：</strong><br />
-      每行一组坐标，支持度、度分、度分秒，标准化后统一为：经度,纬度。<br />
-      标准化会把输入格式转换成十进制度，并合并原来的交换经纬度功能。<br />
+      每行一组坐标，格式转换可在度、度分、度分秒之间切换。<br />
+      标准化会统一为十进制度，经度,纬度，并合并原来的交换经纬度功能。<br />
       生成 KML 时也会保留输入区中的原始小数精度。<br />
       Polygon 会按输入顺序连线，并自动把最后一个点连接回第一个点。
     </section>
@@ -471,6 +471,7 @@
     const MANUAL_CONTACT_TEXT = "微信 Mir-2188";
 
     imageInput.addEventListener("change", recognizeImage);
+    coordinateFormat.addEventListener("change", convertCoordinateFormat);
 
     function showMessage(text, isError = false) {
       message.textContent = text;
@@ -816,6 +817,65 @@
       return pairs;
     }
 
+    function convertCoordinateFormat() {
+      const pairs = getCoordinatePairs();
+
+      if (pairs.length === 0) {
+        if (input.value.trim()) {
+          showMessage("没有找到可转换的坐标。", true);
+        }
+        return;
+      }
+
+      input.value = pairs
+        .map(pair => formatPairForDisplay(pair, coordinateFormat.value))
+        .join("\n");
+      showMessage(`已转换 ${pairs.length} 组坐标格式。`);
+    }
+
+    function formatPairForDisplay(pair, format) {
+      const longitude = Number(pair.longitude);
+      const latitude = Number(pair.latitude);
+
+      if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
+        return `${pair.longitude},${pair.latitude}`;
+      }
+
+      if (format === "degree") {
+        return `${trimNumber(longitude)},${trimNumber(latitude)}`;
+      }
+
+      if (format === "dm") {
+        return `${decimalToDm(longitude)},${decimalToDm(latitude)}`;
+      }
+
+      return `${decimalToDms(longitude)},${decimalToDms(latitude)}`;
+    }
+
+    function trimNumber(number) {
+      return Number(number).toString();
+    }
+
+    function decimalToDm(value) {
+      const sign = value < 0 ? "-" : "";
+      const absolute = Math.abs(value);
+      const degrees = Math.floor(absolute);
+      const minutes = (absolute - degrees) * 60;
+
+      return `${sign}${degrees}°${trimNumber(minutes.toFixed(8))}'`;
+    }
+
+    function decimalToDms(value) {
+      const sign = value < 0 ? "-" : "";
+      const absolute = Math.abs(value);
+      const degrees = Math.floor(absolute);
+      const totalMinutes = (absolute - degrees) * 60;
+      const minutes = Math.floor(totalMinutes);
+      const seconds = (totalMinutes - minutes) * 60;
+
+      return `${sign}${degrees}°${minutes}'${trimNumber(seconds.toFixed(6))}"`;
+    }
+
     function parseCoordinateLine(line) {
       const text = String(line || "")
         .replace(/经纬度|经度|纬度|longitude|latitude|lon|lat/gi, " ")
@@ -980,6 +1040,7 @@
       }
 
       input.value = pairs.map(pair => `${pair.longitude},${pair.latitude}`).join("\n");
+      coordinateFormat.value = "degree";
       showMessage(`已标准化 ${pairs.length} 组坐标，统一为经度,纬度。`);
     }
 
