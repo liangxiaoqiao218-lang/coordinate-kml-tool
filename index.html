@@ -124,6 +124,7 @@
     .upload-box {
       border-style: dashed;
       border-color: #94a3b8;
+      background: #f8fbff;
     }
 
     .upload-box input {
@@ -144,7 +145,7 @@
 
     .buttons {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 10px;
       margin-top: 14px;
     }
@@ -408,6 +409,14 @@
         <button type="button" class="icon-button" onclick="copyContent()" title="复制内容" aria-label="复制内容">⧉</button>
       </div>
     </div>
+
+    <div class="panel upload-box">
+      <label for="imageInput">上传坐标图片</label>
+      <input id="imageInput" type="file" accept="image/*" />
+      <div id="uploadMessage" class="upload-message"></div>
+      <p class="privacy-note">上传图片后会自动识别坐标并填入上方工作区，请优先上传坐标表区域截图。</p>
+    </div>
+
     <button type="button" class="primary-action" onclick="downloadKml()">生成KML文件并下载</button>
 
     <div class="settings-grid">
@@ -435,13 +444,14 @@
           <option value="Point">点位 Point</option>
         </select>
       </div>
-    </div>
-
-    <div class="panel upload-box">
-      <label for="imageInput">上传坐标图片</label>
-      <input id="imageInput" type="file" accept="image/*" />
-      <div id="uploadMessage" class="upload-message"></div>
-      <p class="privacy-note">上传图片仅用于坐标识别和人工协助处理，请尽量只上传坐标表区域。</p>
+      <div class="panel">
+        <label for="projectionType">X/Y坐标系</label>
+        <select id="projectionType">
+          <option value="utm29n" selected>UTM 29N 转经纬度</option>
+          <option value="utm28n">UTM 28N 转经纬度</option>
+          <option value="none">不转换 X/Y</option>
+        </select>
+      </div>
     </div>
 
     <div class="buttons">
@@ -493,6 +503,7 @@
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
     const exportType = document.getElementById("exportType");
+    const projectionType = document.getElementById("projectionType");
     const imageInput = document.getElementById("imageInput");
     const message = document.getElementById("message");
     const toast = document.getElementById("toast");
@@ -507,6 +518,7 @@
 
     imageInput.addEventListener("change", recognizeImage);
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
+    coordinateOrder.addEventListener("change", applyInputOrderChange);
 
     function showMessage(text, isError = false) {
       if (!text) {
@@ -852,6 +864,97 @@
       return Boolean(extractProjectedCoordinateLines(text).trim());
     }
 
+    function getProjectionZone() {
+      if (projectionType.value === "utm28n") {
+        return 28;
+      }
+
+      if (projectionType.value === "utm29n") {
+        return 29;
+      }
+
+      return null;
+    }
+
+    function parseProjectedCoordinateLine(line) {
+      const zone = getProjectionZone();
+
+      if (!zone || /[°º'′″"NSEWO]/i.test(line)) {
+        return null;
+      }
+
+      const numbers = String(line || "").match(/[-+]?\d+(?:\.\d+)?/g) || [];
+      const largeNumbers = numbers.filter(value => Math.abs(Number(value)) > 180);
+
+      if (largeNumbers.length < 2) {
+        return null;
+      }
+
+      const easting = Number(largeNumbers[0]);
+      const northing = Number(largeNumbers[1]);
+
+      if (!Number.isFinite(easting) || !Number.isFinite(northing)) {
+        return null;
+      }
+
+      const converted = utmToWgs84(easting, northing, zone, true);
+
+      if (!converted) {
+        return null;
+      }
+
+      return {
+        longitude: trimNumber(converted.longitude),
+        latitude: trimNumber(converted.latitude),
+        projected: true
+      };
+    }
+
+    function utmToWgs84(easting, northing, zone, isNorthernHemisphere) {
+      const a = 6378137;
+      const e = 0.08181919084262149;
+      const e1sq = 0.006739496742276434;
+      const k0 = 0.9996;
+      const x = easting - 500000;
+      let y = northing;
+
+      if (!isNorthernHemisphere) {
+        y -= 10000000;
+      }
+
+      const m = y / k0;
+      const mu = m / (a * (1 - (e * e) / 4 - 3 * Math.pow(e, 4) / 64 - 5 * Math.pow(e, 6) / 256));
+      const e1 = (1 - Math.sqrt(1 - e * e)) / (1 + Math.sqrt(1 - e * e));
+      const j1 = 3 * e1 / 2 - 27 * Math.pow(e1, 3) / 32;
+      const j2 = 21 * Math.pow(e1, 2) / 16 - 55 * Math.pow(e1, 4) / 32;
+      const j3 = 151 * Math.pow(e1, 3) / 96;
+      const j4 = 1097 * Math.pow(e1, 4) / 512;
+      const fp = mu + j1 * Math.sin(2 * mu) + j2 * Math.sin(4 * mu) + j3 * Math.sin(6 * mu) + j4 * Math.sin(8 * mu);
+      const sinfp = Math.sin(fp);
+      const cosfp = Math.cos(fp);
+      const tanfp = Math.tan(fp);
+      const c1 = e1sq * cosfp * cosfp;
+      const t1 = tanfp * tanfp;
+      const r1 = a * (1 - e * e) / Math.pow(1 - e * e * sinfp * sinfp, 1.5);
+      const n1 = a / Math.sqrt(1 - e * e * sinfp * sinfp);
+      const d = x / (n1 * k0);
+      const q1 = n1 * tanfp / r1;
+      const q2 = d * d / 2;
+      const q3 = (5 + 3 * t1 + 10 * c1 - 4 * c1 * c1 - 9 * e1sq) * Math.pow(d, 4) / 24;
+      const q4 = (61 + 90 * t1 + 298 * c1 + 45 * t1 * t1 - 252 * e1sq - 3 * c1 * c1) * Math.pow(d, 6) / 720;
+      const latitude = fp - q1 * (q2 - q3 + q4);
+      const q5 = d;
+      const q6 = (1 + 2 * t1 + c1) * Math.pow(d, 3) / 6;
+      const q7 = (5 - 2 * c1 + 28 * t1 - 3 * c1 * c1 + 8 * e1sq + 24 * t1 * t1) * Math.pow(d, 5) / 120;
+      const longitudeOrigin = (zone - 1) * 6 - 180 + 3;
+      const longitude = longitudeOrigin + (q5 - q6 + q7) / cosfp * 180 / Math.PI;
+
+      return {
+        longitude,
+        latitude: latitude * 180 / Math.PI
+      };
+    }
+
     function countCoordinateRows(text) {
       return String(text || "")
         .split(/\r?\n/)
@@ -922,7 +1025,7 @@
       const pairs = [];
 
       for (const line of lines) {
-        const pair = parseCoordinateLine(line);
+        const pair = parseCoordinateLine(line) || parseProjectedCoordinateLine(line);
 
         if (pair) {
           pairs.push(pair);
@@ -947,6 +1050,14 @@
         .map(pair => formatPairForDisplay(pair, coordinateFormat.value))
         .join("\n");
       showMessage(`已转换 ${pairs.length} 组坐标格式。`);
+    }
+
+    function applyInputOrderChange() {
+      if (!input.value.trim()) {
+        return;
+      }
+
+      normalizeCoordinates();
     }
 
     function formatPairForDisplay(pair, format) {
@@ -1079,10 +1190,22 @@
       let longitude = first;
       let latitude = second;
       const order = coordinateOrder.value;
+      const hasExplicitAxis = first.axis && second.axis;
 
-      if (order === "latlng") {
+      if (hasExplicitAxis) {
+        if (first.axis === "lat" && second.axis === "lon") {
+          longitude = second;
+          latitude = first;
+        } else if (first.axis === "lon" && second.axis === "lat") {
+          longitude = first;
+          latitude = second;
+        }
+      } else if (order === "latlng") {
         longitude = second;
         latitude = first;
+      } else if (order === "lnglat") {
+        longitude = first;
+        latitude = second;
       } else if (order === "auto") {
         if (first.axis === "lat" && second.axis === "lon") {
           longitude = second;
