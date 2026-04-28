@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>坐标工具后台</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: #f4f7fb;
+      color: #172033;
+    }
+
+    .page {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      padding: 18px;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 26px;
+    }
+
+    .panel {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid #d8e0ec;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .login {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 700;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    textarea {
+      min-height: 70px;
+      resize: vertical;
+    }
+
+    button {
+      min-height: 40px;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: #2563eb;
+      color: #ffffff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #475569;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+
+    .card {
+      padding: 14px;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #ffffff;
+    }
+
+    .card strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 26px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      padding: 8px;
+      border-bottom: 1px solid #e2e8f0;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f8fafc;
+      font-weight: 700;
+    }
+
+    .muted {
+      color: #64748b;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .message {
+      margin-top: 10px;
+      color: #166534;
+      font-size: 14px;
+    }
+
+    .error {
+      color: #b91c1c;
+    }
+
+    .editor {
+      display: none;
+    }
+
+    .checks {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .checks label {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin: 0;
+      font-weight: 400;
+    }
+
+    .checks input {
+      width: auto;
+      min-height: auto;
+    }
+
+    @media (max-width: 760px) {
+      .login,
+      .grid,
+      .cards {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>坐标工具后台</h1>
+    <p class="muted">用于查看用户、功能点击数据，并手动开通功能权限。请先在 Render 设置环境变量 <strong>ADMIN_PASSWORD</strong>。</p>
+
+    <section class="panel login">
+      <div>
+        <label for="password">管理员密码</label>
+        <input id="password" type="password" placeholder="输入 ADMIN_PASSWORD" />
+      </div>
+      <button type="button" onclick="login()">进入后台</button>
+      <button type="button" class="secondary" onclick="refreshAll()">刷新</button>
+    </section>
+
+    <div id="message" class="message"></div>
+
+    <section class="panel">
+      <div class="cards">
+        <div class="card">用户数<strong id="usersTotal">0</strong></div>
+        <div class="card">事件数<strong id="eventsTotal">0</strong></div>
+        <div class="card">VIP用户<strong id="vipTotal">0</strong></div>
+        <div class="card">禁用用户<strong id="disabledTotal">0</strong></div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="panel">
+        <h2>功能点击统计</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>事件</th>
+              <th>次数</th>
+            </tr>
+          </thead>
+          <tbody id="eventsByName"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>全局功能开关</h2>
+        <div class="checks">
+          <label><input id="flagAi" type="checkbox" /> AI图片识别</label>
+          <label><input id="flagXy" type="checkbox" /> X/Y转换</label>
+          <label><input id="flagKml" type="checkbox" /> KML导出</label>
+          <label><input id="flagManual" type="checkbox" /> 人工协助入口</label>
+        </div>
+        <p class="muted">全局关闭后，即使用户权限已开通，也会被关闭。</p>
+        <button type="button" onclick="saveFlags()">保存功能开关</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>用户列表</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>用户ID</th>
+            <th>套餐</th>
+            <th>状态</th>
+            <th>事件数</th>
+            <th>最后访问</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="usersBody"></tbody>
+      </table>
+    </section>
+
+    <section id="editor" class="panel editor">
+      <h2>用户权限</h2>
+      <p class="muted" id="editingUser"></p>
+      <div class="grid">
+        <div>
+          <label for="plan">套餐</label>
+          <select id="plan">
+            <option value="free">免费用户</option>
+            <option value="trial">试用用户</option>
+            <option value="vip">VIP用户</option>
+          </select>
+        </div>
+        <div>
+          <label for="status">状态</label>
+          <select id="status">
+            <option value="active">正常</option>
+            <option value="disabled">禁用</option>
+          </select>
+        </div>
+      </div>
+      <div class="checks">
+        <label><input id="permAi" type="checkbox" /> 允许 AI 图片识别</label>
+        <label><input id="permXy" type="checkbox" /> 允许 X/Y 转换</label>
+        <label><input id="permKml" type="checkbox" /> 允许 KML 导出</label>
+        <label><input id="permManual" type="checkbox" /> 允许人工协助入口</label>
+      </div>
+      <div class="grid">
+        <div>
+          <label for="wechat">微信</label>
+          <input id="wechat" />
+        </div>
+        <div>
+          <label for="phone">电话</label>
+          <input id="phone" />
+        </div>
+      </div>
+      <label for="note">备注</label>
+      <textarea id="note"></textarea>
+      <button type="button" onclick="saveUser()">保存用户权限</button>
+    </section>
+
+    <section class="panel">
+      <h2>最近事件</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>用户ID</th>
+            <th>事件</th>
+          </tr>
+        </thead>
+        <tbody id="recentEvents"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    let adminPassword = localStorage.getItem("coordinateToolAdminPassword") || "";
+    let users = [];
+    let selectedUser = null;
+
+    document.getElementById("password").value = adminPassword;
+
+    if (adminPassword) {
+      refreshAll();
+    }
+
+    function setMessage(text, isError = false) {
+      const el = document.getElementById("message");
+      el.textContent = text;
+      el.className = isError ? "message error" : "message";
+    }
+
+    function getPassword() {
+      return document.getElementById("password").value.trim();
+    }
+
+    function login() {
+      adminPassword = getPassword();
+      localStorage.setItem("coordinateToolAdminPassword", adminPassword);
+      refreshAll();
+    }
+
+    async function adminFetch(url, options = {}) {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": adminPassword,
+          ...(options.headers || {})
+        }
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || "请求失败");
+      }
+
+      return data;
+    }
+
+    async function refreshAll() {
+      try {
+        adminPassword = getPassword();
+        localStorage.setItem("coordinateToolAdminPassword", adminPassword);
+        const [summary, usersResult] = await Promise.all([
+          adminFetch("/api/admin/summary"),
+          adminFetch("/api/admin/users")
+        ]);
+
+        users = usersResult.users || [];
+        renderSummary(summary);
+        renderUsers(users);
+        setMessage("后台数据已刷新。");
+      } catch (error) {
+        setMessage(error.message, true);
+      }
+    }
+
+    function renderSummary(summary) {
+      document.getElementById("usersTotal").textContent = summary.totals.users;
+      document.getElementById("eventsTotal").textContent = summary.totals.events;
+      document.getElementById("vipTotal").textContent = summary.totals.vipUsers;
+      document.getElementById("disabledTotal").textContent = summary.totals.disabledUsers;
+
+      const flags = summary.featureFlags || {};
+      document.getElementById("flagAi").checked = Boolean(flags.aiOcrEnabled);
+      document.getElementById("flagXy").checked = Boolean(flags.xyConvertEnabled);
+      document.getElementById("flagKml").checked = Boolean(flags.kmlExportEnabled);
+      document.getElementById("flagManual").checked = Boolean(flags.manualSupportEnabled);
+
+      document.getElementById("eventsByName").innerHTML = Object.entries(summary.eventsByName || {})
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => `<tr><td>${escapeHtml(name)}</td><td>${count}</td></tr>`)
+        .join("");
+
+      document.getElementById("recentEvents").innerHTML = (summary.recentEvents || [])
+        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.eventName)}</td></tr>`)
+        .join("");
+    }
+
+    function renderUsers(list) {
+      document.getElementById("usersBody").innerHTML = list
+        .map(user => `<tr>
+          <td>${escapeHtml(user.visitorId)}</td>
+          <td>${escapeHtml(user.plan || "free")}</td>
+          <td>${escapeHtml(user.status || "active")}</td>
+          <td>${user.eventCount || 0}</td>
+          <td>${formatTime(user.lastSeenAt)}</td>
+          <td><button type="button" onclick="editUser('${escapeAttr(user.visitorId)}')">编辑</button></td>
+        </tr>`)
+        .join("");
+    }
+
+    function editUser(visitorId) {
+      selectedUser = users.find(user => user.visitorId === visitorId);
+
+      if (!selectedUser) {
+        return;
+      }
+
+      const permissions = selectedUser.permissions || {};
+      document.getElementById("editor").style.display = "block";
+      document.getElementById("editingUser").textContent = `正在编辑：${selectedUser.visitorId}`;
+      document.getElementById("plan").value = selectedUser.plan || "free";
+      document.getElementById("status").value = selectedUser.status || "active";
+      document.getElementById("permAi").checked = Boolean(permissions.aiOcrEnabled);
+      document.getElementById("permXy").checked = Boolean(permissions.xyConvertEnabled);
+      document.getElementById("permKml").checked = Boolean(permissions.kmlExportEnabled);
+      document.getElementById("permManual").checked = Boolean(permissions.manualSupportEnabled);
+      document.getElementById("wechat").value = selectedUser.wechat || "";
+      document.getElementById("phone").value = selectedUser.phone || "";
+      document.getElementById("note").value = selectedUser.note || "";
+      document.getElementById("editor").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    async function saveUser() {
+      if (!selectedUser) {
+        return;
+      }
+
+      try {
+        await adminFetch(`/api/admin/users/${encodeURIComponent(selectedUser.visitorId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            plan: document.getElementById("plan").value,
+            status: document.getElementById("status").value,
+            permissions: {
+              aiOcrEnabled: document.getElementById("permAi").checked,
+              xyConvertEnabled: document.getElementById("permXy").checked,
+              kmlExportEnabled: document.getElementById("permKml").checked,
+              manualSupportEnabled: document.getElementById("permManual").checked
+            },
+            wechat: document.getElementById("wechat").value,
+            phone: document.getElementById("phone").value,
+            note: document.getElementById("note").value
+          })
+        });
+
+        setMessage("用户权限已保存。");
+        refreshAll();
+      } catch (error) {
+        setMessage(error.message, true);
+      }
+    }
+
+    async function saveFlags() {
+      try {
+        await adminFetch("/api/admin/feature-flags", {
+          method: "PATCH",
+          body: JSON.stringify({
+            featureFlags: {
+              aiOcrEnabled: document.getElementById("flagAi").checked,
+              xyConvertEnabled: document.getElementById("flagXy").checked,
+              kmlExportEnabled: document.getElementById("flagKml").checked,
+              manualSupportEnabled: document.getElementById("flagManual").checked
+            }
+          })
+        });
+
+        setMessage("功能开关已保存。");
+        refreshAll();
+      } catch (error) {
+        setMessage(error.message, true);
+      }
+    }
+
+    function formatTime(value) {
+      if (!value) {
+        return "";
+      }
+
+      return new Date(value).toLocaleString();
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/`/g, "&#096;");
+    }
+  </script>
+</body>
+</html>
