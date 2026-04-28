@@ -771,7 +771,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 2. Point / Latitude nord / Longitude ouest。
 3. Point A-Z 或 1-99 的长表。
 4. Nord / Est 表头，结合 N/S/E/W 判断纬度和经度。
-5. X / Y 或 Liste des Coordonnées 平面坐标表。
+5. X / Y、Liste des Coordonnées、BFTM / ITRF 2008 / Projection BFTM 平面坐标表。
 6. 十进制度、度分、度分秒 DMS。
 7. N/S/E/W，法语 O / Ouest = West = 西经。
 8. Latitude nord = 北纬；Longitude ouest = 西经。

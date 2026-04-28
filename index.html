@@ -603,8 +603,10 @@
       <option value="latlng">纬度,经度</option>
     </select>
     <select id="projectionType" hidden>
-      <option value="utm29n" selected>UTM 29N 转经纬度</option>
+      <option value="auto" selected>自动判断平面坐标</option>
+      <option value="utm29n">UTM 29N 转经纬度</option>
       <option value="utm28n">UTM 28N 转经纬度</option>
+      <option value="bftm">BFTM 布基纳法索转经纬度</option>
       <option value="none">不转换 X/Y</option>
     </select>
 
@@ -1239,22 +1241,40 @@
       return Boolean(extractProjectedCoordinateLines(text).trim());
     }
 
-    function getProjectionZone() {
-      if (projectionType.value === "utm28n") {
-        return 28;
+    function detectProjectionFromText(text) {
+      const value = String(text || "").toLowerCase();
+
+      if (/bftm|burkina|burkina faso|itrf\s*2008/.test(value)) {
+        return "bftm";
       }
 
-      if (projectionType.value === "utm29n") {
-        return 29;
+      return "";
+    }
+
+    function resolveProjectedCoordinateSystem(easting, northing, sourceText = "") {
+      if (projectionType.value && projectionType.value !== "auto") {
+        return projectionType.value;
       }
 
-      return null;
+      const textProjection = detectProjectionFromText(sourceText);
+
+      if (textProjection) {
+        return textProjection;
+      }
+
+      if (easting >= 500000 && easting <= 760000 && northing >= 1200000 && northing <= 1600000) {
+        return "bftm";
+      }
+
+      if (easting >= 100000 && easting <= 900000 && northing >= 0 && northing <= 2000000) {
+        return "utm29n";
+      }
+
+      return "none";
     }
 
     function parseProjectedCoordinateLine(line) {
-      const zone = getProjectionZone();
-
-      if (!appConfig.permissions.xyConvertEnabled || !zone || /[°º'′″"NSEWO]/i.test(line)) {
+      if (!appConfig.permissions.xyConvertEnabled || /[°º'′″"NSEWO]/i.test(line)) {
         return null;
       }
 
@@ -1272,7 +1292,15 @@
         return null;
       }
 
-      const converted = utmToWgs84(easting, northing, zone, true);
+      const projectedSystem = resolveProjectedCoordinateSystem(easting, northing, line);
+
+      if (projectedSystem === "none") {
+        return null;
+      }
+
+      const converted = projectedSystem === "bftm"
+        ? bftmToWgs84(easting, northing)
+        : utmToWgs84(easting, northing, projectedSystem === "utm28n" ? 28 : 29, true);
 
       if (!converted) {
         return null;
@@ -1281,20 +1309,22 @@
       return {
         longitude: trimNumber(converted.longitude),
         latitude: trimNumber(converted.latitude),
-        projected: true
+        projected: true,
+        projectedSystem
       };
     }
 
-    function utmToWgs84(easting, northing, zone, isNorthernHemisphere) {
+    function transverseMercatorToWgs84(easting, northing, options) {
       const a = 6378137;
-      const e = 0.08181919084262149;
-      const e1sq = 0.006739496742276434;
-      const k0 = 0.9996;
-      const x = easting - 500000;
-      let y = northing;
+      const e = options.eccentricity || 0.08181919084262149;
+      const e1sq = (e * e) / (1 - e * e);
+      const k0 = options.scaleFactor || 0.9996;
+      const x = easting - (options.falseEasting || 0);
+      const y = northing - (options.falseNorthing || 0);
+      const longitudeOrigin = options.centralMeridian;
 
-      if (!isNorthernHemisphere) {
-        y -= 10000000;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(longitudeOrigin)) {
+        return null;
       }
 
       const m = y / k0;
@@ -1321,13 +1351,31 @@
       const q5 = d;
       const q6 = (1 + 2 * t1 + c1) * Math.pow(d, 3) / 6;
       const q7 = (5 - 2 * c1 + 28 * t1 - 3 * c1 * c1 + 8 * e1sq + 24 * t1 * t1) * Math.pow(d, 5) / 120;
-      const longitudeOrigin = (zone - 1) * 6 - 180 + 3;
       const longitude = longitudeOrigin + (q5 - q6 + q7) / cosfp * 180 / Math.PI;
 
       return {
         longitude,
         latitude: latitude * 180 / Math.PI
       };
+    }
+
+    function bftmToWgs84(easting, northing) {
+      return transverseMercatorToWgs84(easting, northing, {
+        eccentricity: 0.0818191910428158,
+        scaleFactor: 0.9996,
+        falseEasting: 600000,
+        falseNorthing: 0,
+        centralMeridian: -1.5
+      });
+    }
+
+    function utmToWgs84(easting, northing, zone, isNorthernHemisphere) {
+      return transverseMercatorToWgs84(easting, northing, {
+        scaleFactor: 0.9996,
+        falseEasting: 500000,
+        falseNorthing: isNorthernHemisphere ? 0 : 10000000,
+        centralMeridian: (zone - 1) * 6 - 180 + 3
+      });
     }
 
     function countCoordinateRows(text) {
@@ -1927,6 +1975,12 @@ ${placemarks}
         const dmsCoordinates = extractDmsCoordinates(data.rawText);
         const recognizedLines = extractRecognizedCoordinateLines(data.rawText);
         const projectedLines = extractProjectedCoordinateLines(data.rawText);
+        const detectedProjection = detectProjectionFromText(data.rawText);
+
+        if (detectedProjection) {
+          projectionType.value = detectedProjection;
+        }
+
         const finalCoordinates = chooseBestCoordinateResult([
           recognizedLines,
           projectedLines,
@@ -1936,6 +1990,7 @@ ${placemarks}
         ]);
 
         appendDebug(`识别原文：\n${data.rawText || "无"}`);
+        appendDebug(`平面坐标系判断：${detectedProjection || projectionType.value || "自动"}`);
         appendDebug(`原样坐标行：\n${recognizedLines || "无"}`);
         appendDebug(`X/Y平面坐标提取结果：\n${projectedLines || "无"}`);
         appendDebug(`后端坐标提取结果：\n${data.coordinates || "无"}`);
