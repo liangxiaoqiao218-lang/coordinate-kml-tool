@@ -513,12 +513,73 @@
     const debugText = document.getElementById("debugText");
     const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
     const MANUAL_CONTACT_TEXT = "微信 Mir-2188";
+    const visitorId = getOrCreateVisitorId();
+    let appConfig = {
+      permissions: {
+        aiOcrEnabled: true,
+        xyConvertEnabled: true,
+        kmlExportEnabled: true,
+        manualSupportEnabled: true
+      }
+    };
     const historyStack = [];
     let clearConfirmTimer = null;
 
     imageInput.addEventListener("change", recognizeImage);
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     coordinateOrder.addEventListener("change", applyInputOrderChange);
+
+    loadUserConfig();
+    trackEvent("page_visit");
+
+    function getOrCreateVisitorId() {
+      const existing = localStorage.getItem("coordinateToolVisitorId");
+
+      if (existing) {
+        return existing;
+      }
+
+      const nextId = `u_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem("coordinateToolVisitorId", nextId);
+
+      return nextId;
+    }
+
+    async function loadUserConfig() {
+      try {
+        const response = await fetch(`/api/config?visitorId=${encodeURIComponent(visitorId)}`);
+        appConfig = await response.json();
+      } catch (error) {
+        console.warn("读取用户配置失败", error);
+      }
+    }
+
+    function canUse(featureName, errorMessage) {
+      if (appConfig?.permissions?.[featureName] === false) {
+        showMessage(errorMessage, true);
+        trackEvent("permission_blocked", {
+          feature: featureName
+        });
+        return false;
+      }
+
+      return true;
+    }
+
+    function trackEvent(eventName, extra = {}) {
+      fetch("/api/track", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          visitorId,
+          eventName,
+          page: location.pathname,
+          extra
+        })
+      }).catch(error => console.warn("记录事件失败", error));
+    }
 
     function showMessage(text, isError = false) {
       if (!text) {
@@ -553,6 +614,7 @@
 
       input.value = historyStack.pop();
       input.focus();
+      trackEvent("undo_click");
       showMessage("已撤销上一步。");
     }
 
@@ -577,8 +639,13 @@
     }
 
     function showManualSupport() {
+      if (!canUse("manualSupportEnabled", "当前用户暂未开通人工协助入口。")) {
+        return;
+      }
+
       supportPanel.style.display = "block";
       supportPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      trackEvent("manual_support_click");
     }
 
     async function copyText(text, successMessage) {
@@ -879,7 +946,7 @@
     function parseProjectedCoordinateLine(line) {
       const zone = getProjectionZone();
 
-      if (!zone || /[°º'′″"NSEWO]/i.test(line)) {
+      if (!appConfig.permissions.xyConvertEnabled || !zone || /[°º'′″"NSEWO]/i.test(line)) {
         return null;
       }
 
@@ -1049,6 +1116,10 @@
       input.value = pairs
         .map(pair => formatPairForDisplay(pair, coordinateFormat.value))
         .join("\n");
+      trackEvent("format_convert_click", {
+        format: coordinateFormat.value,
+        count: pairs.length
+      });
       showMessage(`已转换 ${pairs.length} 组坐标格式。`);
     }
 
@@ -1261,6 +1332,7 @@
       }
 
       await copyText(input.value, "内容已复制。");
+      trackEvent("copy_content_click");
     }
 
     function confirmClearContent() {
@@ -1285,11 +1357,16 @@
     function clearContent() {
       rememberState();
       input.value = "";
+      trackEvent("clear_content_click");
       showMessage("内容已清空。");
       input.focus();
     }
 
     function normalizeCoordinates() {
+      if (hasProjectedCoordinateRows(input.value) && !canUse("xyConvertEnabled", "当前用户暂未开通 X/Y 平面坐标转换。")) {
+        return;
+      }
+
       const pairs = getCoordinatePairs();
 
       if (pairs.length === 0) {
@@ -1305,6 +1382,10 @@
       rememberState();
       input.value = pairs.map(pair => `${pair.longitude},${pair.latitude}`).join("\n");
       coordinateFormat.value = "degree";
+      trackEvent("normalize_click", {
+        count: pairs.length,
+        projection: projectionType.value
+      });
       showMessage(`已标准化 ${pairs.length} 组坐标，统一为经度,纬度。`);
     }
 
@@ -1362,6 +1443,14 @@
     }
 
     function downloadKml() {
+      if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。")) {
+        return;
+      }
+
+      if (hasProjectedCoordinateRows(input.value) && !canUse("xyConvertEnabled", "当前用户暂未开通 X/Y 平面坐标转换。")) {
+        return;
+      }
+
       const pairs = getCoordinatePairs();
       const selectedType = exportType.value;
 
@@ -1419,6 +1508,10 @@ ${placemarks}
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+      trackEvent("kml_download_click", {
+        exportType: selectedType,
+        count: pairs.length
+      });
 
       if (selectedType === "Polygon") {
         showMessage(`已生成闭合 Polygon 面 KML，包含 ${pairs.length} 组输入坐标。`);
@@ -1434,10 +1527,19 @@ ${placemarks}
         return;
       }
 
+      if (!canUse("aiOcrEnabled", "当前用户暂未开通 AI 图片识别。")) {
+        imageInput.value = "";
+        return;
+      }
+
       imageInput.disabled = true;
       input.value = "";
       supportPanel.style.display = "none";
       clearUploadMessage();
+      trackEvent("image_upload_select", {
+        fileSize: file.size,
+        fileType: file.type
+      });
       setDebug(`正在上传图片\n文件名：${file.name}\n大小：${Math.round(file.size / 1024)} KB`);
       showMessage("正在上传图片……");
 
@@ -1451,6 +1553,9 @@ ${placemarks}
 
         const response = await fetch("/api/recognize-coordinates", {
           method: "POST",
+          headers: {
+            "x-visitor-id": visitorId
+          },
           body: formData
         });
 
@@ -1499,6 +1604,10 @@ ${placemarks}
         rememberState();
         input.value = finalCoordinates;
         input.focus();
+        trackEvent("image_recognize_success", {
+          rows: countCoordinateRows(finalCoordinates),
+          projected: hasProjectedCoordinateRows(finalCoordinates)
+        });
         if (hasProjectedCoordinateRows(finalCoordinates)) {
           showMessage("已识别到 X/Y 平面坐标，请先确认坐标系后再转换成经纬度。", true);
         } else {
@@ -1506,6 +1615,9 @@ ${placemarks}
         }
       } catch (error) {
         appendDebug(`错误信息：${error.message}`);
+        trackEvent("image_recognize_fail", {
+          message: error.message
+        });
         showMessage(`识别失败：${error.message}`, true);
         showUploadSupportMessage("图片识别遇到问题，建议使用");
         showManualSupport();

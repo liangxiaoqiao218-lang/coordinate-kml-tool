@@ -4,6 +4,7 @@ import multer from "multer";
 import OpenAI from "openai";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs/promises";
 import Tesseract from "tesseract.js";
 
 const app = express();
@@ -18,8 +19,120 @@ const openAIBaseURL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
+const adminDataFile = path.join(__dirname, "admin-data.json");
+const adminPassword = process.env.ADMIN_PASSWORD || "";
 
+app.use(express.json({ limit: "1mb" }));
 app.use(express.static(__dirname));
+
+function createDefaultAdminData() {
+  return {
+    users: {},
+    events: [],
+    featureFlags: {
+      aiOcrEnabled: true,
+      xyConvertEnabled: true,
+      kmlExportEnabled: true,
+      manualSupportEnabled: true
+    }
+  };
+}
+
+async function readAdminData() {
+  try {
+    const text = await fs.readFile(adminDataFile, "utf8");
+    const data = JSON.parse(text);
+    const defaults = createDefaultAdminData();
+
+    return {
+      ...defaults,
+      ...data,
+      users: data.users || {},
+      events: Array.isArray(data.events) ? data.events : [],
+      featureFlags: {
+        ...defaults.featureFlags,
+        ...(data.featureFlags || {})
+      }
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return createDefaultAdminData();
+    }
+
+    throw error;
+  }
+}
+
+async function writeAdminData(data) {
+  await fs.writeFile(adminDataFile, JSON.stringify(data, null, 2), "utf8");
+}
+
+function getNowISO() {
+  return new Date().toISOString();
+}
+
+function makeId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function ensureUser(data, visitorId) {
+  const id = String(visitorId || "").trim();
+
+  if (!id) {
+    return null;
+  }
+
+  if (!data.users[id]) {
+    data.users[id] = {
+      visitorId: id,
+      plan: "free",
+      status: "active",
+      permissions: {
+        aiOcrEnabled: true,
+        xyConvertEnabled: true,
+        kmlExportEnabled: true,
+        manualSupportEnabled: true
+      },
+      createdAt: getNowISO(),
+      lastSeenAt: getNowISO(),
+      eventCount: 0,
+      note: "",
+      phone: "",
+      wechat: ""
+    };
+  }
+
+  return data.users[id];
+}
+
+function getEffectivePermissions(user, featureFlags) {
+  const permissions = user?.permissions || {};
+
+  return {
+    aiOcrEnabled: Boolean(featureFlags.aiOcrEnabled && permissions.aiOcrEnabled),
+    xyConvertEnabled: Boolean(featureFlags.xyConvertEnabled && permissions.xyConvertEnabled),
+    kmlExportEnabled: Boolean(featureFlags.kmlExportEnabled && permissions.kmlExportEnabled),
+    manualSupportEnabled: Boolean(featureFlags.manualSupportEnabled && permissions.manualSupportEnabled)
+  };
+}
+
+function requireAdmin(req, res, next) {
+  if (!adminPassword) {
+    return res.status(403).json({
+      error: "后台未启用：请先在 Render 环境变量里设置 ADMIN_PASSWORD。"
+    });
+  }
+
+  const provided = req.get("x-admin-password") || req.query.password || "";
+
+  if (provided !== adminPassword) {
+    return res.status(401).json({
+      error: "管理员密码不正确。"
+    });
+  }
+
+  next();
+}
 
 function normalizeText(text) {
   return String(text || "")
@@ -259,6 +372,195 @@ function getOpenAIErrorMessage(error) {
   return [status, code, type, message].filter(Boolean).join(" | ");
 }
 
+app.get("/api/config", async (req, res) => {
+  try {
+    const visitorId = String(req.query.visitorId || "").trim();
+    const data = await readAdminData();
+    const user = ensureUser(data, visitorId);
+
+    if (user) {
+      user.lastSeenAt = getNowISO();
+      await writeAdminData(data);
+    }
+
+    res.json({
+      visitorId,
+      user,
+      featureFlags: data.featureFlags,
+      permissions: getEffectivePermissions(user, data.featureFlags)
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "读取配置失败。"
+    });
+  }
+});
+
+app.post("/api/track", async (req, res) => {
+  try {
+    const visitorId = String(req.body?.visitorId || "").trim();
+    const eventName = String(req.body?.eventName || "").trim();
+
+    if (!visitorId || !eventName) {
+      return res.status(400).json({
+        error: "缺少 visitorId 或 eventName。"
+      });
+    }
+
+    const data = await readAdminData();
+    const user = ensureUser(data, visitorId);
+
+    if (user) {
+      user.lastSeenAt = getNowISO();
+      user.eventCount = (user.eventCount || 0) + 1;
+    }
+
+    data.events.push({
+      id: makeId("evt"),
+      visitorId,
+      eventName,
+      page: String(req.body?.page || ""),
+      extra: req.body?.extra || {},
+      createdAt: getNowISO()
+    });
+
+    if (data.events.length > 5000) {
+      data.events = data.events.slice(-5000);
+    }
+
+    await writeAdminData(data);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "记录事件失败。"
+    });
+  }
+});
+
+app.get("/api/admin/summary", requireAdmin, async (req, res) => {
+  try {
+    const data = await readAdminData();
+    const users = Object.values(data.users);
+    const eventsByName = {};
+
+    for (const event of data.events) {
+      eventsByName[event.eventName] = (eventsByName[event.eventName] || 0) + 1;
+    }
+
+    res.json({
+      totals: {
+        users: users.length,
+        events: data.events.length,
+        vipUsers: users.filter(user => user.plan === "vip").length,
+        disabledUsers: users.filter(user => user.status === "disabled").length
+      },
+      eventsByName,
+      featureFlags: data.featureFlags,
+      recentEvents: data.events.slice(-80).reverse()
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "读取后台统计失败。"
+    });
+  }
+});
+
+app.get("/api/admin/users", requireAdmin, async (req, res) => {
+  try {
+    const data = await readAdminData();
+    const users = Object.values(data.users)
+      .sort((a, b) => String(b.lastSeenAt || "").localeCompare(String(a.lastSeenAt || "")));
+
+    res.json({ users });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "读取用户列表失败。"
+    });
+  }
+});
+
+app.patch("/api/admin/users/:visitorId", requireAdmin, async (req, res) => {
+  try {
+    const data = await readAdminData();
+    const user = ensureUser(data, req.params.visitorId);
+
+    if (!user) {
+      return res.status(400).json({
+        error: "用户ID无效。"
+      });
+    }
+
+    const allowedPlans = ["free", "trial", "vip"];
+    const allowedStatuses = ["active", "disabled"];
+
+    if (allowedPlans.includes(req.body?.plan)) {
+      user.plan = req.body.plan;
+    }
+
+    if (allowedStatuses.includes(req.body?.status)) {
+      user.status = req.body.status;
+    }
+
+    if (req.body?.permissions && typeof req.body.permissions === "object") {
+      user.permissions = {
+        ...user.permissions,
+        aiOcrEnabled: Boolean(req.body.permissions.aiOcrEnabled),
+        xyConvertEnabled: Boolean(req.body.permissions.xyConvertEnabled),
+        kmlExportEnabled: Boolean(req.body.permissions.kmlExportEnabled),
+        manualSupportEnabled: Boolean(req.body.permissions.manualSupportEnabled)
+      };
+    }
+
+    if (typeof req.body?.note === "string") {
+      user.note = req.body.note.slice(0, 500);
+    }
+
+    if (typeof req.body?.phone === "string") {
+      user.phone = req.body.phone.slice(0, 80);
+    }
+
+    if (typeof req.body?.wechat === "string") {
+      user.wechat = req.body.wechat.slice(0, 80);
+    }
+
+    user.updatedAt = getNowISO();
+    await writeAdminData(data);
+    res.json({ user });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "保存用户权限失败。"
+    });
+  }
+});
+
+app.patch("/api/admin/feature-flags", requireAdmin, async (req, res) => {
+  try {
+    const data = await readAdminData();
+    const nextFlags = req.body?.featureFlags || {};
+
+    data.featureFlags = {
+      ...data.featureFlags,
+      aiOcrEnabled: Boolean(nextFlags.aiOcrEnabled),
+      xyConvertEnabled: Boolean(nextFlags.xyConvertEnabled),
+      kmlExportEnabled: Boolean(nextFlags.kmlExportEnabled),
+      manualSupportEnabled: Boolean(nextFlags.manualSupportEnabled)
+    };
+
+    await writeAdminData(data);
+    res.json({ featureFlags: data.featureFlags });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: "保存功能开关失败。"
+    });
+  }
+});
+
 app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) => {
   console.log("---- 收到识别请求 ----");
   console.log("是否收到图片：", Boolean(req.file));
@@ -496,5 +798,5 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`坐标工具已启动：http://localhost:${port}`);
   console.log(`当前视觉模型：${model}`);
-  console.log("坐标识别模式：裁剪图片区域 + DMS 兜底解析。");
+  console.log("坐标识别模式：原图识别 + DMS/X/Y 兜底解析 + 后台统计。");
 });
