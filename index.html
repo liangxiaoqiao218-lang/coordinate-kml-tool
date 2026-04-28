@@ -1251,19 +1251,23 @@
       return "";
     }
 
-    function resolveProjectedCoordinateSystem(easting, northing, sourceText = "") {
-      if (projectionType.value && projectionType.value !== "auto") {
-        return projectionType.value;
-      }
+    function looksLikeBftmCoordinate(easting, northing) {
+      return easting >= 500000 && easting <= 760000 && northing >= 1200000 && northing <= 1600000;
+    }
 
+    function resolveProjectedCoordinateSystem(easting, northing, sourceText = "") {
       const textProjection = detectProjectionFromText(sourceText);
 
       if (textProjection) {
         return textProjection;
       }
 
-      if (easting >= 500000 && easting <= 760000 && northing >= 1200000 && northing <= 1600000) {
+      if (looksLikeBftmCoordinate(easting, northing)) {
         return "bftm";
+      }
+
+      if (projectionType.value && projectionType.value !== "auto") {
+        return projectionType.value;
       }
 
       if (easting >= 100000 && easting <= 900000 && northing >= 0 && northing <= 2000000) {
@@ -1977,8 +1981,14 @@ ${placemarks}
         const projectedLines = extractProjectedCoordinateLines(data.rawText);
         const detectedProjection = detectProjectionFromText(data.rawText);
 
-        if (detectedProjection) {
-          projectionType.value = detectedProjection;
+        if (detectedProjection || hasProjectedCoordinateRows(projectedLines)) {
+          const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
+
+          if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeBftmCoordinate(firstProjectedPair[0], firstProjectedPair[1])) {
+            projectionType.value = "bftm";
+          } else if (detectedProjection) {
+            projectionType.value = detectedProjection;
+          }
         }
 
         const finalCoordinates = chooseBestCoordinateResult([
