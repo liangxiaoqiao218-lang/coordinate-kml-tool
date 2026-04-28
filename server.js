@@ -105,6 +105,36 @@ function ensureUser(data, visitorId) {
   return data.users[id];
 }
 
+function getClientIp(req) {
+  const forwardedFor = req.get("x-forwarded-for") || "";
+  const firstForwardedIp = forwardedFor.split(",")[0]?.trim();
+
+  return firstForwardedIp || req.ip || req.socket?.remoteAddress || "";
+}
+
+function updateUserVisitMeta(user, req) {
+  if (!user) {
+    return;
+  }
+
+  const ip = getClientIp(req);
+  const userAgent = req.get("user-agent") || "";
+
+  if (!user.firstIp && ip) {
+    user.firstIp = ip;
+  }
+
+  if (ip) {
+    user.lastIp = ip;
+  }
+
+  if (userAgent) {
+    user.lastUserAgent = userAgent.slice(0, 300);
+  }
+
+  user.lastSeenAt = getNowISO();
+}
+
 function getEffectivePermissions(user, featureFlags) {
   const permissions = user?.permissions || {};
 
@@ -379,7 +409,7 @@ app.get("/api/config", async (req, res) => {
     const user = ensureUser(data, visitorId);
 
     if (user) {
-      user.lastSeenAt = getNowISO();
+      updateUserVisitMeta(user, req);
       await writeAdminData(data);
     }
 
@@ -412,7 +442,7 @@ app.post("/api/track", async (req, res) => {
     const user = ensureUser(data, visitorId);
 
     if (user) {
-      user.lastSeenAt = getNowISO();
+      updateUserVisitMeta(user, req);
       user.eventCount = (user.eventCount || 0) + 1;
     }
 
@@ -420,6 +450,8 @@ app.post("/api/track", async (req, res) => {
       id: makeId("evt"),
       visitorId,
       eventName,
+      ip: getClientIp(req),
+      userAgent: (req.get("user-agent") || "").slice(0, 300),
       page: String(req.body?.page || ""),
       extra: req.body?.extra || {},
       createdAt: getNowISO()

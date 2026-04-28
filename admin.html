@@ -232,6 +232,7 @@
             <th>用户ID</th>
             <th>套餐</th>
             <th>状态</th>
+            <th>最近IP</th>
             <th>事件数</th>
             <th>最后访问</th>
             <th>操作</th>
@@ -289,6 +290,7 @@
           <tr>
             <th>时间</th>
             <th>用户ID</th>
+            <th>IP</th>
             <th>事件</th>
           </tr>
         </thead>
@@ -378,7 +380,7 @@
         .join("");
 
       document.getElementById("recentEvents").innerHTML = (summary.recentEvents || [])
-        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.eventName)}</td></tr>`)
+        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.ip || "")}</td><td>${escapeHtml(event.eventName)}</td></tr>`)
         .join("");
     }
 
@@ -388,6 +390,7 @@
           <td>${escapeHtml(user.visitorId)}</td>
           <td>${escapeHtml(user.plan || "free")}</td>
           <td>${escapeHtml(user.status || "active")}</td>
+          <td>${escapeHtml(user.lastIp || "")}</td>
           <td>${user.eventCount || 0}</td>
           <td>${formatTime(user.lastSeenAt)}</td>
           <td><button type="button" onclick="editUser('${escapeAttr(user.visitorId)}')">编辑</button></td>
