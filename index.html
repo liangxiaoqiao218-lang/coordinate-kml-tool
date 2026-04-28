@@ -768,6 +768,28 @@
       uploadMessage.innerHTML = `${text}<button type="button" class="inline-link" onclick="showManualSupport()">人工协助识别</button>`;
     }
 
+    function getRecognitionFailureMessage(errorMessage, responseStatus) {
+      const message = String(errorMessage || "").trim();
+
+      if (responseStatus === 403 || /未开通|权限|禁用|permission/i.test(message)) {
+        return `权限未开通：${message || "当前用户没有 AI 图片识别权限"}，请联系管理员开通或使用`;
+      }
+
+      if (/未收到图片|重新选择图片|没有收到图片/i.test(message)) {
+        return "上传失败：后端没有收到图片，请重新选择图片上传。仍无法上传时建议使用";
+      }
+
+      if (/未识别到有效坐标|没有提取|有效坐标|坐标区域/i.test(message)) {
+        return "坐标未提取：AI 没有从图片中识别到有效坐标，请尽量只截坐标表格区域，或使用";
+      }
+
+      if (/API|HTTP|quota|余额|key|模型|OpenAI|DashScope|timeout|fetch|network|请求/i.test(message)) {
+        return `识别接口异常：${message || "AI 接口请求失败"}，请检查模型/API Key/余额，或使用`;
+      }
+
+      return `识别失败：${message || "图片文字不清晰或表格结构复杂"}，请换更清晰的坐标表截图，或使用`;
+    }
+
     function escapeHtml(text) {
       return String(text || "")
         .replace(/&/g, "&amp;")
@@ -1818,7 +1840,7 @@ ${placemarks}
 
         if (!finalCoordinates || finalCoordinates === noCoordinatesText) {
           showMessage("");
-          showUploadSupportMessage("自动识别未能提取有效坐标，建议使用");
+          showUploadSupportMessage(getRecognitionFailureMessage(data.warning || data.error || "未识别到有效坐标", response.status));
           showManualSupport();
           return;
         }
@@ -1841,7 +1863,7 @@ ${placemarks}
           message: error.message
         });
         showMessage(`识别失败：${error.message}`, true);
-        showUploadSupportMessage("图片识别遇到问题，建议使用");
+        showUploadSupportMessage(getRecognitionFailureMessage(error.message));
         showManualSupport();
       } finally {
         imageInput.disabled = false;
