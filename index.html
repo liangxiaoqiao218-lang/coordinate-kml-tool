@@ -75,7 +75,10 @@
       right: 10px;
       z-index: 1;
       display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
       gap: 6px;
+      max-width: 190px;
     }
 
     .workspace-tools .icon-button {
@@ -125,11 +128,18 @@
       border-style: dashed;
       border-color: #94a3b8;
       background: #f8fbff;
+      padding: 12px 14px;
+    }
+
+    .upload-box label {
+      margin-bottom: 6px;
+      font-size: 20px;
+      line-height: 1.2;
     }
 
     .upload-box input {
       width: 100%;
-      min-height: 44px;
+      min-height: 34px;
     }
 
     .image-preview {
@@ -328,10 +338,10 @@
     }
 
     .privacy-note {
-      margin: 10px 0 0;
+      margin: 6px 0 0;
       color: #64748b;
       font-size: 13px;
-      line-height: 1.5;
+      line-height: 1.35;
     }
 
     .inline-link {
@@ -484,6 +494,27 @@
         padding-bottom: 60px;
       }
 
+      .workspace-tools {
+        bottom: 8px;
+        right: 8px;
+        max-width: 184px;
+      }
+
+      .icon-button {
+        width: 38px;
+        min-height: 38px;
+        font-size: 19px;
+      }
+
+      .upload-box {
+        margin-top: 10px;
+        padding: 10px 12px;
+      }
+
+      .upload-box label {
+        font-size: 21px;
+      }
+
       .buttons,
       .settings-grid,
       .support-actions {
@@ -525,6 +556,7 @@
       <div class="workspace-tools">
         <button type="button" class="icon-button" onclick="undoLastChange()" title="撤销上一步" aria-label="撤销上一步">↶</button>
         <button type="button" class="icon-button" onclick="confirmClearContent()" title="清空内容" aria-label="清空内容">×</button>
+        <button type="button" class="icon-button" onclick="swapLongitudeLatitude()" title="交换经纬度" aria-label="交换经纬度">⇄</button>
         <button type="button" class="icon-button" onclick="copyContent()" title="复制内容" aria-label="复制内容">⧉</button>
       </div>
     </div>
@@ -537,7 +569,7 @@
     </div>
 
     <div class="panel upload-box">
-      <label for="imageInput">上传坐标图片</label>
+      <label for="imageInput">第一步：上传坐标图片</label>
       <input id="imageInput" type="file" accept="image/*" />
       <div id="imagePreview" class="image-preview"></div>
       <div id="uploadMessage" class="upload-message"></div>
@@ -1326,6 +1358,33 @@
       }
 
       return pairs;
+    }
+
+    async function swapLongitudeLatitude() {
+      await loadUserConfig();
+
+      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
+        return;
+      }
+
+      const pairs = getCoordinatePairs();
+
+      if (pairs.length === 0) {
+        showMessage("没有找到可交换的坐标。", true);
+        return;
+      }
+
+      rememberState();
+      input.value = pairs
+        .map(pair => formatPairForDisplay({
+          longitude: pair.latitude,
+          latitude: pair.longitude
+        }, coordinateFormat.value))
+        .join("\n");
+      trackEvent("swap_lnglat_click", {
+        count: pairs.length
+      });
+      showMessage(`已交换 ${pairs.length} 组坐标的经纬度顺序。`);
     }
 
     async function convertCoordinateFormat() {
