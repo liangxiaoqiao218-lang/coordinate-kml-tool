@@ -302,6 +302,33 @@ function parseCompactDmsToken(token, fallbackDirection) {
   return null;
 }
 
+function getDmsTokensFromLine(line) {
+  return String(line || "").match(/[-+]?\d{1,3}\s*°\s*(?:\d{1,2}\s*'\s*\d{1,4}(?:\.\d+)?|\d{3,7}(?:\.\d+)?)\s*["']?\s*[NSEWO]?/gi) || [];
+}
+
+function tokenHasDirection(token) {
+  return /[NSEWO]\s*$/i.test(String(token || "").trim());
+}
+
+function shouldInferWestNorth(firstToken, secondToken) {
+  if (tokenHasDirection(firstToken) || tokenHasDirection(secondToken)) {
+    return false;
+  }
+
+  const first = parseCompactDmsToken(firstToken, "");
+  const second = parseCompactDmsToken(secondToken, "");
+  const firstValue = Math.abs(Number(first?.value));
+  const secondValue = Math.abs(Number(second?.value));
+
+  return Number.isFinite(firstValue)
+    && Number.isFinite(secondValue)
+    && firstValue > 0
+    && secondValue > 0
+    && firstValue <= 20
+    && secondValue <= 20
+    && firstValue < secondValue;
+}
+
 function extractDecimalCoordinateLines(text) {
   const lines = normalizeText(text)
     .split(/\r?\n/)
@@ -391,22 +418,21 @@ function extractDmsCoordinateLines(text) {
     .map(line => line.trim())
     .filter(Boolean);
   const coordinateLines = [];
-  const dmsTokenPattern = /[-+]?\d{1,3}\s*°\s*(?:\d{1,2}\s*'\s*\d{1,4}(?:\.\d+)?|\d{3,7}(?:\.\d+)?)\s*["']?\s*[NSEWO]?/gi;
-
   for (const line of lines) {
     if (/annoter|tourner|rechercher|partager|hectares/i.test(line)) {
       continue;
     }
 
-    const tokens = line.match(dmsTokenPattern) || [];
+    const tokens = getDmsTokensFromLine(line);
 
     if (tokens.length < 2) {
       continue;
     }
 
     const looksLikeLonLat = /,/.test(line) || /^\s*[-+]\s*\d/.test(line);
+    const inferWestNorth = looksLikeLonLat && shouldInferWestNorth(tokens[0], tokens[1]);
     const parsed = tokens
-      .map((token, index) => parseCompactDmsToken(token, looksLikeLonLat ? "" : (index === 0 ? "N" : "O")))
+      .map((token, index) => parseCompactDmsToken(token, inferWestNorth ? (index === 0 ? "O" : "N") : (looksLikeLonLat ? "" : (index === 0 ? "N" : "O"))))
       .filter(Boolean)
       .filter(item => item.value !== null);
 

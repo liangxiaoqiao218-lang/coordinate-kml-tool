@@ -1092,6 +1092,51 @@
       return null;
     }
 
+    function getDmsTokensFromLine(line) {
+      return String(line || "").match(/[-+]?\d{1,3}\s*°\s*(?:\d{1,2}\s*'\s*\d{1,4}(?:\.\d+)?|\d{3,7}(?:\.\d+)?)\s*["']?\s*[NSEWO]?/gi) || [];
+    }
+
+    function tokenHasDirection(token) {
+      return /[NSEWO]\s*$/i.test(String(token || "").trim());
+    }
+
+    function shouldInferWestNorth(firstToken, secondToken) {
+      if (tokenHasDirection(firstToken) || tokenHasDirection(secondToken)) {
+        return false;
+      }
+
+      const first = parseDmsToken(firstToken, "");
+      const second = parseDmsToken(secondToken, "");
+      const firstValue = Math.abs(Number(first?.value));
+      const secondValue = Math.abs(Number(second?.value));
+
+      return Number.isFinite(firstValue)
+        && Number.isFinite(secondValue)
+        && firstValue > 0
+        && secondValue > 0
+        && firstValue <= 20
+        && secondValue <= 20
+        && firstValue < secondValue;
+    }
+
+    function cleanDmsTokenForDisplay(token) {
+      return String(token || "")
+        .replace(/\s+/g, "")
+        .replace(/[º˚]/g, "°")
+        .replace(/[‘’´`′]/g, "'")
+        .replace(/[“”″]/g, '"');
+    }
+
+    function addImpliedWestNorthDirections(line) {
+      const tokens = getDmsTokensFromLine(line);
+
+      if (tokens.length < 2 || !shouldInferWestNorth(tokens[0], tokens[1])) {
+        return "";
+      }
+
+      return `${cleanDmsTokenForDisplay(tokens[0])}W,${cleanDmsTokenForDisplay(tokens[1])}N`;
+    }
+
     function extractDmsCoordinates(text) {
       const lines = String(text || "")
         .replace(/[º˚]/g, "°")
@@ -1105,16 +1150,17 @@
           continue;
         }
 
-        const tokens = line.match(/[-+]?\d{1,3}\s*°\s*(?:\d{1,2}\s*'\s*\d{1,4}(?:\.\d+)?|\d{3,7}(?:\.\d+)?)\s*["']?\s*[NSEWO]?/gi) || [];
+        const tokens = getDmsTokensFromLine(line);
 
         if (tokens.length < 2) {
           continue;
         }
 
         const looksLikeLonLat = /,/.test(line) || /^\s*[-+]\s*\d/.test(line);
+        const inferWestNorth = looksLikeLonLat && shouldInferWestNorth(tokens[0], tokens[1]);
         const parsed = tokens
           .slice(0, 2)
-          .map((token, index) => parseDmsToken(token, looksLikeLonLat ? "" : (index === 0 ? "N" : "O")))
+          .map((token, index) => parseDmsToken(token, inferWestNorth ? (index === 0 ? "O" : "N") : (looksLikeLonLat ? "" : (index === 0 ? "N" : "O"))))
           .filter(Boolean)
           .filter(item => item.value);
 
@@ -1155,7 +1201,11 @@
           continue;
         }
 
-        if (parseCoordinateLine(trimmed)) {
+        const inferredDms = addImpliedWestNorthDirections(trimmed);
+
+        if (inferredDms) {
+          coordinateLines.push(inferredDms);
+        } else if (parseCoordinateLine(trimmed)) {
           coordinateLines.push(trimmed.replace(/\s*,\s*/g, ","));
         }
       }
@@ -1381,10 +1431,11 @@
           latitude: pair.longitude
         }, coordinateFormat.value))
         .join("\n");
+      coordinateOrder.value = "lnglat";
       trackEvent("swap_lnglat_click", {
         count: pairs.length
       });
-      showMessage(`已交换 ${pairs.length} 组坐标的经纬度顺序。`);
+      showMessage(`已交换 ${pairs.length} 组坐标的经纬度顺序，导出时将按当前工作区顺序使用。`);
     }
 
     async function convertCoordinateFormat() {
@@ -1675,6 +1726,7 @@
       rememberState();
       input.value = pairs.map(pair => `${pair.longitude},${pair.latitude}`).join("\n");
       coordinateFormat.value = "degree";
+      coordinateOrder.value = "lnglat";
       trackEvent("normalize_click", {
         count: pairs.length,
         projection: projectionType.value
@@ -1906,6 +1958,7 @@ ${placemarks}
 
         rememberState();
         input.value = finalCoordinates;
+        coordinateOrder.value = "auto";
         input.focus();
         trackEvent("image_recognize_success", {
           rows: countCoordinateRows(finalCoordinates),
