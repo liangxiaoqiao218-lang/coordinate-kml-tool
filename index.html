@@ -768,6 +768,15 @@
       uploadMessage.innerHTML = `${text}<button type="button" class="inline-link" onclick="showManualSupport()">人工协助识别</button>`;
     }
 
+    function escapeHtml(text) {
+      return String(text || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
     function showSelectedImage(file) {
       if (selectedImageUrl) {
         URL.revokeObjectURL(selectedImageUrl);
@@ -1720,7 +1729,12 @@ ${placemarks}
         return;
       }
 
-      showSelectedImage(file);
+      try {
+        showSelectedImage(file);
+      } catch (error) {
+        console.error(error);
+        showMessage("图片预览失败，但会继续尝试识别。", true);
+      }
 
       if (!canUse("aiOcrEnabled", "当前用户暂未开通 AI 图片识别。")) {
         imageInput.value = "";
