@@ -71,7 +71,7 @@
 
     .workspace-tools {
       position: absolute;
-      top: 10px;
+      bottom: 10px;
       right: 10px;
       z-index: 1;
       display: flex;
@@ -85,7 +85,7 @@
     textarea {
       width: 100%;
       min-height: 340px;
-      padding: 58px 14px 14px 14px;
+      padding: 14px 14px 62px 14px;
       resize: vertical;
       border: 1px solid #cbd5e1;
       border-radius: 8px;
@@ -112,7 +112,7 @@
 
     .settings-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 10px;
       margin-top: 14px;
     }
@@ -130,6 +130,44 @@
     .upload-box input {
       width: 100%;
       min-height: 44px;
+    }
+
+    .image-preview {
+      display: none;
+      margin-top: 12px;
+      padding: 10px;
+      border: 1px solid #d8e0ec;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .image-preview-row {
+      display: grid;
+      grid-template-columns: 96px 1fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .image-preview img {
+      width: 96px;
+      height: 72px;
+      object-fit: cover;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+
+    .image-preview p {
+      margin: 0;
+      color: #475569;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .image-preview .remove-image {
+      min-height: 36px;
+      padding: 8px 10px;
+      background: #b91c1c;
     }
 
     select {
@@ -278,6 +316,26 @@
       font-size: 20px;
     }
 
+    .panel-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .panel-title-row h2,
+    .panel-title-row strong {
+      margin: 0;
+    }
+
+    .close-panel {
+      min-height: 34px;
+      padding: 7px 10px;
+      background: #475569;
+      font-size: 13px;
+    }
+
     .support-panel p {
       margin: 6px 0;
       color: #36513d;
@@ -376,6 +434,7 @@
 
       textarea {
         min-height: 300px;
+        padding-bottom: 60px;
       }
 
       .buttons,
@@ -386,6 +445,19 @@
 
       .wechat-info {
         grid-template-columns: 1fr;
+      }
+
+      .image-preview-row {
+        grid-template-columns: 72px 1fr;
+      }
+
+      .image-preview img {
+        width: 72px;
+        height: 58px;
+      }
+
+      .image-preview .remove-image {
+        grid-column: 1 / -1;
       }
     }
   </style>
@@ -410,9 +482,17 @@
       </div>
     </div>
 
+    <div id="debugPanel" class="panel debug-panel">
+      <div class="panel-title-row">
+        <strong>识别调试信息</strong>
+      </div>
+      <textarea id="debugText" readonly></textarea>
+    </div>
+
     <div class="panel upload-box">
       <label for="imageInput">上传坐标图片</label>
       <input id="imageInput" type="file" accept="image/*" />
+      <div id="imagePreview" class="image-preview"></div>
       <div id="uploadMessage" class="upload-message"></div>
       <p class="privacy-note">上传图片后会自动识别坐标并填入上方工作区，请优先上传坐标表区域截图。</p>
     </div>
@@ -429,14 +509,6 @@
         </select>
       </div>
       <div class="panel">
-        <label for="coordinateOrder">输入顺序</label>
-        <select id="coordinateOrder">
-          <option value="auto" selected>自动判断</option>
-          <option value="lnglat">经度,纬度</option>
-          <option value="latlng">纬度,经度</option>
-        </select>
-      </div>
-      <div class="panel">
         <label for="exportType">导出类型</label>
         <select id="exportType">
           <option value="Polygon" selected>面 Polygon（默认，矿区范围）</option>
@@ -444,15 +516,18 @@
           <option value="Point">点位 Point</option>
         </select>
       </div>
-      <div class="panel">
-        <label for="projectionType">X/Y坐标系</label>
-        <select id="projectionType">
-          <option value="utm29n" selected>UTM 29N 转经纬度</option>
-          <option value="utm28n">UTM 28N 转经纬度</option>
-          <option value="none">不转换 X/Y</option>
-        </select>
-      </div>
     </div>
+
+    <select id="coordinateOrder" hidden>
+      <option value="auto" selected>自动判断</option>
+      <option value="lnglat">经度,纬度</option>
+      <option value="latlng">纬度,经度</option>
+    </select>
+    <select id="projectionType" hidden>
+      <option value="utm29n" selected>UTM 29N 转经纬度</option>
+      <option value="utm28n">UTM 28N 转经纬度</option>
+      <option value="none">不转换 X/Y</option>
+    </select>
 
     <div class="buttons">
       <button type="button" onclick="normalizeCoordinates()">标准化坐标</button>
@@ -463,7 +538,10 @@
     <div id="toast" class="toast"></div>
 
     <div id="supportPanel" class="panel support-panel">
-      <h2>人工协助识别</h2>
+      <div class="panel-title-row">
+        <h2>人工协助识别</h2>
+        <button type="button" class="close-panel" onclick="hideManualSupport()">收回</button>
+      </div>
       <p>如果图片有水印、表格错位、手机菜单、DMS 粘连或扫描不清，自动识别可能不稳定。你可以把原图和识别原文发给人工协助，我们帮你整理成 KML 可用的经度,纬度格式。</p>
       <div class="support-actions">
         <button type="button" class="support" onclick="copyManualMessage()">复制人工服务说明</button>
@@ -482,11 +560,6 @@
         <strong>发送建议：</strong><br />
         建议让用户发送：原图 + 识别调试信息 + 需要导出的类型（Polygon/LineString/Point）
       </div>
-    </div>
-
-    <div id="debugPanel" class="panel debug-panel">
-      <strong>识别调试信息</strong>
-      <textarea id="debugText" readonly></textarea>
     </div>
 
     <section class="help">
@@ -508,6 +581,7 @@
     const message = document.getElementById("message");
     const toast = document.getElementById("toast");
     const uploadMessage = document.getElementById("uploadMessage");
+    const imagePreview = document.getElementById("imagePreview");
     const supportPanel = document.getElementById("supportPanel");
     const debugPanel = document.getElementById("debugPanel");
     const debugText = document.getElementById("debugText");
@@ -524,11 +598,10 @@
     };
     const historyStack = [];
     let clearConfirmTimer = null;
+    let selectedImageUrl = "";
 
     imageInput.addEventListener("change", recognizeImage);
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
-    coordinateOrder.addEventListener("change", applyInputOrderChange);
-
     loadUserConfig();
     trackEvent("page_visit");
 
@@ -599,6 +672,14 @@
     }
 
     function rememberState() {
+      if (!input.value.trim()) {
+        return;
+      }
+
+      if (historyStack[historyStack.length - 1] === input.value) {
+        return;
+      }
+
       historyStack.push(input.value);
 
       if (historyStack.length > 20) {
@@ -628,6 +709,36 @@
       uploadMessage.innerHTML = `${text}<button type="button" class="inline-link" onclick="showManualSupport()">人工协助识别</button>`;
     }
 
+    function showSelectedImage(file) {
+      if (selectedImageUrl) {
+        URL.revokeObjectURL(selectedImageUrl);
+      }
+
+      selectedImageUrl = URL.createObjectURL(file);
+      imagePreview.style.display = "block";
+      imagePreview.innerHTML = `
+        <div class="image-preview-row">
+          <a href="${selectedImageUrl}" target="_blank" rel="noopener" title="点击查看上传图片">
+            <img src="${selectedImageUrl}" alt="已上传图片预览" />
+          </a>
+          <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />点击图片可查看大图</p>
+          <button type="button" class="remove-image" onclick="clearSelectedImage()">删除图片</button>
+        </div>`;
+    }
+
+    function clearSelectedImage() {
+      if (selectedImageUrl) {
+        URL.revokeObjectURL(selectedImageUrl);
+      }
+
+      selectedImageUrl = "";
+      imagePreview.style.display = "none";
+      imagePreview.innerHTML = "";
+      imageInput.value = "";
+      clearUploadMessage();
+      showMessage("已删除上传图片，可以重新选择。");
+    }
+
     function setDebug(text) {
       debugPanel.style.display = "block";
       debugText.textContent = text;
@@ -646,6 +757,11 @@
       supportPanel.style.display = "block";
       supportPanel.scrollIntoView({ behavior: "smooth", block: "start" });
       trackEvent("manual_support_click");
+    }
+
+    function hideManualSupport() {
+      supportPanel.style.display = "none";
+      showMessage("已收回人工协助窗口。");
     }
 
     async function copyText(text, successMessage) {
@@ -1532,8 +1648,8 @@ ${placemarks}
         return;
       }
 
+      showSelectedImage(file);
       imageInput.disabled = true;
-      input.value = "";
       supportPanel.style.display = "none";
       clearUploadMessage();
       trackEvent("image_upload_select", {
