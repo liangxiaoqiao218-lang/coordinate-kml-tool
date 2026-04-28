@@ -105,6 +105,42 @@ function ensureUser(data, visitorId) {
   return data.users[id];
 }
 
+function normalizeAdminUser(user, fallbackId = "") {
+  const safeUser = user && typeof user === "object" ? user : {};
+  const visitorId = String(safeUser.visitorId || fallbackId || "").trim();
+
+  return {
+    visitorId,
+    plan: safeUser.plan || "free",
+    status: safeUser.status || "active",
+    permissions: {
+      aiOcrEnabled: safeUser.permissions?.aiOcrEnabled !== false,
+      xyConvertEnabled: safeUser.permissions?.xyConvertEnabled !== false,
+      kmlExportEnabled: safeUser.permissions?.kmlExportEnabled !== false,
+      manualSupportEnabled: safeUser.permissions?.manualSupportEnabled !== false
+    },
+    createdAt: safeUser.createdAt || "",
+    lastSeenAt: safeUser.lastSeenAt || "",
+    eventCount: Number(safeUser.eventCount || 0),
+    note: safeUser.note || "",
+    phone: safeUser.phone || "",
+    wechat: safeUser.wechat || "",
+    firstIp: safeUser.firstIp || "",
+    lastIp: safeUser.lastIp || "",
+    lastUserAgent: safeUser.lastUserAgent || ""
+  };
+}
+
+function getAdminUsersList(data) {
+  if (!data.users || typeof data.users !== "object") {
+    return [];
+  }
+
+  return Object.entries(data.users)
+    .map(([id, user]) => normalizeAdminUser(user, id))
+    .filter(user => user.visitorId);
+}
+
 function getClientIp(req) {
   const forwardedFor = req.get("x-forwarded-for") || "";
   const firstForwardedIp = forwardedFor.split(",")[0]?.trim();
@@ -474,10 +510,14 @@ app.post("/api/track", async (req, res) => {
 app.get("/api/admin/summary", requireAdmin, async (req, res) => {
   try {
     const data = await readAdminData();
-    const users = Object.values(data.users);
+    const users = getAdminUsersList(data);
     const eventsByName = {};
 
     for (const event of data.events) {
+      if (!event || !event.eventName) {
+        continue;
+      }
+
       eventsByName[event.eventName] = (eventsByName[event.eventName] || 0) + 1;
     }
 
@@ -503,14 +543,14 @@ app.get("/api/admin/summary", requireAdmin, async (req, res) => {
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
     const data = await readAdminData();
-    const users = Object.values(data.users)
+    const users = getAdminUsersList(data)
       .sort((a, b) => String(b.lastSeenAt || "").localeCompare(String(a.lastSeenAt || "")));
 
     res.json({ users });
   } catch (error) {
     console.error(error);
     res.status(500).json({
-      error: "读取用户列表失败。"
+      error: `读取用户列表失败：${error.message || "未知错误"}`
     });
   }
 });

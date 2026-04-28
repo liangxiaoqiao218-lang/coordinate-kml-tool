@@ -361,15 +361,21 @@
       try {
         adminPassword = getPassword();
         localStorage.setItem("coordinateToolAdminPassword", adminPassword);
-        const [summary, usersResult] = await Promise.all([
-          adminFetch("/api/admin/summary"),
-          adminFetch("/api/admin/users")
-        ]);
+        const summary = await adminFetch("/api/admin/summary");
+        let usersResult = { users: [] };
+
+        try {
+          usersResult = await adminFetch("/api/admin/users");
+        } catch (error) {
+          setMessage(error.message, true);
+        }
 
         users = usersResult.users || [];
         renderSummary(summary);
         renderUsers(users);
-        setMessage(`后台数据已刷新。${new Date().toLocaleTimeString()}`);
+        if (usersResult.users) {
+          setMessage(`后台数据已刷新。${new Date().toLocaleTimeString()}`);
+        }
       } catch (error) {
         setMessage(error.message, true);
       }
