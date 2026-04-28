@@ -135,6 +135,13 @@
       font-size: 14px;
     }
 
+    .refresh-note {
+      margin-left: 8px;
+      color: #64748b;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
     .error {
       color: #b91c1c;
     }
@@ -184,6 +191,7 @@
       </div>
       <button type="button" onclick="login()">进入后台</button>
       <button type="button" class="secondary" onclick="refreshAll()">刷新</button>
+      <span id="refreshNote" class="refresh-note">每 30 秒自动刷新</span>
     </section>
 
     <div id="message" class="message"></div>
@@ -233,6 +241,7 @@
             <th>套餐</th>
             <th>状态</th>
             <th>最近IP</th>
+            <th>终端</th>
             <th>事件数</th>
             <th>最后访问</th>
             <th>操作</th>
@@ -291,6 +300,7 @@
             <th>时间</th>
             <th>用户ID</th>
             <th>IP</th>
+            <th>终端</th>
             <th>事件</th>
           </tr>
         </thead>
@@ -303,12 +313,15 @@
     let adminPassword = localStorage.getItem("coordinateToolAdminPassword") || "";
     let users = [];
     let selectedUser = null;
+    let autoRefreshTimer = null;
 
     document.getElementById("password").value = adminPassword;
 
     if (adminPassword) {
       refreshAll();
     }
+
+    startAutoRefresh();
 
     function setMessage(text, isError = false) {
       const el = document.getElementById("message");
@@ -356,10 +369,19 @@
         users = usersResult.users || [];
         renderSummary(summary);
         renderUsers(users);
-        setMessage("后台数据已刷新。");
+        setMessage(`后台数据已刷新。${new Date().toLocaleTimeString()}`);
       } catch (error) {
         setMessage(error.message, true);
       }
+    }
+
+    function startAutoRefresh() {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = setInterval(() => {
+        if (getPassword()) {
+          refreshAll();
+        }
+      }, 30000);
     }
 
     function renderSummary(summary) {
@@ -380,7 +402,7 @@
         .join("");
 
       document.getElementById("recentEvents").innerHTML = (summary.recentEvents || [])
-        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.ip || "")}</td><td>${escapeHtml(event.eventName)}</td></tr>`)
+        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.ip || "")}</td><td>${escapeHtml(describeTerminal(event.userAgent || ""))}</td><td>${escapeHtml(event.eventName)}</td></tr>`)
         .join("");
     }
 
@@ -391,6 +413,7 @@
           <td>${escapeHtml(user.plan || "free")}</td>
           <td>${escapeHtml(user.status || "active")}</td>
           <td>${escapeHtml(user.lastIp || "")}</td>
+          <td>${escapeHtml(describeTerminal(user.lastUserAgent || ""))}</td>
           <td>${user.eventCount || 0}</td>
           <td>${formatTime(user.lastSeenAt)}</td>
           <td><button type="button" onclick="editUser('${escapeAttr(user.visitorId)}')">编辑</button></td>
@@ -477,6 +500,37 @@
       }
 
       return new Date(value).toLocaleString();
+    }
+
+    function describeTerminal(userAgent) {
+      const ua = String(userAgent || "");
+
+      if (!ua) {
+        return "";
+      }
+
+      let device = "电脑";
+      let browser = "浏览器";
+
+      if (/ipad|tablet/i.test(ua)) {
+        device = "平板";
+      } else if (/mobile|iphone|android/i.test(ua)) {
+        device = "手机";
+      }
+
+      if (/MicroMessenger/i.test(ua)) {
+        browser = "微信";
+      } else if (/Edg\//i.test(ua)) {
+        browser = "Edge";
+      } else if (/Chrome\//i.test(ua) && !/Edg\//i.test(ua)) {
+        browser = "Chrome";
+      } else if (/Safari\//i.test(ua) && !/Chrome\//i.test(ua)) {
+        browser = "Safari";
+      } else if (/Firefox\//i.test(ua)) {
+        browser = "Firefox";
+      }
+
+      return `${device} / ${browser}`;
     }
 
     function escapeHtml(value) {
