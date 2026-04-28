@@ -189,6 +189,15 @@ function updateUserVisitMeta(user, req) {
 function getEffectivePermissions(user, featureFlags) {
   const permissions = user?.permissions || {};
 
+  if (user?.status === "disabled") {
+    return {
+      aiOcrEnabled: false,
+      xyConvertEnabled: false,
+      kmlExportEnabled: false,
+      manualSupportEnabled: false
+    };
+  }
+
   return {
     aiOcrEnabled: Boolean(featureFlags.aiOcrEnabled && permissions.aiOcrEnabled),
     xyConvertEnabled: Boolean(featureFlags.xyConvertEnabled && permissions.xyConvertEnabled),
@@ -653,6 +662,24 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
   console.log("是否收到图片：", Boolean(req.file));
 
   try {
+    const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
+    const adminData = await readAdminData();
+    const user = ensureUser(adminData, visitorId);
+    const permissions = getEffectivePermissions(user, adminData.featureFlags);
+
+    if (!permissions.aiOcrEnabled) {
+      if (user) {
+        updateUserVisitMeta(user, req);
+        await writeAdminData(adminData);
+      }
+
+      return res.status(403).json({
+        error: "当前用户暂未开通 AI 图片识别。",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+
     if (!req.file) {
       return res.status(400).json({
         error: "后端没有收到图片，请重新选择图片上传。",
