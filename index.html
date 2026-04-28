@@ -157,6 +157,19 @@
       background: #f8fafc;
     }
 
+    .preview-button {
+      min-height: auto;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      line-height: 0;
+    }
+
+    .preview-button:hover {
+      background: transparent;
+    }
+
     .image-preview p {
       margin: 0;
       color: #475569;
@@ -168,6 +181,40 @@
       min-height: 36px;
       padding: 8px 10px;
       background: #b91c1c;
+    }
+
+    .image-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(15, 23, 42, 0.82);
+    }
+
+    .image-modal-content {
+      width: min(96vw, 900px);
+      max-height: 92vh;
+      padding: 10px;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .image-modal-content img {
+      display: block;
+      width: 100%;
+      max-height: 78vh;
+      object-fit: contain;
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+
+    .image-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 10px;
     }
 
     select {
@@ -537,6 +584,15 @@
     <div id="message" class="message"></div>
     <div id="toast" class="toast"></div>
 
+    <div id="imageModal" class="image-modal" onclick="closeImageModal()">
+      <div class="image-modal-content" onclick="event.stopPropagation()">
+        <img id="imageModalImg" alt="上传图片大图预览" />
+        <div class="image-modal-actions">
+          <button type="button" class="secondary" onclick="closeImageModal()">关闭预览</button>
+        </div>
+      </div>
+    </div>
+
     <div id="supportPanel" class="panel support-panel">
       <div class="panel-title-row">
         <h2>人工协助识别</h2>
@@ -582,6 +638,8 @@
     const toast = document.getElementById("toast");
     const uploadMessage = document.getElementById("uploadMessage");
     const imagePreview = document.getElementById("imagePreview");
+    const imageModal = document.getElementById("imageModal");
+    const imageModalImg = document.getElementById("imageModalImg");
     const supportPanel = document.getElementById("supportPanel");
     const debugPanel = document.getElementById("debugPanel");
     const debugText = document.getElementById("debugText");
@@ -599,6 +657,7 @@
     const historyStack = [];
     let clearConfirmTimer = null;
     let selectedImageUrl = "";
+    let selectedImageFile = null;
 
     imageInput.addEventListener("change", recognizeImage);
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
@@ -714,16 +773,32 @@
         URL.revokeObjectURL(selectedImageUrl);
       }
 
+      selectedImageFile = file;
       selectedImageUrl = URL.createObjectURL(file);
       imagePreview.style.display = "block";
       imagePreview.innerHTML = `
         <div class="image-preview-row">
-          <a href="${selectedImageUrl}" target="_blank" rel="noopener" title="点击查看上传图片">
+          <button type="button" class="preview-button" onclick="openSelectedImage()" title="点击查看上传图片">
             <img src="${selectedImageUrl}" alt="已上传图片预览" />
-          </a>
+          </button>
           <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />点击图片可查看大图</p>
           <button type="button" class="remove-image" onclick="clearSelectedImage()">删除图片</button>
         </div>`;
+    }
+
+    function openSelectedImage() {
+      if (!selectedImageUrl) {
+        showMessage("当前没有可查看的上传图片。", true);
+        return;
+      }
+
+      imageModalImg.src = selectedImageUrl;
+      imageModal.style.display = "flex";
+    }
+
+    function closeImageModal() {
+      imageModal.style.display = "none";
+      imageModalImg.removeAttribute("src");
     }
 
     function clearSelectedImage() {
@@ -732,6 +807,8 @@
       }
 
       selectedImageUrl = "";
+      selectedImageFile = null;
+      closeImageModal();
       imagePreview.style.display = "none";
       imagePreview.innerHTML = "";
       imageInput.value = "";
@@ -1643,12 +1720,13 @@ ${placemarks}
         return;
       }
 
+      showSelectedImage(file);
+
       if (!canUse("aiOcrEnabled", "当前用户暂未开通 AI 图片识别。")) {
         imageInput.value = "";
         return;
       }
 
-      showSelectedImage(file);
       imageInput.disabled = true;
       supportPanel.style.display = "none";
       clearUploadMessage();
