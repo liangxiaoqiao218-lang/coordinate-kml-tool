@@ -289,7 +289,7 @@
       </div>
       <label for="note">备注</label>
       <textarea id="note"></textarea>
-      <button type="button" onclick="saveUser()">保存用户权限</button>
+      <button id="saveUserButton" type="button" onclick="saveUser()">保存用户权限</button>
     </section>
 
     <section class="panel">
@@ -313,6 +313,7 @@
     let adminPassword = localStorage.getItem("coordinateToolAdminPassword") || "";
     let users = [];
     let selectedUser = null;
+    let selectedVisitorId = "";
     let autoRefreshTimer = null;
 
     document.getElementById("password").value = adminPassword;
@@ -351,7 +352,7 @@
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(data.error || "请求失败");
+        throw new Error(data.error || `请求失败：HTTP ${response.status}`);
       }
 
       return data;
@@ -384,7 +385,8 @@
     function startAutoRefresh() {
       clearInterval(autoRefreshTimer);
       autoRefreshTimer = setInterval(() => {
-        if (getPassword()) {
+        const editorOpen = document.getElementById("editor").style.display === "block";
+        if (getPassword() && !editorOpen) {
           refreshAll();
         }
       }, 30000);
@@ -429,13 +431,16 @@
 
     function editUser(visitorId) {
       selectedUser = users.find(user => user.visitorId === visitorId);
+      selectedVisitorId = visitorId;
 
       if (!selectedUser) {
+        setMessage("没有找到这个用户，请先刷新后台数据。", true);
         return;
       }
 
       const permissions = selectedUser.permissions || {};
       document.getElementById("editor").style.display = "block";
+      document.getElementById("editor").dataset.visitorId = visitorId;
       document.getElementById("editingUser").textContent = `正在编辑：${selectedUser.visitorId}`;
       document.getElementById("plan").value = selectedUser.plan || "free";
       document.getElementById("status").value = selectedUser.status || "active";
@@ -450,12 +455,20 @@
     }
 
     async function saveUser() {
-      if (!selectedUser) {
+      const visitorId = selectedUser?.visitorId || selectedVisitorId || document.getElementById("editor").dataset.visitorId || "";
+      const button = document.getElementById("saveUserButton");
+
+      if (!visitorId) {
+        setMessage("请先在用户列表里点击“编辑”，再保存用户权限。", true);
         return;
       }
 
       try {
-        await adminFetch(`/api/admin/users/${encodeURIComponent(selectedUser.visitorId)}`, {
+        button.disabled = true;
+        button.textContent = "正在保存...";
+        setMessage("正在保存用户权限，请稍候...");
+
+        const result = await adminFetch(`/api/admin/users/${encodeURIComponent(visitorId)}`, {
           method: "PATCH",
           body: JSON.stringify({
             plan: document.getElementById("plan").value,
@@ -472,10 +485,14 @@
           })
         });
 
+        selectedUser = result.user || selectedUser;
         setMessage("用户权限已保存。");
-        refreshAll();
+        await refreshAll();
       } catch (error) {
-        setMessage(error.message, true);
+        setMessage(`保存失败：${error.message}`, true);
+      } finally {
+        button.disabled = false;
+        button.textContent = "保存用户权限";
       }
     }
 
