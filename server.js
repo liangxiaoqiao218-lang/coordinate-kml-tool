@@ -41,7 +41,7 @@ function createDefaultAdminData() {
 async function readAdminData() {
   try {
     const text = await fs.readFile(adminDataFile, "utf8");
-    const data = JSON.parse(text);
+    const data = JSON.parse(text || "{}");
     const defaults = createDefaultAdminData();
 
     return {
@@ -59,12 +59,27 @@ async function readAdminData() {
       return createDefaultAdminData();
     }
 
+    if (error instanceof SyntaxError) {
+      const backupFile = `${adminDataFile}.${Date.now()}.broken`;
+
+      try {
+        await fs.rename(adminDataFile, backupFile);
+        console.error(`admin-data.json 已损坏，已备份到 ${backupFile} 并重建。`);
+      } catch (renameError) {
+        console.error("admin-data.json 损坏，备份失败，将直接重建。", renameError);
+      }
+
+      return createDefaultAdminData();
+    }
+
     throw error;
   }
 }
 
 async function writeAdminData(data) {
-  await fs.writeFile(adminDataFile, JSON.stringify(data, null, 2), "utf8");
+  const tempFile = `${adminDataFile}.tmp`;
+  await fs.writeFile(tempFile, JSON.stringify(data, null, 2), "utf8");
+  await fs.rename(tempFile, adminDataFile);
 }
 
 function getNowISO() {
@@ -535,7 +550,7 @@ app.get("/api/admin/summary", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({
-      error: "读取后台统计失败。"
+      error: `读取后台统计失败：${error.message || "未知错误"}`
     });
   }
 });
