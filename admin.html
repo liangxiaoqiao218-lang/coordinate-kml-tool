@@ -146,6 +146,27 @@
       color: #b91c1c;
     }
 
+    .editor-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .button-secondary {
+      background: #475569;
+    }
+
+    .save-status {
+      color: #166534;
+      font-weight: 700;
+    }
+
+    .save-status.error {
+      color: #b91c1c;
+    }
+
     .editor {
       display: none;
     }
@@ -289,7 +310,11 @@
       </div>
       <label for="note">备注</label>
       <textarea id="note"></textarea>
-      <button id="saveUserButton" type="button" onclick="saveUser()">保存用户权限</button>
+      <div class="editor-actions">
+        <button id="saveUserButton" type="button" onclick="saveUser()">保存用户权限</button>
+        <button class="button-secondary" type="button" onclick="closeUserEditor()">关闭</button>
+        <span id="saveUserStatus" class="save-status"></span>
+      </div>
     </section>
 
     <section class="panel">
@@ -451,7 +476,22 @@
       document.getElementById("wechat").value = selectedUser.wechat || "";
       document.getElementById("phone").value = selectedUser.phone || "";
       document.getElementById("note").value = selectedUser.note || "";
+      setUserSaveStatus("");
       document.getElementById("editor").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function closeUserEditor() {
+      document.getElementById("editor").style.display = "none";
+      document.getElementById("editor").dataset.visitorId = "";
+      selectedUser = null;
+      selectedVisitorId = "";
+      setUserSaveStatus("");
+    }
+
+    function setUserSaveStatus(text, isError = false) {
+      const status = document.getElementById("saveUserStatus");
+      status.textContent = text;
+      status.className = isError ? "save-status error" : "save-status";
     }
 
     async function saveUser() {
@@ -460,6 +500,7 @@
 
       if (!visitorId) {
         setMessage("请先在用户列表里点击“编辑”，再保存用户权限。", true);
+        setUserSaveStatus("请先选择用户", true);
         return;
       }
 
@@ -467,6 +508,7 @@
         button.disabled = true;
         button.textContent = "正在保存...";
         setMessage("正在保存用户权限，请稍候...");
+        setUserSaveStatus("正在保存...");
 
         const result = await adminFetch(`/api/admin/users/${encodeURIComponent(visitorId)}`, {
           method: "PATCH",
@@ -487,9 +529,16 @@
 
         selectedUser = result.user || selectedUser;
         setMessage("用户权限已保存。");
+        setUserSaveStatus("已保存");
         await refreshAll();
+        setTimeout(() => {
+          if (selectedVisitorId === visitorId || document.getElementById("editor").dataset.visitorId === visitorId) {
+            closeUserEditor();
+          }
+        }, 800);
       } catch (error) {
         setMessage(`保存失败：${error.message}`, true);
+        setUserSaveStatus(`保存失败：${error.message}`, true);
       } finally {
         button.disabled = false;
         button.textContent = "保存用户权限";
