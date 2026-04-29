@@ -547,6 +547,53 @@ function extractDecimalCoordinateLines(text) {
   return coordinateLines;
 }
 
+function splitGroupsAtRepeatedBoundary(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map(line => line.trim());
+  const result = [];
+  let currentGroup = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (!line) {
+      if (result.length > 0 && result[result.length - 1] !== "") {
+        result.push("");
+      }
+      currentGroup = [];
+      continue;
+    }
+
+    result.push(line);
+
+    if (!/^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(line)) {
+      continue;
+    }
+
+    const normalized = line.replace(/\s*,\s*/g, ",");
+    const previousNormalized = currentGroup[currentGroup.length - 1];
+    currentGroup.push(normalized);
+
+    const remainingCoordinateCount = lines
+      .slice(index + 1)
+      .filter(nextLine => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(nextLine))
+      .length;
+
+    if (
+      currentGroup.length >= 4
+      && remainingCoordinateCount >= 3
+      && previousNormalized === normalized
+      && result[result.length - 1] !== ""
+    ) {
+      result.push("");
+      currentGroup = [];
+    }
+  }
+
+  return result.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function extractNumbersWithThousands(text) {
   return (String(text || "").match(/[-+]?\d{1,3}(?:\s+\d{3})+(?:\.\d+)?|[-+]?\d+(?:\.\d+)?/g) || [])
     .map(value => value.replace(/\s+/g, ""));
@@ -730,7 +777,7 @@ function extractCoordinateLines(text) {
   const decimalLines = extractDecimalCoordinateLines(text);
 
   if (decimalLines.length > 0) {
-    return decimalLines.join("\n");
+    return splitGroupsAtRepeatedBoundary(decimalLines.join("\n"));
   }
 
   const dmsLines = extractDmsCoordinateLines(text);

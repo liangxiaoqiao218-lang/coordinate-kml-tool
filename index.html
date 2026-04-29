@@ -1257,7 +1257,7 @@
         }
       }
 
-      return groupEveryFourLinesWhenLikely(coordinateLines.join("\n").replace(/\n{3,}/g, "\n\n").trim());
+      return splitGroupsAtRepeatedBoundary(groupEveryFourLinesWhenLikely(coordinateLines.join("\n").replace(/\n{3,}/g, "\n\n").trim()));
     }
 
     function extractProjectedCoordinateLines(text) {
@@ -1499,7 +1499,7 @@
       let bestCount = 0;
 
       for (const result of results) {
-        const value = String(result || "").trim();
+        const value = splitGroupsAtRepeatedBoundary(String(result || "").trim());
 
         if (!value || value === noCoordinatesText) {
           continue;
@@ -1535,6 +1535,52 @@
       return lines
         .map((line, index) => (index > 0 && index % 4 === 0 ? `\n${line}` : line))
         .join("\n");
+    }
+
+    function splitGroupsAtRepeatedBoundary(text) {
+      const lines = String(text || "").split(/\r?\n/);
+      const result = [];
+      let currentGroup = [];
+
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index].trim();
+
+        if (!line) {
+          if (result.length > 0 && result[result.length - 1] !== "") {
+            result.push("");
+          }
+          currentGroup = [];
+          continue;
+        }
+
+        result.push(line);
+
+        const pair = parseCoordinateLine(line) || parseProjectedCoordinateLine(line);
+        if (!pair) {
+          continue;
+        }
+
+        const normalized = `${pair.longitude},${pair.latitude}`;
+        const previousNormalized = currentGroup[currentGroup.length - 1];
+        currentGroup.push(normalized);
+
+        const remainingCoordinateCount = lines
+          .slice(index + 1)
+          .filter(nextLine => parseCoordinateLine(nextLine.trim()) || parseProjectedCoordinateLine(nextLine.trim()))
+          .length;
+
+        if (
+          currentGroup.length >= 4
+          && remainingCoordinateCount >= 3
+          && previousNormalized === normalized
+          && result[result.length - 1] !== ""
+        ) {
+          result.push("");
+          currentGroup = [];
+        }
+      }
+
+      return result.join("\n").replace(/\n{3,}/g, "\n\n").trim();
     }
 
     function loadImage(file) {
