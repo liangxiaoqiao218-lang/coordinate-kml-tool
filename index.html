@@ -1220,7 +1220,14 @@
       for (const line of lines) {
         const trimmed = line.trim();
 
-        if (!trimmed || /annoter|tourner|rechercher|partager|hectares|point|latitude|longitude/i.test(trimmed)) {
+        if (!trimmed) {
+          if (coordinateLines.length > 0 && coordinateLines[coordinateLines.length - 1] !== "") {
+            coordinateLines.push("");
+          }
+          continue;
+        }
+
+        if (/annoter|tourner|rechercher|partager|hectares|point|latitude|longitude/i.test(trimmed)) {
           continue;
         }
 
@@ -1233,7 +1240,7 @@
         }
       }
 
-      return coordinateLines.join("\n");
+      return coordinateLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
     }
 
     function extractProjectedCoordinateLines(text) {
@@ -1539,6 +1546,36 @@
       }
 
       return pairs;
+    }
+
+    function getCoordinateGroups() {
+      const lines = input.value.split(/\r?\n/);
+      const groups = [];
+      let currentGroup = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+          if (currentGroup.length > 0) {
+            groups.push(currentGroup);
+            currentGroup = [];
+          }
+          continue;
+        }
+
+        const pair = parseCoordinateLine(trimmed) || parseProjectedCoordinateLine(trimmed);
+
+        if (pair) {
+          currentGroup.push(pair);
+        }
+      }
+
+      if (currentGroup.length > 0) {
+        groups.push(currentGroup);
+      }
+
+      return groups;
     }
 
     async function swapLongitudeLatitude() {
@@ -1883,9 +1920,9 @@
     </Placemark>`).join("\n");
     }
 
-    function buildLineStringKml(pairs) {
+    function buildLineStringKml(pairs, groupIndex = 1) {
       return `    <Placemark>
-      <name>坐标线</name>
+      <name>坐标线 ${groupIndex}</name>
       <LineString>
         <tessellate>1</tessellate>
         <coordinates>${formatKmlCoordinates(pairs)}</coordinates>
@@ -1893,11 +1930,11 @@
     </Placemark>`;
     }
 
-    function buildPolygonKml(pairs) {
+    function buildPolygonKml(pairs, groupIndex = 1) {
       const closedPairs = getClosedPolygonPairs(pairs);
 
       return `    <Placemark>
-      <name>矿区范围</name>
+      <name>矿区范围 ${groupIndex}</name>
       <Style>
         <LineStyle>
           <color>ff0000ff</color>
@@ -1929,7 +1966,8 @@
         return;
       }
 
-      const pairs = getCoordinatePairs();
+      const coordinateGroups = getCoordinateGroups();
+      const pairs = coordinateGroups.flat();
       const selectedType = exportType.value;
 
       if (pairs.length === 0) {
@@ -1942,12 +1980,18 @@
         return;
       }
 
-      if (selectedType === "LineString" && pairs.length < 2) {
+      const validGroups = selectedType === "Polygon"
+        ? coordinateGroups.filter(group => group.length >= 3)
+        : selectedType === "LineString"
+          ? coordinateGroups.filter(group => group.length >= 2)
+          : coordinateGroups;
+
+      if (selectedType === "LineString" && validGroups.length === 0) {
         showMessage("生成线至少需要 2 组坐标。", true);
         return;
       }
 
-      if (selectedType === "Polygon" && pairs.length < 3) {
+      if (selectedType === "Polygon" && validGroups.length === 0) {
         showMessage("生成面至少需要 3 组坐标。", true);
         return;
       }
@@ -1959,10 +2003,14 @@
         placemarks = buildPointKml(pairs);
         documentName = "坐标点位导出";
       } else if (selectedType === "LineString") {
-        placemarks = buildLineStringKml(pairs);
+        placemarks = validGroups
+          .map((group, index) => buildLineStringKml(group, index + 1))
+          .join("\n");
         documentName = "坐标线导出";
       } else {
-        placemarks = buildPolygonKml(pairs);
+        placemarks = validGroups
+          .map((group, index) => buildPolygonKml(group, index + 1))
+          .join("\n");
         documentName = "矿区范围导出";
       }
 
@@ -1992,7 +2040,7 @@ ${placemarks}
       });
 
       if (selectedType === "Polygon") {
-        showMessage(`已生成闭合 Polygon 面 KML，包含 ${pairs.length} 组输入坐标。`);
+        showMessage(`已生成 ${validGroups.length} 个闭合 Polygon 面 KML，包含 ${pairs.length} 组输入坐标。`);
       } else {
         showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 组坐标。`);
       }
