@@ -150,13 +150,84 @@ function normalizeAdminUser(user, fallbackId = "") {
   };
 }
 
+const eventNameLabels = {
+  page_visit: "打开页面",
+  permission_blocked: "权限拦截",
+  undo_click: "撤销",
+  manual_support_click: "人工协助识别",
+  swap_lnglat_click: "交换经纬度",
+  format_convert_click: "格式转换",
+  copy_content_click: "复制内容",
+  clear_content_click: "清空内容",
+  normalize_click: "标准化坐标",
+  kml_download_click: "生成KML文件并下载",
+  image_upload_select: "上传坐标图片",
+  image_recognize_success: "图片识别成功",
+  image_recognize_fail: "图片识别失败"
+};
+
+function getEventLabel(eventName) {
+  return eventNameLabels[eventName] || eventName || "";
+}
+
+function getDateKey(dateText) {
+  const date = new Date(dateText);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
+function getDaysSince(dateText) {
+  const time = new Date(dateText).getTime();
+  return Number.isNaN(time) ? 999 : Math.max(0, Math.floor((Date.now() - time) / 86400000));
+}
+
+function buildUserInsights(data, user) {
+  const events = (data.events || []).filter(event => event?.visitorId === user.visitorId);
+  const visitDays = new Set(events.map(event => getDateKey(event.createdAt)).filter(Boolean)).size || (user.lastSeenAt ? 1 : 0);
+  const kmlDownloads = events.filter(event => event.eventName === "kml_download_click").length;
+  const imageSuccess = events.filter(event => event.eventName === "image_recognize_success").length;
+  const manualSupport = events.filter(event => event.eventName === "manual_support_click").length;
+  const daysSinceLastSeen = getDaysSince(user.lastSeenAt || user.createdAt || "");
+  let segment = "new";
+  let segmentLabel = "新用户";
+
+  if (daysSinceLastSeen >= 7) {
+    segment = "lost";
+    segmentLabel = "流失用户";
+  } else if (daysSinceLastSeen >= 3) {
+    segment = "inactive";
+    segmentLabel = "沉默用户";
+  } else if (kmlDownloads >= 2 || imageSuccess >= 2 || manualSupport >= 1 || (visitDays >= 2 && kmlDownloads >= 1)) {
+    segment = "quality";
+    segmentLabel = "优质用户";
+  } else if (visitDays >= 2 || events.length >= 5) {
+    segment = "returning";
+    segmentLabel = "回访用户";
+  }
+
+  return {
+    visitDays,
+    kmlDownloads,
+    imageSuccess,
+    manualSupport,
+    daysSinceLastSeen,
+    segment,
+    segmentLabel
+  };
+}
+
 function getAdminUsersList(data) {
   if (!data.users || typeof data.users !== "object") {
     return [];
   }
 
   return Object.entries(data.users)
-    .map(([id, user]) => normalizeAdminUser(user, id))
+    .map(([id, user]) => {
+      const normalized = normalizeAdminUser(user, id);
+      return {
+        ...normalized,
+        ...buildUserInsights(data, normalized)
+      };
+    })
     .filter(user => user.visitorId);
 }
 
@@ -168,12 +239,17 @@ function getClientIp(req) {
 }
 
 function normalizeIp(ip) {
-  return String(ip || "")
+  let cleanIp = String(ip || "")
     .split(",")[0]
     .trim()
     .replace(/^::ffff:/, "")
-    .replace(/^\[|\]$/g, "")
-    .replace(/:\d+$/, "");
+    .replace(/^\[|\]$/g, "");
+
+  if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(cleanIp)) {
+    cleanIp = cleanIp.replace(/:\d+$/, "");
+  }
+
+  return cleanIp;
 }
 
 function isPrivateIp(ip) {
@@ -206,6 +282,28 @@ function translateCountry(country) {
   };
 
   return names[country] || country || "";
+}
+
+function translateCountryCode(code) {
+  const names = {
+    CN: "中国",
+    GN: "几内亚",
+    ML: "马里",
+    BF: "布基纳法索",
+    CI: "科特迪瓦",
+    GH: "加纳",
+    NG: "尼日利亚",
+    SN: "塞内加尔",
+    SL: "塞拉利昂",
+    LR: "利比里亚",
+    CD: "刚果金",
+    CG: "刚果",
+    CM: "喀麦隆",
+    US: "美国",
+    FR: "法国"
+  };
+
+  return names[String(code || "").toUpperCase()] || "";
 }
 
 function translateChinaRegion(region) {
@@ -261,6 +359,64 @@ function formatIpLocation(geo) {
   return translateCountry(geo.country) || geo.region || geo.city || "";
 }
 
+function normalizeGeoResult(raw, provider, ip) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const country = raw.country_name || raw.country || "";
+  const countryCode = raw.country_code || raw.countryCode || raw.country_code2 || "";
+  const region = raw.region || raw.regionName || raw.region_name || "";
+  const city = raw.city || "";
+  let label = "";
+
+  if (String(countryCode).toUpperCase() === "CN" || country === "China") {
+    label = translateChinaRegion(region) || city || translateCountryCode("CN");
+  } else {
+    label = translateCountryCode(countryCode) || translateCountry(country) || region || city;
+  }
+
+  if (label && city && label !== city && String(countryCode).toUpperCase() !== "CN") {
+    label = `${label} ${city}`;
+  }
+
+  if (!label) {
+    return null;
+  }
+
+  return {
+    ip,
+    provider,
+    country,
+    countryCode,
+    region,
+    city,
+    label,
+    updatedAt: getNowISO()
+  };
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs = 3500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      headers: { accept: "application/json" },
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function lookupIpLocation(ip, data) {
   const cleanIp = normalizeIp(ip);
 
@@ -273,35 +429,54 @@ async function lookupIpLocation(ip, data) {
   }
 
   const cached = data.ipGeoCache[cleanIp];
-  if (cached?.label) {
+  const cachedAge = cached?.updatedAt ? Date.now() - new Date(cached.updatedAt).getTime() : 0;
+  if (cached?.label && cached.label !== "未知地区" && cachedAge < 7 * 86400000) {
     return cached;
   }
 
-  try {
-    const response = await fetch(`https://ipwho.is/${encodeURIComponent(cleanIp)}`, {
-      headers: { accept: "application/json" }
-    });
-    const geo = await response.json();
-
-    if (!response.ok || geo.success === false) {
-      return { ip: cleanIp, label: "" };
-    }
-
-    const result = {
-      ip: cleanIp,
-      country: geo.country || "",
-      region: geo.region || "",
-      city: geo.city || "",
-      label: formatIpLocation(geo),
-      updatedAt: getNowISO()
-    };
-
-    data.ipGeoCache[cleanIp] = result;
-    return result;
-  } catch (error) {
-    console.error("IP location lookup failed:", cleanIp, error.message);
-    return { ip: cleanIp, label: "" };
+  if (cached?.label === "未知地区" && cachedAge < 6 * 3600000) {
+    return cached;
   }
+
+  const providers = [
+    {
+      name: "ipwho.is",
+      url: `https://ipwho.is/${encodeURIComponent(cleanIp)}`,
+      parse: geo => geo?.success === false ? null : normalizeGeoResult(geo, "ipwho.is", cleanIp)
+    },
+    {
+      name: "ipapi.co",
+      url: `https://ipapi.co/${encodeURIComponent(cleanIp)}/json/`,
+      parse: geo => geo?.error ? null : normalizeGeoResult(geo, "ipapi.co", cleanIp)
+    },
+    {
+      name: "country.is",
+      url: `https://api.country.is/${encodeURIComponent(cleanIp)}`,
+      parse: geo => normalizeGeoResult({ country_code: geo?.country }, "country.is", cleanIp)
+    }
+  ];
+
+  for (const provider of providers) {
+    try {
+      const geo = await fetchJsonWithTimeout(provider.url);
+      const result = provider.parse(geo);
+
+      if (result?.label) {
+        data.ipGeoCache[cleanIp] = result;
+        return result;
+      }
+    } catch (error) {
+      console.error("IP location lookup failed:", provider.name, cleanIp, error.message);
+    }
+  }
+
+  const fallback = {
+    ip: cleanIp,
+    label: "未知地区",
+    updatedAt: getNowISO()
+  };
+  data.ipGeoCache[cleanIp] = fallback;
+  return fallback;
 }
 
 async function updateUserVisitMeta(user, req, data) {
@@ -895,19 +1070,35 @@ app.get("/api/admin/summary", requireAdmin, async (req, res) => {
         continue;
       }
 
-      eventsByName[event.eventName] = (eventsByName[event.eventName] || 0) + 1;
+      const label = getEventLabel(event.eventName);
+      eventsByName[label] = (eventsByName[label] || 0) + 1;
     }
+
+    const returningUsers = users.filter(user => user.visitDays >= 2).length;
+    const qualityUsers = users.filter(user => user.segment === "quality").length;
+    const newUsers = users.filter(user => user.segment === "new").length;
+    const inactiveUsers = users.filter(user => user.segment === "inactive").length;
+    const lostUsers = users.filter(user => user.segment === "lost").length;
 
     res.json({
       totals: {
         users: users.length,
         events: data.events.length,
         vipUsers: users.filter(user => user.plan === "vip").length,
-        disabledUsers: users.filter(user => user.status === "disabled").length
+        disabledUsers: users.filter(user => user.status === "disabled").length,
+        returningUsers,
+        qualityUsers,
+        newUsers,
+        inactiveUsers,
+        lostUsers,
+        returningRate: users.length ? Math.round((returningUsers / users.length) * 100) : 0
       },
       eventsByName,
       featureFlags: data.featureFlags,
-      recentEvents: data.events.slice(-80).reverse()
+      recentEvents: data.events.slice(-80).reverse().map(event => ({
+        ...event,
+        eventLabel: getEventLabel(event.eventName)
+      }))
     });
   } catch (error) {
     console.error(error);

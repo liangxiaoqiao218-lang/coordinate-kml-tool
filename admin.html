@@ -81,7 +81,7 @@
 
     .cards {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: 10px;
     }
 
@@ -224,6 +224,11 @@
         <div class="card">事件数<strong id="eventsTotal">0</strong></div>
         <div class="card">VIP用户<strong id="vipTotal">0</strong></div>
         <div class="card">禁用用户<strong id="disabledTotal">0</strong></div>
+        <div class="card">回访率<strong id="returningRate">0%</strong></div>
+        <div class="card">新用户<strong id="newUsersTotal">0</strong></div>
+        <div class="card">回访用户<strong id="returningUsersTotal">0</strong></div>
+        <div class="card">优质用户<strong id="qualityUsersTotal">0</strong></div>
+        <div class="card">沉默/流失<strong id="inactiveUsersTotal">0</strong></div>
       </div>
     </section>
 
@@ -262,9 +267,11 @@
             <th>用户ID</th>
             <th>套餐</th>
             <th>状态</th>
+            <th>用户类型</th>
             <th>最近IP</th>
             <th>地区</th>
             <th>终端</th>
+            <th>访问天数</th>
             <th>事件数</th>
             <th>最后访问</th>
             <th>操作</th>
@@ -438,6 +445,11 @@
       document.getElementById("eventsTotal").textContent = summary.totals.events;
       document.getElementById("vipTotal").textContent = summary.totals.vipUsers;
       document.getElementById("disabledTotal").textContent = summary.totals.disabledUsers;
+      document.getElementById("returningRate").textContent = `${summary.totals.returningRate || 0}%`;
+      document.getElementById("newUsersTotal").textContent = summary.totals.newUsers || 0;
+      document.getElementById("returningUsersTotal").textContent = summary.totals.returningUsers || 0;
+      document.getElementById("qualityUsersTotal").textContent = summary.totals.qualityUsers || 0;
+      document.getElementById("inactiveUsersTotal").textContent = (summary.totals.inactiveUsers || 0) + (summary.totals.lostUsers || 0);
 
       const flags = summary.featureFlags || {};
       document.getElementById("flagAi").checked = Boolean(flags.aiOcrEnabled);
@@ -451,7 +463,7 @@
         .join("");
 
       document.getElementById("recentEvents").innerHTML = (summary.recentEvents || [])
-        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.ip || "")}</td><td>${escapeHtml(event.ipLocation || "")}</td><td>${escapeHtml(describeTerminal(event.userAgent || ""))}</td><td>${escapeHtml(event.eventName)}</td></tr>`)
+        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.ip || "")}</td><td>${escapeHtml(event.ipLocation || "")}</td><td>${escapeHtml(describeTerminal(event.userAgent || ""))}</td><td>${escapeHtml(event.eventLabel || event.eventName)}</td></tr>`)
         .join("");
     }
 
@@ -461,9 +473,11 @@
           <td>${escapeHtml(user.visitorId)}</td>
           <td>${escapeHtml(user.plan || "free")}</td>
           <td>${escapeHtml(user.status || "active")}</td>
+          <td>${escapeHtml(user.segmentLabel || "新用户")}</td>
           <td>${escapeHtml(user.lastIp || "")}</td>
           <td>${escapeHtml(user.lastIpLocation || "")}</td>
           <td>${escapeHtml(describeTerminal(user.lastUserAgent || ""))}</td>
+          <td>${user.visitDays || 0}</td>
           <td>${user.eventCount || 0}</td>
           <td>${formatTime(user.lastSeenAt)}</td>
           <td><button type="button" onclick="editUser('${escapeAttr(user.visitorId)}')">编辑</button></td>
