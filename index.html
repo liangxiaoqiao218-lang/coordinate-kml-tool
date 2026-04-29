@@ -395,13 +395,6 @@
       margin: 0;
     }
 
-    .close-panel {
-      min-height: 34px;
-      padding: 7px 10px;
-      background: #475569;
-      font-size: 13px;
-    }
-
     .support-panel p {
       margin: 6px 0;
       color: #36513d;
@@ -614,7 +607,7 @@
 
     <div class="buttons">
       <button type="button" onclick="normalizeCoordinates()">标准化坐标</button>
-      <button type="button" class="support" onclick="showManualSupport()">人工协助识别</button>
+      <button type="button" class="support" onclick="toggleManualSupport()">人工协助识别</button>
     </div>
 
     <div id="message" class="message"></div>
@@ -632,7 +625,6 @@
     <div id="supportPanel" class="panel support-panel">
       <div class="panel-title-row">
         <h2>人工协助识别</h2>
-        <button type="button" class="close-panel" onclick="hideManualSupport()">收回</button>
       </div>
       <p>如果图片有水印、表格错位、手机菜单、DMS 粘连或扫描不清，自动识别可能不稳定。你可以把原图和识别原文发给人工协助，我们帮你整理成 KML 可用的经度,纬度格式。</p>
       <div class="support-actions">
@@ -820,7 +812,7 @@
 
     function showUploadSupportMessage(text) {
       uploadMessage.style.display = "block";
-      uploadMessage.innerHTML = `${text}<button type="button" class="inline-link" onclick="showManualSupport()">人工协助识别</button>`;
+      uploadMessage.innerHTML = `${text}<button type="button" class="inline-link" onclick="openManualSupport()">人工协助识别</button>`;
     }
 
     function getRecognitionFailureMessage(errorMessage, responseStatus) {
@@ -912,7 +904,7 @@
       debugText.textContent = debugText.textContent ? `${debugText.textContent}\n${text}` : text;
     }
 
-    async function showManualSupport() {
+    async function openManualSupport() {
       await loadUserConfig();
 
       if (!canUse("manualSupportEnabled", "当前用户暂未开通人工协助入口。")) {
@@ -924,9 +916,17 @@
       trackEvent("manual_support_click");
     }
 
+    async function toggleManualSupport() {
+      if (supportPanel.style.display === "block") {
+        hideManualSupport();
+        return;
+      }
+
+      await openManualSupport();
+    }
+
     function hideManualSupport() {
       supportPanel.style.display = "none";
-      showMessage("已收回人工协助窗口。");
     }
 
     async function copyText(text, successMessage) {
@@ -2253,14 +2253,14 @@ ${placemarks}
         appendDebug(`识别提示：${data.warning || "无"}`);
 
         if (!response.ok) {
-          showManualSupport();
+          openManualSupport();
           throw new Error(data.error || data.detail || "识别失败");
         }
 
         if (!finalCoordinates || finalCoordinates === noCoordinatesText) {
           showMessage("");
           showUploadSupportMessage(getRecognitionFailureMessage(data.warning || data.error || "未识别到有效坐标", response.status));
-          showManualSupport();
+          openManualSupport();
           return;
         }
 
@@ -2284,7 +2284,7 @@ ${placemarks}
         });
         showMessage(`识别失败：${error.message}`, true);
         showUploadSupportMessage(getRecognitionFailureMessage(error.message));
-        showManualSupport();
+        openManualSupport();
       } finally {
         imageInput.disabled = false;
         imageInput.value = "";

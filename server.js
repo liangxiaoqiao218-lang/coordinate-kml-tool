@@ -29,6 +29,7 @@ function createDefaultAdminData() {
   return {
     users: {},
     events: [],
+    ipGeoCache: {},
     featureFlags: {
       aiOcrEnabled: true,
       xyConvertEnabled: true,
@@ -49,6 +50,7 @@ async function readAdminData() {
       ...data,
       users: data.users || {},
       events: Array.isArray(data.events) ? data.events : [],
+      ipGeoCache: data.ipGeoCache && typeof data.ipGeoCache === "object" ? data.ipGeoCache : {},
       featureFlags: {
         ...defaults.featureFlags,
         ...(data.featureFlags || {})
@@ -142,6 +144,8 @@ function normalizeAdminUser(user, fallbackId = "") {
     wechat: safeUser.wechat || "",
     firstIp: safeUser.firstIp || "",
     lastIp: safeUser.lastIp || "",
+    firstIpLocation: safeUser.firstIpLocation || "",
+    lastIpLocation: safeUser.lastIpLocation || "",
     lastUserAgent: safeUser.lastUserAgent || ""
   };
 }
@@ -163,13 +167,151 @@ function getClientIp(req) {
   return firstForwardedIp || req.ip || req.socket?.remoteAddress || "";
 }
 
-function updateUserVisitMeta(user, req) {
+function normalizeIp(ip) {
+  return String(ip || "")
+    .split(",")[0]
+    .trim()
+    .replace(/^::ffff:/, "")
+    .replace(/^\[|\]$/g, "")
+    .replace(/:\d+$/, "");
+}
+
+function isPrivateIp(ip) {
+  const cleanIp = normalizeIp(ip);
+
+  return (
+    !cleanIp ||
+    cleanIp === "::1" ||
+    cleanIp === "127.0.0.1" ||
+    cleanIp.startsWith("10.") ||
+    cleanIp.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(cleanIp)
+  );
+}
+
+function translateCountry(country) {
+  const names = {
+    China: "中国",
+    Guinea: "几内亚",
+    Mali: "马里",
+    "Burkina Faso": "布基纳法索",
+    "Cote d'Ivoire": "科特迪瓦",
+    "Côte d'Ivoire": "科特迪瓦",
+    "Ivory Coast": "科特迪瓦",
+    Ghana: "加纳",
+    Nigeria: "尼日利亚",
+    Senegal: "塞内加尔",
+    "Sierra Leone": "塞拉利昂",
+    Liberia: "利比里亚"
+  };
+
+  return names[country] || country || "";
+}
+
+function translateChinaRegion(region) {
+  const names = {
+    Beijing: "北京",
+    Shanghai: "上海",
+    Tianjin: "天津",
+    Chongqing: "重庆",
+    Guangdong: "广东",
+    Guangxi: "广西",
+    Hunan: "湖南",
+    Hubei: "湖北",
+    Henan: "河南",
+    Hebei: "河北",
+    Shandong: "山东",
+    Shanxi: "山西",
+    Shaanxi: "陕西",
+    Jiangsu: "江苏",
+    Zhejiang: "浙江",
+    Fujian: "福建",
+    Jiangxi: "江西",
+    Anhui: "安徽",
+    Sichuan: "四川",
+    Yunnan: "云南",
+    Guizhou: "贵州",
+    Hainan: "海南",
+    Liaoning: "辽宁",
+    Jilin: "吉林",
+    Heilongjiang: "黑龙江",
+    Gansu: "甘肃",
+    Qinghai: "青海",
+    Ningxia: "宁夏",
+    Xinjiang: "新疆",
+    Tibet: "西藏",
+    "Inner Mongolia": "内蒙古",
+    "Hong Kong": "香港",
+    Macau: "澳门",
+    Taiwan: "台湾"
+  };
+
+  return names[region] || region || "";
+}
+
+function formatIpLocation(geo) {
+  if (!geo) {
+    return "";
+  }
+
+  if (geo.country === "China") {
+    return translateChinaRegion(geo.region) || "中国";
+  }
+
+  return translateCountry(geo.country) || geo.region || geo.city || "";
+}
+
+async function lookupIpLocation(ip, data) {
+  const cleanIp = normalizeIp(ip);
+
+  if (isPrivateIp(cleanIp)) {
+    return { ip: cleanIp, label: cleanIp ? "本地网络" : "" };
+  }
+
+  if (!data.ipGeoCache || typeof data.ipGeoCache !== "object") {
+    data.ipGeoCache = {};
+  }
+
+  const cached = data.ipGeoCache[cleanIp];
+  if (cached?.label) {
+    return cached;
+  }
+
+  try {
+    const response = await fetch(`https://ipwho.is/${encodeURIComponent(cleanIp)}`, {
+      headers: { accept: "application/json" }
+    });
+    const geo = await response.json();
+
+    if (!response.ok || geo.success === false) {
+      return { ip: cleanIp, label: "" };
+    }
+
+    const result = {
+      ip: cleanIp,
+      country: geo.country || "",
+      region: geo.region || "",
+      city: geo.city || "",
+      label: formatIpLocation(geo),
+      updatedAt: getNowISO()
+    };
+
+    data.ipGeoCache[cleanIp] = result;
+    return result;
+  } catch (error) {
+    console.error("IP location lookup failed:", cleanIp, error.message);
+    return { ip: cleanIp, label: "" };
+  }
+}
+
+async function updateUserVisitMeta(user, req, data) {
   if (!user) {
     return;
   }
 
   const ip = getClientIp(req);
   const userAgent = req.get("user-agent") || "";
+  let ipLocation = "";
 
   if (!user.firstIp && ip) {
     user.firstIp = ip;
@@ -177,6 +319,19 @@ function updateUserVisitMeta(user, req) {
 
   if (ip) {
     user.lastIp = ip;
+
+    if (data) {
+      const geo = await lookupIpLocation(ip, data);
+      ipLocation = geo.label || "";
+
+      if (ipLocation) {
+        user.lastIpLocation = ipLocation;
+
+        if (!user.firstIpLocation) {
+          user.firstIpLocation = ipLocation;
+        }
+      }
+    }
   }
 
   if (userAgent) {
@@ -184,6 +339,39 @@ function updateUserVisitMeta(user, req) {
   }
 
   user.lastSeenAt = getNowISO();
+  return ipLocation;
+}
+
+async function enrichAdminLocations(data) {
+  if (!data || typeof data !== "object") {
+    return;
+  }
+
+  for (const user of Object.values(data.users || {})) {
+    if (!user || typeof user !== "object" || !user.lastIp || user.lastIpLocation) {
+      continue;
+    }
+
+    const geo = await lookupIpLocation(user.lastIp, data);
+    if (geo.label) {
+      user.lastIpLocation = geo.label;
+
+      if (!user.firstIpLocation) {
+        user.firstIpLocation = geo.label;
+      }
+    }
+  }
+
+  for (const event of (data.events || []).slice(-100)) {
+    if (!event || !event.ip || event.ipLocation) {
+      continue;
+    }
+
+    const geo = await lookupIpLocation(event.ip, data);
+    if (geo.label) {
+      event.ipLocation = geo.label;
+    }
+  }
 }
 
 function getEffectivePermissions(user, featureFlags) {
@@ -581,7 +769,7 @@ app.get("/api/config", async (req, res) => {
     const user = ensureUser(data, visitorId);
 
     if (user) {
-      updateUserVisitMeta(user, req);
+      await updateUserVisitMeta(user, req, data);
       await writeAdminData(data);
     }
 
@@ -614,15 +802,19 @@ app.post("/api/track", async (req, res) => {
     const user = ensureUser(data, visitorId);
 
     if (user) {
-      updateUserVisitMeta(user, req);
+      await updateUserVisitMeta(user, req, data);
       user.eventCount = (user.eventCount || 0) + 1;
     }
+
+    const ip = getClientIp(req);
+    const geo = await lookupIpLocation(ip, data);
 
     data.events.push({
       id: makeId("evt"),
       visitorId,
       eventName,
-      ip: getClientIp(req),
+      ip,
+      ipLocation: geo.label || "",
       userAgent: (req.get("user-agent") || "").slice(0, 300),
       page: String(req.body?.page || ""),
       extra: req.body?.extra || {},
@@ -646,6 +838,8 @@ app.post("/api/track", async (req, res) => {
 app.get("/api/admin/summary", requireAdmin, async (req, res) => {
   try {
     const data = await readAdminData();
+    await enrichAdminLocations(data);
+    await writeAdminData(data);
     const users = getAdminUsersList(data);
     const eventsByName = {};
 
@@ -679,6 +873,8 @@ app.get("/api/admin/summary", requireAdmin, async (req, res) => {
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
     const data = await readAdminData();
+    await enrichAdminLocations(data);
+    await writeAdminData(data);
     const users = getAdminUsersList(data)
       .sort((a, b) => String(b.lastSeenAt || "").localeCompare(String(a.lastSeenAt || "")));
 
@@ -781,7 +977,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 
     if (!permissions.aiOcrEnabled) {
       if (user) {
-        updateUserVisitMeta(user, req);
+        await updateUserVisitMeta(user, req, adminData);
         await writeAdminData(adminData);
       }
 
