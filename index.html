@@ -117,11 +117,20 @@
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 10px;
-      margin-top: 14px;
+      margin-top: 18px;
     }
 
     .settings-grid .panel {
       margin-top: 0;
+    }
+
+    .setting-panel {
+      background: #f8fafc;
+    }
+
+    .setting-panel label {
+      color: #475569;
+      font-size: 14px;
     }
 
     .upload-box {
@@ -284,6 +293,16 @@
 
     button.support:hover {
       background: #166534;
+    }
+
+    button.utility-action {
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #334155;
+    }
+
+    button.utility-action:hover {
+      background: #f1f5f9;
     }
 
     .primary-action {
@@ -508,11 +527,23 @@
 
       .upload-box {
         margin-top: 10px;
-        padding: 10px 12px;
+        padding: 9px 12px;
       }
 
       .upload-box label {
-        font-size: 21px;
+        font-size: 19px;
+      }
+
+      .privacy-note {
+        margin-top: 4px;
+      }
+
+      .primary-action {
+        margin-top: 10px;
+      }
+
+      .buttons {
+        margin-top: 10px;
       }
 
       .buttons,
@@ -578,25 +609,6 @@
 
     <button type="button" class="primary-action" onclick="downloadKml()">生成KML文件并下载</button>
 
-    <div class="settings-grid">
-      <div class="panel">
-        <label for="coordinateFormat">格式转换</label>
-        <select id="coordinateFormat">
-          <option value="dms" selected>转为度分秒（默认）</option>
-          <option value="dm">转为度分</option>
-          <option value="degree">转为度</option>
-        </select>
-      </div>
-      <div class="panel">
-        <label for="exportType">导出类型</label>
-        <select id="exportType">
-          <option value="Polygon" selected>面 Polygon（默认，矿区范围）</option>
-          <option value="LineString">线 LineString</option>
-          <option value="Point">点位 Point</option>
-        </select>
-      </div>
-    </div>
-
     <select id="coordinateOrder" hidden>
       <option value="auto" selected>自动判断</option>
       <option value="lnglat">经度,纬度</option>
@@ -611,7 +623,7 @@
     </select>
 
     <div class="buttons">
-      <button type="button" onclick="normalizeCoordinates()">标准化坐标</button>
+      <button type="button" class="utility-action" onclick="normalizeCoordinates()">标准化坐标</button>
       <button type="button" class="support" onclick="showManualSupport()">人工协助识别</button>
     </div>
 
@@ -659,6 +671,25 @@
       生成 KML 时也会保留输入区中的原始小数精度。<br />
       Polygon 会按输入顺序连线，并自动把最后一个点连接回第一个点。
     </section>
+
+    <div class="settings-grid">
+      <div class="panel setting-panel">
+        <label for="coordinateFormat">格式转换</label>
+        <select id="coordinateFormat">
+          <option value="dms" selected>转为度分秒（默认）</option>
+          <option value="dm">转为度分</option>
+          <option value="degree">转为度</option>
+        </select>
+      </div>
+      <div class="panel setting-panel">
+        <label for="exportType">导出类型</label>
+        <select id="exportType">
+          <option value="Polygon" selected>面 Polygon（默认，矿区范围）</option>
+          <option value="LineString">线 LineString</option>
+          <option value="Point">点位 Point</option>
+        </select>
+      </div>
+    </div>
   </main>
 
   <script>
