@@ -359,6 +359,73 @@ function extractDecimalCoordinateLines(text) {
   return coordinateLines;
 }
 
+function extractNumbersWithThousands(text) {
+  return (String(text || "").match(/[-+]?\d{1,3}(?:\s+\d{3})+(?:\.\d+)?|[-+]?\d+(?:\.\d+)?/g) || [])
+    .map(value => value.replace(/\s+/g, ""));
+}
+
+function extractProjectedNumberPair(text) {
+  const groups = String(text || "").match(/\d+(?:\.\d+)?/g) || [];
+  const isSmallId = value => /^\d{1,2}$/.test(value);
+  const isThreeDigits = value => /^\d{3}$/.test(value);
+  const isOneToThreeDigits = value => /^\d{1,3}$/.test(value);
+
+  if (
+    groups.length >= 6
+    && isSmallId(groups[0])
+    && isThreeDigits(groups[1])
+    && isThreeDigits(groups[2])
+    && isOneToThreeDigits(groups[3])
+    && isThreeDigits(groups[4])
+    && isThreeDigits(groups[5])
+  ) {
+    return [`${groups[1]}${groups[2]}`, `${groups[3]}${groups[4]}${groups[5]}`];
+  }
+
+  if (
+    groups.length >= 5
+    && isThreeDigits(groups[0])
+    && isThreeDigits(groups[1])
+    && isOneToThreeDigits(groups[2])
+    && isThreeDigits(groups[3])
+    && isThreeDigits(groups[4])
+  ) {
+    return [`${groups[0]}${groups[1]}`, `${groups[2]}${groups[3]}${groups[4]}`];
+  }
+
+  return null;
+}
+
+function extractProjectedCoordinateLines(text) {
+  const lines = normalizeText(text)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const coordinateLines = [];
+
+  for (const line of lines) {
+    if (/annoter|tourner|rechercher|partager|hectares|latitude|longitude/i.test(line)) {
+      continue;
+    }
+
+    const tablePair = extractProjectedNumberPair(line);
+
+    if (tablePair) {
+      coordinateLines.push(`${tablePair[0]},${tablePair[1]}`);
+      continue;
+    }
+
+    const numbers = extractNumbersWithThousands(line);
+    const largeNumbers = numbers.filter(value => Math.abs(Number(value)) > 180);
+
+    if (largeNumbers.length >= 2) {
+      coordinateLines.push(`${largeNumbers[0]},${largeNumbers[1]}`);
+    }
+  }
+
+  return coordinateLines;
+}
+
 function fixLikelyLatLonOrder(firstText, secondText) {
   const first = Number(firstText);
   const second = Number(secondText);
@@ -463,6 +530,12 @@ function extractCoordinateLines(text) {
 
   if (decimalLines.length > 0) {
     return decimalLines.join("\n");
+  }
+
+  const projectedLines = extractProjectedCoordinateLines(text);
+
+  if (projectedLines.length > 0) {
+    return projectedLines.join("\n");
   }
 
   const dmsLines = extractDmsCoordinateLines(text);
@@ -775,6 +848,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 6. 十进制度、度分、度分秒 DMS。
 7. N/S/E/W，法语 O / Ouest = West = 西经。
 8. Latitude nord = 北纬；Longitude ouest = 西经。
+9. 表格数字可能带空格分组，例如 658 800 和 1 364 200，必须分别理解为 658800 和 1364200。
 
 输出规则：
 1. 识别出什么格式，就保留什么格式。不要把度分秒自动转换成十进制度。
@@ -782,8 +856,10 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 3. 如果表格是 X/Y 平面坐标，每一行输出：X,Y，保留原数字。
 4. 如果原图没有 N/W/O 字母，但表头写了 Latitude nord / Longitude ouest，需要在输出中补上 N 和 W，或用负号表达西经。
 5. 必须按 Point 编号逐行输出，不能漏掉第一行、中间行或最后一行。看到 4 个点就输出 4 行；看到 A-Z 就输出 A-Z 对应的全部行。
-6. 不要输出点号、表头、解释文字、Markdown、编号、空行。
-7. 不要压缩小数位，不要改写原始精度。
+6. 如果 X 列连续两行相同，或 Y 列连续两行相同，也必须按同一行的 X 和 Y 配对，不要把下一行的 Y 拿来配上一行。
+7. 表格右侧的斜线、手写勾、批注线不是数字，不要因为这些标记跳行或漏行。
+8. 不要输出点号、表头、解释文字、Markdown、编号、空行。
+9. 不要压缩小数位，不要改写原始精度。
 
 示例：
 09°01'13.67"W,11°43'16.45"N

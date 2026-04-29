@@ -1226,7 +1226,14 @@
           continue;
         }
 
-        const numbers = trimmed.match(/[-+]?\d+(?:\.\d+)?/g) || [];
+        const tablePair = extractProjectedNumberPair(trimmed);
+
+        if (tablePair) {
+          coordinateLines.push(`${tablePair[0]},${tablePair[1]}`);
+          continue;
+        }
+
+        const numbers = extractNumbersWithThousands(trimmed);
         const largeNumbers = numbers.filter(value => Math.abs(Number(value)) > 180);
 
         if (largeNumbers.length >= 2) {
@@ -1235,6 +1242,43 @@
       }
 
       return coordinateLines.join("\n");
+    }
+
+    function extractNumbersWithThousands(text) {
+      return (String(text || "").match(/[-+]?\d{1,3}(?:\s+\d{3})+(?:\.\d+)?|[-+]?\d+(?:\.\d+)?/g) || [])
+        .map(value => value.replace(/\s+/g, ""));
+    }
+
+    function extractProjectedNumberPair(text) {
+      const groups = String(text || "").match(/\d+(?:\.\d+)?/g) || [];
+      const isSmallId = value => /^\d{1,2}$/.test(value);
+      const isThreeDigits = value => /^\d{3}$/.test(value);
+      const isOneToThreeDigits = value => /^\d{1,3}$/.test(value);
+
+      if (
+        groups.length >= 6
+        && isSmallId(groups[0])
+        && isThreeDigits(groups[1])
+        && isThreeDigits(groups[2])
+        && isOneToThreeDigits(groups[3])
+        && isThreeDigits(groups[4])
+        && isThreeDigits(groups[5])
+      ) {
+        return [`${groups[1]}${groups[2]}`, `${groups[3]}${groups[4]}${groups[5]}`];
+      }
+
+      if (
+        groups.length >= 5
+        && isThreeDigits(groups[0])
+        && isThreeDigits(groups[1])
+        && isOneToThreeDigits(groups[2])
+        && isThreeDigits(groups[3])
+        && isThreeDigits(groups[4])
+      ) {
+        return [`${groups[0]}${groups[1]}`, `${groups[2]}${groups[3]}${groups[4]}`];
+      }
+
+      return null;
     }
 
     function hasProjectedCoordinateRows(text) {
@@ -1282,7 +1326,8 @@
         return null;
       }
 
-      const numbers = String(line || "").match(/[-+]?\d+(?:\.\d+)?/g) || [];
+      const tablePair = extractProjectedNumberPair(line);
+      const numbers = tablePair || extractNumbersWithThousands(line);
       const largeNumbers = numbers.filter(value => Math.abs(Number(value)) > 180);
 
       if (largeNumbers.length < 2) {
