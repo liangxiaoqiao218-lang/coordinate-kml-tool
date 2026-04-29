@@ -22,8 +22,8 @@
     body {
       margin: 0;
       font-family: Arial, "Microsoft YaHei", sans-serif;
-      background: #f4f7fb;
-      color: #1f2937;
+      background: #eef3f8;
+      color: #172033;
     }
 
     .page {
@@ -35,11 +35,13 @@
     h1 {
       margin: 0 0 8px;
       font-size: 28px;
+      color: #0f172a;
     }
 
     .intro {
+      max-width: 720px;
       margin: 0 0 18px;
-      color: #5b6472;
+      color: #526071;
       line-height: 1.6;
     }
 
@@ -69,14 +71,15 @@
       min-height: 40px;
       padding: 0;
       border-radius: 8px;
-      background: #e8eef7;
-      color: #1f2937;
+      border: 1px solid #d8e1ee;
+      background: #edf3fa;
+      color: #172033;
       font-size: 20px;
       line-height: 1;
     }
 
     .icon-button:hover {
-      background: #dbe6f5;
+      background: #e2ebf6;
     }
 
     .workspace-tools {
@@ -100,12 +103,13 @@
       min-height: 340px;
       padding: 14px 14px 62px 14px;
       resize: vertical;
-      border: 1px solid #cbd5e1;
+      border: 1px solid #cfd9e8;
       border-radius: 8px;
       font-size: 16px;
       line-height: 1.5;
       background: #ffffff;
       color: #111827;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
 
     textarea:focus,
@@ -118,9 +122,10 @@
     .panel {
       margin-top: 14px;
       padding: 14px;
-      border: 1px solid #d8e0ec;
+      border: 1px solid #d6dfeb;
       border-radius: 8px;
       background: #ffffff;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
     }
 
     .settings-grid {
@@ -145,7 +150,7 @@
 
     .upload-box {
       border-style: dashed;
-      border-color: #94a3b8;
+      border-color: #9fb1c8;
       background: #f8fbff;
       padding: 12px 14px;
     }
@@ -273,15 +278,18 @@
       font-size: 15px;
       font-weight: 700;
       cursor: pointer;
-      background: #2563eb;
+      background: #1f63e9;
       color: #ffffff;
       text-align: center;
       text-decoration: none;
+      box-shadow: 0 6px 14px rgba(31, 99, 233, 0.14);
+      transition: background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
     }
 
     button:hover,
     .contact-link:hover {
-      background: #1d4ed8;
+      background: #1856cf;
+      transform: translateY(-1px);
     }
 
     button:disabled {
@@ -299,6 +307,7 @@
 
     button.support {
       background: #15803d;
+      box-shadow: 0 6px 14px rgba(21, 128, 61, 0.16);
     }
 
     button.support:hover {
@@ -311,6 +320,7 @@
       margin-top: 10px;
       font-size: 17px;
       background: #145de8;
+      box-shadow: 0 10px 22px rgba(20, 93, 232, 0.2);
     }
 
     .primary-action:hover {
@@ -483,9 +493,11 @@
       margin-top: 18px;
       padding: 14px;
       border-left: 4px solid #2563eb;
+      border-radius: 8px;
       background: #ffffff;
-      color: #4b5563;
+      color: #475569;
       line-height: 1.7;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
     }
 
     .help strong {
@@ -499,6 +511,12 @@
 
       h1 {
         font-size: 23px;
+        line-height: 1.25;
+      }
+
+      .intro {
+        margin-bottom: 14px;
+        font-size: 15px;
       }
 
       textarea {
@@ -533,6 +551,7 @@
 
       .primary-action {
         margin-top: 10px;
+        min-height: 50px;
       }
 
       .buttons {
@@ -567,7 +586,7 @@
 <body>
   <main class="page">
     <h1>坐标转 KML 小工具</h1>
-    <p class="intro">上传矿业坐标图片或手动粘贴坐标。自动识别不准时，可以转人工协助整理成 KML 可用坐标。</p>
+    <p class="intro">上传矿业坐标图片，工具会尽量自动识别并放到坐标工作区。你也可以直接粘贴坐标，核对后生成 Google Earth / 奥维地图可打开的 KML 文件；识别不准时，可转人工协助整理。</p>
 
     <div class="workspace-head">
       <label for="coordinateInput">坐标工作区</label>
@@ -597,7 +616,7 @@
       <input id="imageInput" type="file" accept="image/*" />
       <div id="imagePreview" class="image-preview"></div>
       <div id="uploadMessage" class="upload-message"></div>
-      <p class="privacy-note">上传图片后会自动识别坐标并填入上方工作区，请优先上传坐标表区域截图。</p>
+      <p class="privacy-note">建议只截坐标表区域，图片越清晰，识别越稳定。</p>
     </div>
 
     <button type="button" class="primary-action" onclick="downloadKml()">生成KML文件并下载</button>
@@ -636,7 +655,7 @@
       <div class="panel-title-row">
         <h2>人工协助识别</h2>
       </div>
-      <p>如果图片有水印、表格错位、手机菜单、DMS 粘连或扫描不清，自动识别可能不稳定。你可以把原图和识别原文发给人工协助，我们帮你整理成 KML 可用的经度,纬度格式。</p>
+      <p>如果图片有水印、表格错位、手写不清，或一张图里有多块矿区，自动识别可能不稳定。你可以把原图和识别原文发给人工协助，我们帮你整理成地图可用坐标。</p>
       <div class="support-actions">
         <button type="button" class="support" onclick="copyManualMessage()">复制人工服务说明</button>
         <button type="button" onclick="copyDebugText()">复制识别调试信息</button>
@@ -647,7 +666,7 @@
         <div>
           <p><strong>添加微信人工协助：</strong></p>
           <p class="wechat-id">Mir-2188</p>
-          <p>请发送原始坐标图片，并说明需要导出 Polygon / LineString / Point。</p>
+          <p>请发送原始坐标图片，并说明要做矿区范围、路线，还是点位。</p>
         </div>
       </div>
       <div class="contact-card">
@@ -677,10 +696,10 @@
 
     <section class="help">
       <strong>坐标说明：</strong><br />
-      每行一组坐标，格式转换可在度、度分、度分秒之间切换。<br />
-      标准化会统一为十进制度，经度,纬度，并合并原来的交换经纬度功能。<br />
-      生成 KML 时也会保留输入区中的原始小数精度。<br />
-      Polygon 会按输入顺序连线，并自动把最后一个点连接回第一个点。
+      一行就是一个点，按矿区边界顺序放好即可。<br />
+      常见写法都可以先放进来：小数、度分、度分秒都支持。<br />
+      点“标准化坐标”后，会整理成地图最常用的“经度,纬度”。<br />
+      生成矿区范围时，工具会按当前顺序连线，并自动闭合成一个面。
     </section>
   </main>
 
