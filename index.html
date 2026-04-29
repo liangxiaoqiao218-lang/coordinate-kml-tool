@@ -1255,9 +1255,9 @@
         }
 
         const numbers = extractNumbersWithThousands(trimmed);
-        const largeNumbers = numbers.filter(value => Math.abs(Number(value)) > 180);
+        const largeNumbers = numbers.filter(value => Math.abs(Number(value)) >= 10000);
 
-        if (largeNumbers.length >= 2) {
+        if (largeNumbers.length >= 2 && looksLikeProjectedPair(largeNumbers[0], largeNumbers[1])) {
           coordinateLines.push(`${largeNumbers[0]},${largeNumbers[1]}`);
         }
       }
@@ -1268,6 +1268,17 @@
     function extractNumbersWithThousands(text) {
       return (String(text || "").match(/[-+]?\d{1,3}(?:\s+\d{3})+(?:\.\d+)?|[-+]?\d+(?:\.\d+)?/g) || [])
         .map(value => value.replace(/\s+/g, ""));
+    }
+
+    function looksLikeProjectedPair(first, second) {
+      const x = Math.abs(Number(first));
+      const y = Math.abs(Number(second));
+
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return false;
+      }
+
+      return x >= 10000 && y >= 10000;
     }
 
     function extractProjectedNumberPair(text) {
@@ -1285,7 +1296,8 @@
         && isThreeDigits(groups[4])
         && isThreeDigits(groups[5])
       ) {
-        return [`${groups[1]}${groups[2]}`, `${groups[3]}${groups[4]}${groups[5]}`];
+        const pair = [`${groups[1]}${groups[2]}`, `${groups[3]}${groups[4]}${groups[5]}`];
+        return looksLikeProjectedPair(pair[0], pair[1]) ? pair : null;
       }
 
       if (
@@ -1296,7 +1308,8 @@
         && isThreeDigits(groups[3])
         && isThreeDigits(groups[4])
       ) {
-        return [`${groups[0]}${groups[1]}`, `${groups[2]}${groups[3]}${groups[4]}`];
+        const pair = [`${groups[0]}${groups[1]}`, `${groups[2]}${groups[3]}${groups[4]}`];
+        return looksLikeProjectedPair(pair[0], pair[1]) ? pair : null;
       }
 
       return null;
@@ -1349,7 +1362,7 @@
 
       const tablePair = extractProjectedNumberPair(line);
       const numbers = tablePair || extractNumbersWithThousands(line);
-      const largeNumbers = numbers.filter(value => Math.abs(Number(value)) > 180);
+      const largeNumbers = numbers.filter(value => Math.abs(Number(value)) >= 10000);
 
       if (largeNumbers.length < 2) {
         return null;

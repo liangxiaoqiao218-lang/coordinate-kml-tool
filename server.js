@@ -364,6 +364,17 @@ function extractNumbersWithThousands(text) {
     .map(value => value.replace(/\s+/g, ""));
 }
 
+function looksLikeProjectedPair(first, second) {
+  const x = Math.abs(Number(first));
+  const y = Math.abs(Number(second));
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return false;
+  }
+
+  return x >= 10000 && y >= 10000;
+}
+
 function extractProjectedNumberPair(text) {
   const groups = String(text || "").match(/\d+(?:\.\d+)?/g) || [];
   const isSmallId = value => /^\d{1,2}$/.test(value);
@@ -379,7 +390,8 @@ function extractProjectedNumberPair(text) {
     && isThreeDigits(groups[4])
     && isThreeDigits(groups[5])
   ) {
-    return [`${groups[1]}${groups[2]}`, `${groups[3]}${groups[4]}${groups[5]}`];
+    const pair = [`${groups[1]}${groups[2]}`, `${groups[3]}${groups[4]}${groups[5]}`];
+    return looksLikeProjectedPair(pair[0], pair[1]) ? pair : null;
   }
 
   if (
@@ -390,7 +402,8 @@ function extractProjectedNumberPair(text) {
     && isThreeDigits(groups[3])
     && isThreeDigits(groups[4])
   ) {
-    return [`${groups[0]}${groups[1]}`, `${groups[2]}${groups[3]}${groups[4]}`];
+    const pair = [`${groups[0]}${groups[1]}`, `${groups[2]}${groups[3]}${groups[4]}`];
+    return looksLikeProjectedPair(pair[0], pair[1]) ? pair : null;
   }
 
   return null;
@@ -416,9 +429,9 @@ function extractProjectedCoordinateLines(text) {
     }
 
     const numbers = extractNumbersWithThousands(line);
-    const largeNumbers = numbers.filter(value => Math.abs(Number(value)) > 180);
+    const largeNumbers = numbers.filter(value => Math.abs(Number(value)) >= 10000);
 
-    if (largeNumbers.length >= 2) {
+    if (largeNumbers.length >= 2 && looksLikeProjectedPair(largeNumbers[0], largeNumbers[1])) {
       coordinateLines.push(`${largeNumbers[0]},${largeNumbers[1]}`);
     }
   }
@@ -532,15 +545,15 @@ function extractCoordinateLines(text) {
     return decimalLines.join("\n");
   }
 
-  const projectedLines = extractProjectedCoordinateLines(text);
-
-  if (projectedLines.length > 0) {
-    return projectedLines.join("\n");
-  }
-
   const dmsLines = extractDmsCoordinateLines(text);
 
-  return dmsLines.length > 0 ? dmsLines.join("\n") : noCoordinatesText;
+  if (dmsLines.length > 0) {
+    return dmsLines.join("\n");
+  }
+
+  const projectedLines = extractProjectedCoordinateLines(text);
+
+  return projectedLines.length > 0 ? projectedLines.join("\n") : noCoordinatesText;
 }
 
 function countCoordinateRows(text) {
@@ -849,6 +862,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 7. N/S/E/W，法语 O / Ouest = West = 西经。
 8. Latitude nord = 北纬；Longitude ouest = 西经。
 9. 表格数字可能带空格分组，例如 658 800 和 1 364 200，必须分别理解为 658800 和 1364200。
+10. 手写坐标可能写成 11°28.31.26N 08.40.42.13W、11°27'57.74 N 08 36 46.30 W 等不规范 DMS，请按度分秒理解。
 
 输出规则：
 1. 识别出什么格式，就保留什么格式。不要把度分秒自动转换成十进制度。
@@ -860,6 +874,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 7. 表格右侧的斜线、手写勾、批注线不是数字，不要因为这些标记跳行或漏行。
 8. 不要输出点号、表头、解释文字、Markdown、编号、空行。
 9. 不要压缩小数位，不要改写原始精度。
+10. 不要输出图片中的像素位置、文字框坐标、识别框坐标或碎数字。例如 41,320,21,42,90 不是地理坐标，必须忽略。
 
 示例：
 09°01'13.67"W,11°43'16.45"N
