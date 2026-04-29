@@ -295,16 +295,6 @@
       background: #166534;
     }
 
-    button.utility-action {
-      border: 1px solid #cbd5e1;
-      background: #ffffff;
-      color: #334155;
-    }
-
-    button.utility-action:hover {
-      background: #f1f5f9;
-    }
-
     .primary-action {
       width: 100%;
       min-height: 52px;
@@ -623,7 +613,7 @@
     </select>
 
     <div class="buttons">
-      <button type="button" class="utility-action" onclick="normalizeCoordinates()">标准化坐标</button>
+      <button type="button" onclick="normalizeCoordinates()">标准化坐标</button>
       <button type="button" class="support" onclick="showManualSupport()">人工协助识别</button>
     </div>
 
@@ -664,14 +654,6 @@
       </div>
     </div>
 
-    <section class="help">
-      <strong>坐标说明：</strong><br />
-      每行一组坐标，格式转换可在度、度分、度分秒之间切换。<br />
-      标准化会统一为十进制度，经度,纬度，并合并原来的交换经纬度功能。<br />
-      生成 KML 时也会保留输入区中的原始小数精度。<br />
-      Polygon 会按输入顺序连线，并自动把最后一个点连接回第一个点。
-    </section>
-
     <div class="settings-grid">
       <div class="panel setting-panel">
         <label for="coordinateFormat">格式转换</label>
@@ -690,6 +672,14 @@
         </select>
       </div>
     </div>
+
+    <section class="help">
+      <strong>坐标说明：</strong><br />
+      每行一组坐标，格式转换可在度、度分、度分秒之间切换。<br />
+      标准化会统一为十进制度，经度,纬度，并合并原来的交换经纬度功能。<br />
+      生成 KML 时也会保留输入区中的原始小数精度。<br />
+      Polygon 会按输入顺序连线，并自动把最后一个点连接回第一个点。
+    </section>
   </main>
 
   <script>
