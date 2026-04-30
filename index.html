@@ -95,6 +95,19 @@
       text-align: center;
     }
 
+    .home-flow span:nth-child(1),
+    .home-flow span:nth-child(2) {
+      border-color: #bfdbfe;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .home-flow span:nth-child(3) {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+      color: #15803d;
+    }
+
     .view {
       display: none;
     }
@@ -129,6 +142,16 @@
       transform: translateY(-1px);
     }
 
+    .module-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: #2563eb;
+    }
+
     .module-card strong {
       display: block;
       margin-bottom: 10px;
@@ -145,12 +168,26 @@
 
     .module-card.primary-module {
       border-color: #bfdbfe;
-      background: #ffffff;
+      background: linear-gradient(180deg, #eff6ff 0%, #ffffff 58%);
     }
 
     .module-card.judge-module {
       border-color: #bbf7d0;
-      background: #ffffff;
+      background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 58%);
+    }
+
+    .module-card.judge-module::before {
+      background: #15803d;
+    }
+
+    .module-card.primary-module:hover {
+      border-color: #2563eb;
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.12);
+    }
+
+    .module-card.judge-module:hover {
+      border-color: #15803d;
+      box-shadow: 0 12px 24px rgba(21, 128, 61, 0.12);
     }
 
     .module-action {
@@ -176,6 +213,11 @@
       font-weight: 700;
     }
 
+    .judge-module .module-tag {
+      background: #dcfce7;
+      color: #15803d;
+    }
+
     .back-button {
       min-height: 38px;
       padding: 8px 12px;
@@ -199,6 +241,16 @@
       background: #0f172a;
       color: #ffffff;
       border-color: #0f172a;
+    }
+
+    .nav-switch.coordinate-switch {
+      background: #2563eb;
+      border-color: #2563eb;
+    }
+
+    .nav-switch.judge-switch {
+      background: #15803d;
+      border-color: #15803d;
     }
 
     label {
@@ -515,17 +567,21 @@
       border-color: #2563eb;
     }
 
+    .module-card.judge-module:hover {
+      border-color: #15803d;
+    }
+
     .primary-action {
       width: 100%;
       min-height: 52px;
       margin-top: 10px;
       font-size: 17px;
-      background: #15803d;
-      box-shadow: 0 10px 22px rgba(21, 128, 61, 0.18);
+      background: #2563eb;
+      box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
     }
 
     .primary-action:hover {
-      background: #166534;
+      background: #1d4ed8;
     }
 
     .message {
@@ -1004,7 +1060,7 @@
     <section id="coordinatePage" class="view">
       <div class="page-nav">
         <button type="button" class="back-button" onclick="showPage('home')">首页</button>
-        <button type="button" class="back-button nav-switch" onclick="showPage('judge')">AI矿地判读</button>
+        <button type="button" class="back-button nav-switch judge-switch" onclick="showPage('judge')">AI矿地判读</button>
       </div>
       <h1>坐标处理工具</h1>
       <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
@@ -1121,7 +1177,7 @@
     <section id="judgePage" class="view">
       <div class="page-nav">
         <button type="button" class="back-button" onclick="showPage('home')">首页</button>
-        <button type="button" class="back-button nav-switch" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button nav-switch coordinate-switch" onclick="showPage('coordinate')">坐标处理工具</button>
       </div>
       <h1>AI矿地判读</h1>
       <p class="intro">上传矿地、河道、卫星图或矿石照片，AI只做初筛判断：是否值得继续看、主要风险在哪里。不预测含量，不标具体金点。</p>
