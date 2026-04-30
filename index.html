@@ -474,6 +474,29 @@
       background: #166534;
     }
 
+    button.text-link-button {
+      min-height: auto;
+      padding: 8px 4px;
+      border: 0;
+      background: transparent;
+      color: #64748b;
+      box-shadow: none;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    button.text-link-button:hover {
+      background: transparent;
+      color: #1d4ed8;
+    }
+
+    .manual-support-link {
+      margin: 14px 0 0;
+      text-align: center;
+    }
+
     .module-card {
       background: #ffffff;
       color: #172033;
@@ -1024,13 +1047,39 @@
       <option value="none">不转换 X/Y</option>
     </select>
 
-    <div class="buttons">
-      <button type="button" onclick="normalizeCoordinates()">标准化坐标</button>
-      <button type="button" class="support" onclick="toggleManualSupport()">人工协助识别</button>
-    </div>
-
     <div id="message" class="message"></div>
     <div id="toast" class="toast"></div>
+
+    <div class="settings-grid">
+      <div class="panel setting-panel">
+        <label for="coordinateFormat">格式转换</label>
+        <select id="coordinateFormat">
+          <option value="dms" selected>转为度分秒（默认）</option>
+          <option value="dm">转为度分</option>
+          <option value="degree">转为度</option>
+          <option value="standard">标准化为经度,纬度</option>
+        </select>
+      </div>
+      <div class="panel setting-panel">
+        <label for="exportType">导出类型</label>
+        <select id="exportType">
+          <option value="Polygon" selected>面 Polygon（默认，矿区范围）</option>
+          <option value="LineString">线 LineString</option>
+          <option value="Point">点位 Point</option>
+        </select>
+      </div>
+    </div>
+
+    <section class="help">
+      <strong>坐标说明：</strong><br />
+      一行就是一个点，按矿区边界顺序放好即可。<br />
+      常见写法都可以先放进来：小数、度分、度分秒都支持。<br />
+      在“格式转换”里选择“标准化为经度,纬度”，会整理成地图最常用的写法。<br />
+      生成矿区范围时，工具会按当前顺序连线，并自动闭合成一个面。
+    </section>
+    <div class="manual-support-link">
+      <button type="button" class="text-link-button" onclick="toggleManualSupport()">识别不准？点击这里人工协助识别</button>
+    </div>
 
     <div id="supportPanel" class="panel support-panel">
       <div class="panel-title-row">
@@ -1059,33 +1108,6 @@
         建议让用户发送：原图 + 识别调试信息 + 需要导出的类型（Polygon/LineString/Point）
       </div>
     </div>
-
-    <div class="settings-grid">
-      <div class="panel setting-panel">
-        <label for="coordinateFormat">格式转换</label>
-        <select id="coordinateFormat">
-          <option value="dms" selected>转为度分秒（默认）</option>
-          <option value="dm">转为度分</option>
-          <option value="degree">转为度</option>
-        </select>
-      </div>
-      <div class="panel setting-panel">
-        <label for="exportType">导出类型</label>
-        <select id="exportType">
-          <option value="Polygon" selected>面 Polygon（默认，矿区范围）</option>
-          <option value="LineString">线 LineString</option>
-          <option value="Point">点位 Point</option>
-        </select>
-      </div>
-    </div>
-
-    <section class="help">
-      <strong>坐标说明：</strong><br />
-      一行就是一个点，按矿区边界顺序放好即可。<br />
-      常见写法都可以先放进来：小数、度分、度分秒都支持。<br />
-      点“标准化坐标”后，会整理成地图最常用的“经度,纬度”。<br />
-      生成矿区范围时，工具会按当前顺序连线，并自动闭合成一个面。
-    </section>
     </section>
 
     <section id="judgePage" class="view">
@@ -2451,6 +2473,11 @@
       await loadUserConfig();
 
       if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
+        return;
+      }
+
+      if (coordinateFormat.value === "standard") {
+        await normalizeCoordinates();
         return;
       }
 
