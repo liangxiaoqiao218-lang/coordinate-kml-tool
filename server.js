@@ -157,7 +157,8 @@ function normalizeAdminUser(user, fallbackId = "") {
     lastIp: safeUser.lastIp || "",
     firstIpLocation: safeUser.firstIpLocation || "",
     lastIpLocation: safeUser.lastIpLocation || "",
-    lastUserAgent: safeUser.lastUserAgent || ""
+    lastUserAgent: safeUser.lastUserAgent || "",
+    lastDeviceModel: safeUser.lastDeviceModel || ""
   };
 }
 
@@ -243,6 +244,52 @@ function getAdminUsersList(data) {
       };
     })
     .filter(user => user.visitorId);
+}
+
+function parseDeviceModelFromUserAgent(userAgent) {
+  const ua = String(userAgent || "");
+
+  if (!ua) {
+    return "";
+  }
+
+  const androidMatch = ua.match(/Android\s+[\d.]+;\s*([^;)]+?)(?:\s+Build|\)|;)/i);
+  if (androidMatch?.[1]) {
+    return androidMatch[1].replace(/^wv\s*/i, "").trim();
+  }
+
+  if (/iPhone/i.test(ua)) {
+    return "iPhone";
+  }
+
+  if (/iPad/i.test(ua)) {
+    return "iPad";
+  }
+
+  if (/Windows NT/i.test(ua)) {
+    return "Windows电脑";
+  }
+
+  if (/Macintosh/i.test(ua)) {
+    return "Mac";
+  }
+
+  return "";
+}
+
+function normalizeClientDeviceInfo(raw, userAgent = "") {
+  const deviceInfo = raw && typeof raw === "object" ? raw : {};
+  const model = String(deviceInfo.model || "").trim();
+  const platform = String(deviceInfo.platform || "").trim();
+  const fallbackModel = parseDeviceModelFromUserAgent(userAgent);
+
+  return {
+    model: (model || fallbackModel).slice(0, 120),
+    platform: platform.slice(0, 80),
+    platformVersion: String(deviceInfo.platformVersion || "").trim().slice(0, 80),
+    screen: String(deviceInfo.screen || "").trim().slice(0, 40),
+    viewport: String(deviceInfo.viewport || "").trim().slice(0, 40)
+  };
 }
 
 function getClientIp(req) {
@@ -525,6 +572,11 @@ async function updateUserVisitMeta(user, req, data) {
 
   if (userAgent) {
     user.lastUserAgent = userAgent.slice(0, 300);
+  }
+
+  const deviceInfo = normalizeClientDeviceInfo(req.body?.extra?.deviceInfo, userAgent);
+  if (deviceInfo.model) {
+    user.lastDeviceModel = deviceInfo.model;
   }
 
   user.lastSeenAt = getNowISO();
@@ -1098,6 +1150,8 @@ app.post("/api/track", async (req, res) => {
 
     const ip = getClientIp(req);
     const geo = await lookupIpLocation(ip, data);
+    const userAgent = req.get("user-agent") || "";
+    const deviceInfo = normalizeClientDeviceInfo(req.body?.extra?.deviceInfo, userAgent);
 
     data.events.push({
       id: makeId("evt"),
@@ -1105,7 +1159,9 @@ app.post("/api/track", async (req, res) => {
       eventName,
       ip,
       ipLocation: geo.label || "",
-      userAgent: (req.get("user-agent") || "").slice(0, 300),
+      userAgent: userAgent.slice(0, 300),
+      deviceModel: deviceInfo.model || "",
+      devicePlatform: deviceInfo.platform || "",
       page: String(req.body?.page || ""),
       extra: req.body?.extra || {},
       createdAt: getNowISO()

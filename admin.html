@@ -272,6 +272,7 @@
             <th>最近IP</th>
             <th>地区</th>
             <th>终端</th>
+            <th>型号</th>
             <th>访问天数</th>
             <th>事件数</th>
             <th>最后访问</th>
@@ -338,6 +339,7 @@
             <th>IP</th>
             <th>地区</th>
             <th>终端</th>
+            <th>型号</th>
             <th>事件</th>
           </tr>
         </thead>
@@ -466,7 +468,7 @@
         .join("");
 
       document.getElementById("recentEvents").innerHTML = (summary.recentEvents || [])
-        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.ip || "")}</td><td>${escapeHtml(event.ipLocation || "")}</td><td>${escapeHtml(describeTerminal(event.userAgent || ""))}</td><td>${escapeHtml(event.eventLabel || event.eventName)}</td></tr>`)
+        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.ip || "")}</td><td>${escapeHtml(event.ipLocation || "")}</td><td>${escapeHtml(describeTerminal(event.userAgent || ""))}</td><td>${escapeHtml(event.deviceModel || describeDeviceModel(event.userAgent || ""))}</td><td>${escapeHtml(event.eventLabel || event.eventName)}</td></tr>`)
         .join("");
     }
 
@@ -480,6 +482,7 @@
           <td>${escapeHtml(user.lastIp || "")}</td>
           <td>${escapeHtml(user.lastIpLocation || "")}</td>
           <td>${escapeHtml(describeTerminal(user.lastUserAgent || ""))}</td>
+          <td>${escapeHtml(user.lastDeviceModel || describeDeviceModel(user.lastUserAgent || ""))}</td>
           <td>${user.visitDays || 0}</td>
           <td>${user.eventCount || 0}</td>
           <td>${formatTime(user.lastSeenAt)}</td>
@@ -640,6 +643,37 @@
       }
 
       return `${device} / ${browser}`;
+    }
+
+    function describeDeviceModel(userAgent) {
+      const ua = String(userAgent || "");
+
+      if (!ua) {
+        return "";
+      }
+
+      const androidMatch = ua.match(/Android\s+[\d.]+;\s*([^;)]+?)(?:\s+Build|\)|;)/i);
+      if (androidMatch?.[1]) {
+        return androidMatch[1].replace(/^wv\s*/i, "").trim();
+      }
+
+      if (/iPhone/i.test(ua)) {
+        return "iPhone";
+      }
+
+      if (/iPad/i.test(ua)) {
+        return "iPad";
+      }
+
+      if (/Windows NT/i.test(ua)) {
+        return "Windows电脑";
+      }
+
+      if (/Macintosh/i.test(ua)) {
+        return "Mac";
+      }
+
+      return "";
     }
 
     function escapeHtml(value) {

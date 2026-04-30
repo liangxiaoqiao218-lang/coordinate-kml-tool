@@ -541,6 +541,39 @@
       color: #14532d;
     }
 
+    .contact-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .contact-method {
+      padding: 12px;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .contact-method img {
+      width: 100%;
+      max-width: 180px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .contact-method strong {
+      display: block;
+      margin: 8px 0 4px;
+    }
+
+    .contact-value {
+      margin: 0;
+      color: #14532d;
+      font-size: 18px;
+      font-weight: 800;
+    }
+
     .debug-panel {
       display: none;
     }
@@ -703,6 +736,10 @@
         grid-template-columns: 1fr;
       }
 
+      .contact-grid {
+        grid-template-columns: 1fr;
+      }
+
       .image-preview-row {
         grid-template-columns: 72px 1fr;
       }
@@ -722,7 +759,7 @@
   <main class="page">
     <section id="homePage" class="view active">
       <h1>矿业空间工具 Geo Tool</h1>
-      <p class="intro">一个入口处理矿业坐标、地图文件和矿地初筛。不会 GIS 的用户，也能先把资料整理成可用结果。</p>
+      <p class="intro">面向矿业现场的空间工具：先把坐标图片或手动坐标整理成 KML 矿区范围，再用 AI 对矿地、河道或矿石图片做初步判读。自动结果不稳时，可直接转人工协助。</p>
 
       <div class="module-grid">
         <button type="button" class="module-card" onclick="showPage('coordinate')">
@@ -816,12 +853,16 @@
         <button type="button" onclick="copyDebugText()">复制识别调试信息</button>
         <button type="button" onclick="copyContent()">复制当前坐标</button>
       </div>
-      <div class="wechat-info">
-        <img src="wechat-qr.jpg" alt="微信二维码" />
-        <div>
-          <p><strong>添加微信人工协助：</strong></p>
-          <p class="wechat-id">Mir-2188</p>
-          <p>请发送原始坐标图片，并说明要做矿区范围、路线，还是点位。</p>
+      <div class="contact-grid">
+        <div class="contact-method">
+          <img src="wechat-qr.jpg" alt="微信二维码" />
+          <strong>微信人工协助</strong>
+          <p class="contact-value">Mir-2188</p>
+        </div>
+        <div class="contact-method">
+          <img src="whatsapp-qr.jpg" alt="WhatsApp二维码" />
+          <strong>WhatsApp人工协助</strong>
+          <p class="contact-value">扫码添加 Miro</p>
         </div>
       </div>
       <div class="contact-card">
@@ -873,6 +914,7 @@
 
         <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片</label>
         <input id="judgeImageInput" type="file" accept="image/*" />
+        <div id="judgeImagePreview" class="image-preview"></div>
 
         <div class="judge-actions">
           <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
@@ -893,6 +935,18 @@
           <button type="button" onclick="copyJudgeManualMessage()">提交图片</button>
           <button type="button" class="secondary" onclick="copyWhatsAppTip()">WhatsApp</button>
           <button type="button" class="support" onclick="copyWechatId()">微信</button>
+        </div>
+        <div class="contact-grid">
+          <div class="contact-method">
+            <img src="wechat-qr.jpg" alt="微信二维码" />
+            <strong>微信</strong>
+            <p class="contact-value">Mir-2188</p>
+          </div>
+          <div class="contact-method">
+            <img src="whatsapp-qr.jpg" alt="WhatsApp二维码" />
+            <strong>WhatsApp</strong>
+            <p class="contact-value">扫码添加 Miro</p>
+          </div>
         </div>
       </div>
 
@@ -922,6 +976,7 @@
     const debugText = document.getElementById("debugText");
     const judgeType = document.getElementById("judgeType");
     const judgeImageInput = document.getElementById("judgeImageInput");
+    const judgeImagePreview = document.getElementById("judgeImagePreview");
     const judgeMessage = document.getElementById("judgeMessage");
     const judgeResult = document.getElementById("judgeResult");
     const pages = {
@@ -931,7 +986,7 @@
     };
     const coordinateUploadPanel = document.getElementById("coordinateUploadPanel");
     const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
-    const MANUAL_CONTACT_TEXT = "微信 Mir-2188";
+    const MANUAL_CONTACT_TEXT = "微信 Mir-2188 / WhatsApp 扫码添加 Miro";
     const visitorId = getOrCreateVisitorId();
     let appConfig = {
       permissions: {
@@ -946,8 +1001,11 @@
     let clearConfirmTimer = null;
     let selectedImageUrl = "";
     let selectedImageFile = null;
+    let selectedJudgeImageUrl = "";
+    let selectedJudgeImageFile = null;
 
     imageInput.addEventListener("change", recognizeImage);
+    judgeImageInput.addEventListener("change", handleJudgeImageChange);
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
     trackEvent("page_visit");
@@ -1024,7 +1082,35 @@
       return true;
     }
 
-    function trackEvent(eventName, extra = {}) {
+    async function collectDeviceInfo() {
+      const base = {
+        userAgent: navigator.userAgent || "",
+        platform: navigator.platform || "",
+        maxTouchPoints: navigator.maxTouchPoints || 0,
+        screen: `${window.screen?.width || 0}x${window.screen?.height || 0}`,
+        viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}`
+      };
+
+      try {
+        if (navigator.userAgentData?.getHighEntropyValues) {
+          const high = await navigator.userAgentData.getHighEntropyValues(["model", "platform", "platformVersion"]);
+          return {
+            ...base,
+            model: high.model || "",
+            platform: high.platform || base.platform,
+            platformVersion: high.platformVersion || ""
+          };
+        }
+      } catch (error) {
+        console.warn("读取设备信息失败", error);
+      }
+
+      return base;
+    }
+
+    async function trackEvent(eventName, extra = {}) {
+      const deviceInfo = await collectDeviceInfo();
+
       fetch("/api/track", {
         method: "POST",
         headers: {
@@ -1034,7 +1120,10 @@
           visitorId,
           eventName,
           page: location.pathname,
-          extra
+          extra: {
+            ...extra,
+            deviceInfo
+          }
         })
       }).catch(error => console.warn("记录事件失败", error));
     }
@@ -1173,6 +1262,61 @@
       showMessage("已删除上传图片，可以重新选择。");
     }
 
+    function showJudgeSelectedImage(file) {
+      if (selectedJudgeImageUrl) {
+        URL.revokeObjectURL(selectedJudgeImageUrl);
+      }
+
+      selectedJudgeImageFile = file;
+      selectedJudgeImageUrl = URL.createObjectURL(file);
+      judgeImagePreview.style.display = "block";
+      judgeImagePreview.innerHTML = `
+        <div class="image-preview-row">
+          <button type="button" class="preview-button" onclick="openJudgeSelectedImage()" title="点击查看上传图片">
+            <img src="${selectedJudgeImageUrl}" alt="已上传判读图片预览" />
+          </button>
+          <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />点击图片可查看大图</p>
+          <button type="button" class="remove-image" onclick="clearJudgeSelectedImage()">删除图片</button>
+        </div>`;
+    }
+
+    function handleJudgeImageChange() {
+      const file = judgeImageInput.files[0];
+
+      if (!file) {
+        return;
+      }
+
+      showJudgeSelectedImage(file);
+      judgeResult.value = "";
+      showJudgeMessage("图片已选择，点击“开始判读”后进行分析。");
+    }
+
+    function openJudgeSelectedImage() {
+      if (!selectedJudgeImageUrl) {
+        showJudgeMessage("当前没有可查看的判读图片。", true);
+        return;
+      }
+
+      imageModalImg.src = selectedJudgeImageUrl;
+      imageModal.style.display = "flex";
+    }
+
+    function clearJudgeSelectedImage() {
+      if (selectedJudgeImageUrl) {
+        URL.revokeObjectURL(selectedJudgeImageUrl);
+      }
+
+      selectedJudgeImageUrl = "";
+      selectedJudgeImageFile = null;
+      closeImageModal();
+      judgeImagePreview.style.display = "none";
+      judgeImagePreview.innerHTML = "";
+      judgeImageInput.value = "";
+      judgeResult.value = "";
+      showJudgeMessage("已删除判读图片，可以重新选择。");
+    }
+
     function setDebug(text) {
       debugPanel.style.display = "block";
       debugText.textContent = text;
@@ -1215,7 +1359,7 @@
     }
 
     async function analyzeMiningImage() {
-      const file = judgeImageInput.files[0];
+      const file = selectedJudgeImageFile || judgeImageInput.files[0];
 
       if (!file) {
         showJudgeMessage("请先选择一张要判读的图片。", true);
@@ -1309,8 +1453,8 @@
     }
 
     function copyWhatsAppTip() {
-      const text = `我需要通过 WhatsApp 进行人工矿地判读，请发送图片和判读结果截图。`;
-      copyText(text, "WhatsApp发送说明已复制。");
+      const text = `请通过页面里的 WhatsApp 二维码添加 Miro，并发送图片和判读结果截图。`;
+      copyText(text, "WhatsApp说明已复制。");
     }
 
     function copyWechatId() {
