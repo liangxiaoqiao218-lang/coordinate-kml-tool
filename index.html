@@ -586,7 +586,7 @@
 <body>
   <main class="page">
     <h1>坐标转 KML 小工具</h1>
-    <p class="intro">上传矿业坐标图片，工具会尽量自动识别并放到坐标工作区。你也可以直接粘贴坐标，核对后生成 Google Earth / 奥维地图可打开的 KML 文件；识别不准时，可转人工协助整理。</p>
+    <p class="intro">上传矿业坐标图，工具会自动识别并放到坐标工作区。也可直接粘贴坐标，核对后生成 Google Earth / 奥维地图可打开的 KML 文件；识别不准时，可转人工协助。</p>
 
     <div class="workspace-head">
       <label for="coordinateInput">坐标工作区</label>
@@ -2347,6 +2347,8 @@ ${placemarks}
         });
         if (hasProjectedCoordinateRows(finalCoordinates)) {
           showMessage("已识别到 X/Y 平面坐标，请先确认坐标系后再转换成经纬度。", true);
+        } else if (data.warning) {
+          showMessage(`${data.warning} 坐标已填入工作区，请核对后再生成 KML。`, true);
         } else {
           showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。");
         }

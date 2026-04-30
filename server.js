@@ -975,6 +975,17 @@ function countCoordinateRows(text) {
     .length;
 }
 
+function extractRecognitionWarning(text) {
+  const warningLine = String(text || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(line => /^#?\s*(识别提示|提示)\s*[:：]/.test(line));
+
+  return warningLine
+    ? warningLine.replace(/^#?\s*/, "")
+    : "";
+}
+
 function getOpenAIErrorMessage(error) {
   const status = error.status ? `HTTP ${error.status}` : "";
   const code = error.code ? `code=${error.code}` : "";
@@ -1297,6 +1308,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 8. Latitude nord = 北纬；Longitude ouest = 西经。
 9. 表格数字可能带空格分组，例如 658 800 和 1 364 200，必须分别理解为 658800 和 1364200。
 10. 手写坐标可能写成 11°28.31.26N 08.40.42.13W、11°27'57.74 N 08 36 46.30 W 等不规范 DMS，请按度分秒理解。
+11. 如果表格里有红色/手写/框选修正标记，例如把打印的 11° 手工改成 10°，优先按修正后的值识别；同时在最后增加一行识别提示，提醒用户核对。
 
 输出规则：
 1. 识别出什么格式，就保留什么格式。不要把度分秒自动转换成十进制度。
@@ -1311,6 +1323,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 10. 不要输出图片中的像素位置、文字框坐标、识别框坐标或碎数字。例如 41,320,21,42,90 不是地理坐标，必须忽略。
 11. 如果同一张图片里有多块不同矿区/多组坐标，必须在不同组之间保留一个空行。每组内部仍然按原顺序逐行输出。
 12. 手写坐标如果出现多段明显分开的 1、2、3、4 编号，每一段就是一组坐标，段与段之间必须输出一个空行。
+13. 如果采用了手写/红色/框选修正，坐标行输出完成后，最后额外输出一行：识别提示：发现疑似人工修正，已按修正值识别，请核对。
 
 示例：
 09°01'13.67"W,11°43'16.45"N
@@ -1420,11 +1433,14 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
     console.log("坐标提取结果：");
     console.log(coordinates);
 
+    const recognitionWarning = extractRecognitionWarning(rawText);
+
     res.json({
       model,
       rawText,
       coordinates,
-      precisionMode: "preserve-original-decimals-and-parse-dms"
+      precisionMode: "preserve-original-decimals-and-parse-dms",
+      warning: recognitionWarning
     });
   } catch (error) {
     const errorMessage = getOpenAIErrorMessage(error);
