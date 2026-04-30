@@ -1007,6 +1007,47 @@ function getOpenAIErrorMessage(error) {
   return [status, code, type, message].filter(Boolean).join(" | ");
 }
 
+function normalizeJudgeOutput(text) {
+  const raw = String(text || "").trim();
+
+  if (!raw) {
+    return "【判读结论】不确定\n【是否建议继续】谨慎\n【风险】图片信息不足\n【依据】需要更清晰图片或现场核对";
+  }
+
+  const sectionNames = ["判读结论", "是否建议继续", "风险", "依据"];
+  const values = {};
+
+  for (let index = 0; index < sectionNames.length; index += 1) {
+    const current = sectionNames[index];
+    const next = sectionNames[index + 1];
+    const pattern = next
+      ? new RegExp(`【${current}】([\\s\\S]*?)(?=【${next}】)`)
+      : new RegExp(`【${current}】([\\s\\S]*)`);
+    const match = raw.match(pattern);
+    values[current] = (match?.[1] || "")
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .slice(0, 1)
+      .join(" ");
+  }
+
+  if (!values["判读结论"] && !values["是否建议继续"] && !values["风险"] && !values["依据"]) {
+    const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(0, 4);
+    values["判读结论"] = lines[0] || "不确定";
+    values["是否建议继续"] = lines[1] || "谨慎";
+    values["风险"] = lines[2] || "图片信息不足";
+    values["依据"] = lines[3] || "需要更清晰图片或现场核对";
+  }
+
+  return [
+    `【判读结论】${values["判读结论"] || "不确定"}`,
+    `【是否建议继续】${values["是否建议继续"] || "谨慎"}`,
+    `【风险】${values["风险"] || "图片信息不足"}`,
+    `【依据】${values["依据"] || "需要更清晰图片或现场核对"}`
+  ].join("\n");
+}
+
 app.get("/api/config", async (req, res) => {
   try {
     const visitorId = String(req.query.visitorId || "").trim();
@@ -1273,38 +1314,23 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
       baseURL: openAIBaseURL
     });
 
-    const prompt = `你是矿业空间判读助手，只做矿业决策辅助，不做储量、含量、具体金点预测。
+    const prompt = `你是矿业空间判读助手，只做矿业决策辅助。
 
-请根据图片进行谨慎判读。图片可能是河道、沟谷、卫星图、地形图、矿地现场、矿石照片或含坐标的矿业资料。
+请根据图片做保守初筛。图片可能是矿地、河道、卫星图、地形图或矿石照片。
 
-输出必须使用固定结构：
-【判读类型】
-矿地 / 河道 / 矿石 / 资料 / 不确定
+只允许输出下面4行，不能增加其他标题：
+【判读结论】一句短话
+【是否建议继续】建议 / 谨慎 / 不建议 + 很短理由
+【风险】一句短话
+【依据】一句短话
 
-【地形类型判断】
-用一句话描述。
-
-【是否具备沉积条件】
-是 / 否 / 不确定，并简要说明。
-
-【是否建议继续投入】
-建议 / 谨慎 / 不建议，并简要说明。
-
-【风险提示】
-列出主要风险，不超过3条。
-
-【判断依据】
-用普通矿业用户能看懂的话说明依据，不超过4条。
-
-【边界说明】
-说明本结果仅供初筛参考，不能替代现场勘查、取样检测和合规审批。
-
-要求：
-1. 不要编造看不见的信息。
-2. 看不清就明确说不确定。
-3. 不输出具体金点。
-4. 不预测含金量或储量。
-5. 如果图片不是矿业判读图片，也要说明无法判断。`;
+规则：
+1. 必须控制在4行以内，每行一个标题和一句短话。
+2. 【是否建议继续】只能写：建议 / 谨慎 / 不建议，再补充很短理由。
+3. 不允许输出含量预测、储量预测。
+4. 不允许报具体金点、坐标点或采样点。
+5. 看不清或证据不足时，必须写“不确定”或“谨慎”。
+6. 偏向保守判断，宁可少说，不要乱说。`;
 
     const response = await openai.chat.completions.create({
       model,
@@ -1326,6 +1352,7 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
     });
 
     const rawOutput = response.choices?.[0]?.message?.content || "";
+    const normalizedOutput = normalizeJudgeOutput(rawOutput);
     const record = {
       id: makeId("record"),
       user_id: visitorId,
@@ -1334,7 +1361,7 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
       imageSize: req.file.size || 0,
       judgeType,
       aiRawOutput: rawOutput,
-      result: rawOutput,
+      result: normalizedOutput,
       createdAt: getNowISO()
     };
 
@@ -1349,7 +1376,8 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
     await writeAdminData(data);
 
     res.json({
-      result: rawOutput,
+      result: normalizedOutput,
+      rawOutput,
       recordId: record.id
     });
   } catch (error) {
