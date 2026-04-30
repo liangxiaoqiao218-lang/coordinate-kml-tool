@@ -50,11 +50,10 @@
     }
 
     .home-hero {
-      padding: 18px;
-      border: 1px solid #d6dfeb;
-      border-radius: 14px;
-      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+      padding: 8px 2px 2px;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
     }
 
     .home-hero .eyebrow {
@@ -66,12 +65,16 @@
     }
 
     .home-hero h1 {
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       font-size: 30px;
     }
 
     .home-hero .intro {
+      max-width: 820px;
       margin-bottom: 0;
+      padding-left: 12px;
+      border-left: 4px solid #2563eb;
+      color: #465568;
     }
 
     .home-flow {
@@ -104,7 +107,7 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 14px;
-      margin-top: 22px;
+      margin-top: 14px;
     }
 
     .module-card {
@@ -142,10 +145,12 @@
 
     .module-card.primary-module {
       border-color: #bfdbfe;
+      background: #ffffff;
     }
 
     .module-card.judge-module {
       border-color: #bbf7d0;
+      background: #ffffff;
     }
 
     .module-action {
@@ -818,7 +823,7 @@
       }
 
       .home-hero {
-        padding: 16px;
+        padding: 4px 0 0;
       }
 
       .home-hero h1 {
@@ -826,7 +831,7 @@
       }
 
       .home-flow {
-        margin: 10px 0 14px;
+        margin: 10px 0 12px;
       }
 
       .home-flow span {
@@ -940,7 +945,7 @@
       <div class="home-hero">
         <p class="eyebrow">坐标 · KML · AI判读</p>
         <h1>矿业空间工具 Geo Tool</h1>
-        <p class="intro">上传坐标图片或粘贴坐标，整理成地图可打开的 KML；也可上传矿地、河道、矿石图片做 AI 初筛，不准时转人工协助。</p>
+        <p class="intro">上传坐标图片或直接粘贴坐标，工具会整理成可一键导入奥维地图、Google Earth 的 KML 文件；也可上传矿地、河道、矿石图片做 AI 初筛，不准时转人工协助。</p>
       </div>
 
       <div class="home-flow">
@@ -953,7 +958,7 @@
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
           <em class="module-tag">坐标/KML</em>
           <strong>坐标处理工具</strong>
-          <span>图片识别、坐标整理、标准化、交换经纬度、复制结果，最后生成 KML 矿区范围。</span>
+          <span>识别图片里的坐标，自动整理成可导入奥维地图和 Google Earth 的 KML 矿区范围。</span>
           <small class="module-action">进入坐标处理</small>
         </button>
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
