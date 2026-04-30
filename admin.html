@@ -253,6 +253,7 @@
           <label><input id="flagXy" type="checkbox" /> 标准化坐标</label>
           <label><input id="flagKml" type="checkbox" /> KML导出</label>
           <label><input id="flagManual" type="checkbox" /> 人工协助入口</label>
+          <label><input id="flagJudge" type="checkbox" /> AI矿地判读</label>
         </div>
         <p class="muted">全局关闭后，即使用户权限已开通，也会被关闭。</p>
         <button type="button" onclick="saveFlags()">保存功能开关</button>
@@ -306,6 +307,7 @@
         <label><input id="permXy" type="checkbox" /> 允许标准化坐标</label>
         <label><input id="permKml" type="checkbox" /> 允许 KML 导出</label>
         <label><input id="permManual" type="checkbox" /> 允许人工协助入口</label>
+        <label><input id="permJudge" type="checkbox" /> 允许 AI 矿地判读</label>
       </div>
       <div class="grid">
         <div>
@@ -456,6 +458,7 @@
       document.getElementById("flagXy").checked = Boolean(flags.xyConvertEnabled);
       document.getElementById("flagKml").checked = Boolean(flags.kmlExportEnabled);
       document.getElementById("flagManual").checked = Boolean(flags.manualSupportEnabled);
+      document.getElementById("flagJudge").checked = Boolean(flags.aiJudgeEnabled);
 
       document.getElementById("eventsByName").innerHTML = Object.entries(summary.eventsByName || {})
         .sort((a, b) => b[1] - a[1])
@@ -504,6 +507,7 @@
       document.getElementById("permXy").checked = Boolean(permissions.xyConvertEnabled);
       document.getElementById("permKml").checked = Boolean(permissions.kmlExportEnabled);
       document.getElementById("permManual").checked = Boolean(permissions.manualSupportEnabled);
+      document.getElementById("permJudge").checked = Boolean(permissions.aiJudgeEnabled);
       document.getElementById("wechat").value = selectedUser.wechat || "";
       document.getElementById("phone").value = selectedUser.phone || "";
       document.getElementById("note").value = selectedUser.note || "";
@@ -550,7 +554,8 @@
               aiOcrEnabled: document.getElementById("permAi").checked,
               xyConvertEnabled: document.getElementById("permXy").checked,
               kmlExportEnabled: document.getElementById("permKml").checked,
-              manualSupportEnabled: document.getElementById("permManual").checked
+              manualSupportEnabled: document.getElementById("permManual").checked,
+              aiJudgeEnabled: document.getElementById("permJudge").checked
             },
             wechat: document.getElementById("wechat").value,
             phone: document.getElementById("phone").value,
@@ -585,7 +590,8 @@
               aiOcrEnabled: document.getElementById("flagAi").checked,
               xyConvertEnabled: document.getElementById("flagXy").checked,
               kmlExportEnabled: document.getElementById("flagKml").checked,
-              manualSupportEnabled: document.getElementById("flagManual").checked
+              manualSupportEnabled: document.getElementById("flagManual").checked,
+              aiJudgeEnabled: document.getElementById("flagJudge").checked
             }
           })
         });

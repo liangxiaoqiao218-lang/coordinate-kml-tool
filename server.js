@@ -29,12 +29,15 @@ function createDefaultAdminData() {
   return {
     users: {},
     events: [],
+    records: [],
+    usage: {},
     ipGeoCache: {},
     featureFlags: {
       aiOcrEnabled: true,
       xyConvertEnabled: true,
       kmlExportEnabled: true,
-      manualSupportEnabled: true
+      manualSupportEnabled: true,
+      aiJudgeEnabled: true
     }
   };
 }
@@ -50,6 +53,8 @@ async function readAdminData() {
       ...data,
       users: data.users || {},
       events: Array.isArray(data.events) ? data.events : [],
+      records: Array.isArray(data.records) ? data.records : [],
+      usage: data.usage && typeof data.usage === "object" ? data.usage : {},
       ipGeoCache: data.ipGeoCache && typeof data.ipGeoCache === "object" ? data.ipGeoCache : {},
       featureFlags: {
         ...defaults.featureFlags,
@@ -108,7 +113,8 @@ function ensureUser(data, visitorId) {
         aiOcrEnabled: true,
         xyConvertEnabled: true,
         kmlExportEnabled: true,
-        manualSupportEnabled: true
+        manualSupportEnabled: true,
+        aiJudgeEnabled: true
       },
       createdAt: getNowISO(),
       lastSeenAt: getNowISO(),
@@ -134,7 +140,8 @@ function normalizeAdminUser(user, fallbackId = "") {
       aiOcrEnabled: safeUser.permissions?.aiOcrEnabled !== false,
       xyConvertEnabled: safeUser.permissions?.xyConvertEnabled !== false,
       kmlExportEnabled: safeUser.permissions?.kmlExportEnabled !== false,
-      manualSupportEnabled: safeUser.permissions?.manualSupportEnabled !== false
+      manualSupportEnabled: safeUser.permissions?.manualSupportEnabled !== false,
+      aiJudgeEnabled: safeUser.permissions?.aiJudgeEnabled !== false
     },
     createdAt: safeUser.createdAt || "",
     lastSeenAt: safeUser.lastSeenAt || "",
@@ -163,7 +170,10 @@ const eventNameLabels = {
   kml_download_click: "生成KML文件并下载",
   image_upload_select: "上传坐标图片",
   image_recognize_success: "图片识别成功",
-  image_recognize_fail: "图片识别失败"
+  image_recognize_fail: "图片识别失败",
+  ai_judge_upload_select: "上传AI判读图片",
+  ai_judge_success: "AI判读成功",
+  ai_judge_fail: "AI判读失败"
 };
 
 function getEventLabel(eventName) {
@@ -557,7 +567,8 @@ function getEffectivePermissions(user, featureFlags) {
       aiOcrEnabled: false,
       xyConvertEnabled: false,
       kmlExportEnabled: false,
-      manualSupportEnabled: false
+      manualSupportEnabled: false,
+      aiJudgeEnabled: false
     };
   }
 
@@ -565,7 +576,8 @@ function getEffectivePermissions(user, featureFlags) {
     aiOcrEnabled: Boolean(featureFlags.aiOcrEnabled && permissions.aiOcrEnabled),
     xyConvertEnabled: Boolean(featureFlags.xyConvertEnabled && permissions.xyConvertEnabled),
     kmlExportEnabled: Boolean(featureFlags.kmlExportEnabled && permissions.kmlExportEnabled),
-    manualSupportEnabled: Boolean(featureFlags.manualSupportEnabled && permissions.manualSupportEnabled)
+    manualSupportEnabled: Boolean(featureFlags.manualSupportEnabled && permissions.manualSupportEnabled),
+    aiJudgeEnabled: Boolean(featureFlags.aiJudgeEnabled && permissions.aiJudgeEnabled)
   };
 }
 
@@ -1164,7 +1176,8 @@ app.patch("/api/admin/users/:visitorId", requireAdmin, async (req, res) => {
         aiOcrEnabled: Boolean(req.body.permissions.aiOcrEnabled),
         xyConvertEnabled: Boolean(req.body.permissions.xyConvertEnabled),
         kmlExportEnabled: Boolean(req.body.permissions.kmlExportEnabled),
-        manualSupportEnabled: Boolean(req.body.permissions.manualSupportEnabled)
+        manualSupportEnabled: Boolean(req.body.permissions.manualSupportEnabled),
+        aiJudgeEnabled: Boolean(req.body.permissions.aiJudgeEnabled)
       };
     }
 
@@ -1201,7 +1214,8 @@ app.patch("/api/admin/feature-flags", requireAdmin, async (req, res) => {
       aiOcrEnabled: Boolean(nextFlags.aiOcrEnabled),
       xyConvertEnabled: Boolean(nextFlags.xyConvertEnabled),
       kmlExportEnabled: Boolean(nextFlags.kmlExportEnabled),
-      manualSupportEnabled: Boolean(nextFlags.manualSupportEnabled)
+      manualSupportEnabled: Boolean(nextFlags.manualSupportEnabled),
+      aiJudgeEnabled: Boolean(nextFlags.aiJudgeEnabled)
     };
 
     await writeAdminData(data);
@@ -1210,6 +1224,139 @@ app.patch("/api/admin/feature-flags", requireAdmin, async (req, res) => {
     console.error(error);
     res.status(500).json({
       error: "保存功能开关失败。"
+    });
+  }
+});
+
+app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) => {
+  console.log("---- 收到AI判读请求 ----");
+  console.log("是否收到图片：", Boolean(req.file));
+
+  try {
+    const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
+    const judgeType = String(req.body?.judgeType || "mine-land").trim();
+    const data = await readAdminData();
+    const user = ensureUser(data, visitorId);
+    const permissions = getEffectivePermissions(user, data.featureFlags);
+
+    if (!permissions.aiJudgeEnabled) {
+      if (user) {
+        await updateUserVisitMeta(user, req, data);
+        await writeAdminData(data);
+      }
+
+      return res.status(403).json({
+        error: "当前用户暂未开通 AI 判读功能。"
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        error: "后端没有收到图片，请重新选择图片上传。"
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(400).json({
+        error: "AI判读需要配置 OPENAI_API_KEY。"
+      });
+    }
+
+    if (user) {
+      await updateUserVisitMeta(user, req, data);
+    }
+
+    const imageBase64 = req.file.buffer.toString("base64");
+    const imageDataUrl = `data:${req.file.mimetype};base64,${imageBase64}`;
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: openAIBaseURL
+    });
+
+    const prompt = `你是矿业空间判读助手，只做矿业决策辅助，不做储量、含量、具体金点预测。
+
+请根据图片进行谨慎判读。图片可能是河道、沟谷、卫星图、地形图、矿地现场、矿石照片或含坐标的矿业资料。
+
+输出必须使用固定结构：
+【判读类型】
+矿地 / 河道 / 矿石 / 资料 / 不确定
+
+【地形类型判断】
+用一句话描述。
+
+【是否具备沉积条件】
+是 / 否 / 不确定，并简要说明。
+
+【是否建议继续投入】
+建议 / 谨慎 / 不建议，并简要说明。
+
+【风险提示】
+列出主要风险，不超过3条。
+
+【判断依据】
+用普通矿业用户能看懂的话说明依据，不超过4条。
+
+【边界说明】
+说明本结果仅供初筛参考，不能替代现场勘查、取样检测和合规审批。
+
+要求：
+1. 不要编造看不见的信息。
+2. 看不清就明确说不确定。
+3. 不输出具体金点。
+4. 不预测含金量或储量。
+5. 如果图片不是矿业判读图片，也要说明无法判断。`;
+
+    const response = await openai.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            {
+              type: "image_url",
+              image_url: {
+                url: imageDataUrl
+              }
+            }
+          ]
+        }
+      ],
+      temperature: 0.1
+    });
+
+    const rawOutput = response.choices?.[0]?.message?.content || "";
+    const record = {
+      id: makeId("record"),
+      user_id: visitorId,
+      imageURL: "",
+      imageName: req.file.originalname || "",
+      imageSize: req.file.size || 0,
+      judgeType,
+      aiRawOutput: rawOutput,
+      result: rawOutput,
+      createdAt: getNowISO()
+    };
+
+    data.records.push(record);
+    data.usage[visitorId] = data.usage[visitorId] || {};
+    data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
+
+    if (user) {
+      user.eventCount = Number(user.eventCount || 0) + 1;
+    }
+
+    await writeAdminData(data);
+
+    res.json({
+      result: rawOutput,
+      recordId: record.id
+    });
+  } catch (error) {
+    const errorMessage = getOpenAIErrorMessage(error);
+    console.error("AI判读失败：", errorMessage);
+    res.status(500).json({
+      error: errorMessage || "AI判读失败，请稍后重试。"
     });
   }
 });

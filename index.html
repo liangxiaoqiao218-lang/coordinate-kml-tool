@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>坐标转 KML 小工具</title>
-  <meta name="description" content="上传矿业坐标图片或手动粘贴坐标，快速整理经纬度并生成 Google Earth / 奥维地图可用的 KML 文件。" />
+  <title>矿业空间工具 Geo Tool</title>
+  <meta name="description" content="矿业坐标识别、KML生成和AI矿地判读工具，辅助矿业从业者快速整理坐标和判断是否值得继续投入。" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="坐标转 KML 小工具" />
-  <meta property="og:description" content="矿业坐标图片识别、坐标整理、Polygon 面范围 KML 一键生成。" />
+  <meta property="og:title" content="矿业空间工具 Geo Tool" />
+  <meta property="og:description" content="坐标转KML、图片识别坐标、AI矿地判读，一个入口完成矿业空间初筛。" />
   <meta property="og:image" content="https://coordinate-kml-tool.onrender.com/share-cover.png?v=1" />
   <meta property="og:url" content="https://coordinate-kml-tool.onrender.com/" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="坐标转 KML 小工具" />
-  <meta name="twitter:description" content="上传坐标图片，整理经纬度，生成 KML 文件。" />
+  <meta name="twitter:title" content="矿业空间工具 Geo Tool" />
+  <meta name="twitter:description" content="上传矿业坐标或矿地图片，整理坐标并辅助判断是否值得继续。" />
   <meta name="twitter:image" content="https://coordinate-kml-tool.onrender.com/share-cover.png?v=1" />
   <style>
     * {
@@ -489,6 +489,36 @@
       font-family: Consolas, "Courier New", monospace;
     }
 
+    .judge-panel {
+      border-color: #bfdbfe;
+      background: #f8fbff;
+    }
+
+    .judge-panel h2 {
+      margin: 0 0 8px;
+      font-size: 20px;
+    }
+
+    .judge-panel p {
+      margin: 6px 0 12px;
+      color: #475569;
+      line-height: 1.6;
+    }
+
+    .judge-panel textarea {
+      min-height: 190px;
+      margin-top: 10px;
+      padding: 12px;
+      background: #ffffff;
+    }
+
+    .judge-actions {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
     .help {
       margin-top: 18px;
       padding: 14px;
@@ -585,8 +615,8 @@
 </head>
 <body>
   <main class="page">
-    <h1>坐标转 KML 小工具</h1>
-    <p class="intro">上传矿业坐标图，工具会自动识别并放到坐标工作区。也可直接粘贴坐标，核对后生成 Google Earth / 奥维地图可打开的 KML 文件；识别不准时，可转人工协助。</p>
+    <h1>矿业空间工具 Geo Tool</h1>
+    <p class="intro">上传矿业坐标图，工具会自动识别并放到坐标工作区。也可直接粘贴坐标，核对后生成 Google Earth / 奥维地图可打开的 KML 文件；还可上传矿地、河道或矿石图片做 AI 初筛判读。</p>
 
     <div class="workspace-head">
       <label for="coordinateInput">坐标工作区</label>
@@ -675,6 +705,24 @@
       </div>
     </div>
 
+    <div class="panel judge-panel">
+      <h2>AI矿地判读</h2>
+      <p>上传矿地、河道、卫星图或矿石照片，AI只做初筛判断：是否值得继续看、主要风险在哪里。不预测含量，不标具体金点。</p>
+      <label for="judgeType">判读类型</label>
+      <select id="judgeType">
+        <option value="mine-land" selected>矿地 / 河道 / 卫星图</option>
+        <option value="ore">矿石照片</option>
+        <option value="document">矿业资料</option>
+      </select>
+      <label for="judgeImageInput" style="margin-top: 10px;">上传判读图片</label>
+      <input id="judgeImageInput" type="file" accept="image/*" />
+      <div class="judge-actions">
+        <button type="button" class="support" onclick="analyzeMiningImage()">AI判读图片</button>
+      </div>
+      <div id="judgeMessage" class="message"></div>
+      <textarea id="judgeResult" readonly placeholder="AI判读结果会显示在这里"></textarea>
+    </div>
+
     <div class="settings-grid">
       <div class="panel setting-panel">
         <label for="coordinateFormat">格式转换</label>
@@ -719,6 +767,10 @@
     const supportPanel = document.getElementById("supportPanel");
     const debugPanel = document.getElementById("debugPanel");
     const debugText = document.getElementById("debugText");
+    const judgeType = document.getElementById("judgeType");
+    const judgeImageInput = document.getElementById("judgeImageInput");
+    const judgeMessage = document.getElementById("judgeMessage");
+    const judgeResult = document.getElementById("judgeResult");
     const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
     const MANUAL_CONTACT_TEXT = "微信 Mir-2188";
     const visitorId = getOrCreateVisitorId();
@@ -727,7 +779,8 @@
         aiOcrEnabled: true,
         xyConvertEnabled: true,
         kmlExportEnabled: true,
-        manualSupportEnabled: true
+        manualSupportEnabled: true,
+        aiJudgeEnabled: true
       }
     };
     const historyStack = [];
@@ -956,6 +1009,69 @@
 
     function hideManualSupport() {
       supportPanel.style.display = "none";
+    }
+
+    function showJudgeMessage(text, isError = false) {
+      judgeMessage.style.display = text ? "block" : "none";
+      judgeMessage.textContent = text || "";
+      judgeMessage.className = isError ? "message error" : "message";
+    }
+
+    async function analyzeMiningImage() {
+      const file = judgeImageInput.files[0];
+
+      if (!file) {
+        showJudgeMessage("请先选择一张要判读的图片。", true);
+        return;
+      }
+
+      await loadUserConfig();
+
+      if (!canUse("aiJudgeEnabled", "当前用户暂未开通 AI 判读功能。")) {
+        showJudgeMessage("当前用户暂未开通 AI 判读功能，请联系管理员开通。", true);
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("image", file);
+      formData.append("judgeType", judgeType.value);
+      judgeResult.value = "";
+      showJudgeMessage("正在进行 AI 判读，请稍候……");
+      trackEvent("ai_judge_upload_select", {
+        fileSize: file.size,
+        fileType: file.type,
+        judgeType: judgeType.value
+      });
+
+      try {
+        const response = await fetch("/api/analyze-mining-image", {
+          method: "POST",
+          headers: {
+            "x-visitor-id": visitorId
+          },
+          body: formData
+        });
+        const data = await response.json().catch(() => ({
+          error: "后端没有返回有效结果。"
+        }));
+
+        if (!response.ok) {
+          throw new Error(data.error || data.detail || "AI判读失败");
+        }
+
+        judgeResult.value = data.result || "未返回判读结果。";
+        showJudgeMessage("AI判读完成，请结合现场情况核对。");
+        trackEvent("ai_judge_success", {
+          judgeType: judgeType.value
+        });
+      } catch (error) {
+        judgeResult.value = "";
+        showJudgeMessage(`AI判读失败：${error.message}`, true);
+        trackEvent("ai_judge_fail", {
+          message: error.message,
+          judgeType: judgeType.value
+        });
+      }
     }
 
     async function copyText(text, successMessage) {
