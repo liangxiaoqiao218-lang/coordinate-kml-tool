@@ -383,6 +383,17 @@
       background: #166534;
     }
 
+    .module-card {
+      background: #ffffff;
+      color: #172033;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+    }
+
+    .module-card:hover {
+      background: #ffffff;
+      border-color: #2563eb;
+    }
+
     .primary-action {
       width: 100%;
       min-height: 52px;
@@ -588,6 +599,25 @@
       margin-top: 12px;
     }
 
+    .judge-manual {
+      margin-top: 14px;
+      border-color: #bbf7d0;
+      background: #f4fff7;
+    }
+
+    .judge-manual p {
+      margin: 6px 0;
+      color: #334155;
+      line-height: 1.6;
+    }
+
+    .judge-manual-actions {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 12px;
+    }
+
     .help {
       margin-top: 18px;
       padding: 14px;
@@ -660,6 +690,7 @@
       .buttons,
       .settings-grid,
       .module-grid,
+      .judge-manual-actions,
       .support-actions {
         grid-template-columns: 1fr;
       }
@@ -695,14 +726,14 @@
 
       <div class="module-grid">
         <button type="button" class="module-card" onclick="showPage('coordinate')">
-          <em class="module-tag">基础工具</em>
-          <strong>坐标转KML</strong>
-          <span>粘贴或输入坐标，生成 Google Earth / 奥维地图可打开的 KML 文件。</span>
+          <em class="module-tag">统一入口</em>
+          <strong>坐标处理工具</strong>
+          <span>粘贴坐标、标准化、交换经纬度、复制结果，并生成 KML 矿区范围。</span>
         </button>
         <button type="button" class="module-card" onclick="showPage('coordinate', 'upload')">
-          <em class="module-tag">坐标整理</em>
+          <em class="module-tag">辅助功能</em>
           <strong>图片识别坐标</strong>
-          <span>上传坐标表图片，自动提取坐标并放入坐标工作区，便于核对和导出。</span>
+          <span>上传坐标表图片，识别后自动放入坐标处理工具，方便核对和导出。</span>
         </button>
         <button type="button" class="module-card" onclick="showPage('judge')">
           <em class="module-tag">核心功能</em>
@@ -714,8 +745,8 @@
 
     <section id="coordinatePage" class="view">
       <button type="button" class="back-button" onclick="showPage('home')">← 返回首页</button>
-      <h1>坐标转KML</h1>
-      <p class="intro">上传矿业坐标图，工具会自动识别并放到坐标工作区。也可直接粘贴坐标，核对后生成 KML 文件。</p>
+      <h1>坐标处理工具</h1>
+      <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
 
       <div class="workspace-head">
       <label for="coordinateInput">坐标工作区</label>
@@ -860,6 +891,16 @@
 【依据】需要更清晰图片或现场核对"></textarea>
       </div>
 
+      <div class="panel judge-manual">
+        <strong>当前判读仅供参考</strong>
+        <p>如需更高精度分析，可以提交图片给人工经验判断。适合水印严重、手写不清、河道复杂或需要投资前复核的情况。</p>
+        <div class="judge-manual-actions">
+          <button type="button" onclick="copyJudgeManualMessage()">提交图片</button>
+          <button type="button" class="secondary" onclick="copyWhatsAppTip()">WhatsApp</button>
+          <button type="button" class="support" onclick="copyWechatId()">微信</button>
+        </div>
+      </div>
+
       <section class="help">
         <strong>判读说明：</strong><br />
         AI判读只做矿地初筛，帮助你判断是否值得继续看。<br />
@@ -916,15 +957,18 @@
     loadUserConfig();
     trackEvent("page_visit");
 
-    function showPage(pageName, focusTarget = "") {
+    function showPage(pageName, focusTarget = "", updateUrl = true) {
       Object.values(pages).forEach(page => page.classList.remove("active"));
       const nextPage = pages[pageName] || pages.home;
       nextPage.classList.add("active");
 
-      if (pageName === "home") {
-        history.replaceState(null, "", location.pathname);
-      } else {
-        history.replaceState(null, "", `#${pageName}`);
+      if (updateUrl) {
+        const pathMap = {
+          home: "/",
+          coordinate: focusTarget === "upload" ? "/ocr" : "/convert",
+          judge: "/judge"
+        };
+        history.pushState({ pageName, focusTarget }, "", pathMap[pageName] || "/");
       }
 
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -936,11 +980,20 @@
       }
     }
 
-    if (location.hash === "#coordinate") {
-      showPage("coordinate");
-    } else if (location.hash === "#judge") {
-      showPage("judge");
+    function openPageFromPath() {
+      if (location.pathname === "/convert" || location.hash === "#coordinate") {
+        showPage("coordinate", "", false);
+      } else if (location.pathname === "/ocr") {
+        showPage("coordinate", "upload", false);
+      } else if (location.pathname === "/judge" || location.hash === "#judge") {
+        showPage("judge", "", false);
+      } else {
+        showPage("home", "", false);
+      }
     }
+
+    window.addEventListener("popstate", openPageFromPath);
+    openPageFromPath();
 
     function getOrCreateVisitorId() {
       const existing = localStorage.getItem("coordinateToolVisitorId");
@@ -1245,6 +1298,28 @@
 我会发送原图和识别调试信息。`;
 
       copyText(text, "人工服务说明已复制。");
+    }
+
+    function copyJudgeManualMessage() {
+      const text = `我需要人工协助做矿地/河道/矿石图片判读。
+
+请帮我看：
+1. 是否有继续投入价值
+2. 主要风险是什么
+3. 需要补充哪些资料或现场信息
+
+联系方式：${MANUAL_CONTACT_TEXT}`;
+
+      copyText(text, "人工判读说明已复制，请连同图片一起发送。");
+    }
+
+    function copyWhatsAppTip() {
+      const text = `我需要通过 WhatsApp 进行人工矿地判读，请发送图片和判读结果截图。`;
+      copyText(text, "WhatsApp发送说明已复制。");
+    }
+
+    function copyWechatId() {
+      copyText("Mir-2188", "微信号已复制：Mir-2188");
     }
 
     function copyDebugText() {
