@@ -1257,9 +1257,6 @@
         const trimmed = line.trim();
 
         if (!trimmed) {
-          if (coordinateLines.length > 0 && coordinateLines[coordinateLines.length - 1] !== "") {
-            coordinateLines.push("");
-          }
           continue;
         }
 
@@ -1536,6 +1533,7 @@
     }
 
     function groupEveryFourLinesWhenLikely(text) {
+      return text;
       const lines = String(text || "")
         .split(/\r?\n/)
         .map(line => line.trim())
