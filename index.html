@@ -143,15 +143,7 @@
     }
 
     .module-card::before {
-      content: "";
-      position: absolute;
-      top: 14px;
-      right: 14px;
-      width: 56px;
-      height: 56px;
-      border-radius: 50%;
-      background: #2563eb;
-      opacity: 0.08;
+      content: none;
     }
 
     .module-card strong {
@@ -169,17 +161,13 @@
     }
 
     .module-card.primary-module {
-      border-color: #bfdbfe;
-      background: linear-gradient(180deg, #f7fbff 0%, #ffffff 64%);
+      border-color: #d8e5fb;
+      background: linear-gradient(180deg, #f8fbff 0%, #ffffff 72%);
     }
 
     .module-card.judge-module {
-      border-color: #bbf7d0;
-      background: linear-gradient(180deg, #f8fff9 0%, #ffffff 64%);
-    }
-
-    .module-card.judge-module::before {
-      background: #15803d;
+      border-color: #d2eadb;
+      background: linear-gradient(180deg, #f8fff9 0%, #ffffff 72%);
     }
 
     .module-card.primary-module:hover {
@@ -200,6 +188,10 @@
       font-weight: 800;
     }
 
+    .module-action::after {
+      content: " →";
+    }
+
     .judge-module .module-action {
       color: #15803d;
     }
@@ -207,16 +199,16 @@
     .module-tag {
       display: inline-block;
       margin-bottom: 12px;
-      padding: 5px 9px;
-      border-radius: 999px;
-      background: #eaf1ff;
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
       color: #1d4ed8;
       font-size: 13px;
       font-weight: 700;
     }
 
     .judge-module .module-tag {
-      background: #dcfce7;
+      background: transparent;
       color: #15803d;
     }
 
@@ -366,24 +358,24 @@
       border-style: dashed;
       border-color: #9fb1c8;
       background: #f8fbff;
-      padding: 12px 14px;
+      padding: 10px 12px;
     }
 
     .upload-box label {
-      margin-bottom: 6px;
-      font-size: 20px;
+      margin-bottom: 4px;
+      font-size: 19px;
       line-height: 1.2;
     }
 
     .upload-box input {
       width: 100%;
-      min-height: 34px;
+      min-height: 30px;
     }
 
     .image-preview {
       display: none;
-      margin-top: 12px;
-      padding: 10px;
+      margin-top: 8px;
+      padding: 8px;
       border: 1px solid #d8e0ec;
       border-radius: 8px;
       background: #ffffff;
@@ -392,14 +384,14 @@
     .image-preview-row {
       position: relative;
       display: grid;
-      grid-template-columns: 96px 1fr auto;
-      gap: 10px;
+      grid-template-columns: 78px 1fr auto;
+      gap: 8px;
       align-items: center;
     }
 
     .image-preview img {
-      width: 96px;
-      height: 72px;
+      width: 78px;
+      height: 56px;
       object-fit: cover;
       border: 1px solid #e5e7eb;
       border-radius: 6px;
@@ -422,7 +414,8 @@
     .image-preview p {
       margin: 0;
       color: #475569;
-      line-height: 1.5;
+      line-height: 1.35;
+      font-size: 14px;
       word-break: break-word;
     }
 
@@ -673,6 +666,11 @@
 
     .recognition-status.error::before {
       background: #dc2626;
+    }
+
+    .judge-status.loading::before {
+      border-color: #bbf7d0;
+      border-top-color: #15803d;
     }
 
     @keyframes spin {
@@ -950,6 +948,11 @@
       color: #1f2937;
     }
 
+    #judgePage .help {
+      border-left-color: #15803d;
+      background: #f8fff9;
+    }
+
     @media (max-width: 720px) {
       .page {
         padding: 14px;
@@ -1009,15 +1012,23 @@
 
       .upload-box {
         margin-top: 10px;
-        padding: 9px 12px;
+        padding: 7px 10px;
       }
 
       .upload-box label {
-        font-size: 19px;
+        font-size: 18px;
+        margin-bottom: 2px;
+      }
+
+      .upload-box input {
+        min-height: 28px;
+        font-size: 14px;
       }
 
       .privacy-note {
-        margin-top: 4px;
+        margin-top: 3px;
+        font-size: 12px;
+        line-height: 1.3;
       }
 
       .primary-action {
@@ -1067,12 +1078,23 @@
       }
 
       .image-preview-row {
-        grid-template-columns: 72px 1fr;
+        grid-template-columns: 56px 1fr;
+        gap: 7px;
       }
 
       .image-preview img {
-        width: 72px;
-        height: 58px;
+        width: 56px;
+        height: 42px;
+      }
+
+      .image-preview {
+        margin-top: 6px;
+        padding: 7px;
+      }
+
+      .image-preview p {
+        font-size: 12px;
+        line-height: 1.25;
       }
 
       .image-preview .remove-image {
@@ -1255,6 +1277,7 @@
           <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
         </div>
 
+        <div id="judgeStatus" class="recognition-status judge-status"></div>
         <div id="judgeMessage" class="message"></div>
         <div class="judge-result-wrap">
           <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里：
@@ -1317,6 +1340,7 @@
     const judgeType = document.getElementById("judgeType");
     const judgeImageInput = document.getElementById("judgeImageInput");
     const judgeImagePreview = document.getElementById("judgeImagePreview");
+    const judgeStatus = document.getElementById("judgeStatus");
     const judgeMessage = document.getElementById("judgeMessage");
     const judgeResult = document.getElementById("judgeResult");
     const judgeQrPanel = document.getElementById("judgeQrPanel");
@@ -1663,6 +1687,7 @@
 
       showJudgeSelectedImage(files);
       judgeResult.value = "";
+      setJudgeStatus(`已选择 ${Math.min(files.length, 5)} 张图片，点击开始判读后上传分析。`, "success");
       showJudgeMessage(`已选择 ${Math.min(files.length, 5)} 张图片，点击“开始判读”后进行分析。`);
     }
 
@@ -1700,11 +1725,13 @@
         judgeImagePreview.innerHTML = "";
         judgeImageInput.value = "";
         judgeResult.value = "";
+        setJudgeStatus("");
         showJudgeMessage("已删除判读图片，可以重新选择。");
         return;
       }
 
       showJudgeSelectedImage(selectedJudgeImageFiles);
+      setJudgeStatus(`已选择 ${selectedJudgeImageFiles.length} 张图片，点击开始判读后上传分析。`, "success");
       showJudgeMessage("已删除该图片。");
     }
 
@@ -1749,6 +1776,23 @@
       judgeMessage.className = isError ? "message error" : "message";
     }
 
+    function setJudgeStatus(text = "", type = "") {
+      if (!judgeStatus) {
+        return;
+      }
+
+      if (!text) {
+        judgeStatus.style.display = "none";
+        judgeStatus.textContent = "";
+        judgeStatus.className = "recognition-status judge-status";
+        return;
+      }
+
+      judgeStatus.style.display = "flex";
+      judgeStatus.textContent = text;
+      judgeStatus.className = `recognition-status judge-status ${type}`.trim();
+    }
+
     function toggleJudgeQr(type) {
       const currentType = judgeQrPanel.dataset.type || "";
 
@@ -1779,6 +1823,7 @@
         : Array.from(judgeImageInput.files || []).filter(isImageUpload).slice(0, 5);
 
       if (files.length === 0) {
+        setJudgeStatus("请先选择要判读的图片。", "error");
         showJudgeMessage("请先选择要判读的图片，最多5张。", true);
         return;
       }
@@ -1786,6 +1831,7 @@
       await loadUserConfig();
 
       if (!canUse("aiJudgeEnabled", "当前用户暂未开通 AI 判读功能。")) {
+        setJudgeStatus("当前用户暂未开通 AI 判读功能。", "error");
         showJudgeMessage("当前用户暂未开通 AI 判读功能，请联系管理员开通。", true);
         return;
       }
@@ -1794,6 +1840,7 @@
       files.forEach(file => formData.append("images", file));
       formData.append("judgeType", judgeType.value);
       judgeResult.value = "";
+      setJudgeStatus(`正在上传并判读 ${files.length} 张图片，请稍候……`, "loading");
       showJudgeMessage(`正在判读 ${files.length} 张图片，请稍候……`);
       trackEvent("ai_judge_upload_select", {
         fileCount: files.length,
@@ -1819,12 +1866,14 @@
         }
 
         judgeResult.value = data.result || "未返回判读结果。";
+        setJudgeStatus("判读完成，请查看结果。", "success");
         showJudgeMessage(data.warning || "AI判读完成，请结合现场情况核对。");
         trackEvent("ai_judge_success", {
           judgeType: judgeType.value
         });
       } catch (error) {
         judgeResult.value = "";
+        setJudgeStatus("判读失败，请重新上传清晰图片或使用人工协助。", "error");
         showJudgeMessage(`AI判读失败：${error.message}`, true);
         trackEvent("ai_judge_fail", {
           message: error.message,
