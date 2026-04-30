@@ -194,6 +194,10 @@
       box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
 
+    #coordinateInput {
+      min-height: 280px;
+    }
+
     textarea:focus,
     select:focus,
     input:focus {
@@ -661,8 +665,20 @@
     .judge-panel textarea {
       min-height: 190px;
       margin-top: 10px;
-      padding: 12px;
+      padding: 12px 12px 58px 12px;
       background: #ffffff;
+    }
+
+    .judge-result-wrap {
+      position: relative;
+    }
+
+    .judge-result-tools {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      display: flex;
+      gap: 8px;
     }
 
     .judge-actions {
@@ -736,6 +752,10 @@
       textarea {
         min-height: 300px;
         padding-bottom: 60px;
+      }
+
+      #coordinateInput {
+        min-height: 245px;
       }
 
       .workspace-tools {
@@ -823,7 +843,7 @@
 
       <div class="module-grid">
         <button type="button" class="module-card" onclick="showPage('coordinate')">
-          <em class="module-tag">统一入口</em>
+          <em class="module-tag">常用工具</em>
           <strong>坐标处理工具</strong>
           <span>粘贴坐标、图片识别、标准化、交换经纬度、复制结果，并生成 KML 矿区范围。</span>
         </button>
@@ -987,11 +1007,17 @@
         </div>
 
         <div id="judgeMessage" class="message"></div>
-        <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里：
+        <div class="judge-result-wrap">
+          <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里：
 【判读结论】不确定
 【是否建议继续】谨慎
 【风险】图片信息不足
 【依据】需要更清晰图片或现场核对"></textarea>
+          <div class="judge-result-tools">
+            <button type="button" class="icon-button" onclick="clearJudgeResult()" title="清除判读结果" aria-label="清除判读结果">×</button>
+            <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">⧉</button>
+          </div>
+        </div>
       </div>
 
       <div class="panel judge-manual">
@@ -1294,6 +1320,12 @@
         </div>`;
     }
 
+    function isImageUpload(file) {
+      const name = String(file?.name || "").toLowerCase();
+      return String(file?.type || "").startsWith("image/")
+        || /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif)$/i.test(name);
+    }
+
     function openSelectedImage() {
       if (!selectedImageUrl) {
         showMessage("当前没有可查看的上传图片。", true);
@@ -1331,7 +1363,7 @@
 
       selectedJudgeImageFile = file;
       selectedJudgeImageUrl = URL.createObjectURL(file);
-      const isImage = file.type.startsWith("image/");
+      const isImage = isImageUpload(file);
       const previewContent = isImage
         ? `<button type="button" class="preview-button" onclick="openJudgeSelectedImage()" title="点击查看上传图片">
             <img src="${selectedJudgeImageUrl}" alt="已上传判读图片预览" />
@@ -1365,7 +1397,7 @@
         return;
       }
 
-      if (!selectedJudgeImageFile?.type?.startsWith("image/")) {
+      if (!isImageUpload(selectedJudgeImageFile)) {
         showJudgeMessage("当前选择的是资料文件，不支持图片预览。", true);
         return;
       }
@@ -1555,6 +1587,24 @@
 
     function copyWechatId() {
       copyText("Mir-2188", "微信号已复制：Mir-2188");
+    }
+
+    function clearJudgeResult() {
+      judgeResult.value = "";
+      showJudgeMessage("判读结果已清除。");
+    }
+
+    function copyJudgeResult() {
+      const text = judgeResult.value.trim();
+
+      if (!text) {
+        showJudgeMessage("暂无判读结果可复制。", true);
+        return;
+      }
+
+      navigator.clipboard.writeText(text)
+        .then(() => showJudgeMessage("判读结果已复制。"))
+        .catch(() => showJudgeMessage("复制失败，请手动选择内容复制。", true));
     }
 
     function copyDebugText() {
