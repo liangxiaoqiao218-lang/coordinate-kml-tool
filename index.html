@@ -50,7 +50,7 @@
     }
 
     .home-hero {
-      padding: 8px 2px 2px;
+      padding: 6px 2px 0;
       border: 0;
       background: transparent;
       box-shadow: none;
@@ -65,20 +65,21 @@
     }
 
     .home-hero h1 {
-      margin-bottom: 8px;
+      margin-bottom: 10px;
       font-size: 30px;
     }
 
     .home-hero .intro {
-      max-width: 820px;
+      max-width: 780px;
       margin-bottom: 0;
-      padding-left: 12px;
-      border-left: 4px solid #2563eb;
+      padding-left: 0;
+      border-left: 0;
       color: #465568;
+      line-height: 1.62;
     }
 
     .home-flow {
-      display: grid;
+      display: none;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
       margin: 12px 0 16px;
@@ -120,14 +121,14 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 14px;
-      margin-top: 14px;
+      margin-top: 18px;
     }
 
     .module-card {
-      min-height: 174px;
+      min-height: 148px;
       padding: 18px;
       border: 1px solid #d6dfeb;
-      border-radius: 14px;
+      border-radius: 16px;
       background: #ffffff;
       color: #172033;
       text-align: left;
@@ -148,7 +149,7 @@
 
     .module-card strong {
       display: block;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       font-size: 22px;
       color: #0f172a;
     }
@@ -161,13 +162,13 @@
     }
 
     .module-card.primary-module {
-      border-color: #d8e5fb;
-      background: linear-gradient(180deg, #f8fbff 0%, #ffffff 72%);
+      border-color: #dce8fb;
+      background: linear-gradient(180deg, #f8fbff 0%, #ffffff 80%);
     }
 
     .module-card.judge-module {
-      border-color: #d2eadb;
-      background: linear-gradient(180deg, #f8fff9 0%, #ffffff 72%);
+      border-color: #d7ecdf;
+      background: linear-gradient(180deg, #f8fff9 0%, #ffffff 80%);
     }
 
     .module-card.primary-module:hover {
@@ -878,9 +879,16 @@
 
     .judge-panel textarea {
       min-height: 190px;
-      margin-top: 10px;
+      margin-top: 0;
       padding: 12px 12px 58px 12px;
       background: #ffffff;
+    }
+
+    .judge-type-note {
+      margin: 8px 0 0;
+      color: #64748b;
+      font-size: 13px;
+      line-height: 1.5;
     }
 
     .judge-result-wrap {
@@ -1108,29 +1116,20 @@
   <main class="page">
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
-        <p class="eyebrow">坐标 · KML · AI判读</p>
-        <h1>矿业空间工具 Geo Tool</h1>
-        <p class="intro">上传坐标图片或直接粘贴坐标，工具会整理成可一键导入奥维地图、Google Earth 的 KML 文件；也可上传矿地、河道、矿石图片做 AI 初筛，不准时转人工协助。</p>
-      </div>
-
-      <div class="home-flow">
-        <span>坐标整理</span>
-        <span>KML导出</span>
-        <span>AI初筛</span>
+        <h1>矿业空间工具</h1>
+        <p class="intro">上传坐标图或直接粘贴坐标，生成可一键导入奥维地图、Google Earth 的 KML；也可上传矿地图片做 AI 初筛，识别不准时转人工协助。</p>
       </div>
 
       <div class="module-grid">
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
-          <em class="module-tag">坐标/KML</em>
-          <strong>坐标处理工具</strong>
-          <span>识别图片里的坐标，自动整理成可导入奥维地图和 Google Earth 的 KML 矿区范围。</span>
-          <small class="module-action">进入坐标处理</small>
+          <strong>坐标处理</strong>
+          <span>图片识别、坐标整理、生成 KML 矿区范围。</span>
+          <small class="module-action">进入</small>
         </button>
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
-          <em class="module-tag">AI初筛</em>
           <strong>AI矿地判读</strong>
-          <span>上传矿地、河道或矿石图片，获得保守的初筛判断和风险提示。</span>
-          <small class="module-action">进入AI判读</small>
+          <span>上传矿地、河道或矿石图，查看初筛结论和风险提示。</span>
+          <small class="module-action">开始</small>
         </button>
       </div>
     </section>
@@ -1262,23 +1261,8 @@
       <p class="intro">上传矿地、河道、卫星图或矿石照片，AI只做初筛判断：是否值得继续看、主要风险在哪里。不预测含量，不标具体金点。</p>
 
       <div class="panel judge-panel">
-        <label for="judgeType">判读类型</label>
-        <select id="judgeType">
-          <option value="mine-land" selected>矿地 / 河道 / 卫星图</option>
-          <option value="ore">矿石照片</option>
-          <option value="document">矿业资料</option>
-        </select>
+        <input id="judgeType" type="hidden" value="mine-land" />
 
-        <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片（最多5张）</label>
-        <input id="judgeImageInput" type="file" accept="image/*" multiple />
-        <div id="judgeImagePreview" class="image-preview"></div>
-
-        <div class="judge-actions">
-          <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
-        </div>
-
-        <div id="judgeStatus" class="recognition-status judge-status"></div>
-        <div id="judgeMessage" class="message"></div>
         <div class="judge-result-wrap">
           <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里：
 【判读结论】不确定
@@ -1290,6 +1274,18 @@
             <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">⧉</button>
           </div>
         </div>
+
+        <label for="judgeImageInput" style="margin-top: 14px;">上传判读图片（最多5张）</label>
+        <input id="judgeImageInput" type="file" accept="image/*" multiple />
+        <div id="judgeImagePreview" class="image-preview"></div>
+        <p class="judge-type-note">支持矿地、河道、卫星图、矿石照片和资料截图，AI会自动判断类型。</p>
+
+        <div class="judge-actions">
+          <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
+        </div>
+
+        <div id="judgeStatus" class="recognition-status judge-status"></div>
+        <div id="judgeMessage" class="message"></div>
       </div>
 
       <div class="panel judge-manual">
