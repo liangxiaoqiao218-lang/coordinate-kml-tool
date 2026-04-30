@@ -336,6 +336,7 @@
     }
 
     .image-preview-row {
+      position: relative;
       display: grid;
       grid-template-columns: 96px 1fr auto;
       gap: 10px;
@@ -372,9 +373,20 @@
     }
 
     .image-preview .remove-image {
-      min-height: 36px;
-      padding: 8px 10px;
-      background: #b91c1c;
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      width: 28px;
+      height: 28px;
+      min-height: 28px;
+      padding: 0;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #334155;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.16);
+      font-size: 18px;
+      line-height: 1;
     }
 
     .image-modal {
@@ -403,12 +415,7 @@
       object-fit: contain;
       border-radius: 6px;
       background: #f8fafc;
-    }
-
-    .image-modal-actions {
-      display: flex;
-      justify-content: flex-end;
-      margin-top: 10px;
+      cursor: zoom-out;
     }
 
     select {
@@ -513,12 +520,12 @@
       min-height: 52px;
       margin-top: 10px;
       font-size: 17px;
-      background: #145de8;
-      box-shadow: 0 10px 22px rgba(20, 93, 232, 0.2);
+      background: #15803d;
+      box-shadow: 0 10px 22px rgba(21, 128, 61, 0.18);
     }
 
     .primary-action:hover {
-      background: #0f4fc7;
+      background: #166534;
     }
 
     .message {
@@ -957,7 +964,8 @@
       }
 
       .image-preview .remove-image {
-        grid-column: 1 / -1;
+        top: -7px;
+        right: -7px;
       }
     }
   </style>
@@ -1126,8 +1134,8 @@
           <option value="document">矿业资料</option>
         </select>
 
-        <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片或资料文件</label>
-        <input id="judgeImageInput" type="file" accept="image/*,.pdf,.doc,.docx,.txt" />
+        <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片（最多5张）</label>
+        <input id="judgeImageInput" type="file" accept="image/*" multiple />
         <div id="judgeImagePreview" class="image-preview"></div>
 
         <div class="judge-actions">
@@ -1171,11 +1179,8 @@
   </main>
 
   <div id="imageModal" class="image-modal" onclick="closeImageModal()">
-    <div class="image-modal-content" onclick="event.stopPropagation()">
+    <div class="image-modal-content">
       <img id="imageModalImg" alt="上传图片大图预览" />
-      <div class="image-modal-actions">
-        <button type="button" class="secondary" onclick="closeImageModal()">关闭预览</button>
-      </div>
     </div>
   </div>
 
@@ -1226,8 +1231,8 @@
     let clearConfirmTimer = null;
     let selectedImageUrl = "";
     let selectedImageFile = null;
-    let selectedJudgeImageUrl = "";
-    let selectedJudgeImageFile = null;
+    let selectedJudgeImageUrls = [];
+    let selectedJudgeImageFiles = [];
 
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
@@ -1453,7 +1458,7 @@
             <img src="${selectedImageUrl}" alt="已上传图片预览" />
           </button>
           <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />点击图片可查看大图</p>
-          <button type="button" class="remove-image" onclick="clearSelectedImage()">删除图片</button>
+          <button type="button" class="remove-image" onclick="clearSelectedImage()" title="删除图片" aria-label="删除图片">×</button>
         </div>`;
     }
 
@@ -1493,69 +1498,86 @@
       showMessage("已删除上传图片，可以重新选择。");
     }
 
-    function showJudgeSelectedImage(file) {
-      if (selectedJudgeImageUrl) {
-        URL.revokeObjectURL(selectedJudgeImageUrl);
-      }
+    function showJudgeSelectedImage(files) {
+      selectedJudgeImageUrls.forEach(url => URL.revokeObjectURL(url));
 
-      selectedJudgeImageFile = file;
-      selectedJudgeImageUrl = URL.createObjectURL(file);
-      const isImage = isImageUpload(file);
-      const previewContent = isImage
-        ? `<button type="button" class="preview-button" onclick="openJudgeSelectedImage()" title="点击查看上传图片">
-            <img src="${selectedJudgeImageUrl}" alt="已上传判读图片预览" />
-          </button>`
-        : `<div class="file-preview-icon">文件</div>`;
-      const viewText = isImage ? "点击图片可查看大图" : "资料文件已选择";
-      judgeImagePreview.style.display = "block";
-      judgeImagePreview.innerHTML = `
-        <div class="image-preview-row">
-          ${previewContent}
-          <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />${viewText}</p>
-          <button type="button" class="remove-image" onclick="clearJudgeSelectedImage()">删除文件</button>
-        </div>`;
-    }
+      selectedJudgeImageFiles = Array.from(files).filter(isImageUpload).slice(0, 5);
+      selectedJudgeImageUrls = selectedJudgeImageFiles.map(file => URL.createObjectURL(file));
 
-    function handleJudgeImageChange() {
-      const file = judgeImageInput.files[0];
-
-      if (!file) {
+      if (selectedJudgeImageFiles.length === 0) {
+        judgeImagePreview.style.display = "none";
+        judgeImagePreview.innerHTML = "";
+        showJudgeMessage("请上传图片文件，当前判读暂不直接读取文档。", true);
         return;
       }
 
-      showJudgeSelectedImage(file);
-      judgeResult.value = "";
-      showJudgeMessage("文件已选择，点击“开始判读”后进行分析。");
+      judgeImagePreview.style.display = "block";
+      judgeImagePreview.innerHTML = selectedJudgeImageFiles.map((file, index) => `
+        <div class="image-preview-row">
+          <button type="button" class="preview-button" onclick="openJudgeSelectedImage(${index})" title="点击查看上传图片">
+            <img src="${selectedJudgeImageUrls[index]}" alt="已上传判读图片预览" />
+          </button>
+          <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />点击图片可查看大图</p>
+          <button type="button" class="remove-image" onclick="clearJudgeSelectedImage(${index})" title="删除图片" aria-label="删除图片">×</button>
+        </div>`).join("");
     }
 
-    function openJudgeSelectedImage() {
-      if (!selectedJudgeImageUrl) {
+    function handleJudgeImageChange() {
+      const files = Array.from(judgeImageInput.files || []);
+
+      if (files.length === 0) {
+        return;
+      }
+
+      if (files.length > 5) {
+        showJudgeMessage("一次最多上传5张图片，已自动保留前5张。", true);
+      }
+
+      showJudgeSelectedImage(files);
+      judgeResult.value = "";
+      showJudgeMessage(`已选择 ${Math.min(files.length, 5)} 张图片，点击“开始判读”后进行分析。`);
+    }
+
+    function openJudgeSelectedImage(index = 0) {
+      const url = selectedJudgeImageUrls[index];
+
+      if (!url) {
         showJudgeMessage("当前没有可查看的判读图片。", true);
         return;
       }
 
-      if (!isImageUpload(selectedJudgeImageFile)) {
-        showJudgeMessage("当前选择的是资料文件，不支持图片预览。", true);
-        return;
-      }
-
-      imageModalImg.src = selectedJudgeImageUrl;
+      imageModalImg.src = url;
       imageModal.style.display = "flex";
     }
 
-    function clearJudgeSelectedImage() {
-      if (selectedJudgeImageUrl) {
-        URL.revokeObjectURL(selectedJudgeImageUrl);
+    function clearJudgeSelectedImage(index = -1) {
+      if (index >= 0) {
+        const url = selectedJudgeImageUrls[index];
+        if (url) {
+          URL.revokeObjectURL(url);
+        }
+
+        selectedJudgeImageUrls.splice(index, 1);
+        selectedJudgeImageFiles.splice(index, 1);
+      } else {
+        selectedJudgeImageUrls.forEach(url => URL.revokeObjectURL(url));
+        selectedJudgeImageUrls = [];
+        selectedJudgeImageFiles = [];
       }
 
-      selectedJudgeImageUrl = "";
-      selectedJudgeImageFile = null;
       closeImageModal();
-      judgeImagePreview.style.display = "none";
-      judgeImagePreview.innerHTML = "";
-      judgeImageInput.value = "";
-      judgeResult.value = "";
-      showJudgeMessage("已删除判读文件，可以重新选择。");
+
+      if (selectedJudgeImageFiles.length === 0) {
+        judgeImagePreview.style.display = "none";
+        judgeImagePreview.innerHTML = "";
+        judgeImageInput.value = "";
+        judgeResult.value = "";
+        showJudgeMessage("已删除判读图片，可以重新选择。");
+        return;
+      }
+
+      showJudgeSelectedImage(selectedJudgeImageFiles);
+      showJudgeMessage("已删除该图片。");
     }
 
     function setDebug(text) {
@@ -1624,10 +1646,12 @@
     }
 
     async function analyzeMiningImage() {
-      const file = selectedJudgeImageFile || judgeImageInput.files[0];
+      const files = selectedJudgeImageFiles.length > 0
+        ? selectedJudgeImageFiles
+        : Array.from(judgeImageInput.files || []).filter(isImageUpload).slice(0, 5);
 
-      if (!file) {
-        showJudgeMessage("请先选择一张要判读的图片或资料文件。", true);
+      if (files.length === 0) {
+        showJudgeMessage("请先选择要判读的图片，最多5张。", true);
         return;
       }
 
@@ -1639,13 +1663,14 @@
       }
 
       const formData = new FormData();
-      formData.append("image", file);
+      files.forEach(file => formData.append("images", file));
       formData.append("judgeType", judgeType.value);
       judgeResult.value = "";
-      showJudgeMessage("正在进行 AI 判读，请稍候……");
+      showJudgeMessage(`正在判读 ${files.length} 张图片，请稍候……`);
       trackEvent("ai_judge_upload_select", {
-        fileSize: file.size,
-        fileType: file.type,
+        fileCount: files.length,
+        fileSize: files.reduce((sum, file) => sum + file.size, 0),
+        fileType: files.map(file => file.type).join(","),
         judgeType: judgeType.value
       });
 
@@ -1690,28 +1715,18 @@
     }
 
     function copyManualMessage() {
-      const text = `我需要人工协助识别矿业坐标图片。
-
-请帮我把图片里的坐标整理为：
-经度,纬度
-经度,纬度
-
-导出类型：${exportType.value}
-联系方式：${MANUAL_CONTACT_TEXT}
-
-我会发送原图和识别调试信息。`;
+      const text = `我需要人工协助整理矿业坐标。
+请把图片坐标整理成可导入奥维地图/Google Earth 的KML可用格式。
+我会发送原图和当前识别结果。
+联系方式：${MANUAL_CONTACT_TEXT}`;
 
       copyText(text, "人工服务说明已复制。");
     }
 
     function copyJudgeManualMessage() {
-      const text = `我需要人工协助做矿地/河道/矿石图片判读。
-
-请帮我看：
-1. 是否有继续投入价值
-2. 主要风险是什么
-3. 需要补充哪些资料或现场信息
-
+      const text = `我需要人工协助做矿地判读。
+请帮我判断是否值得继续、主要风险和需要补充的信息。
+我会发送图片和AI判读结果。
 联系方式：${MANUAL_CONTACT_TEXT}`;
 
       copyText(text, "人工判读说明已复制，请连同图片一起发送。");

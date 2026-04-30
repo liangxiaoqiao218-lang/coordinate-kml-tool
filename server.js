@@ -1329,9 +1329,19 @@ app.patch("/api/admin/feature-flags", requireAdmin, async (req, res) => {
   }
 });
 
-app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) => {
+app.post("/api/analyze-mining-image", upload.fields([
+  { name: "image", maxCount: 1 },
+  { name: "images", maxCount: 5 }
+]), async (req, res) => {
   console.log("---- 收到AI判读请求 ----");
-  console.log("是否收到图片：", Boolean(req.file));
+  const uploadedFiles = [
+    ...(req.files?.images || []),
+    ...(req.files?.image || [])
+  ].slice(0, 5);
+  const firstFile = uploadedFiles[0];
+  console.log("是否收到图片：", uploadedFiles.length > 0);
+  console.log("收到图片数量：", uploadedFiles.length);
+  console.log("图片大小：", uploadedFiles.map(file => `${file.originalname || "image"}=${file.size} bytes`).join(", "));
 
   try {
     const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
@@ -1351,13 +1361,14 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
       });
     }
 
-    if (!req.file) {
+    if (uploadedFiles.length === 0) {
       return res.status(400).json({
         error: "后端没有收到文件，请重新选择图片或资料文件上传。"
       });
     }
 
-    const isImageFile = String(req.file.mimetype || "").startsWith("image/");
+    const imageFiles = uploadedFiles.filter(file => String(file.mimetype || "").startsWith("image/"));
+    const isImageFile = imageFiles.length > 0;
 
     if (user) {
       await updateUserVisitMeta(user, req, data);
@@ -1373,8 +1384,8 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
         id: makeId("record"),
         user_id: visitorId,
         imageURL: "",
-        imageName: req.file.originalname || "",
-        imageSize: req.file.size || 0,
+        imageName: firstFile.originalname || "",
+        imageSize: firstFile.size || 0,
         judgeType,
         aiRawOutput: rawOutput,
         result: normalizedOutput,
@@ -1405,8 +1416,12 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
       });
     }
 
-    const imageBase64 = req.file.buffer.toString("base64");
-    const imageDataUrl = `data:${req.file.mimetype};base64,${imageBase64}`;
+    const imageItems = imageFiles.map(file => ({
+      type: "image_url",
+      image_url: {
+        url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`
+      }
+    }));
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       baseURL: openAIBaseURL
@@ -1414,7 +1429,7 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
 
     const prompt = `你是矿业空间判读助手，只做矿业决策辅助。
 
-请根据图片做保守初筛。图片可能是矿地、河道、卫星图、地形图或矿石照片。
+请根据上传的1到5张图片做保守初筛。图片可能是矿地、河道、卫星图、地形图、矿石照片或资料页截图。
 
 只允许输出下面4行，不能增加其他标题：
 【判读结论】一句短话
@@ -1428,7 +1443,8 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
 3. 不允许输出含量预测、储量预测。
 4. 不允许报具体金点、坐标点或采样点。
 5. 看不清或证据不足时，必须写“不确定”或“谨慎”。
-6. 偏向保守判断，宁可少说，不要乱说。`;
+6. 如果图片看起来像AI生成图、过度美化图、合成图或不真实场景，必须在【风险】里提示“疑似AI图或非真实现场图，需人工核对”。
+7. 偏向保守判断，宁可少说，不要乱说。`;
 
     const response = await openai.chat.completions.create({
       model,
@@ -1437,12 +1453,7 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
           role: "user",
           content: [
             { type: "text", text: prompt },
-            {
-              type: "image_url",
-              image_url: {
-                url: imageDataUrl
-              }
-            }
+            ...imageItems
           ]
         }
       ],
@@ -1455,8 +1466,8 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
       id: makeId("record"),
       user_id: visitorId,
       imageURL: "",
-      imageName: req.file.originalname || "",
-      imageSize: req.file.size || 0,
+      imageName: imageFiles.map(file => file.originalname || "").filter(Boolean).join(", "),
+      imageSize: imageFiles.reduce((sum, file) => sum + Number(file.size || 0), 0),
       judgeType,
       aiRawOutput: rawOutput,
       result: normalizedOutput,
