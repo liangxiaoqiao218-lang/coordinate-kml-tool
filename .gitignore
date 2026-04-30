@@ -1,5 +1,5 @@
 node_modules/
 .env
+admin-data.json
 *.log
 eng.traineddata
-

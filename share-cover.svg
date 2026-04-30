@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600">
+  <rect width="600" height="600" rx="44" fill="#f4f7fb"/>
+  <rect x="48" y="48" width="504" height="504" rx="32" fill="#ffffff" stroke="#d6e1f0" stroke-width="3"/>
+  <rect x="88" y="86" width="92" height="92" rx="22" fill="#2563eb"/>
+  <path d="M116 136h36m-16-18 18 18-18 18" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="204" y="124" font-family="Arial, Microsoft YaHei, sans-serif" font-size="36" font-weight="700" fill="#0f172a">坐标转 KML</text>
+  <text x="204" y="168" font-family="Arial, Microsoft YaHei, sans-serif" font-size="22" fill="#64748b">矿业坐标整理工具</text>
+  <rect x="88" y="226" width="424" height="82" rx="18" fill="#eff6ff"/>
+  <text x="118" y="260" font-family="Arial, Microsoft YaHei, sans-serif" font-size="24" font-weight="700" fill="#1e40af">上传坐标图片</text>
+  <text x="118" y="292" font-family="Arial, Microsoft YaHei, sans-serif" font-size="18" fill="#475569">识别经纬度 / 表格 / 手写坐标</text>
+  <rect x="88" y="332" width="424" height="82" rx="18" fill="#ecfdf5"/>
+  <text x="118" y="366" font-family="Arial, Microsoft YaHei, sans-serif" font-size="24" font-weight="700" fill="#166534">生成 KML 文件</text>
+  <text x="118" y="398" font-family="Arial, Microsoft YaHei, sans-serif" font-size="18" fill="#475569">支持 Polygon 矿区范围面</text>
+  <path d="M132 476h70l34-36 62 24 52-48 92 60" fill="none" stroke="#2563eb" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="132" cy="476" r="10" fill="#16a34a"/>
+  <circle cx="236" cy="440" r="10" fill="#16a34a"/>
+  <circle cx="350" cy="416" r="10" fill="#16a34a"/>
+  <circle cx="442" cy="476" r="10" fill="#16a34a"/>
+</svg>
