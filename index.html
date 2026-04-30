@@ -145,11 +145,13 @@
     .module-card::before {
       content: "";
       position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 4px;
+      top: 14px;
+      right: 14px;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
       background: #2563eb;
+      opacity: 0.08;
     }
 
     .module-card strong {
@@ -168,12 +170,12 @@
 
     .module-card.primary-module {
       border-color: #bfdbfe;
-      background: linear-gradient(180deg, #eff6ff 0%, #ffffff 58%);
+      background: linear-gradient(180deg, #f7fbff 0%, #ffffff 64%);
     }
 
     .module-card.judge-module {
       border-color: #bbf7d0;
-      background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 58%);
+      background: linear-gradient(180deg, #f8fff9 0%, #ffffff 64%);
     }
 
     .module-card.judge-module::before {
@@ -182,12 +184,12 @@
 
     .module-card.primary-module:hover {
       border-color: #2563eb;
-      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.12);
+      box-shadow: 0 10px 22px rgba(37, 99, 235, 0.08);
     }
 
     .module-card.judge-module:hover {
       border-color: #15803d;
-      box-shadow: 0 12px 24px rgba(21, 128, 61, 0.12);
+      box-shadow: 0 10px 22px rgba(21, 128, 61, 0.08);
     }
 
     .module-action {
@@ -623,6 +625,60 @@
       font-size: 14px;
     }
 
+    .recognition-status {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin: 10px 0 0;
+      padding: 9px 11px;
+      border: 1px solid #dbe5f1;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #475569;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    .recognition-status::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #94a3b8;
+      flex: 0 0 auto;
+    }
+
+    .recognition-status.loading::before {
+      border: 2px solid #bfdbfe;
+      border-top-color: #2563eb;
+      background: transparent;
+      animation: spin 0.8s linear infinite;
+    }
+
+    .recognition-status.success {
+      border-color: #bbf7d0;
+      background: #f8fff9;
+      color: #166534;
+    }
+
+    .recognition-status.success::before {
+      background: #16a34a;
+    }
+
+    .recognition-status.error {
+      border-color: #fecaca;
+      background: #fff7f7;
+      color: #b91c1c;
+    }
+
+    .recognition-status.error::before {
+      background: #dc2626;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
     .privacy-note {
       margin: 6px 0 0;
       color: #64748b;
@@ -807,8 +863,8 @@
     }
 
     .judge-panel {
-      border-color: #bfdbfe;
-      background: #f8fbff;
+      border-color: #bbf7d0;
+      background: #f8fff9;
     }
 
     .judge-panel h2 {
@@ -1081,22 +1137,23 @@
       </div>
     </div>
 
+    <div id="coordinateUploadPanel" class="panel upload-box">
+      <label for="imageInput">第一步：上传坐标图片</label>
+      <input id="imageInput" type="file" accept="image/*" />
+      <div id="imagePreview" class="image-preview"></div>
+      <div id="uploadMessage" class="upload-message"></div>
+      <div id="recognitionStatus" class="recognition-status"></div>
+      <p class="privacy-note">建议只截坐标表区域，图片越清晰，识别越稳定。</p>
+    </div>
+
+    <button type="button" class="primary-action" onclick="downloadKml()">生成KML文件并下载</button>
+
     <div id="debugPanel" class="panel debug-panel">
       <div class="panel-title-row">
         <strong>识别调试信息</strong>
       </div>
       <textarea id="debugText" readonly></textarea>
     </div>
-
-    <div id="coordinateUploadPanel" class="panel upload-box">
-      <label for="imageInput">第一步：上传坐标图片</label>
-      <input id="imageInput" type="file" accept="image/*" />
-      <div id="imagePreview" class="image-preview"></div>
-      <div id="uploadMessage" class="upload-message"></div>
-      <p class="privacy-note">建议只截坐标表区域，图片越清晰，识别越稳定。</p>
-    </div>
-
-    <button type="button" class="primary-action" onclick="downloadKml()">生成KML文件并下载</button>
 
     <select id="coordinateOrder" hidden>
       <option value="auto" selected>自动判断</option>
@@ -1250,6 +1307,7 @@
     const message = document.getElementById("message");
     const toast = document.getElementById("toast");
     const uploadMessage = document.getElementById("uploadMessage");
+    const recognitionStatus = document.getElementById("recognitionStatus");
     const imagePreview = document.getElementById("imagePreview");
     const imageModal = document.getElementById("imageModal");
     const imageModalImg = document.getElementById("imageModalImg");
@@ -1464,6 +1522,19 @@
       uploadMessage.innerHTML = "";
     }
 
+    function setRecognitionStatus(text = "", type = "") {
+      if (!text) {
+        recognitionStatus.style.display = "none";
+        recognitionStatus.textContent = "";
+        recognitionStatus.className = "recognition-status";
+        return;
+      }
+
+      recognitionStatus.style.display = "flex";
+      recognitionStatus.textContent = text;
+      recognitionStatus.className = `recognition-status ${type}`.trim();
+    }
+
     function showUploadSupportMessage(text) {
       uploadMessage.style.display = "block";
       uploadMessage.innerHTML = `${text}<button type="button" class="inline-link" onclick="openManualSupport()">人工协助识别</button>`;
@@ -1551,6 +1622,7 @@
       imagePreview.innerHTML = "";
       imageInput.value = "";
       clearUploadMessage();
+      setRecognitionStatus();
       showMessage("已删除上传图片，可以重新选择。");
     }
 
@@ -3097,6 +3169,7 @@ ${placemarks}
       imageInput.disabled = true;
       supportPanel.style.display = "none";
       clearUploadMessage();
+      setRecognitionStatus("正在读取图片并识别坐标……", "loading");
       trackEvent("image_upload_select", {
         fileSize: file.size,
         fileType: file.type
@@ -3164,11 +3237,13 @@ ${placemarks}
         appendDebug(`识别提示：${data.warning || "无"}`);
 
         if (!response.ok) {
+          setRecognitionStatus("图片识别遇到问题，建议使用人工协助识别。", "error");
           openManualSupport();
           throw new Error(data.error || data.detail || "识别失败");
         }
 
         if (!finalCoordinates || finalCoordinates === noCoordinatesText) {
+          setRecognitionStatus("未识别到有效坐标，建议使用人工协助识别。", "error");
           showMessage("");
           showUploadSupportMessage(getRecognitionFailureMessage(data.warning || data.error || "未识别到有效坐标", response.status));
           openManualSupport();
@@ -3190,11 +3265,13 @@ ${placemarks}
         } else {
           showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。");
         }
+        setRecognitionStatus("识别完成，坐标已填入工作区，请核对后下载。", "success");
       } catch (error) {
         appendDebug(`错误信息：${error.message}`);
         trackEvent("image_recognize_fail", {
           message: error.message
         });
+        setRecognitionStatus("图片识别遇到问题，建议使用人工协助识别。", "error");
         showMessage(`识别失败：${error.message}`, true);
         showUploadSupportMessage(getRecognitionFailureMessage(error.message));
         openManualSupport();
