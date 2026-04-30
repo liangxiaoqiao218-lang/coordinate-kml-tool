@@ -1353,7 +1353,49 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
 
     if (!req.file) {
       return res.status(400).json({
-        error: "后端没有收到图片，请重新选择图片上传。"
+        error: "后端没有收到文件，请重新选择图片或资料文件上传。"
+      });
+    }
+
+    const isImageFile = String(req.file.mimetype || "").startsWith("image/");
+
+    if (user) {
+      await updateUserVisitMeta(user, req, data);
+    }
+
+    if (!isImageFile) {
+      const rawOutput = `【判读结论】已收到资料文件，当前版本暂不能直接解析文档内容
+【是否建议继续】谨慎，建议上传关键页面截图
+【风险】文件内容未进入视觉判读
+【依据】请截取矿地、河道、矿石或坐标表关键页再判读`;
+      const normalizedOutput = normalizeJudgeOutput(rawOutput);
+      const record = {
+        id: makeId("record"),
+        user_id: visitorId,
+        imageURL: "",
+        imageName: req.file.originalname || "",
+        imageSize: req.file.size || 0,
+        judgeType,
+        aiRawOutput: rawOutput,
+        result: normalizedOutput,
+        createdAt: getNowISO()
+      };
+
+      data.records.push(record);
+      data.usage[visitorId] = data.usage[visitorId] || {};
+      data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
+
+      if (user) {
+        user.eventCount = Number(user.eventCount || 0) + 1;
+      }
+
+      await writeAdminData(data);
+
+      return res.json({
+        result: normalizedOutput,
+        rawOutput,
+        recordId: record.id,
+        warning: "当前版本已支持上传资料文件，但AI判读仍建议使用关键页面截图。"
       });
     }
 
@@ -1361,10 +1403,6 @@ app.post("/api/analyze-mining-image", upload.single("image"), async (req, res) =
       return res.status(400).json({
         error: "AI判读需要配置 OPENAI_API_KEY。"
       });
-    }
-
-    if (user) {
-      await updateUserVisitMeta(user, req, data);
     }
 
     const imageBase64 = req.file.buffer.toString("base64");

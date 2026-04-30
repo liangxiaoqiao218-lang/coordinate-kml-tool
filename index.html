@@ -105,13 +105,26 @@
     .back-button {
       min-height: 38px;
       padding: 8px 12px;
-      margin-bottom: 14px;
+      margin-bottom: 0;
       border: 1px solid #d6dfeb;
       border-radius: 8px;
       background: #ffffff;
       color: #334155;
       font-size: 15px;
       font-weight: 700;
+    }
+
+    .page-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .nav-switch {
+      background: #0f172a;
+      color: #ffffff;
+      border-color: #0f172a;
     }
 
     label {
@@ -574,6 +587,33 @@
       font-weight: 800;
     }
 
+    .qr-toggle-panel {
+      display: none;
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #d6dfeb;
+      border-radius: 8px;
+      background: #ffffff;
+      text-align: center;
+    }
+
+    .qr-toggle-panel img {
+      width: min(220px, 80vw);
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .qr-toggle-panel strong {
+      display: block;
+      margin-top: 8px;
+    }
+
+    .qr-toggle-panel p {
+      margin: 4px 0 0;
+      color: #475569;
+    }
+
     .debug-panel {
       display: none;
     }
@@ -646,9 +686,21 @@
 
     .judge-manual-actions {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 10px;
       margin-top: 12px;
+    }
+
+    .file-preview-icon {
+      display: grid;
+      place-items: center;
+      width: 96px;
+      height: 72px;
+      border: 1px solid #d8e1ee;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #334155;
+      font-weight: 800;
     }
 
     .help {
@@ -723,7 +775,6 @@
       .buttons,
       .settings-grid,
       .module-grid,
-      .judge-manual-actions,
       .support-actions {
         grid-template-columns: 1fr;
       }
@@ -737,7 +788,16 @@
       }
 
       .contact-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .contact-method {
+        padding: 8px;
+      }
+
+      .contact-method img {
+        max-width: 130px;
       }
 
       .image-preview-row {
@@ -776,7 +836,10 @@
     </section>
 
     <section id="coordinatePage" class="view">
-      <button type="button" class="back-button" onclick="showPage('home')">← 返回首页</button>
+      <div class="page-nav">
+        <button type="button" class="back-button" onclick="showPage('home')">首页</button>
+        <button type="button" class="back-button nav-switch" onclick="showPage('judge')">AI矿地判读</button>
+      </div>
       <h1>坐标处理工具</h1>
       <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
 
@@ -849,9 +912,9 @@
       </div>
       <p>如果图片有水印、表格错位、手写不清，或一张图里有多块矿区，自动识别可能不稳定。你可以把原图和识别原文发给人工协助，我们帮你整理成地图可用坐标。</p>
       <div class="support-actions">
-        <button type="button" class="support" onclick="copyManualMessage()">复制人工服务说明</button>
-        <button type="button" onclick="copyDebugText()">复制识别调试信息</button>
-        <button type="button" onclick="copyContent()">复制当前坐标</button>
+        <button type="button" class="secondary" onclick="copyManualMessage()">复制人工服务说明</button>
+        <button type="button" class="secondary" onclick="copyDebugText()">复制识别调试信息</button>
+        <button type="button" class="secondary" onclick="copyContent()">复制当前坐标</button>
       </div>
       <div class="contact-grid">
         <div class="contact-method">
@@ -900,7 +963,10 @@
     </section>
 
     <section id="judgePage" class="view">
-      <button type="button" class="back-button" onclick="showPage('home')">← 返回首页</button>
+      <div class="page-nav">
+        <button type="button" class="back-button" onclick="showPage('home')">首页</button>
+        <button type="button" class="back-button nav-switch" onclick="showPage('coordinate')">坐标处理工具</button>
+      </div>
       <h1>AI矿地判读</h1>
       <p class="intro">上传矿地、河道、卫星图或矿石照片，AI只做初筛判断：是否值得继续看、主要风险在哪里。不预测含量，不标具体金点。</p>
 
@@ -912,8 +978,8 @@
           <option value="document">矿业资料</option>
         </select>
 
-        <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片</label>
-        <input id="judgeImageInput" type="file" accept="image/*" />
+        <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片或资料文件</label>
+        <input id="judgeImageInput" type="file" accept="image/*,.pdf,.doc,.docx,.txt" />
         <div id="judgeImagePreview" class="image-preview"></div>
 
         <div class="judge-actions">
@@ -932,21 +998,13 @@
         <strong>当前判读仅供参考</strong>
         <p>如需更高精度分析，可以提交图片给人工经验判断。适合水印严重、手写不清、河道复杂或需要投资前复核的情况。</p>
         <div class="judge-manual-actions">
-          <button type="button" onclick="copyJudgeManualMessage()">提交图片</button>
-          <button type="button" class="secondary" onclick="copyWhatsAppTip()">WhatsApp</button>
-          <button type="button" class="support" onclick="copyWechatId()">微信</button>
+          <button type="button" class="secondary" onclick="toggleJudgeQr('whatsapp')">WhatsApp</button>
+          <button type="button" class="secondary" onclick="toggleJudgeQr('wechat')">微信</button>
         </div>
-        <div class="contact-grid">
-          <div class="contact-method">
-            <img src="wechat-qr.jpg" alt="微信二维码" />
-            <strong>微信</strong>
-            <p class="contact-value">Mir-2188</p>
-          </div>
-          <div class="contact-method">
-            <img src="whatsapp-qr.jpg" alt="WhatsApp二维码" />
-            <strong>WhatsApp</strong>
-            <p class="contact-value">扫码添加 Miro</p>
-          </div>
+        <div id="judgeQrPanel" class="qr-toggle-panel">
+          <img id="judgeQrImage" src="" alt="联系二维码" />
+          <strong id="judgeQrTitle"></strong>
+          <p id="judgeQrText"></p>
         </div>
       </div>
 
@@ -979,6 +1037,10 @@
     const judgeImagePreview = document.getElementById("judgeImagePreview");
     const judgeMessage = document.getElementById("judgeMessage");
     const judgeResult = document.getElementById("judgeResult");
+    const judgeQrPanel = document.getElementById("judgeQrPanel");
+    const judgeQrImage = document.getElementById("judgeQrImage");
+    const judgeQrTitle = document.getElementById("judgeQrTitle");
+    const judgeQrText = document.getElementById("judgeQrText");
     const pages = {
       home: document.getElementById("homePage"),
       coordinate: document.getElementById("coordinatePage"),
@@ -1269,14 +1331,19 @@
 
       selectedJudgeImageFile = file;
       selectedJudgeImageUrl = URL.createObjectURL(file);
+      const isImage = file.type.startsWith("image/");
+      const previewContent = isImage
+        ? `<button type="button" class="preview-button" onclick="openJudgeSelectedImage()" title="点击查看上传图片">
+            <img src="${selectedJudgeImageUrl}" alt="已上传判读图片预览" />
+          </button>`
+        : `<div class="file-preview-icon">文件</div>`;
+      const viewText = isImage ? "点击图片可查看大图" : "资料文件已选择";
       judgeImagePreview.style.display = "block";
       judgeImagePreview.innerHTML = `
         <div class="image-preview-row">
-          <button type="button" class="preview-button" onclick="openJudgeSelectedImage()" title="点击查看上传图片">
-            <img src="${selectedJudgeImageUrl}" alt="已上传判读图片预览" />
-          </button>
-          <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />点击图片可查看大图</p>
-          <button type="button" class="remove-image" onclick="clearJudgeSelectedImage()">删除图片</button>
+          ${previewContent}
+          <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />${viewText}</p>
+          <button type="button" class="remove-image" onclick="clearJudgeSelectedImage()">删除文件</button>
         </div>`;
     }
 
@@ -1289,12 +1356,17 @@
 
       showJudgeSelectedImage(file);
       judgeResult.value = "";
-      showJudgeMessage("图片已选择，点击“开始判读”后进行分析。");
+      showJudgeMessage("文件已选择，点击“开始判读”后进行分析。");
     }
 
     function openJudgeSelectedImage() {
       if (!selectedJudgeImageUrl) {
         showJudgeMessage("当前没有可查看的判读图片。", true);
+        return;
+      }
+
+      if (!selectedJudgeImageFile?.type?.startsWith("image/")) {
+        showJudgeMessage("当前选择的是资料文件，不支持图片预览。", true);
         return;
       }
 
@@ -1314,7 +1386,7 @@
       judgeImagePreview.innerHTML = "";
       judgeImageInput.value = "";
       judgeResult.value = "";
-      showJudgeMessage("已删除判读图片，可以重新选择。");
+      showJudgeMessage("已删除判读文件，可以重新选择。");
     }
 
     function setDebug(text) {
@@ -1358,11 +1430,35 @@
       judgeMessage.className = isError ? "message error" : "message";
     }
 
+    function toggleJudgeQr(type) {
+      const currentType = judgeQrPanel.dataset.type || "";
+
+      if (judgeQrPanel.style.display === "block" && currentType === type) {
+        judgeQrPanel.style.display = "none";
+        judgeQrPanel.dataset.type = "";
+        return;
+      }
+
+      if (type === "whatsapp") {
+        judgeQrImage.src = "whatsapp-qr.jpg";
+        judgeQrTitle.textContent = "WhatsApp 人工判读";
+        judgeQrText.textContent = "长按保存图片，或直接识别二维码添加 Miro。";
+      } else {
+        judgeQrImage.src = "wechat-qr.jpg";
+        judgeQrTitle.textContent = "微信人工判读";
+        judgeQrText.textContent = "微信号：Mir-2188。长按保存图片，或直接识别二维码添加。";
+      }
+
+      judgeQrPanel.dataset.type = type;
+      judgeQrPanel.style.display = "block";
+      trackEvent("judge_contact_qr_click", { contactType: type });
+    }
+
     async function analyzeMiningImage() {
       const file = selectedJudgeImageFile || judgeImageInput.files[0];
 
       if (!file) {
-        showJudgeMessage("请先选择一张要判读的图片。", true);
+        showJudgeMessage("请先选择一张要判读的图片或资料文件。", true);
         return;
       }
 
@@ -1401,7 +1497,7 @@
         }
 
         judgeResult.value = data.result || "未返回判读结果。";
-        showJudgeMessage("AI判读完成，请结合现场情况核对。");
+        showJudgeMessage(data.warning || "AI判读完成，请结合现场情况核对。");
         trackEvent("ai_judge_success", {
           judgeType: judgeType.value
         });
