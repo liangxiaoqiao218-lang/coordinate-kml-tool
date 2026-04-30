@@ -45,6 +45,53 @@
       line-height: 1.6;
     }
 
+    .home-view {
+      padding-top: 6px;
+    }
+
+    .home-hero {
+      padding: 18px;
+      border: 1px solid #d6dfeb;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+    }
+
+    .home-hero .eyebrow {
+      margin: 0 0 8px;
+      color: #2563eb;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .home-hero h1 {
+      margin-bottom: 10px;
+      font-size: 30px;
+    }
+
+    .home-hero .intro {
+      margin-bottom: 0;
+    }
+
+    .home-flow {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 12px 0 16px;
+    }
+
+    .home-flow span {
+      padding: 8px 6px;
+      border: 1px solid #d8e1ee;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #475569;
+      font-size: 13px;
+      font-weight: 800;
+      text-align: center;
+    }
+
     .view {
       display: none;
     }
@@ -55,21 +102,23 @@
 
     .module-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 14px;
       margin-top: 22px;
     }
 
     .module-card {
-      min-height: 190px;
+      min-height: 174px;
       padding: 18px;
       border: 1px solid #d6dfeb;
-      border-radius: 10px;
+      border-radius: 14px;
       background: #ffffff;
       color: #172033;
       text-align: left;
       box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
       cursor: pointer;
+      position: relative;
+      overflow: hidden;
     }
 
     .module-card:hover {
@@ -89,6 +138,26 @@
       color: #526071;
       line-height: 1.6;
       font-size: 15px;
+    }
+
+    .module-card.primary-module {
+      border-color: #bfdbfe;
+    }
+
+    .module-card.judge-module {
+      border-color: #bbf7d0;
+    }
+
+    .module-action {
+      display: inline-block;
+      margin-top: 14px;
+      color: #1d4ed8;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .judge-module .module-action {
+      color: #15803d;
     }
 
     .module-tag {
@@ -744,6 +813,27 @@
         line-height: 1.25;
       }
 
+      .home-view {
+        padding-top: 2px;
+      }
+
+      .home-hero {
+        padding: 16px;
+      }
+
+      .home-hero h1 {
+        font-size: 27px;
+      }
+
+      .home-flow {
+        margin: 10px 0 14px;
+      }
+
+      .home-flow span {
+        padding: 8px 4px;
+        font-size: 12px;
+      }
+
       .intro {
         margin-bottom: 14px;
         font-size: 15px;
@@ -800,7 +890,16 @@
       }
 
       .module-card {
-        min-height: 140px;
+        min-height: auto;
+        padding: 16px;
+      }
+
+      .module-card strong {
+        font-size: 21px;
+      }
+
+      .module-action {
+        margin-top: 12px;
       }
 
       .wechat-info {
@@ -837,20 +936,31 @@
 </head>
 <body>
   <main class="page">
-    <section id="homePage" class="view active">
-      <h1>矿业空间工具 Geo Tool</h1>
-      <p class="intro">面向矿业现场的空间工具：先把坐标图片或手动坐标整理成 KML 矿区范围，再用 AI 对矿地、河道或矿石图片做初步判读。自动结果不稳时，可直接转人工协助。</p>
+    <section id="homePage" class="view active home-view">
+      <div class="home-hero">
+        <p class="eyebrow">坐标 · KML · AI判读</p>
+        <h1>矿业空间工具 Geo Tool</h1>
+        <p class="intro">上传坐标图片或粘贴坐标，整理成地图可打开的 KML；也可上传矿地、河道、矿石图片做 AI 初筛，不准时转人工协助。</p>
+      </div>
+
+      <div class="home-flow">
+        <span>坐标整理</span>
+        <span>KML导出</span>
+        <span>AI初筛</span>
+      </div>
 
       <div class="module-grid">
-        <button type="button" class="module-card" onclick="showPage('coordinate')">
-          <em class="module-tag">常用工具</em>
+        <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
+          <em class="module-tag">坐标/KML</em>
           <strong>坐标处理工具</strong>
-          <span>粘贴坐标、图片识别、标准化、交换经纬度、复制结果，并生成 KML 矿区范围。</span>
+          <span>图片识别、坐标整理、标准化、交换经纬度、复制结果，最后生成 KML 矿区范围。</span>
+          <small class="module-action">进入坐标处理</small>
         </button>
-        <button type="button" class="module-card" onclick="showPage('judge')">
-          <em class="module-tag">核心功能</em>
+        <button type="button" class="module-card judge-module" onclick="showPage('judge')">
+          <em class="module-tag">AI初筛</em>
           <strong>AI矿地判读</strong>
           <span>上传矿地、河道或矿石图片，获得保守的初筛判断和风险提示。</span>
+          <small class="module-action">进入AI判读</small>
         </button>
       </div>
     </section>
@@ -916,15 +1026,6 @@
 
     <div id="message" class="message"></div>
     <div id="toast" class="toast"></div>
-
-    <div id="imageModal" class="image-modal" onclick="closeImageModal()">
-      <div class="image-modal-content" onclick="event.stopPropagation()">
-        <img id="imageModalImg" alt="上传图片大图预览" />
-        <div class="image-modal-actions">
-          <button type="button" class="secondary" onclick="closeImageModal()">关闭预览</button>
-        </div>
-      </div>
-    </div>
 
     <div id="supportPanel" class="panel support-panel">
       <div class="panel-title-row">
@@ -1041,6 +1142,15 @@
       </section>
     </section>
   </main>
+
+  <div id="imageModal" class="image-modal" onclick="closeImageModal()">
+    <div class="image-modal-content" onclick="event.stopPropagation()">
+      <img id="imageModalImg" alt="上传图片大图预览" />
+      <div class="image-modal-actions">
+        <button type="button" class="secondary" onclick="closeImageModal()">关闭预览</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     const input = document.getElementById("coordinateInput");
