@@ -1104,6 +1104,62 @@ function normalizeJudgeOutput(text) {
   ].join("\n");
 }
 
+function normalizeJudgeOutputV2(text) {
+  const raw = String(text || "").trim();
+  const defaults = {
+    "图片关系": "单张图片或关系不明确",
+    "判读结论": "不确定",
+    "是否建议继续": "谨慎，建议结合现场核对",
+    "风险": "图片信息有限，不能替代现场勘查",
+    "依据": "需要结合更多清晰图片或资料判断"
+  };
+
+  if (!raw) {
+    return [
+      `【图片关系】${defaults["图片关系"]}`,
+      `【判读结论】${defaults["判读结论"]}`,
+      `【是否建议继续】${defaults["是否建议继续"]}`,
+      `【风险】${defaults["风险"]}`,
+      `【依据】${defaults["依据"]}`
+    ].join("\n");
+  }
+
+  const sectionNames = ["图片关系", "判读结论", "是否建议继续", "风险", "依据"];
+  const values = {};
+
+  for (let index = 0; index < sectionNames.length; index += 1) {
+    const current = sectionNames[index];
+    const next = sectionNames[index + 1];
+    const pattern = next
+      ? new RegExp(`【${current}】([\\s\\S]*?)(?=【${next}】)`)
+      : new RegExp(`【${current}】([\\s\\S]*)`);
+    const match = raw.match(pattern);
+    values[current] = (match?.[1] || "")
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .slice(0, current === "依据" ? 2 : 1)
+      .join(" ");
+  }
+
+  if (!values["判读结论"] && !values["是否建议继续"] && !values["风险"] && !values["依据"]) {
+    const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(0, 5);
+    values["图片关系"] = lines[0] || defaults["图片关系"];
+    values["判读结论"] = lines[1] || defaults["判读结论"];
+    values["是否建议继续"] = lines[2] || defaults["是否建议继续"];
+    values["风险"] = lines[3] || defaults["风险"];
+    values["依据"] = lines[4] || defaults["依据"];
+  }
+
+  return [
+    `【图片关系】${values["图片关系"] || defaults["图片关系"]}`,
+    `【判读结论】${values["判读结论"] || defaults["判读结论"]}`,
+    `【是否建议继续】${values["是否建议继续"] || defaults["是否建议继续"]}`,
+    `【风险】${values["风险"] || defaults["风险"]}`,
+    `【依据】${values["依据"] || defaults["依据"]}`
+  ].join("\n");
+}
+
 app.get("/api/config", async (req, res) => {
   try {
     const visitorId = String(req.query.visitorId || "").trim();
@@ -1379,7 +1435,7 @@ app.post("/api/analyze-mining-image", upload.fields([
 【是否建议继续】谨慎，建议上传关键页面截图
 【风险】文件内容未进入视觉判读
 【依据】请截取矿地、河道、矿石或坐标表关键页再判读`;
-      const normalizedOutput = normalizeJudgeOutput(rawOutput);
+      const normalizedOutput = normalizeJudgeOutputV2(rawOutput);
       const record = {
         id: makeId("record"),
         user_id: visitorId,
@@ -1452,13 +1508,34 @@ app.post("/api/analyze-mining-image", upload.fields([
 7. 结论要具体，避免空话，例如不要只写“图片信息不足”；要写出看到了什么、为什么建议或谨慎。
 8. 偏向审慎但要有用：不夸大，不乱承诺，也不要过度保守。`;
 
+    const multiImageJudgePrompt = `你是矿业空间判读助手，只做矿业决策辅助。请先判断上传图片之间的关系，再给出有参考价值的初筛判断。
+
+必须只输出下面5行，不能增加其他文字：
+【图片关系】单张图片 / 同一矿地不同角度 / 同一项目不同资料 / 同一区域不同位置 / 疑似不同项目 / 关系不明确
+【判读结论】一句具体判断
+【是否建议继续】建议 / 谨慎 / 不建议 + 很短理由
+【风险】一句具体风险
+【依据】一句可见依据
+
+多图判读逻辑：
+1. 如果多张图是同一矿地不同角度，综合成一个对象判断，不要重复计权。
+2. 如果多张图是同一项目不同资料，例如卫星图、现场图、矿石图、文件截图，综合判断，并说明依据来自哪些可见信息。
+3. 如果多张图是同一区域不同位置，综合判断，但风险里提示局部差异。
+4. 如果多张图明显属于不同矿地或不同项目，不要强行合并，提示应分开上传判读。
+5. 如果部分图片模糊、无关或重复，以有效图片为主，风险里说明。
+6. 如果是矿石照片，只判断是否值得进一步检测，不预测含量。
+7. 如果是资料页截图，只概括资料是否足够继续核对，不报金点。
+8. 只有图片明显存在AI生成痕迹时，才提示疑似AI图；普通手机照片、扫描件、地图截图、压缩失真不要轻易判为AI。
+
+禁止输出含量预测、储量预测、具体金点、采样点或保证性结论。结论要具体、有用、保守但不要空泛。`;
+
     const response = await openai.chat.completions.create({
       model,
       messages: [
         {
           role: "user",
           content: [
-            { type: "text", text: prompt },
+            { type: "text", text: multiImageJudgePrompt },
             ...imageItems
           ]
         }
@@ -1467,7 +1544,7 @@ app.post("/api/analyze-mining-image", upload.fields([
     });
 
     const rawOutput = response.choices?.[0]?.message?.content || "";
-    const normalizedOutput = normalizeJudgeOutput(rawOutput);
+    const normalizedOutput = normalizeJudgeOutputV2(rawOutput);
     const record = {
       id: makeId("record"),
       user_id: visitorId,
