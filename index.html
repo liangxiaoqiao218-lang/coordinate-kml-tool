@@ -718,6 +718,23 @@
       line-height: 1.5;
     }
 
+    .message.loading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .message.loading::before {
+      content: "";
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(22, 163, 74, 0.2);
+      border-top-color: #15803d;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex: 0 0 auto;
+    }
+
     .toast {
       position: fixed;
       top: 16px;
@@ -1741,22 +1758,22 @@
     function handleQuotaPrimary() {
       const type = quotaModal.dataset.type || "convert";
 
-      if (quotaModal.dataset.stage === "contact") {
-        closeQuotaModal();
-        return;
-      }
+      quotaModal.dataset.stage = "price";
+      quotaPrimary.textContent = "联系方式已显示";
+      quotaFootnote.textContent = type === "judge"
+        ? "截图当前页面，添加微信或 WhatsApp 后发送“开通AI判读次数”。"
+        : "截图当前页面，添加微信或 WhatsApp 后发送“开通坐标次数”。";
 
-      if (type === "judge") {
-        showQuotaContactModal("judge");
-        trackEvent("quota_contact_click", {
-          type: "judge"
+      const contactGrid = quotaModal.querySelector(".quota-contact-grid");
+      if (contactGrid) {
+        contactGrid.scrollIntoView({
+          behavior: "smooth",
+          block: "center"
         });
-        return;
       }
 
-      showQuotaContactModal("convert");
       trackEvent("quota_contact_click", {
-        type: "convert"
+        type
       });
     }
 
@@ -2125,10 +2142,10 @@
       supportPanel.setAttribute("aria-expanded", "false");
     }
 
-    function showJudgeMessage(text, isError = false) {
+    function showJudgeMessage(text, isError = false, isLoading = false) {
       judgeMessage.style.display = text ? "block" : "none";
       judgeMessage.textContent = text || "";
-      judgeMessage.className = isError ? "message error" : "message";
+      judgeMessage.className = isLoading ? "message loading" : (isError ? "message error" : "message");
     }
 
     function toggleJudgeQr(type) {
@@ -2176,7 +2193,7 @@
       files.forEach(file => formData.append("images", file));
       formData.append("judgeType", judgeType.value);
       judgeResult.value = "";
-      showJudgeMessage(`正在判读 ${files.length} 张图片，请稍候……`);
+      showJudgeMessage(`正在判读 ${files.length} 张图片，请稍候……`, false, true);
       trackEvent("ai_judge_upload_select", {
         fileCount: files.length,
         fileSize: files.reduce((sum, file) => sum + file.size, 0),
