@@ -191,10 +191,50 @@
       min-height: auto;
     }
 
+    .table-tools {
+      display: flex;
+      gap: 10px;
+      margin: 10px 0 12px;
+    }
+
+    .table-tools input {
+      width: min(460px, 100%);
+    }
+
+    .quota-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .quick-add {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .quick-add strong {
+      margin-right: 4px;
+    }
+
+    .quick-add button {
+      min-height: 34px;
+      padding: 6px 10px;
+      background: #475569;
+    }
+
+    .vip-check {
+      margin-top: 12px;
+    }
+
     @media (max-width: 760px) {
       .login,
       .grid,
-      .cards {
+      .cards,
+      .quota-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -262,20 +302,27 @@
 
     <section class="panel">
       <h2>用户列表</h2>
+      <div class="table-tools">
+        <input id="userSearch" placeholder="输入 user_id 搜索用户" oninput="renderUsers(users)" />
+      </div>
       <table>
         <thead>
           <tr>
             <th>用户ID</th>
             <th>套餐</th>
             <th>状态</th>
-            <th>坐标次数</th>
-            <th>判读次数</th>
             <th>VIP</th>
             <th>用户类型</th>
             <th>最近IP</th>
             <th>地区</th>
             <th>终端</th>
             <th>型号</th>
+            <th>免费坐标</th>
+            <th>付费坐标</th>
+            <th>免费判读</th>
+            <th>付费判读</th>
+            <th>总坐标</th>
+            <th>总判读</th>
             <th>访问天数</th>
             <th>事件数</th>
             <th>最后访问</th>
@@ -306,43 +353,45 @@
           </select>
         </div>
       </div>
+      <div class="checks vip-check">
+        <label><input id="isVip" type="checkbox" /> VIP用户（无限次数）</label>
+      </div>
+      <div class="quota-grid">
+        <div>
+          <label for="freeConvertCount">免费坐标剩余</label>
+          <input id="freeConvertCount" type="number" min="0" />
+        </div>
+        <div>
+          <label for="paidConvertCount">付费坐标剩余</label>
+          <input id="paidConvertCount" type="number" min="0" />
+        </div>
+        <div>
+          <label for="freeJudgeCount">免费判读剩余</label>
+          <input id="freeJudgeCount" type="number" min="0" />
+        </div>
+        <div>
+          <label for="paidJudgeCount">付费判读剩余</label>
+          <input id="paidJudgeCount" type="number" min="0" />
+        </div>
+      </div>
+      <div class="quick-add">
+        <strong>坐标加次数</strong>
+        <button type="button" onclick="quickAddCount('convert', 10)">+10</button>
+        <button type="button" onclick="quickAddCount('convert', 50)">+50</button>
+        <button type="button" onclick="quickAddCount('convert', 100)">+100</button>
+      </div>
+      <div class="quick-add">
+        <strong>判读加次数</strong>
+        <button type="button" onclick="quickAddCount('judge', 10)">+10</button>
+        <button type="button" onclick="quickAddCount('judge', 50)">+50</button>
+        <button type="button" onclick="quickAddCount('judge', 100)">+100</button>
+      </div>
       <div class="checks">
         <label><input id="permAi" type="checkbox" /> 允许 AI 图片识别</label>
         <label><input id="permXy" type="checkbox" /> 允许标准化坐标</label>
         <label><input id="permKml" type="checkbox" /> 允许 KML 导出</label>
         <label><input id="permManual" type="checkbox" /> 允许人工协助入口</label>
         <label><input id="permJudge" type="checkbox" /> 允许 AI 矿地判读</label>
-        <label><input id="isVip" type="checkbox" /> VIP无限次数</label>
-      </div>
-      <div class="grid">
-        <div>
-          <label for="paidConvertCount">付费坐标次数</label>
-          <input id="paidConvertCount" type="number" min="0" step="1" />
-        </div>
-        <div>
-          <label for="paidJudgeCount">付费判读次数</label>
-          <input id="paidJudgeCount" type="number" min="0" step="1" />
-        </div>
-      </div>
-      <div class="grid">
-        <div>
-          <label for="freeConvertCount">今日免费坐标剩余</label>
-          <input id="freeConvertCount" type="number" min="0" step="1" />
-        </div>
-        <div>
-          <label for="freeJudgeCount">今日免费判读剩余</label>
-          <input id="freeJudgeCount" type="number" min="0" step="1" />
-        </div>
-      </div>
-      <div class="grid">
-        <div>
-          <label for="addConvertCount">本次增加坐标次数</label>
-          <input id="addConvertCount" type="number" min="0" step="1" placeholder="例如 10" />
-        </div>
-        <div>
-          <label for="addJudgeCount">本次增加判读次数</label>
-          <input id="addJudgeCount" type="number" min="0" step="1" placeholder="例如 10" />
-        </div>
       </div>
       <div class="grid">
         <div>
@@ -507,35 +556,34 @@
     }
 
     function renderUsers(list) {
-      document.getElementById("usersBody").innerHTML = list
+      const keyword = (document.getElementById("userSearch")?.value || "").trim().toLowerCase();
+      const filtered = keyword
+        ? list.filter(user => String(user.visitorId || user.user_id || "").toLowerCase().includes(keyword))
+        : list;
+
+      document.getElementById("usersBody").innerHTML = filtered
         .map(user => `<tr>
           <td>${escapeHtml(user.visitorId)}</td>
           <td>${escapeHtml(user.plan || "free")}</td>
           <td>${escapeHtml(user.status || "active")}</td>
-          <td>${escapeHtml(formatQuota(user, "convert"))}</td>
-          <td>${escapeHtml(formatQuota(user, "judge"))}</td>
-          <td>${user.isVip ? "是" : "否"}</td>
+          <td>${user.isVip || user.is_vip ? "是" : "否"}</td>
           <td>${escapeHtml(user.segmentLabel || "新用户")}</td>
           <td>${escapeHtml(user.lastIp || "")}</td>
           <td>${escapeHtml(user.lastIpLocation || "")}</td>
           <td>${escapeHtml(describeTerminal(user.lastUserAgent || ""))}</td>
           <td>${escapeHtml(user.lastDeviceModel || describeDeviceModel(user.lastUserAgent || ""))}</td>
+          <td>${Number(user.freeConvertCount ?? user.free_convert_count ?? 0)}</td>
+          <td>${Number(user.paidConvertCount ?? user.paid_convert_count ?? 0)}</td>
+          <td>${Number(user.freeJudgeCount ?? user.free_judge_count ?? 0)}</td>
+          <td>${Number(user.paidJudgeCount ?? user.paid_judge_count ?? 0)}</td>
+          <td>${Number(user.totalConvertCount ?? user.total_convert_count ?? 0)}</td>
+          <td>${Number(user.totalJudgeCount ?? user.total_judge_count ?? 0)}</td>
           <td>${user.visitDays || 0}</td>
           <td>${user.eventCount || 0}</td>
           <td>${formatTime(user.lastSeenAt)}</td>
           <td><button type="button" onclick="editUser('${escapeAttr(user.visitorId)}')">编辑</button></td>
         </tr>`)
         .join("");
-    }
-
-    function formatQuota(user, type) {
-      if (user.isVip) {
-        return "VIP";
-      }
-
-      const paid = type === "judge" ? user.paidJudgeCount : user.paidConvertCount;
-      const free = type === "judge" ? user.freeJudgeCount : user.freeConvertCount;
-      return `付${Number(paid || 0)} / 免${Number(free || 0)}`;
     }
 
     function editUser(visitorId) {
@@ -553,18 +601,16 @@
       document.getElementById("editingUser").textContent = `正在编辑：${selectedUser.visitorId}`;
       document.getElementById("plan").value = selectedUser.plan || "free";
       document.getElementById("status").value = selectedUser.status || "active";
+      document.getElementById("isVip").checked = Boolean(selectedUser.isVip || selectedUser.is_vip);
+      document.getElementById("freeConvertCount").value = Number(selectedUser.freeConvertCount ?? selectedUser.free_convert_count ?? 0);
+      document.getElementById("paidConvertCount").value = Number(selectedUser.paidConvertCount ?? selectedUser.paid_convert_count ?? 0);
+      document.getElementById("freeJudgeCount").value = Number(selectedUser.freeJudgeCount ?? selectedUser.free_judge_count ?? 0);
+      document.getElementById("paidJudgeCount").value = Number(selectedUser.paidJudgeCount ?? selectedUser.paid_judge_count ?? 0);
       document.getElementById("permAi").checked = Boolean(permissions.aiOcrEnabled);
       document.getElementById("permXy").checked = Boolean(permissions.xyConvertEnabled);
       document.getElementById("permKml").checked = Boolean(permissions.kmlExportEnabled);
       document.getElementById("permManual").checked = Boolean(permissions.manualSupportEnabled);
       document.getElementById("permJudge").checked = Boolean(permissions.aiJudgeEnabled);
-      document.getElementById("isVip").checked = Boolean(selectedUser.isVip);
-      document.getElementById("paidConvertCount").value = Number(selectedUser.paidConvertCount || 0);
-      document.getElementById("paidJudgeCount").value = Number(selectedUser.paidJudgeCount || 0);
-      document.getElementById("freeConvertCount").value = Number(selectedUser.freeConvertCount || 0);
-      document.getElementById("freeJudgeCount").value = Number(selectedUser.freeJudgeCount || 0);
-      document.getElementById("addConvertCount").value = "";
-      document.getElementById("addJudgeCount").value = "";
       document.getElementById("wechat").value = selectedUser.wechat || "";
       document.getElementById("phone").value = selectedUser.phone || "";
       document.getElementById("note").value = selectedUser.note || "";
@@ -586,6 +632,13 @@
       status.className = isError ? "save-status error" : "save-status";
     }
 
+    function quickAddCount(type, count) {
+      const targetId = type === "judge" ? "paidJudgeCount" : "paidConvertCount";
+      const input = document.getElementById(targetId);
+      input.value = Number(input.value || 0) + Number(count || 0);
+      setUserSaveStatus(`已准备增加 ${count} 次，点击保存生效`);
+    }
+
     async function saveUser() {
       const visitorId = selectedUser?.visitorId || selectedVisitorId || document.getElementById("editor").dataset.visitorId || "";
       const button = document.getElementById("saveUserButton");
@@ -602,11 +655,18 @@
         setMessage("正在保存用户权限，请稍候...");
         setUserSaveStatus("正在保存...");
 
+        const isVipChecked = document.getElementById("isVip").checked;
+        const selectedPlan = document.getElementById("plan").value;
         const result = await adminFetch(`/api/admin/users/${encodeURIComponent(visitorId)}`, {
           method: "PATCH",
           body: JSON.stringify({
-            plan: document.getElementById("plan").value,
+            plan: isVipChecked ? "vip" : (selectedPlan === "vip" ? "free" : selectedPlan),
             status: document.getElementById("status").value,
+            isVip: isVipChecked,
+            freeConvertCount: Number(document.getElementById("freeConvertCount").value || 0),
+            paidConvertCount: Number(document.getElementById("paidConvertCount").value || 0),
+            freeJudgeCount: Number(document.getElementById("freeJudgeCount").value || 0),
+            paidJudgeCount: Number(document.getElementById("paidJudgeCount").value || 0),
             permissions: {
               aiOcrEnabled: document.getElementById("permAi").checked,
               xyConvertEnabled: document.getElementById("permXy").checked,
@@ -614,13 +674,6 @@
               manualSupportEnabled: document.getElementById("permManual").checked,
               aiJudgeEnabled: document.getElementById("permJudge").checked
             },
-            isVip: document.getElementById("isVip").checked,
-            paidConvertCount: document.getElementById("paidConvertCount").value,
-            paidJudgeCount: document.getElementById("paidJudgeCount").value,
-            freeConvertCount: document.getElementById("freeConvertCount").value,
-            freeJudgeCount: document.getElementById("freeJudgeCount").value,
-            addConvertCount: document.getElementById("addConvertCount").value,
-            addJudgeCount: document.getElementById("addJudgeCount").value,
             wechat: document.getElementById("wechat").value,
             phone: document.getElementById("phone").value,
             note: document.getElementById("note").value
