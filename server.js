@@ -21,9 +21,42 @@ const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
 const adminDataFile = path.join(__dirname, "admin-data.json");
 const adminPassword = process.env.ADMIN_PASSWORD || "";
+const DAILY_FREE_CONVERT_LIMIT = 3;
+const DAILY_FREE_JUDGE_LIMIT = 2;
 
 app.use(express.json({ limit: "1mb" }));
-app.use(express.static(__dirname));
+
+const appVersion = "2026-05-01-quota-contact-v2";
+
+app.use((req, res, next) => {
+  const noCachePaths = new Set(["/", "/convert", "/ocr", "/judge", "/index.html"]);
+
+  if (noCachePaths.has(req.path) || req.path.endsWith(".html")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+
+  next();
+});
+
+app.use(express.static(__dirname, {
+  etag: false,
+  lastModified: false,
+  setHeaders(res, filePath) {
+    if (filePath.endsWith(".html")) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    }
+  }
+}));
+
+app.get("/api/version", (req, res) => {
+  res.json({
+    version: appVersion
+  });
+});
 
 app.get(["/convert", "/ocr", "/judge"], (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
@@ -101,9 +134,6 @@ function makeId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-const DAILY_FREE_CONVERT_LIMIT = 3;
-const DAILY_FREE_JUDGE_LIMIT = 2;
-
 function getTodayKey() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -114,42 +144,52 @@ function toNonNegativeInteger(value, fallback = 0) {
 }
 
 function normalizeUsageCounters(user) {
-  if (!user || typeof user !== "object") {
+  if (!user) {
     return null;
   }
 
-  const today = getTodayKey();
+  const todayKey = getTodayKey();
 
-  if (user.dailyUsageDate !== today) {
-    user.dailyUsageDate = today;
+  if (user.usageDate !== todayKey) {
+    user.usageDate = todayKey;
     user.freeConvertCount = DAILY_FREE_CONVERT_LIMIT;
     user.freeJudgeCount = DAILY_FREE_JUDGE_LIMIT;
+  } else {
+    user.freeConvertCount = toNonNegativeInteger(user.freeConvertCount, DAILY_FREE_CONVERT_LIMIT);
+    user.freeJudgeCount = toNonNegativeInteger(user.freeJudgeCount, DAILY_FREE_JUDGE_LIMIT);
   }
 
-  user.freeConvertCount = toNonNegativeInteger(user.freeConvertCount, DAILY_FREE_CONVERT_LIMIT);
-  user.freeJudgeCount = toNonNegativeInteger(user.freeJudgeCount, DAILY_FREE_JUDGE_LIMIT);
   user.paidConvertCount = toNonNegativeInteger(user.paidConvertCount, 0);
   user.paidJudgeCount = toNonNegativeInteger(user.paidJudgeCount, 0);
+  user.totalConvertCount = toNonNegativeInteger(user.totalConvertCount, 0);
+  user.totalJudgeCount = toNonNegativeInteger(user.totalJudgeCount, 0);
   user.isVip = Boolean(user.isVip || user.plan === "vip");
+
+  if (user.isVip) {
+    user.plan = "vip";
+  }
 
   return user;
 }
 
 function buildQuotaPayload(user) {
-  const safeUser = normalizeUsageCounters(user) || {};
+  normalizeUsageCounters(user);
 
   return {
-    user_id: safeUser.visitorId || "",
-    free_convert_count: toNonNegativeInteger(safeUser.freeConvertCount, 0),
-    free_judge_count: toNonNegativeInteger(safeUser.freeJudgeCount, 0),
-    paid_convert_count: toNonNegativeInteger(safeUser.paidConvertCount, 0),
-    paid_judge_count: toNonNegativeInteger(safeUser.paidJudgeCount, 0),
-    is_vip: Boolean(safeUser.isVip),
-    freeConvertCount: toNonNegativeInteger(safeUser.freeConvertCount, 0),
-    freeJudgeCount: toNonNegativeInteger(safeUser.freeJudgeCount, 0),
-    paidConvertCount: toNonNegativeInteger(safeUser.paidConvertCount, 0),
-    paidJudgeCount: toNonNegativeInteger(safeUser.paidJudgeCount, 0),
-    isVip: Boolean(safeUser.isVip)
+    free_convert_count: Number(user?.freeConvertCount || 0),
+    free_judge_count: Number(user?.freeJudgeCount || 0),
+    paid_convert_count: Number(user?.paidConvertCount || 0),
+    paid_judge_count: Number(user?.paidJudgeCount || 0),
+    is_vip: Boolean(user?.isVip),
+    total_convert_count: Number(user?.totalConvertCount || 0),
+    total_judge_count: Number(user?.totalJudgeCount || 0),
+    freeConvertCount: Number(user?.freeConvertCount || 0),
+    freeJudgeCount: Number(user?.freeJudgeCount || 0),
+    paidConvertCount: Number(user?.paidConvertCount || 0),
+    paidJudgeCount: Number(user?.paidJudgeCount || 0),
+    isVip: Boolean(user?.isVip),
+    totalConvertCount: Number(user?.totalConvertCount || 0),
+    totalJudgeCount: Number(user?.totalJudgeCount || 0)
   };
 }
 
@@ -158,15 +198,15 @@ function checkUsageAvailable(user, type) {
 
   if (!user) {
     return {
-      success: false,
-      reason: "missing_user",
-      quota: buildQuotaPayload(user)
+      allowed: false,
+      source: "none",
+      quota: {}
     };
   }
 
-  if (user.isVip || user.plan === "vip") {
+  if (user.isVip) {
     return {
-      success: true,
+      allowed: true,
       source: "vip",
       quota: buildQuotaPayload(user)
     };
@@ -175,49 +215,61 @@ function checkUsageAvailable(user, type) {
   const paidKey = type === "judge" ? "paidJudgeCount" : "paidConvertCount";
   const freeKey = type === "judge" ? "freeJudgeCount" : "freeConvertCount";
 
-  if (toNonNegativeInteger(user[paidKey], 0) > 0 || toNonNegativeInteger(user[freeKey], 0) > 0) {
+  if (Number(user[paidKey] || 0) > 0) {
     return {
-      success: true,
-      source: toNonNegativeInteger(user[paidKey], 0) > 0 ? "paid" : "free",
-      quota: buildQuotaPayload(user)
-    };
-  }
-
-  return {
-    success: false,
-    reason: "limit_exceeded",
-    quota: buildQuotaPayload(user)
-  };
-}
-
-function consumeUsage(user, type) {
-  const available = checkUsageAvailable(user, type);
-
-  if (!available.success) {
-    return available;
-  }
-
-  if (available.source === "vip") {
-    return available;
-  }
-
-  const paidKey = type === "judge" ? "paidJudgeCount" : "paidConvertCount";
-  const freeKey = type === "judge" ? "freeJudgeCount" : "freeConvertCount";
-
-  if (toNonNegativeInteger(user[paidKey], 0) > 0) {
-    user[paidKey] = toNonNegativeInteger(user[paidKey], 0) - 1;
-    return {
-      success: true,
+      allowed: true,
       source: "paid",
       quota: buildQuotaPayload(user)
     };
   }
 
-  user[freeKey] = Math.max(0, toNonNegativeInteger(user[freeKey], 0) - 1);
+  if (Number(user[freeKey] || 0) > 0) {
+    return {
+      allowed: true,
+      source: "free",
+      quota: buildQuotaPayload(user)
+    };
+  }
+
+  return {
+    allowed: false,
+    source: "none",
+    quota: buildQuotaPayload(user)
+  };
+}
+
+function consumeUsage(user, type) {
+  const status = checkUsageAvailable(user, type);
+
+  if (!status.allowed) {
+    return {
+      success: false,
+      source: "none",
+      quota: status.quota
+    };
+  }
+
+  if (type === "judge") {
+    if (status.source === "paid") {
+      user.paidJudgeCount -= 1;
+    } else if (status.source === "free") {
+      user.freeJudgeCount -= 1;
+    }
+
+    user.totalJudgeCount = Number(user.totalJudgeCount || 0) + 1;
+  } else {
+    if (status.source === "paid") {
+      user.paidConvertCount -= 1;
+    } else if (status.source === "free") {
+      user.freeConvertCount -= 1;
+    }
+
+    user.totalConvertCount = Number(user.totalConvertCount || 0) + 1;
+  }
 
   return {
     success: true,
-    source: "free",
+    source: status.source,
     quota: buildQuotaPayload(user)
   };
 }
@@ -246,41 +298,24 @@ function ensureUser(data, visitorId) {
       eventCount: 0,
       note: "",
       phone: "",
-      wechat: "",
-      freeConvertCount: DAILY_FREE_CONVERT_LIMIT,
-      freeJudgeCount: DAILY_FREE_JUDGE_LIMIT,
-      paidConvertCount: 0,
-      paidJudgeCount: 0,
-      isVip: false,
-      dailyUsageDate: getTodayKey()
+      wechat: ""
     };
   }
 
   normalizeUsageCounters(data.users[id]);
-
   return data.users[id];
 }
 
 function normalizeAdminUser(user, fallbackId = "") {
   const safeUser = user && typeof user === "object" ? user : {};
-  normalizeUsageCounters(safeUser);
   const visitorId = String(safeUser.visitorId || fallbackId || "").trim();
+  normalizeUsageCounters(safeUser);
 
   return {
-    visitorId,
     user_id: visitorId,
+    visitorId,
     plan: safeUser.plan || "free",
     status: safeUser.status || "active",
-    free_convert_count: toNonNegativeInteger(safeUser.freeConvertCount, 0),
-    free_judge_count: toNonNegativeInteger(safeUser.freeJudgeCount, 0),
-    paid_convert_count: toNonNegativeInteger(safeUser.paidConvertCount, 0),
-    paid_judge_count: toNonNegativeInteger(safeUser.paidJudgeCount, 0),
-    is_vip: Boolean(safeUser.isVip),
-    freeConvertCount: toNonNegativeInteger(safeUser.freeConvertCount, 0),
-    freeJudgeCount: toNonNegativeInteger(safeUser.freeJudgeCount, 0),
-    paidConvertCount: toNonNegativeInteger(safeUser.paidConvertCount, 0),
-    paidJudgeCount: toNonNegativeInteger(safeUser.paidJudgeCount, 0),
-    isVip: Boolean(safeUser.isVip),
     permissions: {
       aiOcrEnabled: safeUser.permissions?.aiOcrEnabled !== false,
       xyConvertEnabled: safeUser.permissions?.xyConvertEnabled !== false,
@@ -288,9 +323,25 @@ function normalizeAdminUser(user, fallbackId = "") {
       manualSupportEnabled: safeUser.permissions?.manualSupportEnabled !== false,
       aiJudgeEnabled: safeUser.permissions?.aiJudgeEnabled !== false
     },
+    created_at: safeUser.createdAt || "",
     createdAt: safeUser.createdAt || "",
     lastSeenAt: safeUser.lastSeenAt || "",
     eventCount: Number(safeUser.eventCount || 0),
+    free_convert_count: Number(safeUser.freeConvertCount || 0),
+    free_judge_count: Number(safeUser.freeJudgeCount || 0),
+    paid_convert_count: Number(safeUser.paidConvertCount || 0),
+    paid_judge_count: Number(safeUser.paidJudgeCount || 0),
+    is_vip: Boolean(safeUser.isVip || safeUser.plan === "vip"),
+    total_convert_count: Number(safeUser.totalConvertCount || 0),
+    total_judge_count: Number(safeUser.totalJudgeCount || 0),
+    freeConvertCount: Number(safeUser.freeConvertCount || 0),
+    freeJudgeCount: Number(safeUser.freeJudgeCount || 0),
+    paidConvertCount: Number(safeUser.paidConvertCount || 0),
+    paidJudgeCount: Number(safeUser.paidJudgeCount || 0),
+    isVip: Boolean(safeUser.isVip || safeUser.plan === "vip"),
+    totalConvertCount: Number(safeUser.totalConvertCount || 0),
+    totalJudgeCount: Number(safeUser.totalJudgeCount || 0),
+    usageDate: safeUser.usageDate || "",
     note: safeUser.note || "",
     phone: safeUser.phone || "",
     wechat: safeUser.wechat || "",
@@ -319,11 +370,48 @@ const eventNameLabels = {
   image_recognize_fail: "图片识别失败",
   ai_judge_upload_select: "上传AI判读图片",
   ai_judge_success: "AI判读成功",
-  ai_judge_fail: "AI判读失败"
+  ai_judge_fail: "AI判读失败",
+  usage_convert: "扣除坐标处理次数",
+  usage_judge: "扣除AI判读次数",
+  limit_convert: "坐标处理额度不足",
+  limit_judge: "AI判读额度不足"
 };
 
 function getEventLabel(eventName) {
   return eventNameLabels[eventName] || eventName || "";
+}
+
+async function appendUsageLog(data, user, req, type, source = "") {
+  if (!data || !user) {
+    return;
+  }
+
+  const ip = getClientIp(req);
+  const geo = await lookupIpLocation(ip, data);
+  const userAgent = req.get("user-agent") || "";
+  const deviceInfo = normalizeClientDeviceInfo(req.body?.deviceInfo || req.body?.extra?.deviceInfo, userAgent);
+
+  data.events.push({
+    id: makeId("evt"),
+    visitorId: user.visitorId,
+    eventName: type === "judge" ? "usage_judge" : "usage_convert",
+    ip,
+    ipLocation: geo.label || "",
+    userAgent: userAgent.slice(0, 300),
+    deviceModel: deviceInfo.model || "",
+    devicePlatform: deviceInfo.platform || "",
+    page: String(req.body?.page || req.get("referer") || "").slice(0, 200),
+    extra: {
+      type,
+      source,
+      quota: buildQuotaPayload(user)
+    },
+    createdAt: getNowISO()
+  });
+
+  if (data.events.length > 5000) {
+    data.events = data.events.slice(-5000);
+  }
 }
 
 function getDateKey(dateText) {
@@ -1245,62 +1333,6 @@ function normalizeJudgeOutput(text) {
   ].join("\n");
 }
 
-function normalizeJudgeOutputV2(text) {
-  const raw = String(text || "").trim();
-  const defaults = {
-    "图片关系": "单张图片或关系不明确",
-    "判读结论": "不确定",
-    "是否建议继续": "谨慎，建议结合现场核对",
-    "风险": "图片信息有限，不能替代现场勘查",
-    "依据": "需要结合更多清晰图片或资料判断"
-  };
-
-  if (!raw) {
-    return [
-      `【图片关系】${defaults["图片关系"]}`,
-      `【判读结论】${defaults["判读结论"]}`,
-      `【是否建议继续】${defaults["是否建议继续"]}`,
-      `【风险】${defaults["风险"]}`,
-      `【依据】${defaults["依据"]}`
-    ].join("\n");
-  }
-
-  const sectionNames = ["图片关系", "判读结论", "是否建议继续", "风险", "依据"];
-  const values = {};
-
-  for (let index = 0; index < sectionNames.length; index += 1) {
-    const current = sectionNames[index];
-    const next = sectionNames[index + 1];
-    const pattern = next
-      ? new RegExp(`【${current}】([\\s\\S]*?)(?=【${next}】)`)
-      : new RegExp(`【${current}】([\\s\\S]*)`);
-    const match = raw.match(pattern);
-    values[current] = (match?.[1] || "")
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean)
-      .slice(0, current === "依据" ? 2 : 1)
-      .join(" ");
-  }
-
-  if (!values["判读结论"] && !values["是否建议继续"] && !values["风险"] && !values["依据"]) {
-    const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(0, 5);
-    values["图片关系"] = lines[0] || defaults["图片关系"];
-    values["判读结论"] = lines[1] || defaults["判读结论"];
-    values["是否建议继续"] = lines[2] || defaults["是否建议继续"];
-    values["风险"] = lines[3] || defaults["风险"];
-    values["依据"] = lines[4] || defaults["依据"];
-  }
-
-  return [
-    `【图片关系】${values["图片关系"] || defaults["图片关系"]}`,
-    `【判读结论】${values["判读结论"] || defaults["判读结论"]}`,
-    `【是否建议继续】${values["是否建议继续"] || defaults["是否建议继续"]}`,
-    `【风险】${values["风险"] || defaults["风险"]}`,
-    `【依据】${values["依据"] || defaults["依据"]}`
-  ].join("\n");
-}
-
 app.get("/api/config", async (req, res) => {
   try {
     const visitorId = String(req.query.visitorId || "").trim();
@@ -1314,10 +1346,9 @@ app.get("/api/config", async (req, res) => {
 
     res.json({
       visitorId,
-      user: normalizeAdminUser(user, visitorId),
+      user,
       featureFlags: data.featureFlags,
-      permissions: getEffectivePermissions(user, data.featureFlags),
-      quota: buildQuotaPayload(user)
+      permissions: getEffectivePermissions(user, data.featureFlags)
     });
   } catch (error) {
     console.error(error);
@@ -1379,74 +1410,6 @@ app.post("/api/track", async (req, res) => {
   }
 });
 
-app.post("/api/usage/consume", async (req, res) => {
-  try {
-    const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
-    const type = String(req.body?.type || req.body?.feature || "").trim();
-
-    if (!visitorId || !["convert", "judge"].includes(type)) {
-      return res.status(400).json({
-        success: false,
-        reason: "bad_request",
-        error: "缺少用户或使用类型。"
-      });
-    }
-
-    const data = await readAdminData();
-    const user = ensureUser(data, visitorId);
-    const permissions = getEffectivePermissions(user, data.featureFlags);
-
-    if (type === "convert" && !permissions.kmlExportEnabled) {
-      return res.status(403).json({
-        success: false,
-        reason: "permission_denied",
-        error: "当前用户暂未开通 KML 导出。",
-        quota: buildQuotaPayload(user)
-      });
-    }
-
-    if (type === "judge" && !permissions.aiJudgeEnabled) {
-      return res.status(403).json({
-        success: false,
-        reason: "permission_denied",
-        error: "当前用户暂未开通 AI 判读。",
-        quota: buildQuotaPayload(user)
-      });
-    }
-
-    if (user) {
-      await updateUserVisitMeta(user, req, data);
-    }
-
-    const usage = consumeUsage(user, type);
-
-    if (!usage.success) {
-      await writeAdminData(data);
-      return res.status(429).json({
-        success: false,
-        reason: usage.reason || "limit_exceeded",
-        feature: type,
-        quota: usage.quota
-      });
-    }
-
-    await writeAdminData(data);
-    res.json({
-      success: true,
-      feature: type,
-      source: usage.source,
-      quota: usage.quota
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      reason: "server_error",
-      error: "次数校验失败，请稍后再试。"
-    });
-  }
-});
-
 app.get("/api/admin/summary", requireAdmin, async (req, res) => {
   try {
     const data = await readAdminData();
@@ -1474,7 +1437,7 @@ app.get("/api/admin/summary", requireAdmin, async (req, res) => {
       totals: {
         users: users.length,
         events: data.events.length,
-        vipUsers: users.filter(user => user.plan === "vip").length,
+        vipUsers: users.filter(user => user.isVip || user.plan === "vip").length,
         disabledUsers: users.filter(user => user.status === "disabled").length,
         returningUsers,
         qualityUsers,
@@ -1533,6 +1496,13 @@ app.patch("/api/admin/users/:visitorId", requireAdmin, async (req, res) => {
       user.plan = req.body.plan;
     }
 
+    if (typeof req.body?.isVip === "boolean") {
+      user.isVip = req.body.isVip;
+      user.plan = user.isVip ? "vip" : (user.plan === "vip" ? "free" : user.plan);
+    } else {
+      user.isVip = user.plan === "vip";
+    }
+
     if (allowedStatuses.includes(req.body?.status)) {
       user.status = req.body.status;
     }
@@ -1548,43 +1518,6 @@ app.patch("/api/admin/users/:visitorId", requireAdmin, async (req, res) => {
       };
     }
 
-    normalizeUsageCounters(user);
-
-    if (typeof req.body?.isVip === "boolean") {
-      user.isVip = req.body.isVip;
-    }
-
-    if (user.plan === "vip") {
-      user.isVip = true;
-    }
-
-    if (typeof req.body?.freeConvertCount !== "undefined") {
-      user.freeConvertCount = toNonNegativeInteger(req.body.freeConvertCount, user.freeConvertCount);
-    }
-
-    if (typeof req.body?.freeJudgeCount !== "undefined") {
-      user.freeJudgeCount = toNonNegativeInteger(req.body.freeJudgeCount, user.freeJudgeCount);
-    }
-
-    if (typeof req.body?.paidConvertCount !== "undefined") {
-      user.paidConvertCount = toNonNegativeInteger(req.body.paidConvertCount, user.paidConvertCount);
-    }
-
-    if (typeof req.body?.paidJudgeCount !== "undefined") {
-      user.paidJudgeCount = toNonNegativeInteger(req.body.paidJudgeCount, user.paidJudgeCount);
-    }
-
-    const addConvertCount = toNonNegativeInteger(req.body?.addConvertCount, 0);
-    const addJudgeCount = toNonNegativeInteger(req.body?.addJudgeCount, 0);
-
-    if (addConvertCount > 0) {
-      user.paidConvertCount = Number(user.paidConvertCount || 0) + addConvertCount;
-    }
-
-    if (addJudgeCount > 0) {
-      user.paidJudgeCount = Number(user.paidJudgeCount || 0) + addJudgeCount;
-    }
-
     if (typeof req.body?.note === "string") {
       user.note = req.body.note.slice(0, 500);
     }
@@ -1595,6 +1528,32 @@ app.patch("/api/admin/users/:visitorId", requireAdmin, async (req, res) => {
 
     if (typeof req.body?.wechat === "string") {
       user.wechat = req.body.wechat.slice(0, 80);
+    }
+
+    normalizeUsageCounters(user);
+
+    if (req.body?.freeConvertCount !== undefined) {
+      user.freeConvertCount = toNonNegativeInteger(req.body.freeConvertCount, user.freeConvertCount);
+    }
+
+    if (req.body?.freeJudgeCount !== undefined) {
+      user.freeJudgeCount = toNonNegativeInteger(req.body.freeJudgeCount, user.freeJudgeCount);
+    }
+
+    if (req.body?.paidConvertCount !== undefined) {
+      user.paidConvertCount = toNonNegativeInteger(req.body.paidConvertCount, user.paidConvertCount);
+    }
+
+    if (req.body?.paidJudgeCount !== undefined) {
+      user.paidJudgeCount = toNonNegativeInteger(req.body.paidJudgeCount, user.paidJudgeCount);
+    }
+
+    if (req.body?.addConvertCount !== undefined) {
+      user.paidConvertCount += toNonNegativeInteger(req.body.addConvertCount, 0);
+    }
+
+    if (req.body?.addJudgeCount !== undefined) {
+      user.paidJudgeCount += toNonNegativeInteger(req.body.addJudgeCount, 0);
     }
 
     user.updatedAt = getNowISO();
@@ -1632,6 +1591,83 @@ app.patch("/api/admin/feature-flags", requireAdmin, async (req, res) => {
   }
 });
 
+app.post("/api/usage/consume", async (req, res) => {
+  try {
+    const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
+    const type = String(req.body?.type || "convert").trim() === "judge" ? "judge" : "convert";
+    const data = await readAdminData();
+    const user = ensureUser(data, visitorId);
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        reason: "missing_user",
+        error: "缺少用户ID。"
+      });
+    }
+
+    const permissions = getEffectivePermissions(user, data.featureFlags);
+    const requiredFeature = type === "judge" ? "aiJudgeEnabled" : "kmlExportEnabled";
+
+    await updateUserVisitMeta(user, req, data);
+
+    if (!permissions[requiredFeature]) {
+      await writeAdminData(data);
+      return res.status(403).json({
+        success: false,
+        reason: "permission_denied",
+        type,
+        quota: buildQuotaPayload(user),
+        error: type === "judge" ? "当前用户暂未开通 AI 判读功能。" : "当前用户暂未开通 KML 导出。"
+      });
+    }
+
+    const usageStatus = checkUsageAvailable(user, type);
+
+    if (!usageStatus.allowed) {
+      data.events.push({
+        id: makeId("evt"),
+        visitorId: user.visitorId,
+        eventName: type === "judge" ? "limit_judge" : "limit_convert",
+        ip: getClientIp(req),
+        page: String(req.body?.page || req.get("referer") || "").slice(0, 200),
+        extra: {
+          type,
+          quota: usageStatus.quota
+        },
+        createdAt: getNowISO()
+      });
+      await writeAdminData(data);
+      return res.status(403).json({
+        success: false,
+        reason: "limit_exceeded",
+        type,
+        quota: usageStatus.quota
+      });
+    }
+
+    const result = consumeUsage(user, type);
+    user.eventCount = Number(user.eventCount || 0) + 1;
+    await appendUsageLog(data, user, req, type, result.source);
+    await writeAdminData(data);
+
+    res.json({
+      success: true,
+      reason: "ok",
+      type,
+      source: result.source,
+      quota: result.quota
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      reason: "server_error",
+      error: "扣减使用次数失败，请稍后重试。"
+    });
+  }
+});
+
 app.post("/api/analyze-mining-image", upload.fields([
   { name: "image", maxCount: 1 },
   { name: "images", maxCount: 5 }
@@ -1664,23 +1700,6 @@ app.post("/api/analyze-mining-image", upload.fields([
       });
     }
 
-    const usageCheck = checkUsageAvailable(user, "judge");
-
-    if (!usageCheck.success) {
-      if (user) {
-        await updateUserVisitMeta(user, req, data);
-        await writeAdminData(data);
-      }
-
-      return res.status(429).json({
-        success: false,
-        reason: "limit_exceeded",
-        feature: "judge",
-        quota: usageCheck.quota,
-        error: "AI判读次数已用完。"
-      });
-    }
-
     if (uploadedFiles.length === 0) {
       return res.status(400).json({
         error: "后端没有收到文件，请重新选择图片或资料文件上传。"
@@ -1694,12 +1713,47 @@ app.post("/api/analyze-mining-image", upload.fields([
       await updateUserVisitMeta(user, req, data);
     }
 
+    if (!user) {
+      await writeAdminData(data);
+      return res.status(400).json({
+        success: false,
+        reason: "missing_user",
+        error: "缺少用户信息，请刷新页面后重试。"
+      });
+    }
+
+    const usageStatus = checkUsageAvailable(user, "judge");
+    if (!usageStatus.allowed) {
+      data.events.push({
+        id: makeId("event"),
+        visitorId: user.visitorId || visitorId,
+        eventName: "limit_judge",
+        eventLabel: getEventLabel("limit_judge"),
+        ip: getClientIp(req),
+        ipLocation: await lookupIpLocation(getClientIp(req)),
+        page: String(req.get("referer") || "").slice(0, 200),
+        extra: {
+          type: "judge",
+          quota: usageStatus.quota
+        },
+        createdAt: getNowISO()
+      });
+      await writeAdminData(data);
+      return res.status(403).json({
+        success: false,
+        reason: "limit_exceeded",
+        type: "judge",
+        quota: usageStatus.quota,
+        error: "AI判读次数已用完，请购买次数或联系人工开通。"
+      });
+    }
+
     if (!isImageFile) {
       const rawOutput = `【判读结论】已收到资料文件，当前版本暂不能直接解析文档内容
 【是否建议继续】谨慎，建议上传关键页面截图
 【风险】文件内容未进入视觉判读
 【依据】请截取矿地、河道、矿石或坐标表关键页再判读`;
-      const normalizedOutput = normalizeJudgeOutputV2(rawOutput);
+      const normalizedOutput = normalizeJudgeOutput(rawOutput);
       const record = {
         id: makeId("record"),
         user_id: visitorId,
@@ -1715,9 +1769,10 @@ app.post("/api/analyze-mining-image", upload.fields([
       data.records.push(record);
       data.usage[visitorId] = data.usage[visitorId] || {};
       data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
+      const usageResult = consumeUsage(user, "judge");
+      await appendUsageLog(data, user, req, "judge", usageResult.source);
 
       if (user) {
-        consumeUsage(user, "judge");
         user.eventCount = Number(user.eventCount || 0) + 1;
       }
 
@@ -1727,7 +1782,6 @@ app.post("/api/analyze-mining-image", upload.fields([
         result: normalizedOutput,
         rawOutput,
         recordId: record.id,
-        quota: user ? buildQuotaPayload(user) : null,
         warning: "当前版本已支持上传资料文件，但AI判读仍建议使用关键页面截图。"
       });
     }
@@ -1749,51 +1803,24 @@ app.post("/api/analyze-mining-image", upload.fields([
       baseURL: openAIBaseURL
     });
 
-    const prompt = `你是矿业空间判读助手，只做矿业决策辅助。你的目标是给用户一个有参考价值的初筛判断，而不是简单拒判。
+    const prompt = `你是矿业空间判读助手，只做矿业决策辅助。
 
-请根据上传的1到5张图片判断。图片可能是矿地、河道、卫星图、地形图、矿石照片或资料页截图。
+请根据上传的1到5张图片做保守初筛。图片可能是矿地、河道、卫星图、地形图、矿石照片或资料页截图。
 
 只允许输出下面4行，不能增加其他标题：
-【判读结论】一句具体判断
+【判读结论】一句短话
 【是否建议继续】建议 / 谨慎 / 不建议 + 很短理由
-【风险】一句具体风险
-【依据】一句可见依据
-
-判读重点：
-1. 如果是矿地/河道/卫星图，重点看河道弯曲、冲沟、阶地、低洼沉积带、裸露岩体、坡度、植被、水系汇流、交通和施工痕迹。
-2. 如果是矿石照片，重点看颜色、风化、石英脉、氧化铁染、结构和拍摄清晰度，只判断是否值得进一步检测。
-3. 如果是资料页截图，重点概括资料显示的矿权/坐标/区域信息是否足够继续核对。
+【风险】一句短话
+【依据】一句短话
 
 规则：
 1. 必须控制在4行以内，每行一个标题和一句短话。
 2. 【是否建议继续】只能写：建议 / 谨慎 / 不建议，再补充很短理由。
 3. 不允许输出含量预测、储量预测。
 4. 不允许报具体金点、坐标点或采样点。
-5. 只有图片严重模糊、主体缺失、完全无法判断时，才写“不确定”；能看到地貌或矿石特征时必须给出初筛意见。
-6. 只有在明显存在AI生成痕迹时，才在【风险】里提示“疑似AI图或非真实现场图，需人工核对”。普通手机照片、地图截图、扫描件、带滤镜或压缩失真的图片，不要轻易判为AI图。
-7. 结论要具体，避免空话，例如不要只写“图片信息不足”；要写出看到了什么、为什么建议或谨慎。
-8. 偏向审慎但要有用：不夸大，不乱承诺，也不要过度保守。`;
-
-    const multiImageJudgePrompt = `你是矿业空间判读助手，只做矿业决策辅助。请先判断上传图片之间的关系，再给出有参考价值的初筛判断。
-
-必须只输出下面5行，不能增加其他文字：
-【图片关系】单张图片 / 同一矿地不同角度 / 同一项目不同资料 / 同一区域不同位置 / 疑似不同项目 / 关系不明确
-【判读结论】一句具体判断
-【是否建议继续】建议 / 谨慎 / 不建议 + 很短理由
-【风险】一句具体风险
-【依据】一句可见依据
-
-多图判读逻辑：
-1. 如果多张图是同一矿地不同角度，综合成一个对象判断，不要重复计权。
-2. 如果多张图是同一项目不同资料，例如卫星图、现场图、矿石图、文件截图，综合判断，并说明依据来自哪些可见信息。
-3. 如果多张图是同一区域不同位置，综合判断，但风险里提示局部差异。
-4. 如果多张图明显属于不同矿地或不同项目，不要强行合并，提示应分开上传判读。
-5. 如果部分图片模糊、无关或重复，以有效图片为主，风险里说明。
-6. 如果是矿石照片，只判断是否值得进一步检测，不预测含量。
-7. 如果是资料页截图，只概括资料是否足够继续核对，不报金点。
-8. 只有图片明显存在AI生成痕迹时，才提示疑似AI图；普通手机照片、扫描件、地图截图、压缩失真不要轻易判为AI。
-
-禁止输出含量预测、储量预测、具体金点、采样点或保证性结论。结论要具体、有用、保守但不要空泛。`;
+5. 看不清或证据不足时，必须写“不确定”或“谨慎”。
+6. 如果图片看起来像AI生成图、过度美化图、合成图或不真实场景，必须在【风险】里提示“疑似AI图或非真实现场图，需人工核对”。
+7. 偏向保守判断，宁可少说，不要乱说。`;
 
     const response = await openai.chat.completions.create({
       model,
@@ -1801,16 +1828,16 @@ app.post("/api/analyze-mining-image", upload.fields([
         {
           role: "user",
           content: [
-            { type: "text", text: multiImageJudgePrompt },
+            { type: "text", text: prompt },
             ...imageItems
           ]
         }
       ],
-      temperature: 0.2
+      temperature: 0.1
     });
 
     const rawOutput = response.choices?.[0]?.message?.content || "";
-    const normalizedOutput = normalizeJudgeOutputV2(rawOutput);
+    const normalizedOutput = normalizeJudgeOutput(rawOutput);
     const record = {
       id: makeId("record"),
       user_id: visitorId,
@@ -1826,9 +1853,10 @@ app.post("/api/analyze-mining-image", upload.fields([
     data.records.push(record);
     data.usage[visitorId] = data.usage[visitorId] || {};
     data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
+    const usageResult = consumeUsage(user, "judge");
+    await appendUsageLog(data, user, req, "judge", usageResult.source);
 
     if (user) {
-      consumeUsage(user, "judge");
       user.eventCount = Number(user.eventCount || 0) + 1;
     }
 
@@ -1837,8 +1865,7 @@ app.post("/api/analyze-mining-image", upload.fields([
     res.json({
       result: normalizedOutput,
       rawOutput,
-      recordId: record.id,
-      quota: user ? buildQuotaPayload(user) : null
+      recordId: record.id
     });
   } catch (error) {
     const errorMessage = getOpenAIErrorMessage(error);

@@ -50,7 +50,7 @@
     }
 
     .home-hero {
-      padding: 6px 2px 0;
+      padding: 8px 2px 2px;
       border: 0;
       background: transparent;
       box-shadow: none;
@@ -65,21 +65,20 @@
     }
 
     .home-hero h1 {
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       font-size: 30px;
     }
 
     .home-hero .intro {
-      max-width: 780px;
+      max-width: 820px;
       margin-bottom: 0;
-      padding-left: 0;
-      border-left: 0;
+      padding-left: 12px;
+      border-left: 4px solid #2563eb;
       color: #465568;
-      line-height: 1.62;
     }
 
     .home-flow {
-      display: none;
+      display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
       margin: 12px 0 16px;
@@ -121,14 +120,14 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 14px;
-      margin-top: 18px;
+      margin-top: 14px;
     }
 
     .module-card {
-      min-height: 148px;
+      min-height: 174px;
       padding: 18px;
       border: 1px solid #d6dfeb;
-      border-radius: 16px;
+      border-radius: 14px;
       background: #ffffff;
       color: #172033;
       text-align: left;
@@ -144,12 +143,20 @@
     }
 
     .module-card::before {
-      content: none;
+      content: "";
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: #2563eb;
+      opacity: 0.08;
     }
 
     .module-card strong {
       display: block;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
       font-size: 22px;
       color: #0f172a;
     }
@@ -162,13 +169,17 @@
     }
 
     .module-card.primary-module {
-      border-color: #dce8fb;
-      background: linear-gradient(180deg, #f8fbff 0%, #ffffff 80%);
+      border-color: #bfdbfe;
+      background: linear-gradient(180deg, #f7fbff 0%, #ffffff 64%);
     }
 
     .module-card.judge-module {
-      border-color: #d7ecdf;
-      background: linear-gradient(180deg, #f8fff9 0%, #ffffff 80%);
+      border-color: #bbf7d0;
+      background: linear-gradient(180deg, #f8fff9 0%, #ffffff 64%);
+    }
+
+    .module-card.judge-module::before {
+      background: #15803d;
     }
 
     .module-card.primary-module:hover {
@@ -189,10 +200,6 @@
       font-weight: 800;
     }
 
-    .module-action::after {
-      content: " →";
-    }
-
     .judge-module .module-action {
       color: #15803d;
     }
@@ -200,16 +207,16 @@
     .module-tag {
       display: inline-block;
       margin-bottom: 12px;
-      padding: 0;
-      border-radius: 0;
-      background: transparent;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #eaf1ff;
       color: #1d4ed8;
       font-size: 13px;
       font-weight: 700;
     }
 
     .judge-module .module-tag {
-      background: transparent;
+      background: #dcfce7;
       color: #15803d;
     }
 
@@ -359,24 +366,24 @@
       border-style: dashed;
       border-color: #9fb1c8;
       background: #f8fbff;
-      padding: 10px 12px;
+      padding: 12px 14px;
     }
 
     .upload-box label {
-      margin-bottom: 4px;
-      font-size: 19px;
+      margin-bottom: 6px;
+      font-size: 20px;
       line-height: 1.2;
     }
 
     .upload-box input {
       width: 100%;
-      min-height: 30px;
+      min-height: 34px;
     }
 
     .image-preview {
       display: none;
-      margin-top: 8px;
-      padding: 8px;
+      margin-top: 12px;
+      padding: 10px;
       border: 1px solid #d8e0ec;
       border-radius: 8px;
       background: #ffffff;
@@ -385,14 +392,14 @@
     .image-preview-row {
       position: relative;
       display: grid;
-      grid-template-columns: 78px 1fr auto;
-      gap: 8px;
+      grid-template-columns: 96px 1fr auto;
+      gap: 10px;
       align-items: center;
     }
 
     .image-preview img {
-      width: 78px;
-      height: 56px;
+      width: 96px;
+      height: 72px;
       object-fit: cover;
       border: 1px solid #e5e7eb;
       border-radius: 6px;
@@ -415,8 +422,7 @@
     .image-preview p {
       margin: 0;
       color: #475569;
-      line-height: 1.35;
-      font-size: 14px;
+      line-height: 1.5;
       word-break: break-word;
     }
 
@@ -464,6 +470,129 @@
       border-radius: 6px;
       background: #f8fafc;
       cursor: zoom-out;
+    }
+
+    .quota-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.55);
+    }
+
+    .quota-card {
+      width: min(92vw, 420px);
+      max-height: 88vh;
+      overflow-y: auto;
+      padding: 22px;
+      border-radius: 16px;
+      background: #ffffff;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.24);
+    }
+
+    .quota-card h3 {
+      margin: 0 0 10px;
+      font-size: 22px;
+      color: #0f172a;
+    }
+
+    .quota-card p {
+      margin: 0 0 14px;
+      color: #475569;
+      line-height: 1.7;
+    }
+
+    .quota-options {
+      display: grid;
+      gap: 8px;
+      margin: 14px 0;
+    }
+
+    .quota-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border: 1px solid #dbeafe;
+      border-radius: 10px;
+      background: #f8fbff;
+      color: #172033;
+      font-weight: 700;
+    }
+
+    .quota-badge {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #16a34a;
+      color: #ffffff;
+      font-size: 12px;
+    }
+
+    .quota-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .quota-actions button {
+      min-height: 44px;
+      border-radius: 10px;
+      font-weight: 700;
+    }
+
+    .quota-primary {
+      border: 0;
+      background: #2563eb;
+      color: #ffffff;
+    }
+
+    .quota-secondary {
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #334155;
+    }
+
+    .quota-footnote {
+      font-size: 12px;
+      color: #64748b;
+    }
+
+    .quota-contact-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .quota-contact-note {
+      margin-top: 10px;
+      text-align: center;
+      color: #475569;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .quota-contact-item {
+      padding: 10px;
+      border: 1px solid #dbeafe;
+      border-radius: 12px;
+      background: #f8fafc;
+      text-align: center;
+      color: #172033;
+      font-weight: 700;
+    }
+
+    .quota-contact-item img {
+      display: block;
+      width: 100%;
+      max-width: 130px;
+      margin: 0 auto 8px;
+      border-radius: 8px;
+      background: #ffffff;
     }
 
     select {
@@ -611,105 +740,6 @@
       background: #991b1b;
     }
 
-    .quota-modal {
-      position: fixed;
-      inset: 0;
-      z-index: 40;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 18px;
-      background: rgba(15, 23, 42, 0.58);
-    }
-
-    .quota-card {
-      width: min(94vw, 420px);
-      padding: 22px;
-      border-radius: 16px;
-      background: #ffffff;
-      color: #172033;
-      box-shadow: 0 22px 60px rgba(15, 23, 42, 0.24);
-    }
-
-    .quota-card h3 {
-      margin: 0 0 8px;
-      font-size: 22px;
-      line-height: 1.25;
-    }
-
-    .quota-card p {
-      margin: 0;
-      color: #5b677a;
-      line-height: 1.55;
-      font-size: 15px;
-    }
-
-    .quota-options {
-      display: grid;
-      gap: 10px;
-      margin: 16px 0;
-    }
-
-    .quota-option {
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      min-height: 48px;
-      padding: 10px 12px;
-      border: 1px solid #dbe5f1;
-      border-radius: 12px;
-      background: #f8fbff;
-      color: #172033;
-      font-weight: 800;
-      box-shadow: none;
-    }
-
-    .quota-option:hover {
-      background: #eef5ff;
-      transform: none;
-    }
-
-    .quota-badge {
-      padding: 3px 8px;
-      border-radius: 999px;
-      background: #dcfce7;
-      color: #166534;
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .quota-actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 16px;
-    }
-
-    .quota-actions .quota-primary {
-      background: #15803d;
-      box-shadow: 0 8px 20px rgba(21, 128, 61, 0.18);
-    }
-
-    .quota-actions .quota-primary.coordinate {
-      background: #2563eb;
-      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.18);
-    }
-
-    .quota-aux {
-      padding: 10px 12px;
-      border-radius: 10px;
-      background: #f8fafc;
-      font-weight: 700;
-    }
-
-    .quota-note {
-      margin-top: 8px;
-      color: #64748b;
-      font-size: 12px;
-      text-align: center;
-    }
-
     .upload-message {
       display: none;
       margin-top: 10px;
@@ -766,11 +796,6 @@
 
     .recognition-status.error::before {
       background: #dc2626;
-    }
-
-    .judge-status.loading::before {
-      border-color: #bbf7d0;
-      border-top-color: #15803d;
     }
 
     @keyframes spin {
@@ -978,16 +1003,9 @@
 
     .judge-panel textarea {
       min-height: 190px;
-      margin-top: 0;
+      margin-top: 10px;
       padding: 12px 12px 58px 12px;
       background: #ffffff;
-    }
-
-    .judge-type-note {
-      margin: 8px 0 0;
-      color: #64748b;
-      font-size: 13px;
-      line-height: 1.5;
     }
 
     .judge-result-wrap {
@@ -1055,11 +1073,6 @@
       color: #1f2937;
     }
 
-    #judgePage .help {
-      border-left-color: #15803d;
-      background: #f8fff9;
-    }
-
     @media (max-width: 720px) {
       .page {
         padding: 14px;
@@ -1119,23 +1132,15 @@
 
       .upload-box {
         margin-top: 10px;
-        padding: 7px 10px;
+        padding: 9px 12px;
       }
 
       .upload-box label {
-        font-size: 18px;
-        margin-bottom: 2px;
-      }
-
-      .upload-box input {
-        min-height: 28px;
-        font-size: 14px;
+        font-size: 19px;
       }
 
       .privacy-note {
-        margin-top: 3px;
-        font-size: 12px;
-        line-height: 1.3;
+        margin-top: 4px;
       }
 
       .primary-action {
@@ -1185,23 +1190,12 @@
       }
 
       .image-preview-row {
-        grid-template-columns: 56px 1fr;
-        gap: 7px;
+        grid-template-columns: 72px 1fr;
       }
 
       .image-preview img {
-        width: 56px;
-        height: 42px;
-      }
-
-      .image-preview {
-        margin-top: 6px;
-        padding: 7px;
-      }
-
-      .image-preview p {
-        font-size: 12px;
-        line-height: 1.25;
+        width: 72px;
+        height: 58px;
       }
 
       .image-preview .remove-image {
@@ -1209,26 +1203,43 @@
         right: -7px;
       }
     }
+
+    .version-stamp {
+      margin: 22px auto 8px;
+      color: #94a3b8;
+      font-size: 12px;
+      text-align: center;
+      user-select: text;
+    }
   </style>
 </head>
 <body>
   <main class="page">
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
-        <h1>矿业空间工具</h1>
-        <p class="intro">上传坐标图或直接粘贴坐标，生成可一键导入奥维地图、Google Earth 的 KML；也可上传矿地图片做 AI 初筛，识别不准时转人工协助。</p>
+        <p class="eyebrow">坐标 · KML · AI判读</p>
+        <h1>矿业空间工具 Geo Tool</h1>
+        <p class="intro">上传坐标图片或直接粘贴坐标，工具会整理成可一键导入奥维地图、Google Earth 的 KML 文件；也可上传矿地、河道、矿石图片做 AI 初筛，不准时转人工协助。</p>
+      </div>
+
+      <div class="home-flow">
+        <span>坐标整理</span>
+        <span>KML导出</span>
+        <span>AI初筛</span>
       </div>
 
       <div class="module-grid">
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
-          <strong>坐标处理</strong>
-          <span>图片识别、坐标整理、生成 KML 矿区范围。</span>
-          <small class="module-action">进入</small>
+          <em class="module-tag">坐标/KML</em>
+          <strong>坐标处理工具</strong>
+          <span>识别图片里的坐标，自动整理成可导入奥维地图和 Google Earth 的 KML 矿区范围。</span>
+          <small class="module-action">进入坐标处理</small>
         </button>
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
+          <em class="module-tag">AI初筛</em>
           <strong>AI矿地判读</strong>
-          <span>上传矿地、河道或矿石图，查看初筛结论和风险提示。</span>
-          <small class="module-action">开始</small>
+          <span>上传矿地、河道或矿石图片，获得保守的初筛判断和风险提示。</span>
+          <small class="module-action">进入AI判读</small>
         </button>
       </div>
     </section>
@@ -1332,7 +1343,11 @@
         <button type="button" class="secondary" onclick="copyDebugText()">复制识别调试信息</button>
         <button type="button" class="secondary" onclick="copyContent()">复制当前坐标</button>
       </div>
-      <div class="contact-grid">
+      <div class="contact-card">
+        <strong>开通次数：</strong><br />
+        添加微信或 WhatsApp，发送“开通坐标次数”加当前页面截图。人工确认后，会在后台为你增加使用次数。
+      </div>
+      <div id="coordinateContactGrid" class="contact-grid">
         <div class="contact-method">
           <img src="wechat-qr.jpg" alt="微信二维码" />
           <strong>微信人工协助</strong>
@@ -1360,8 +1375,22 @@
       <p class="intro">上传矿地、河道、卫星图或矿石照片，AI只做初筛判断：是否值得继续看、主要风险在哪里。不预测含量，不标具体金点。</p>
 
       <div class="panel judge-panel">
-        <input id="judgeType" type="hidden" value="mine-land" />
+        <label for="judgeType">判读类型</label>
+        <select id="judgeType">
+          <option value="mine-land" selected>矿地 / 河道 / 卫星图</option>
+          <option value="ore">矿石照片</option>
+          <option value="document">矿业资料</option>
+        </select>
 
+        <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片（最多5张）</label>
+        <input id="judgeImageInput" type="file" accept="image/*" multiple />
+        <div id="judgeImagePreview" class="image-preview"></div>
+
+        <div class="judge-actions">
+          <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
+        </div>
+
+        <div id="judgeMessage" class="message"></div>
         <div class="judge-result-wrap">
           <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里：
 【判读结论】不确定
@@ -1373,23 +1402,15 @@
             <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">⧉</button>
           </div>
         </div>
-
-        <label for="judgeImageInput" style="margin-top: 14px;">上传判读图片（最多5张）</label>
-        <input id="judgeImageInput" type="file" accept="image/*" multiple />
-        <div id="judgeImagePreview" class="image-preview"></div>
-        <p class="judge-type-note">支持矿地、河道、卫星图、矿石照片和资料截图，AI会自动判断类型。</p>
-
-        <div class="judge-actions">
-          <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
-        </div>
-
-        <div id="judgeStatus" class="recognition-status judge-status"></div>
-        <div id="judgeMessage" class="message"></div>
       </div>
 
-      <div class="panel judge-manual">
+      <div id="judgeSupportPanel" class="panel judge-manual">
         <strong>当前判读仅供参考</strong>
         <p>如需更高精度分析，可以提交图片给人工经验判断。适合水印严重、手写不清、河道复杂或需要投资前复核的情况。</p>
+        <div class="contact-card">
+          <strong>开通判读次数：</strong><br />
+          添加微信或 WhatsApp，发送“开通 AI 判读次数”加当前页面截图。人工确认后，会在后台为你增加判读次数。
+        </div>
         <div class="judge-manual-actions">
           <button type="button" class="secondary" onclick="toggleJudgeQr('whatsapp')">WhatsApp</button>
           <button type="button" class="secondary" onclick="toggleJudgeQr('wechat')">微信</button>
@@ -1415,21 +1436,22 @@
     </div>
   </div>
 
-  <div id="quotaModal" class="quota-modal" onclick="closeQuotaModal()">
-    <div class="quota-card" onclick="event.stopPropagation()">
-      <h3 id="quotaTitle"></h3>
+  <div id="quotaModal" class="quota-modal" role="dialog" aria-modal="true">
+    <div class="quota-card">
+      <h3 id="quotaTitle">今日免费次数已用完</h3>
       <p id="quotaDescription"></p>
       <div id="quotaOptions" class="quota-options"></div>
-      <p id="quotaAux" class="quota-aux"></p>
-      <p id="quotaNote" class="quota-note"></p>
+      <p id="quotaHelper"></p>
+      <div id="quotaFootnote" class="quota-footnote"></div>
       <div class="quota-actions">
-        <button id="quotaPrimaryButton" type="button" class="quota-primary" onclick="confirmQuotaModal()">立即使用</button>
-        <button type="button" class="secondary" onclick="closeQuotaModal()">稍后再说</button>
+        <button id="quotaPrimary" class="quota-primary" type="button" onclick="handleQuotaPrimary()">立即使用</button>
+        <button class="quota-secondary" type="button" onclick="closeQuotaModal()">稍后再说</button>
       </div>
     </div>
   </div>
 
   <script>
+    const APP_VERSION = "2026-05-01-quota-contact-v2";
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
@@ -1447,16 +1469,17 @@
     const quotaTitle = document.getElementById("quotaTitle");
     const quotaDescription = document.getElementById("quotaDescription");
     const quotaOptions = document.getElementById("quotaOptions");
-    const quotaAux = document.getElementById("quotaAux");
-    const quotaNote = document.getElementById("quotaNote");
-    const quotaPrimaryButton = document.getElementById("quotaPrimaryButton");
+    const quotaHelper = document.getElementById("quotaHelper");
+    const quotaFootnote = document.getElementById("quotaFootnote");
+    const quotaPrimary = document.getElementById("quotaPrimary");
     const supportPanel = document.getElementById("supportPanel");
+    const coordinateContactGrid = document.getElementById("coordinateContactGrid");
+    const judgeSupportPanel = document.getElementById("judgeSupportPanel");
     const debugPanel = document.getElementById("debugPanel");
     const debugText = document.getElementById("debugText");
     const judgeType = document.getElementById("judgeType");
     const judgeImageInput = document.getElementById("judgeImageInput");
     const judgeImagePreview = document.getElementById("judgeImagePreview");
-    const judgeStatus = document.getElementById("judgeStatus");
     const judgeMessage = document.getElementById("judgeMessage");
     const judgeResult = document.getElementById("judgeResult");
     const judgeQrPanel = document.getElementById("judgeQrPanel");
@@ -1487,7 +1510,6 @@
     let selectedImageFile = null;
     let selectedJudgeImageUrls = [];
     let selectedJudgeImageFiles = [];
-    let activeQuotaType = "coordinate";
 
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
@@ -1507,6 +1529,10 @@
           judge: "/judge"
         };
         history.pushState({ pageName, focusTarget }, "", pathMap[pageName] || "/");
+      }
+
+      if (focusTarget === "support") {
+        return;
       }
 
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1532,6 +1558,15 @@
 
     window.addEventListener("popstate", openPageFromPath);
     openPageFromPath();
+    document.documentElement.dataset.appVersion = APP_VERSION;
+    addVersionStamp();
+
+    function addVersionStamp() {
+      const stamp = document.createElement("div");
+      stamp.className = "version-stamp";
+      stamp.textContent = `版本：${APP_VERSION}`;
+      document.body.appendChild(stamp);
+    }
 
     function getOrCreateVisitorId() {
       const existing = localStorage.getItem("coordinateToolVisitorId");
@@ -1555,87 +1590,9 @@
       }
     }
 
-    function getQuotaContent(type = "coordinate") {
-      if (type === "judge") {
-        return {
-          title: "AI判读次数已用完",
-          description: "今日免费判读已使用完<br>继续判读可购买使用次数",
-          options: [
-            { text: "👉 10次判读：¥9.9", recommended: false }
-          ],
-          aux: "用于快速判断矿地是否值得继续",
-          note: "",
-          primaryText: "继续判读",
-          primaryClass: ""
-        };
-      }
-
-      return {
-        title: "今日免费次数已用完",
-        description: "坐标处理和KML生成已达到今日免费额度<br>继续使用仅需少量费用",
-        options: [
-          { text: "👉 10次使用：¥9.9", recommended: true },
-          { text: "👉 50次使用：¥29", recommended: false },
-          { text: "👉 100次使用：¥49", recommended: false }
-        ],
-        aux: "适用于矿区批量处理 / 快速筛选项目",
-        note: "一次购买，多次使用，无时间限制",
-        primaryText: "立即使用",
-        primaryClass: "coordinate"
-      };
-    }
-
-    function showQuotaModal(type = "coordinate") {
-      activeQuotaType = type;
-      const content = getQuotaContent(type);
-      quotaTitle.textContent = content.title;
-      quotaDescription.innerHTML = content.description;
-      quotaOptions.innerHTML = content.options.map(option => `
-        <button type="button" class="quota-option" onclick="confirmQuotaModal()">
-          <span>${option.text}</span>
-          ${option.recommended ? '<span class="quota-badge">推荐</span>' : ''}
-        </button>
-      `).join("");
-      quotaAux.textContent = content.aux;
-      quotaNote.textContent = content.note;
-      quotaNote.style.display = content.note ? "block" : "none";
-      quotaPrimaryButton.textContent = content.primaryText;
-      quotaPrimaryButton.className = `quota-primary ${content.primaryClass}`.trim();
-      quotaModal.style.display = "flex";
-      trackEvent("quota_modal_show", { type });
-    }
-
-    function closeQuotaModal() {
-      quotaModal.style.display = "none";
-    }
-
-    function confirmQuotaModal() {
-      closeQuotaModal();
-      trackEvent("quota_modal_primary_click", { type: activeQuotaType });
-
-      if (activeQuotaType === "judge") {
-        showJudgeMessage("请通过下方 WhatsApp 或微信联系开通判读次数。");
-        const manualBlock = document.querySelector("#judgePage .judge-manual");
-        if (manualBlock) {
-          manualBlock.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-        return;
-      }
-
-      showMessage("请通过人工协助联系开通使用次数。");
-      if (supportPanel && supportPanel.style.display !== "block") {
-        toggleSupportPanel();
-      }
-      supportPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-
-    function canUse(featureName, errorMessage, quotaType = "") {
+    function canUse(featureName, errorMessage) {
       if (appConfig?.permissions?.[featureName] === false) {
-        if (quotaType) {
-          showQuotaModal(quotaType);
-        } else {
-          showMessage(errorMessage, true);
-        }
+        showMessage(errorMessage, true);
         trackEvent("permission_blocked", {
           feature: featureName
         });
@@ -1645,7 +1602,168 @@
       return true;
     }
 
-    async function consumeFeatureUsage(type) {
+    function quotaContactHtml() {
+      return `
+        <div class="quota-contact-note">扫码添加人工开通次数</div>
+        <div class="quota-contact-grid">
+          <div class="quota-contact-item">
+            <img src="wechat-qr.jpg" alt="微信二维码" />
+            <div>微信：Mir-2188</div>
+          </div>
+          <div class="quota-contact-item">
+            <img src="whatsapp-qr.jpg" alt="WhatsApp二维码" />
+            <div>WhatsApp</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function resetQuotaScroll() {
+      const card = quotaModal.querySelector(".quota-card");
+      if (card) {
+        card.scrollTop = 0;
+      }
+    }
+
+    function showQuotaModal(type) {
+      quotaModal.dataset.type = type;
+      quotaModal.dataset.stage = "price";
+
+      if (type === "judge") {
+        quotaTitle.textContent = "AI判读次数已用完";
+        quotaDescription.innerHTML = "今日免费判读已使用完<br>继续判读可购买使用次数";
+        quotaOptions.innerHTML = `
+          ${quotaContactHtml()}
+          <div class="quota-option">👉 10次判读：¥9.9 <span class="quota-badge">推荐</span></div>
+        `;
+        quotaHelper.textContent = "用于快速判断矿地是否值得继续";
+        quotaFootnote.textContent = "截图发给人工后，为你开通对应次数。";
+        quotaPrimary.textContent = "联系开通";
+      } else {
+        quotaTitle.textContent = "今日免费次数已用完";
+        quotaDescription.innerHTML = "坐标处理和KML生成已达到今日免费额度<br>继续使用仅需少量费用";
+        quotaOptions.innerHTML = `
+          ${quotaContactHtml()}
+          <div class="quota-option">👉 10次使用：¥9.9 <span class="quota-badge">推荐</span></div>
+          <div class="quota-option">👉 50次使用：¥29</div>
+          <div class="quota-option">👉 100次使用：¥49</div>
+        `;
+        quotaHelper.textContent = "适用于矿区批量处理 / 快速筛选项目";
+        quotaFootnote.textContent = "一次购买，多次使用，无时间限制。截图发给人工后开通。";
+        quotaPrimary.textContent = "联系开通";
+      }
+
+      quotaModal.style.display = "flex";
+      resetQuotaScroll();
+    }
+
+    function showQuotaContactModal(type) {
+      quotaModal.dataset.type = type;
+      quotaModal.dataset.stage = "contact";
+
+      if (type === "judge") {
+        quotaTitle.textContent = "联系开通AI判读次数";
+        quotaDescription.innerHTML = "请添加微信或 WhatsApp<br>发送“开通AI判读次数”加当前页面截图";
+        quotaHelper.textContent = "人工确认后，会在后台为你增加判读次数。";
+        quotaPrimary.textContent = "我知道了";
+      } else {
+        quotaTitle.textContent = "联系开通坐标次数";
+        quotaDescription.innerHTML = "请添加微信或 WhatsApp<br>发送“开通坐标次数”加当前页面截图";
+        quotaHelper.textContent = "人工确认后，会在后台为你增加坐标处理和KML生成次数。";
+        quotaPrimary.textContent = "我知道了";
+      }
+
+      quotaOptions.innerHTML = quotaContactHtml();
+      quotaFootnote.textContent = "截图发给人工后，为你开通对应次数。";
+      quotaModal.style.display = "flex";
+      resetQuotaScroll();
+    }
+
+    function closeQuotaModal() {
+      quotaModal.style.display = "none";
+    }
+
+    function showConvertLimitMessage() {
+      setRecognitionStatus("坐标处理免费次数已用完，请通过下方 WhatsApp 或微信联系开通更多使用次数。", "error");
+      showUploadSupportMessage("需要继续生成 KML，请联系人工开通坐标处理次数。");
+    }
+
+    function scrollToContactPanel(panel) {
+      if (!panel) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        setTimeout(() => {
+          panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 160);
+      });
+    }
+
+    function forceOpenManualSupportPanel() {
+      if (typeof showPage === "function") {
+        showPage("coordinate", "support");
+      }
+
+      supportPanel.style.display = "block";
+      supportPanel.hidden = false;
+      supportPanel.setAttribute("aria-expanded", "true");
+
+      const scrollToPanel = () => {
+        const target = coordinateContactGrid || supportPanel;
+        const top = target.getBoundingClientRect().top + window.pageYOffset - 18;
+        window.scrollTo({
+          top: Math.max(top, 0),
+          behavior: "smooth"
+        });
+      };
+
+      requestAnimationFrame(scrollToPanel);
+      setTimeout(scrollToPanel, 160);
+      setTimeout(scrollToPanel, 420);
+      setTimeout(scrollToPanel, 800);
+    }
+
+    function openConvertPaidContact() {
+      showConvertLimitMessage();
+      forceOpenManualSupportPanel();
+      trackEvent("quota_contact_click", {
+        type: "convert"
+      });
+    }
+
+    function openJudgePaidContact() {
+      showJudgeMessage("请通过下方 WhatsApp 或微信联系开通判读次数，开通后即可继续判读。", true);
+      scrollToContactPanel(judgeSupportPanel);
+      trackEvent("quota_contact_click", {
+        type: "judge"
+      });
+    }
+
+    function handleQuotaPrimary() {
+      const type = quotaModal.dataset.type || "convert";
+
+      if (quotaModal.dataset.stage === "contact") {
+        closeQuotaModal();
+        return;
+      }
+
+      if (type === "judge") {
+        showQuotaContactModal("judge");
+        trackEvent("quota_contact_click", {
+          type: "judge"
+        });
+        return;
+      }
+
+      showQuotaContactModal("convert");
+      trackEvent("quota_contact_click", {
+        type: "convert"
+      });
+    }
+
+    async function consumeUsage(type) {
       try {
         const response = await fetch("/api/usage/consume", {
           method: "POST",
@@ -1654,54 +1772,39 @@
             "x-visitor-id": visitorId
           },
           body: JSON.stringify({
-            type,
-            visitorId
+            visitorId,
+            type
           })
         });
         const data = await response.json().catch(() => ({}));
 
-        if (!response.ok || data.success === false) {
-          if (data.reason === "limit_exceeded") {
-            if (data.quota) {
-              appConfig.quota = data.quota;
-            }
+        if (response.ok && data.success !== false) {
+          return true;
+        }
 
-            const quotaType = type === "judge" ? "judge" : "coordinate";
-            showQuotaModal(quotaType);
-            trackEvent("quota_limit_hit", { type });
-
-            if (type === "judge") {
-              showJudgeMessage("今日免费判读次数已用完，请联系开通更多次数。", true);
-            } else {
-              showMessage("今日免费次数已用完，请联系开通更多使用次数。", true);
-            }
-
-            return false;
-          }
-
-          const message = data.error || "次数校验失败，请稍后再试。";
-
+        if (data.reason === "limit_exceeded") {
+          showQuotaModal(type);
           if (type === "judge") {
-            showJudgeMessage(message, true);
+            showJudgeMessage("AI判读次数已用完，请联系开通更多判读次数。", true);
           } else {
-            showMessage(message, true);
+            showConvertLimitMessage();
           }
-
           return false;
         }
 
-        if (data.quota) {
-          appConfig.quota = data.quota;
+        const text = data.error || "当前用户暂未开通该功能。";
+        if (type === "judge") {
+          showJudgeMessage(text, true);
+        } else {
+          showMessage(text, true);
         }
 
-        return true;
+        return false;
       } catch (error) {
-        const message = "次数校验失败，请稍后再试。";
-
         if (type === "judge") {
-          showJudgeMessage(message, true);
+          showJudgeMessage(`检查次数失败：${error.message}`, true);
         } else {
-          showMessage(message, true);
+          showMessage(`检查次数失败：${error.message}`, true);
         }
 
         return false;
@@ -1945,7 +2048,6 @@
 
       showJudgeSelectedImage(files);
       judgeResult.value = "";
-      setJudgeStatus(`已选择 ${Math.min(files.length, 5)} 张图片，点击开始判读后上传分析。`, "success");
       showJudgeMessage(`已选择 ${Math.min(files.length, 5)} 张图片，点击“开始判读”后进行分析。`);
     }
 
@@ -1983,13 +2085,11 @@
         judgeImagePreview.innerHTML = "";
         judgeImageInput.value = "";
         judgeResult.value = "";
-        setJudgeStatus("");
         showJudgeMessage("已删除判读图片，可以重新选择。");
         return;
       }
 
       showJudgeSelectedImage(selectedJudgeImageFiles);
-      setJudgeStatus(`已选择 ${selectedJudgeImageFiles.length} 张图片，点击开始判读后上传分析。`, "success");
       showJudgeMessage("已删除该图片。");
     }
 
@@ -2010,8 +2110,7 @@
         return;
       }
 
-      supportPanel.style.display = "block";
-      supportPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      forceOpenManualSupportPanel();
       trackEvent("manual_support_click");
     }
 
@@ -2026,29 +2125,13 @@
 
     function hideManualSupport() {
       supportPanel.style.display = "none";
+      supportPanel.setAttribute("aria-expanded", "false");
     }
 
     function showJudgeMessage(text, isError = false) {
       judgeMessage.style.display = text ? "block" : "none";
       judgeMessage.textContent = text || "";
       judgeMessage.className = isError ? "message error" : "message";
-    }
-
-    function setJudgeStatus(text = "", type = "") {
-      if (!judgeStatus) {
-        return;
-      }
-
-      if (!text) {
-        judgeStatus.style.display = "none";
-        judgeStatus.textContent = "";
-        judgeStatus.className = "recognition-status judge-status";
-        return;
-      }
-
-      judgeStatus.style.display = "flex";
-      judgeStatus.textContent = text;
-      judgeStatus.className = `recognition-status judge-status ${type}`.trim();
     }
 
     function toggleJudgeQr(type) {
@@ -2081,15 +2164,13 @@
         : Array.from(judgeImageInput.files || []).filter(isImageUpload).slice(0, 5);
 
       if (files.length === 0) {
-        setJudgeStatus("请先选择要判读的图片。", "error");
         showJudgeMessage("请先选择要判读的图片，最多5张。", true);
         return;
       }
 
       await loadUserConfig();
 
-      if (!canUse("aiJudgeEnabled", "当前用户暂未开通 AI 判读功能。", "judge")) {
-        setJudgeStatus("当前用户暂未开通 AI 判读功能。", "error");
+      if (!canUse("aiJudgeEnabled", "当前用户暂未开通 AI 判读功能。")) {
         showJudgeMessage("当前用户暂未开通 AI 判读功能，请联系管理员开通。", true);
         return;
       }
@@ -2098,7 +2179,6 @@
       files.forEach(file => formData.append("images", file));
       formData.append("judgeType", judgeType.value);
       judgeResult.value = "";
-      setJudgeStatus(`正在上传并判读 ${files.length} 张图片，请稍候……`, "loading");
       showJudgeMessage(`正在判读 ${files.length} 张图片，请稍候……`);
       trackEvent("ai_judge_upload_select", {
         fileCount: files.length,
@@ -2119,35 +2199,28 @@
           error: "后端没有返回有效结果。"
         }));
 
+        if (!response.ok && data.reason === "limit_exceeded") {
+          showQuotaModal("judge");
+          showJudgeMessage(data.error || "AI判读次数已用完，可购买次数后继续。", true);
+          return;
+        }
+
+        if (!response.ok && data.reason === "permission_denied") {
+          showJudgeMessage(data.error || "当前用户暂未开通 AI 判读。", true);
+          return;
+        }
+
         if (!response.ok) {
-          if (data.reason === "limit_exceeded") {
-            if (data.quota) {
-              appConfig.quota = data.quota;
-            }
-
-            showQuotaModal("judge");
-            setJudgeStatus("AI判读次数已用完。", "error");
-            showJudgeMessage("今日免费判读次数已用完，请联系开通更多次数。", true);
-            trackEvent("quota_limit_hit", { type: "judge" });
-            return;
-          }
-
           throw new Error(data.error || data.detail || "AI判读失败");
         }
 
-        if (data.quota) {
-          appConfig.quota = data.quota;
-        }
-
         judgeResult.value = data.result || "未返回判读结果。";
-        setJudgeStatus("判读完成，请查看结果。", "success");
         showJudgeMessage(data.warning || "AI判读完成，请结合现场情况核对。");
         trackEvent("ai_judge_success", {
           judgeType: judgeType.value
         });
       } catch (error) {
         judgeResult.value = "";
-        setJudgeStatus("判读失败，请重新上传清晰图片或使用人工协助。", "error");
         showJudgeMessage(`AI判读失败：${error.message}`, true);
         trackEvent("ai_judge_fail", {
           message: error.message,
@@ -2910,7 +2983,7 @@
     async function swapLongitudeLatitude() {
       await loadUserConfig();
 
-      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。", "coordinate")) {
+      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
         return;
       }
 
@@ -2938,7 +3011,7 @@
     async function convertCoordinateFormat() {
       await loadUserConfig();
 
-      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。", "coordinate")) {
+      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
         return;
       }
 
@@ -3297,7 +3370,7 @@
     async function normalizeCoordinates() {
       await loadUserConfig();
 
-      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。", "coordinate")) {
+      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
         return;
       }
 
@@ -3380,11 +3453,11 @@
     async function downloadKml() {
       await loadUserConfig();
 
-      if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。", "coordinate")) {
+      if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。")) {
         return;
       }
 
-      if (hasProjectedCoordinateRows(input.value) && !canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。", "coordinate")) {
+      if (hasProjectedCoordinateRows(input.value) && !canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
         return;
       }
 
@@ -3418,6 +3491,11 @@
         return;
       }
 
+      const usageAllowed = await consumeUsage("convert");
+      if (!usageAllowed) {
+        return;
+      }
+
       let placemarks = "";
       let documentName = "";
 
@@ -3443,10 +3521,6 @@
 ${placemarks}
   </Document>
 </kml>`;
-
-      if (!await consumeFeatureUsage("convert")) {
-        return;
-      }
 
       const blob = new Blob([kml], {
         type: "application/vnd.google-earth.kml+xml;charset=utf-8"
@@ -3488,7 +3562,7 @@ ${placemarks}
 
       await loadUserConfig();
 
-      if (!canUse("aiOcrEnabled", "当前用户暂未开通 AI 图片识别。", "coordinate")) {
+      if (!canUse("aiOcrEnabled", "当前用户暂未开通 AI 图片识别。")) {
         imageInput.value = "";
         return;
       }
