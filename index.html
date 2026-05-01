@@ -611,6 +611,105 @@
       background: #991b1b;
     }
 
+    .quota-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.58);
+    }
+
+    .quota-card {
+      width: min(94vw, 420px);
+      padding: 22px;
+      border-radius: 16px;
+      background: #ffffff;
+      color: #172033;
+      box-shadow: 0 22px 60px rgba(15, 23, 42, 0.24);
+    }
+
+    .quota-card h3 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      line-height: 1.25;
+    }
+
+    .quota-card p {
+      margin: 0;
+      color: #5b677a;
+      line-height: 1.55;
+      font-size: 15px;
+    }
+
+    .quota-options {
+      display: grid;
+      gap: 10px;
+      margin: 16px 0;
+    }
+
+    .quota-option {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 48px;
+      padding: 10px 12px;
+      border: 1px solid #dbe5f1;
+      border-radius: 12px;
+      background: #f8fbff;
+      color: #172033;
+      font-weight: 800;
+      box-shadow: none;
+    }
+
+    .quota-option:hover {
+      background: #eef5ff;
+      transform: none;
+    }
+
+    .quota-badge {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #dcfce7;
+      color: #166534;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .quota-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .quota-actions .quota-primary {
+      background: #15803d;
+      box-shadow: 0 8px 20px rgba(21, 128, 61, 0.18);
+    }
+
+    .quota-actions .quota-primary.coordinate {
+      background: #2563eb;
+      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.18);
+    }
+
+    .quota-aux {
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #f8fafc;
+      font-weight: 700;
+    }
+
+    .quota-note {
+      margin-top: 8px;
+      color: #64748b;
+      font-size: 12px;
+      text-align: center;
+    }
+
     .upload-message {
       display: none;
       margin-top: 10px;
@@ -1316,6 +1415,20 @@
     </div>
   </div>
 
+  <div id="quotaModal" class="quota-modal" onclick="closeQuotaModal()">
+    <div class="quota-card" onclick="event.stopPropagation()">
+      <h3 id="quotaTitle"></h3>
+      <p id="quotaDescription"></p>
+      <div id="quotaOptions" class="quota-options"></div>
+      <p id="quotaAux" class="quota-aux"></p>
+      <p id="quotaNote" class="quota-note"></p>
+      <div class="quota-actions">
+        <button id="quotaPrimaryButton" type="button" class="quota-primary" onclick="confirmQuotaModal()">立即使用</button>
+        <button type="button" class="secondary" onclick="closeQuotaModal()">稍后再说</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
@@ -1330,6 +1443,13 @@
     const imagePreview = document.getElementById("imagePreview");
     const imageModal = document.getElementById("imageModal");
     const imageModalImg = document.getElementById("imageModalImg");
+    const quotaModal = document.getElementById("quotaModal");
+    const quotaTitle = document.getElementById("quotaTitle");
+    const quotaDescription = document.getElementById("quotaDescription");
+    const quotaOptions = document.getElementById("quotaOptions");
+    const quotaAux = document.getElementById("quotaAux");
+    const quotaNote = document.getElementById("quotaNote");
+    const quotaPrimaryButton = document.getElementById("quotaPrimaryButton");
     const supportPanel = document.getElementById("supportPanel");
     const debugPanel = document.getElementById("debugPanel");
     const debugText = document.getElementById("debugText");
@@ -1367,6 +1487,7 @@
     let selectedImageFile = null;
     let selectedJudgeImageUrls = [];
     let selectedJudgeImageFiles = [];
+    let activeQuotaType = "coordinate";
 
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
@@ -1434,9 +1555,87 @@
       }
     }
 
-    function canUse(featureName, errorMessage) {
+    function getQuotaContent(type = "coordinate") {
+      if (type === "judge") {
+        return {
+          title: "AI判读次数已用完",
+          description: "今日免费判读已使用完<br>继续判读可购买使用次数",
+          options: [
+            { text: "👉 10次判读：¥9.9", recommended: false }
+          ],
+          aux: "用于快速判断矿地是否值得继续",
+          note: "",
+          primaryText: "继续判读",
+          primaryClass: ""
+        };
+      }
+
+      return {
+        title: "今日免费次数已用完",
+        description: "坐标处理和KML生成已达到今日免费额度<br>继续使用仅需少量费用",
+        options: [
+          { text: "👉 10次使用：¥9.9", recommended: true },
+          { text: "👉 50次使用：¥29", recommended: false },
+          { text: "👉 100次使用：¥49", recommended: false }
+        ],
+        aux: "适用于矿区批量处理 / 快速筛选项目",
+        note: "一次购买，多次使用，无时间限制",
+        primaryText: "立即使用",
+        primaryClass: "coordinate"
+      };
+    }
+
+    function showQuotaModal(type = "coordinate") {
+      activeQuotaType = type;
+      const content = getQuotaContent(type);
+      quotaTitle.textContent = content.title;
+      quotaDescription.innerHTML = content.description;
+      quotaOptions.innerHTML = content.options.map(option => `
+        <button type="button" class="quota-option" onclick="confirmQuotaModal()">
+          <span>${option.text}</span>
+          ${option.recommended ? '<span class="quota-badge">推荐</span>' : ''}
+        </button>
+      `).join("");
+      quotaAux.textContent = content.aux;
+      quotaNote.textContent = content.note;
+      quotaNote.style.display = content.note ? "block" : "none";
+      quotaPrimaryButton.textContent = content.primaryText;
+      quotaPrimaryButton.className = `quota-primary ${content.primaryClass}`.trim();
+      quotaModal.style.display = "flex";
+      trackEvent("quota_modal_show", { type });
+    }
+
+    function closeQuotaModal() {
+      quotaModal.style.display = "none";
+    }
+
+    function confirmQuotaModal() {
+      closeQuotaModal();
+      trackEvent("quota_modal_primary_click", { type: activeQuotaType });
+
+      if (activeQuotaType === "judge") {
+        showJudgeMessage("请通过下方 WhatsApp 或微信联系开通判读次数。");
+        const manualBlock = document.querySelector("#judgePage .judge-manual");
+        if (manualBlock) {
+          manualBlock.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return;
+      }
+
+      showMessage("请通过人工协助联系开通使用次数。");
+      if (supportPanel && supportPanel.style.display !== "block") {
+        toggleSupportPanel();
+      }
+      supportPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function canUse(featureName, errorMessage, quotaType = "") {
       if (appConfig?.permissions?.[featureName] === false) {
-        showMessage(errorMessage, true);
+        if (quotaType) {
+          showQuotaModal(quotaType);
+        } else {
+          showMessage(errorMessage, true);
+        }
         trackEvent("permission_blocked", {
           feature: featureName
         });
@@ -1826,7 +2025,7 @@
 
       await loadUserConfig();
 
-      if (!canUse("aiJudgeEnabled", "当前用户暂未开通 AI 判读功能。")) {
+      if (!canUse("aiJudgeEnabled", "当前用户暂未开通 AI 判读功能。", "judge")) {
         setJudgeStatus("当前用户暂未开通 AI 判读功能。", "error");
         showJudgeMessage("当前用户暂未开通 AI 判读功能，请联系管理员开通。", true);
         return;
@@ -2632,7 +2831,7 @@
     async function swapLongitudeLatitude() {
       await loadUserConfig();
 
-      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
+      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。", "coordinate")) {
         return;
       }
 
@@ -2660,7 +2859,7 @@
     async function convertCoordinateFormat() {
       await loadUserConfig();
 
-      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
+      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。", "coordinate")) {
         return;
       }
 
@@ -3019,7 +3218,7 @@
     async function normalizeCoordinates() {
       await loadUserConfig();
 
-      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
+      if (!canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。", "coordinate")) {
         return;
       }
 
@@ -3102,11 +3301,11 @@
     async function downloadKml() {
       await loadUserConfig();
 
-      if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。")) {
+      if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。", "coordinate")) {
         return;
       }
 
-      if (hasProjectedCoordinateRows(input.value) && !canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
+      if (hasProjectedCoordinateRows(input.value) && !canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。", "coordinate")) {
         return;
       }
 
@@ -3206,7 +3405,7 @@ ${placemarks}
 
       await loadUserConfig();
 
-      if (!canUse("aiOcrEnabled", "当前用户暂未开通 AI 图片识别。")) {
+      if (!canUse("aiOcrEnabled", "当前用户暂未开通 AI 图片识别。", "coordinate")) {
         imageInput.value = "";
         return;
       }
