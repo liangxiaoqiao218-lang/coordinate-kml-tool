@@ -101,6 +101,127 @@ function makeId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+const DAILY_FREE_CONVERT_LIMIT = 3;
+const DAILY_FREE_JUDGE_LIMIT = 2;
+
+function getTodayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function toNonNegativeInteger(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : fallback;
+}
+
+function normalizeUsageCounters(user) {
+  if (!user || typeof user !== "object") {
+    return null;
+  }
+
+  const today = getTodayKey();
+
+  if (user.dailyUsageDate !== today) {
+    user.dailyUsageDate = today;
+    user.freeConvertCount = DAILY_FREE_CONVERT_LIMIT;
+    user.freeJudgeCount = DAILY_FREE_JUDGE_LIMIT;
+  }
+
+  user.freeConvertCount = toNonNegativeInteger(user.freeConvertCount, DAILY_FREE_CONVERT_LIMIT);
+  user.freeJudgeCount = toNonNegativeInteger(user.freeJudgeCount, DAILY_FREE_JUDGE_LIMIT);
+  user.paidConvertCount = toNonNegativeInteger(user.paidConvertCount, 0);
+  user.paidJudgeCount = toNonNegativeInteger(user.paidJudgeCount, 0);
+  user.isVip = Boolean(user.isVip || user.plan === "vip");
+
+  return user;
+}
+
+function buildQuotaPayload(user) {
+  const safeUser = normalizeUsageCounters(user) || {};
+
+  return {
+    user_id: safeUser.visitorId || "",
+    free_convert_count: toNonNegativeInteger(safeUser.freeConvertCount, 0),
+    free_judge_count: toNonNegativeInteger(safeUser.freeJudgeCount, 0),
+    paid_convert_count: toNonNegativeInteger(safeUser.paidConvertCount, 0),
+    paid_judge_count: toNonNegativeInteger(safeUser.paidJudgeCount, 0),
+    is_vip: Boolean(safeUser.isVip),
+    freeConvertCount: toNonNegativeInteger(safeUser.freeConvertCount, 0),
+    freeJudgeCount: toNonNegativeInteger(safeUser.freeJudgeCount, 0),
+    paidConvertCount: toNonNegativeInteger(safeUser.paidConvertCount, 0),
+    paidJudgeCount: toNonNegativeInteger(safeUser.paidJudgeCount, 0),
+    isVip: Boolean(safeUser.isVip)
+  };
+}
+
+function checkUsageAvailable(user, type) {
+  normalizeUsageCounters(user);
+
+  if (!user) {
+    return {
+      success: false,
+      reason: "missing_user",
+      quota: buildQuotaPayload(user)
+    };
+  }
+
+  if (user.isVip || user.plan === "vip") {
+    return {
+      success: true,
+      source: "vip",
+      quota: buildQuotaPayload(user)
+    };
+  }
+
+  const paidKey = type === "judge" ? "paidJudgeCount" : "paidConvertCount";
+  const freeKey = type === "judge" ? "freeJudgeCount" : "freeConvertCount";
+
+  if (toNonNegativeInteger(user[paidKey], 0) > 0 || toNonNegativeInteger(user[freeKey], 0) > 0) {
+    return {
+      success: true,
+      source: toNonNegativeInteger(user[paidKey], 0) > 0 ? "paid" : "free",
+      quota: buildQuotaPayload(user)
+    };
+  }
+
+  return {
+    success: false,
+    reason: "limit_exceeded",
+    quota: buildQuotaPayload(user)
+  };
+}
+
+function consumeUsage(user, type) {
+  const available = checkUsageAvailable(user, type);
+
+  if (!available.success) {
+    return available;
+  }
+
+  if (available.source === "vip") {
+    return available;
+  }
+
+  const paidKey = type === "judge" ? "paidJudgeCount" : "paidConvertCount";
+  const freeKey = type === "judge" ? "freeJudgeCount" : "freeConvertCount";
+
+  if (toNonNegativeInteger(user[paidKey], 0) > 0) {
+    user[paidKey] = toNonNegativeInteger(user[paidKey], 0) - 1;
+    return {
+      success: true,
+      source: "paid",
+      quota: buildQuotaPayload(user)
+    };
+  }
+
+  user[freeKey] = Math.max(0, toNonNegativeInteger(user[freeKey], 0) - 1);
+
+  return {
+    success: true,
+    source: "free",
+    quota: buildQuotaPayload(user)
+  };
+}
+
 function ensureUser(data, visitorId) {
   const id = String(visitorId || "").trim();
 
@@ -125,21 +246,41 @@ function ensureUser(data, visitorId) {
       eventCount: 0,
       note: "",
       phone: "",
-      wechat: ""
+      wechat: "",
+      freeConvertCount: DAILY_FREE_CONVERT_LIMIT,
+      freeJudgeCount: DAILY_FREE_JUDGE_LIMIT,
+      paidConvertCount: 0,
+      paidJudgeCount: 0,
+      isVip: false,
+      dailyUsageDate: getTodayKey()
     };
   }
+
+  normalizeUsageCounters(data.users[id]);
 
   return data.users[id];
 }
 
 function normalizeAdminUser(user, fallbackId = "") {
   const safeUser = user && typeof user === "object" ? user : {};
+  normalizeUsageCounters(safeUser);
   const visitorId = String(safeUser.visitorId || fallbackId || "").trim();
 
   return {
     visitorId,
+    user_id: visitorId,
     plan: safeUser.plan || "free",
     status: safeUser.status || "active",
+    free_convert_count: toNonNegativeInteger(safeUser.freeConvertCount, 0),
+    free_judge_count: toNonNegativeInteger(safeUser.freeJudgeCount, 0),
+    paid_convert_count: toNonNegativeInteger(safeUser.paidConvertCount, 0),
+    paid_judge_count: toNonNegativeInteger(safeUser.paidJudgeCount, 0),
+    is_vip: Boolean(safeUser.isVip),
+    freeConvertCount: toNonNegativeInteger(safeUser.freeConvertCount, 0),
+    freeJudgeCount: toNonNegativeInteger(safeUser.freeJudgeCount, 0),
+    paidConvertCount: toNonNegativeInteger(safeUser.paidConvertCount, 0),
+    paidJudgeCount: toNonNegativeInteger(safeUser.paidJudgeCount, 0),
+    isVip: Boolean(safeUser.isVip),
     permissions: {
       aiOcrEnabled: safeUser.permissions?.aiOcrEnabled !== false,
       xyConvertEnabled: safeUser.permissions?.xyConvertEnabled !== false,
@@ -1173,9 +1314,10 @@ app.get("/api/config", async (req, res) => {
 
     res.json({
       visitorId,
-      user,
+      user: normalizeAdminUser(user, visitorId),
       featureFlags: data.featureFlags,
-      permissions: getEffectivePermissions(user, data.featureFlags)
+      permissions: getEffectivePermissions(user, data.featureFlags),
+      quota: buildQuotaPayload(user)
     });
   } catch (error) {
     console.error(error);
@@ -1233,6 +1375,74 @@ app.post("/api/track", async (req, res) => {
     console.error(error);
     res.status(500).json({
       error: "记录事件失败。"
+    });
+  }
+});
+
+app.post("/api/usage/consume", async (req, res) => {
+  try {
+    const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
+    const type = String(req.body?.type || req.body?.feature || "").trim();
+
+    if (!visitorId || !["convert", "judge"].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        reason: "bad_request",
+        error: "缺少用户或使用类型。"
+      });
+    }
+
+    const data = await readAdminData();
+    const user = ensureUser(data, visitorId);
+    const permissions = getEffectivePermissions(user, data.featureFlags);
+
+    if (type === "convert" && !permissions.kmlExportEnabled) {
+      return res.status(403).json({
+        success: false,
+        reason: "permission_denied",
+        error: "当前用户暂未开通 KML 导出。",
+        quota: buildQuotaPayload(user)
+      });
+    }
+
+    if (type === "judge" && !permissions.aiJudgeEnabled) {
+      return res.status(403).json({
+        success: false,
+        reason: "permission_denied",
+        error: "当前用户暂未开通 AI 判读。",
+        quota: buildQuotaPayload(user)
+      });
+    }
+
+    if (user) {
+      await updateUserVisitMeta(user, req, data);
+    }
+
+    const usage = consumeUsage(user, type);
+
+    if (!usage.success) {
+      await writeAdminData(data);
+      return res.status(429).json({
+        success: false,
+        reason: usage.reason || "limit_exceeded",
+        feature: type,
+        quota: usage.quota
+      });
+    }
+
+    await writeAdminData(data);
+    res.json({
+      success: true,
+      feature: type,
+      source: usage.source,
+      quota: usage.quota
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      reason: "server_error",
+      error: "次数校验失败，请稍后再试。"
     });
   }
 });
@@ -1338,6 +1548,43 @@ app.patch("/api/admin/users/:visitorId", requireAdmin, async (req, res) => {
       };
     }
 
+    normalizeUsageCounters(user);
+
+    if (typeof req.body?.isVip === "boolean") {
+      user.isVip = req.body.isVip;
+    }
+
+    if (user.plan === "vip") {
+      user.isVip = true;
+    }
+
+    if (typeof req.body?.freeConvertCount !== "undefined") {
+      user.freeConvertCount = toNonNegativeInteger(req.body.freeConvertCount, user.freeConvertCount);
+    }
+
+    if (typeof req.body?.freeJudgeCount !== "undefined") {
+      user.freeJudgeCount = toNonNegativeInteger(req.body.freeJudgeCount, user.freeJudgeCount);
+    }
+
+    if (typeof req.body?.paidConvertCount !== "undefined") {
+      user.paidConvertCount = toNonNegativeInteger(req.body.paidConvertCount, user.paidConvertCount);
+    }
+
+    if (typeof req.body?.paidJudgeCount !== "undefined") {
+      user.paidJudgeCount = toNonNegativeInteger(req.body.paidJudgeCount, user.paidJudgeCount);
+    }
+
+    const addConvertCount = toNonNegativeInteger(req.body?.addConvertCount, 0);
+    const addJudgeCount = toNonNegativeInteger(req.body?.addJudgeCount, 0);
+
+    if (addConvertCount > 0) {
+      user.paidConvertCount = Number(user.paidConvertCount || 0) + addConvertCount;
+    }
+
+    if (addJudgeCount > 0) {
+      user.paidJudgeCount = Number(user.paidJudgeCount || 0) + addJudgeCount;
+    }
+
     if (typeof req.body?.note === "string") {
       user.note = req.body.note.slice(0, 500);
     }
@@ -1352,7 +1599,7 @@ app.patch("/api/admin/users/:visitorId", requireAdmin, async (req, res) => {
 
     user.updatedAt = getNowISO();
     await writeAdminData(data);
-    res.json({ user });
+    res.json({ user: normalizeAdminUser(user, req.params.visitorId) });
   } catch (error) {
     console.error(error);
     res.status(500).json({
@@ -1417,6 +1664,23 @@ app.post("/api/analyze-mining-image", upload.fields([
       });
     }
 
+    const usageCheck = checkUsageAvailable(user, "judge");
+
+    if (!usageCheck.success) {
+      if (user) {
+        await updateUserVisitMeta(user, req, data);
+        await writeAdminData(data);
+      }
+
+      return res.status(429).json({
+        success: false,
+        reason: "limit_exceeded",
+        feature: "judge",
+        quota: usageCheck.quota,
+        error: "AI判读次数已用完。"
+      });
+    }
+
     if (uploadedFiles.length === 0) {
       return res.status(400).json({
         error: "后端没有收到文件，请重新选择图片或资料文件上传。"
@@ -1453,6 +1717,7 @@ app.post("/api/analyze-mining-image", upload.fields([
       data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
 
       if (user) {
+        consumeUsage(user, "judge");
         user.eventCount = Number(user.eventCount || 0) + 1;
       }
 
@@ -1462,6 +1727,7 @@ app.post("/api/analyze-mining-image", upload.fields([
         result: normalizedOutput,
         rawOutput,
         recordId: record.id,
+        quota: user ? buildQuotaPayload(user) : null,
         warning: "当前版本已支持上传资料文件，但AI判读仍建议使用关键页面截图。"
       });
     }
@@ -1562,6 +1828,7 @@ app.post("/api/analyze-mining-image", upload.fields([
     data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
 
     if (user) {
+      consumeUsage(user, "judge");
       user.eventCount = Number(user.eventCount || 0) + 1;
     }
 
@@ -1570,7 +1837,8 @@ app.post("/api/analyze-mining-image", upload.fields([
     res.json({
       result: normalizedOutput,
       rawOutput,
-      recordId: record.id
+      recordId: record.id,
+      quota: user ? buildQuotaPayload(user) : null
     });
   } catch (error) {
     const errorMessage = getOpenAIErrorMessage(error);

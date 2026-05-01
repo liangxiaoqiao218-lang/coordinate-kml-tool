@@ -1645,6 +1645,69 @@
       return true;
     }
 
+    async function consumeFeatureUsage(type) {
+      try {
+        const response = await fetch("/api/usage/consume", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-visitor-id": visitorId
+          },
+          body: JSON.stringify({
+            type,
+            visitorId
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data.success === false) {
+          if (data.reason === "limit_exceeded") {
+            if (data.quota) {
+              appConfig.quota = data.quota;
+            }
+
+            const quotaType = type === "judge" ? "judge" : "coordinate";
+            showQuotaModal(quotaType);
+            trackEvent("quota_limit_hit", { type });
+
+            if (type === "judge") {
+              showJudgeMessage("今日免费判读次数已用完，请联系开通更多次数。", true);
+            } else {
+              showMessage("今日免费次数已用完，请联系开通更多使用次数。", true);
+            }
+
+            return false;
+          }
+
+          const message = data.error || "次数校验失败，请稍后再试。";
+
+          if (type === "judge") {
+            showJudgeMessage(message, true);
+          } else {
+            showMessage(message, true);
+          }
+
+          return false;
+        }
+
+        if (data.quota) {
+          appConfig.quota = data.quota;
+        }
+
+        return true;
+      } catch (error) {
+        const message = "次数校验失败，请稍后再试。";
+
+        if (type === "judge") {
+          showJudgeMessage(message, true);
+        } else {
+          showMessage(message, true);
+        }
+
+        return false;
+      }
+    }
+
     async function collectDeviceInfo() {
       const base = {
         userAgent: navigator.userAgent || "",
@@ -2057,7 +2120,23 @@
         }));
 
         if (!response.ok) {
+          if (data.reason === "limit_exceeded") {
+            if (data.quota) {
+              appConfig.quota = data.quota;
+            }
+
+            showQuotaModal("judge");
+            setJudgeStatus("AI判读次数已用完。", "error");
+            showJudgeMessage("今日免费判读次数已用完，请联系开通更多次数。", true);
+            trackEvent("quota_limit_hit", { type: "judge" });
+            return;
+          }
+
           throw new Error(data.error || data.detail || "AI判读失败");
+        }
+
+        if (data.quota) {
+          appConfig.quota = data.quota;
         }
 
         judgeResult.value = data.result || "未返回判读结果。";
@@ -3364,6 +3443,10 @@
 ${placemarks}
   </Document>
 </kml>`;
+
+      if (!await consumeFeatureUsage("convert")) {
+        return;
+      }
 
       const blob = new Blob([kml], {
         type: "application/vnd.google-earth.kml+xml;charset=utf-8"
