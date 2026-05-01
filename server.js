@@ -1730,7 +1730,7 @@ app.post("/api/analyze-mining-image", upload.fields([
         eventName: "limit_judge",
         eventLabel: getEventLabel("limit_judge"),
         ip: getClientIp(req),
-        ipLocation: await lookupIpLocation(getClientIp(req)),
+        ipLocation: await lookupIpLocation(getClientIp(req), data),
         page: String(req.get("referer") || "").slice(0, 200),
         extra: {
           type: "judge",

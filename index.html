@@ -742,9 +742,12 @@
 
     .upload-message {
       display: none;
-      margin-top: 10px;
+      margin-top: 8px;
+      padding: 7px 9px;
+      border-radius: 8px;
+      background: #fff7ed;
       color: #b91c1c;
-      line-height: 1.6;
+      line-height: 1.35;
       font-size: 14px;
     }
 
@@ -1274,7 +1277,7 @@
       <div id="imagePreview" class="image-preview"></div>
       <div id="uploadMessage" class="upload-message"></div>
       <div id="recognitionStatus" class="recognition-status"></div>
-      <p class="privacy-note">建议只截坐标表区域，图片越清晰，识别越稳定。</p>
+      <p class="privacy-note">只截坐标表，识别更稳定。</p>
     </div>
 
     <button type="button" class="primary-action" onclick="downloadKml()">生成KML文件并下载</button>
@@ -1375,21 +1378,6 @@
       <p class="intro">上传矿地、河道、卫星图或矿石照片，AI只做初筛判断：是否值得继续看、主要风险在哪里。不预测含量，不标具体金点。</p>
 
       <div class="panel judge-panel">
-        <label for="judgeType">判读类型</label>
-        <select id="judgeType">
-          <option value="mine-land" selected>矿地 / 河道 / 卫星图</option>
-          <option value="ore">矿石照片</option>
-          <option value="document">矿业资料</option>
-        </select>
-
-        <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片（最多5张）</label>
-        <input id="judgeImageInput" type="file" accept="image/*" multiple />
-        <div id="judgeImagePreview" class="image-preview"></div>
-
-        <div class="judge-actions">
-          <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
-        </div>
-
         <div id="judgeMessage" class="message"></div>
         <div class="judge-result-wrap">
           <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里：
@@ -1401,6 +1389,14 @@
             <button type="button" class="icon-button" onclick="clearJudgeResult()" title="清除判读结果" aria-label="清除判读结果">×</button>
             <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">⧉</button>
           </div>
+        </div>
+
+        <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片（最多5张）</label>
+        <input id="judgeImageInput" type="file" accept="image/*" multiple />
+        <div id="judgeImagePreview" class="image-preview"></div>
+
+        <div class="judge-actions">
+          <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
         </div>
       </div>
 
@@ -1451,7 +1447,7 @@
   </div>
 
   <script>
-    const APP_VERSION = "2026-05-01-quota-contact-v2";
+    const APP_VERSION = "2026-05-01-mobile-layout-repair";
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
@@ -1477,7 +1473,7 @@
     const judgeSupportPanel = document.getElementById("judgeSupportPanel");
     const debugPanel = document.getElementById("debugPanel");
     const debugText = document.getElementById("debugText");
-    const judgeType = document.getElementById("judgeType");
+    const judgeType = { value: "mine-land" };
     const judgeImageInput = document.getElementById("judgeImageInput");
     const judgeImagePreview = document.getElementById("judgeImagePreview");
     const judgeMessage = document.getElementById("judgeMessage");
@@ -1685,7 +1681,8 @@
 
     function showConvertLimitMessage() {
       setRecognitionStatus("坐标处理免费次数已用完，请通过下方 WhatsApp 或微信联系开通更多使用次数。", "error");
-      showUploadSupportMessage("需要继续生成 KML，请联系人工开通坐标处理次数。");
+      uploadMessage.style.display = "none";
+      uploadMessage.innerHTML = "";
     }
 
     function scrollToContactPanel(panel) {
