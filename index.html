@@ -1671,25 +1671,7 @@
     }
 
     function showQuotaContactModal(type) {
-      quotaModal.dataset.type = type;
-      quotaModal.dataset.stage = "contact";
-
-      if (type === "judge") {
-        quotaTitle.textContent = "联系开通AI判读次数";
-        quotaDescription.innerHTML = "请添加微信或 WhatsApp<br>发送“开通AI判读次数”加当前页面截图";
-        quotaHelper.textContent = "人工确认后，会在后台为你增加判读次数。";
-        quotaPrimary.textContent = "我知道了";
-      } else {
-        quotaTitle.textContent = "联系开通坐标次数";
-        quotaDescription.innerHTML = "请添加微信或 WhatsApp<br>发送“开通坐标次数”加当前页面截图";
-        quotaHelper.textContent = "人工确认后，会在后台为你增加坐标处理和KML生成次数。";
-        quotaPrimary.textContent = "我知道了";
-      }
-
-      quotaOptions.innerHTML = quotaContactHtml();
-      quotaFootnote.textContent = "截图发给人工后，为你开通对应次数。";
-      quotaModal.style.display = "flex";
-      resetQuotaScroll();
+      showQuotaModal(type);
     }
 
     function closeQuotaModal() {
@@ -1697,9 +1679,7 @@
     }
 
     function showConvertLimitMessage() {
-      setRecognitionStatus("坐标处理免费次数已用完，请通过下方 WhatsApp 或微信联系开通更多使用次数。", "error");
-      uploadMessage.style.display = "none";
-      uploadMessage.innerHTML = "";
+      showQuotaModal("convert");
     }
 
     function scrollToContactPanel(panel) {
@@ -1740,16 +1720,14 @@
     }
 
     function openConvertPaidContact() {
-      showConvertLimitMessage();
-      forceOpenManualSupportPanel();
+      showQuotaModal("convert");
       trackEvent("quota_contact_click", {
         type: "convert"
       });
     }
 
     function openJudgePaidContact() {
-      showJudgeMessage("请通过下方 WhatsApp 或微信联系开通判读次数，开通后即可继续判读。", true);
-      scrollToContactPanel(judgeSupportPanel);
+      showQuotaModal("judge");
       trackEvent("quota_contact_click", {
         type: "judge"
       });
@@ -1798,10 +1776,9 @@
 
         if (data.reason === "limit_exceeded") {
           showQuotaModal(type);
-          if (type === "judge") {
-            showJudgeMessage("AI判读次数已用完，请联系开通更多判读次数。", true);
-          } else {
-            showConvertLimitMessage();
+          if (type === "convert") {
+            clearUploadMessage();
+            setRecognitionStatus("", "");
           }
           return false;
         }
@@ -2214,8 +2191,8 @@
         }));
 
         if (!response.ok && data.reason === "limit_exceeded") {
+          showJudgeMessage("");
           showQuotaModal("judge");
-          showJudgeMessage(data.error || "AI判读次数已用完，可购买次数后继续。", true);
           return;
         }
 
@@ -3652,13 +3629,12 @@ ${placemarks}
         appendDebug(`识别提示：${data.warning || "无"}`);
 
         if (!response.ok) {
-          setRecognitionStatus("图片识别遇到问题，建议使用人工协助识别。", "error");
-          openManualSupport();
+          setRecognitionStatus("", "");
           throw new Error(data.error || data.detail || "识别失败");
         }
 
         if (!finalCoordinates || finalCoordinates === noCoordinatesText) {
-          setRecognitionStatus("未识别到有效坐标，建议使用人工协助识别。", "error");
+          setRecognitionStatus("", "");
           showMessage("");
           showUploadSupportMessage(getRecognitionFailureMessage(data.warning || data.error || "未识别到有效坐标", response.status));
           openManualSupport();
@@ -3686,7 +3662,7 @@ ${placemarks}
         trackEvent("image_recognize_fail", {
           message: error.message
         });
-        setRecognitionStatus("图片识别遇到问题，建议使用人工协助识别。", "error");
+        setRecognitionStatus("", "");
         showMessage(`识别失败：${error.message}`, true);
         showUploadSupportMessage(getRecognitionFailureMessage(error.message));
         openManualSupport();
