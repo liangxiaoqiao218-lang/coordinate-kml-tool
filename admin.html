@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>坐标工具后台</title>
+  <title>矿业空间工具后台</title>
   <style>
     * {
       box-sizing: border-box;
@@ -23,8 +23,19 @@
     }
 
     h1 {
-      margin: 0 0 12px;
+      margin: 0 0 8px;
       font-size: 26px;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .muted {
+      color: #64748b;
+      font-size: 13px;
+      line-height: 1.6;
     }
 
     .panel {
@@ -49,7 +60,6 @@
     }
 
     input,
-    select,
     textarea {
       width: 100%;
       min-height: 40px;
@@ -60,8 +70,10 @@
     }
 
     textarea {
-      min-height: 70px;
+      min-height: 86px;
       resize: vertical;
+      font-family: inherit;
+      line-height: 1.5;
     }
 
     button {
@@ -73,15 +85,35 @@
       color: #ffffff;
       font-weight: 700;
       cursor: pointer;
+      white-space: nowrap;
     }
 
-    button.secondary {
+    button.secondary,
+    .button-secondary {
       background: #475569;
+    }
+
+    button.success {
+      background: #16a34a;
+    }
+
+    button.danger {
+      background: #dc2626;
+    }
+
+    .message {
+      margin-top: 10px;
+      color: #166534;
+      font-size: 14px;
+    }
+
+    .message.error {
+      color: #b91c1c;
     }
 
     .cards {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
       gap: 10px;
     }
 
@@ -92,16 +124,108 @@
       color: #ffffff;
     }
 
+    .card span {
+      display: block;
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
     .card strong {
       display: block;
       margin-top: 6px;
-      font-size: 26px;
+      font-size: 25px;
     }
 
-    .grid {
+    .status-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+
+    .status-item {
+      padding: 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+
+    .status-item span {
+      display: block;
+      margin-bottom: 4px;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .status-item strong {
+      font-size: 15px;
+    }
+
+    .switch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .switch-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+
+    .switch-item strong {
+      font-size: 14px;
+    }
+
+    .switch-state {
+      display: inline-flex;
+      align-items: center;
+      min-width: 46px;
+      justify-content: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .switch-item.active .switch-state {
+      background: #dcfce7;
+      color: #15803d;
+    }
+
+    .switch-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      font-weight: 400;
+    }
+
+    .switch-control input {
+      width: auto;
+      min-height: auto;
+    }
+
+    .table-tools {
+      display: flex;
+      gap: 10px;
+      margin: 10px 0 12px;
+    }
+
+    .table-tools input {
+      width: min(460px, 100%);
+    }
+
+    .table-scroll {
+      overflow-x: auto;
     }
 
     table {
@@ -123,82 +247,52 @@
       font-weight: 700;
     }
 
-    .muted {
-      color: #64748b;
-      font-size: 13px;
-      line-height: 1.6;
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
-    .message {
-      margin-top: 10px;
-      color: #166534;
+    .actions button {
+      min-height: 34px;
+      padding: 6px 10px;
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.35);
+    }
+
+    .modal.active {
+      display: flex;
+    }
+
+    .modal-card {
+      width: min(720px, 100%);
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 16px;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.22);
+    }
+
+    .readonly-row {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 10px;
+      margin: 8px 0;
       font-size: 14px;
     }
 
-    .refresh-note {
-      margin-left: 8px;
-      color: #64748b;
-      font-size: 13px;
-      white-space: nowrap;
-    }
-
-    .error {
-      color: #b91c1c;
-    }
-
-    .editor-actions {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-top: 8px;
-    }
-
-    .button-secondary {
-      background: #475569;
-    }
-
-    .save-status {
-      color: #166534;
-      font-weight: 700;
-    }
-
-    .save-status.error {
-      color: #b91c1c;
-    }
-
-    .editor {
-      display: none;
-    }
-
-    .checks {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 8px;
-      margin-top: 8px;
-    }
-
-    .checks label {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      margin: 0;
-      font-weight: 400;
-    }
-
-    .checks input {
-      width: auto;
-      min-height: auto;
-    }
-
-    .table-tools {
-      display: flex;
-      gap: 10px;
-      margin: 10px 0 12px;
-    }
-
-    .table-tools input {
-      width: min(460px, 100%);
+    .readonly-row strong {
+      color: #475569;
     }
 
     .quota-grid {
@@ -208,16 +302,13 @@
       margin-top: 12px;
     }
 
-    .quick-add {
+    .quick-add,
+    .editor-actions {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 8px;
-      margin: 10px 0;
-    }
-
-    .quick-add strong {
-      margin-right: 4px;
+      margin-top: 12px;
     }
 
     .quick-add button {
@@ -226,24 +317,69 @@
       background: #475569;
     }
 
-    .vip-check {
-      margin-top: 12px;
+    .note-editor,
+    .log-panel {
+      margin-top: 14px;
+    }
+
+    .note-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .log-list {
+      display: grid;
+      gap: 8px;
+      max-height: 260px;
+      overflow-y: auto;
+      padding: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #f8fafc;
+      font-size: 13px;
+    }
+
+    .log-item {
+      padding: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .log-item strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .log-json {
+      margin-top: 4px;
+      color: #475569;
+      word-break: break-all;
+    }
+
+    .log-detail {
+      margin-top: 6px;
+      line-height: 1.7;
+      white-space: pre-line;
     }
 
     @media (max-width: 760px) {
       .login,
-      .grid,
-      .cards,
       .quota-grid {
         grid-template-columns: 1fr;
+      }
+
+      .table-tools {
+        display: grid;
       }
     }
   </style>
 </head>
 <body>
   <main class="page">
-    <h1>坐标工具后台</h1>
-    <p class="muted">用于查看用户、功能点击数据，并手动开通功能权限。请先在 Render 设置环境变量 <strong>ADMIN_PASSWORD</strong>。</p>
+    <h1>矿业空间工具后台</h1>
+    <p class="muted">正式运营后台仅使用 Supabase users 表管理用户次数、付费余额和 VIP 状态。</p>
 
     <section class="panel login">
       <div>
@@ -252,191 +388,183 @@
       </div>
       <button type="button" onclick="login()">进入后台</button>
       <button id="refreshButton" type="button" class="secondary" onclick="refreshAll(true)">刷新数据</button>
-      <span id="refreshNote" class="refresh-note">每 30 秒自动刷新</span>
     </section>
 
     <div id="message" class="message"></div>
-    <p class="muted">提示：当前后台数据保存在 Render 服务本地临时文件中，重新部署或服务重启后可能清空。后续正式收费运营时，建议接入数据库保存用户权限和统计数据。</p>
 
     <section class="panel">
-      <div class="cards">
-        <div class="card">用户数<strong id="usersTotal">0</strong></div>
-        <div class="card">事件数<strong id="eventsTotal">0</strong></div>
-        <div class="card">VIP用户<strong id="vipTotal">0</strong></div>
-        <div class="card">禁用用户<strong id="disabledTotal">0</strong></div>
-        <div class="card">回访率<strong id="returningRate">0%</strong></div>
-        <div class="card">新用户<strong id="newUsersTotal">0</strong></div>
-        <div class="card">回访用户<strong id="returningUsersTotal">0</strong></div>
-        <div class="card">优质用户<strong id="qualityUsersTotal">0</strong></div>
-        <div class="card">沉默/流失<strong id="inactiveUsersTotal">0</strong></div>
+      <h2>系统状态</h2>
+      <div class="status-grid">
+        <div class="status-item">
+          <span>数据源</span>
+          <strong>Supabase users 表</strong>
+        </div>
+        <div class="status-item">
+          <span>坐标识别</span>
+          <strong>阿里云视觉模型</strong>
+        </div>
+        <div class="status-item">
+          <span>AI判读</span>
+          <strong>阿里云模型</strong>
+        </div>
+        <div class="status-item">
+          <span>收费方式</span>
+          <strong>人工收款 + 后台开通</strong>
+        </div>
       </div>
     </section>
 
-    <section class="grid">
-      <div class="panel">
-        <h2>功能点击统计</h2>
+    <section class="panel">
+      <h2>系统功能开关</h2>
+      <p class="muted">功能开关接口待接入。当前仅做新版后台 UI 预留，不读取 admin-data.json。</p>
+      <div class="switch-grid">
+        <div class="switch-item active">
+          <strong>坐标图片识别</strong>
+          <label class="switch-control">
+            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <span class="switch-state">开启</span>
+          </label>
+        </div>
+        <div class="switch-item active">
+          <strong>标准化坐标</strong>
+          <label class="switch-control">
+            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <span class="switch-state">开启</span>
+          </label>
+        </div>
+        <div class="switch-item active">
+          <strong>KML导出</strong>
+          <label class="switch-control">
+            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <span class="switch-state">开启</span>
+          </label>
+        </div>
+        <div class="switch-item active">
+          <strong>AI矿地判读</strong>
+          <label class="switch-control">
+            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <span class="switch-state">开启</span>
+          </label>
+        </div>
+        <div class="switch-item active">
+          <strong>人工开通入口</strong>
+          <label class="switch-control">
+            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <span class="switch-state">开启</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>运营概览</h2>
+      <div class="cards">
+        <div class="card"><span>总用户数</span><strong id="totalUsers">0</strong></div>
+        <div class="card"><span>VIP用户数</span><strong id="vipUsers">0</strong></div>
+        <div class="card"><span>有付费余额用户数</span><strong id="paidBalanceUsers">0</strong></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>用户与次数管理</h2>
+      <p class="muted">该区域来自 Supabase users 表，用于正式管理用户次数、付费次数和 VIP 状态。</p>
+      <div class="table-tools">
+        <input id="supabaseUserSearch" placeholder="输入用户ID搜索" onkeydown="handleSearchKey(event)" />
+        <button type="button" onclick="loadSupabaseUsers()">搜索/刷新</button>
+      </div>
+      <div class="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>事件</th>
-              <th>次数</th>
+              <th>用户ID</th>
+              <th>VIP</th>
+              <th>最近IP</th>
+              <th>地区</th>
+              <th>设备</th>
+              <th>最后访问</th>
+              <th>备注</th>
+              <th>免费坐标</th>
+              <th>付费坐标</th>
+              <th>免费判读</th>
+              <th>付费判读</th>
+              <th>创建时间</th>
+              <th>更新时间</th>
+              <th>操作</th>
             </tr>
           </thead>
-          <tbody id="eventsByName"></tbody>
+          <tbody id="supabaseUsersBody"></tbody>
         </table>
       </div>
-
-      <div class="panel">
-        <h2>全局功能开关</h2>
-        <div class="checks">
-          <label><input id="flagAi" type="checkbox" /> AI图片识别</label>
-          <label><input id="flagXy" type="checkbox" /> 标准化坐标</label>
-          <label><input id="flagKml" type="checkbox" /> KML导出</label>
-          <label><input id="flagManual" type="checkbox" /> 人工协助入口</label>
-          <label><input id="flagJudge" type="checkbox" /> AI矿地判读</label>
-        </div>
-        <p class="muted">全局关闭后，即使用户权限已开通，也会被关闭。</p>
-        <button type="button" onclick="saveFlags()">保存功能开关</button>
-      </div>
+      <div id="supabaseUserMessage" class="message"></div>
     </section>
 
-    <section class="panel">
-      <h2>用户列表</h2>
-      <div class="table-tools">
-        <input id="userSearch" placeholder="输入 user_id 搜索用户" oninput="renderUsers(users)" />
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>用户ID</th>
-            <th>套餐</th>
-            <th>状态</th>
-            <th>VIP</th>
-            <th>用户类型</th>
-            <th>最近IP</th>
-            <th>地区</th>
-            <th>终端</th>
-            <th>型号</th>
-            <th>免费坐标</th>
-            <th>付费坐标</th>
-            <th>免费判读</th>
-            <th>付费判读</th>
-            <th>总坐标</th>
-            <th>总判读</th>
-            <th>访问天数</th>
-            <th>事件数</th>
-            <th>最后访问</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="usersBody"></tbody>
-      </table>
-    </section>
+    <div id="supabaseQuotaModal" class="modal" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <h2>编辑用户次数</h2>
+        <div class="readonly-row">
+          <strong>用户ID</strong>
+          <span id="quotaEditUserId">-</span>
+        </div>
+        <div class="readonly-row">
+          <strong>VIP状态</strong>
+          <span id="quotaEditVip">-</span>
+        </div>
 
-    <section id="editor" class="panel editor">
-      <h2>用户权限</h2>
-      <p class="muted" id="editingUser"></p>
-      <div class="grid">
-        <div>
-          <label for="plan">套餐</label>
-          <select id="plan">
-            <option value="free">免费用户</option>
-            <option value="trial">试用用户</option>
-            <option value="vip">VIP用户</option>
-          </select>
+        <div class="quota-grid">
+          <div>
+            <label for="quotaFreeConvert">免费坐标</label>
+            <input id="quotaFreeConvert" type="number" min="0" />
+          </div>
+          <div>
+            <label for="quotaPaidConvert">付费坐标</label>
+            <input id="quotaPaidConvert" type="number" min="0" />
+          </div>
+          <div>
+            <label for="quotaFreeJudge">免费判读</label>
+            <input id="quotaFreeJudge" type="number" min="0" />
+          </div>
+          <div>
+            <label for="quotaPaidJudge">付费判读</label>
+            <input id="quotaPaidJudge" type="number" min="0" />
+          </div>
         </div>
-        <div>
-          <label for="status">状态</label>
-          <select id="status">
-            <option value="active">正常</option>
-            <option value="disabled">禁用</option>
-          </select>
-        </div>
-      </div>
-      <div class="checks vip-check">
-        <label><input id="isVip" type="checkbox" /> VIP用户（无限次数）</label>
-      </div>
-      <div class="quota-grid">
-        <div>
-          <label for="freeConvertCount">免费坐标剩余</label>
-          <input id="freeConvertCount" type="number" min="0" />
-        </div>
-        <div>
-          <label for="paidConvertCount">付费坐标剩余</label>
-          <input id="paidConvertCount" type="number" min="0" />
-        </div>
-        <div>
-          <label for="freeJudgeCount">免费判读剩余</label>
-          <input id="freeJudgeCount" type="number" min="0" />
-        </div>
-        <div>
-          <label for="paidJudgeCount">付费判读剩余</label>
-          <input id="paidJudgeCount" type="number" min="0" />
-        </div>
-      </div>
-      <div class="quick-add">
-        <strong>坐标加次数</strong>
-        <button type="button" onclick="quickAddCount('convert', 10)">+10</button>
-        <button type="button" onclick="quickAddCount('convert', 50)">+50</button>
-        <button type="button" onclick="quickAddCount('convert', 100)">+100</button>
-      </div>
-      <div class="quick-add">
-        <strong>判读加次数</strong>
-        <button type="button" onclick="quickAddCount('judge', 10)">+10</button>
-        <button type="button" onclick="quickAddCount('judge', 50)">+50</button>
-        <button type="button" onclick="quickAddCount('judge', 100)">+100</button>
-      </div>
-      <div class="checks">
-        <label><input id="permAi" type="checkbox" /> 允许 AI 图片识别</label>
-        <label><input id="permXy" type="checkbox" /> 允许标准化坐标</label>
-        <label><input id="permKml" type="checkbox" /> 允许 KML 导出</label>
-        <label><input id="permManual" type="checkbox" /> 允许人工协助入口</label>
-        <label><input id="permJudge" type="checkbox" /> 允许 AI 矿地判读</label>
-      </div>
-      <div class="grid">
-        <div>
-          <label for="wechat">微信</label>
-          <input id="wechat" />
-        </div>
-        <div>
-          <label for="phone">电话</label>
-          <input id="phone" />
-        </div>
-      </div>
-      <label for="note">备注</label>
-      <textarea id="note"></textarea>
-      <div class="editor-actions">
-        <button id="saveUserButton" type="button" onclick="saveUser()">保存用户权限</button>
-        <button class="button-secondary" type="button" onclick="closeUserEditor()">关闭</button>
-        <span id="saveUserStatus" class="save-status"></span>
-      </div>
-    </section>
 
-    <section class="panel">
-      <h2>最近事件</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>时间</th>
-            <th>用户ID</th>
-            <th>IP</th>
-            <th>地区</th>
-            <th>终端</th>
-            <th>型号</th>
-            <th>事件</th>
-          </tr>
-        </thead>
-        <tbody id="recentEvents"></tbody>
-      </table>
-    </section>
+        <div class="quick-add">
+          <strong>套餐快捷填充</strong>
+          <button type="button" onclick="quickAddSupabaseQuota('convert', 10)">坐标 +10（¥9.9）</button>
+          <button type="button" onclick="quickAddSupabaseQuota('convert', 50)">坐标 +50（¥29）</button>
+          <button type="button" onclick="quickAddSupabaseQuota('convert', 100)">坐标 +100（¥49）</button>
+          <button type="button" onclick="quickAddSupabaseQuota('judge', 10)">判读 +10</button>
+        </div>
+
+        <div class="note-editor">
+          <label for="quotaAdminNote">管理员备注</label>
+          <textarea id="quotaAdminNote" placeholder="填写用户来源、付款记录、沟通备注等"></textarea>
+          <div class="note-actions">
+            <button type="button" class="button-secondary" onclick="saveSupabaseNote()">保存备注</button>
+          </div>
+        </div>
+
+        <div class="log-panel">
+          <h2>操作日志</h2>
+          <div id="adminLogsList" class="log-list">
+            <div class="muted">打开用户后加载日志。</div>
+          </div>
+        </div>
+
+        <div class="editor-actions">
+          <button type="button" onclick="saveSupabaseQuota()">保存修改</button>
+          <button type="button" class="button-secondary" onclick="closeSupabaseQuotaEditor()">取消</button>
+        </div>
+        <div id="quotaEditMessage" class="message"></div>
+      </div>
+    </div>
   </main>
 
   <script>
     let adminPassword = localStorage.getItem("coordinateToolAdminPassword") || "";
-    let users = [];
-    let selectedUser = null;
-    let selectedVisitorId = "";
-    let autoRefreshTimer = null;
+    let supabaseUsers = [];
+    let selectedSupabaseUser = null;
 
     document.getElementById("password").value = adminPassword;
 
@@ -444,10 +572,20 @@
       refreshAll();
     }
 
-    startAutoRefresh();
-
     function setMessage(text, isError = false) {
       const el = document.getElementById("message");
+      el.textContent = text;
+      el.className = isError ? "message error" : "message";
+    }
+
+    function setSupabaseUserMessage(text, isError = false) {
+      const el = document.getElementById("supabaseUserMessage");
+      el.textContent = text;
+      el.className = isError ? "message error" : "message";
+    }
+
+    function setQuotaEditMessage(text, isError = false) {
+      const el = document.getElementById("quotaEditMessage");
       el.textContent = text;
       el.className = isError ? "message error" : "message";
     }
@@ -487,26 +625,13 @@
         if (isManual) {
           refreshButton.disabled = true;
           refreshButton.textContent = "正在刷新...";
-          setMessage("正在刷新后台数据...");
+          setMessage("正在读取 Supabase 用户...");
         }
 
         adminPassword = getPassword();
         localStorage.setItem("coordinateToolAdminPassword", adminPassword);
-        const summary = await adminFetch("/api/admin/summary");
-        let usersResult = { users: [] };
-
-        try {
-          usersResult = await adminFetch("/api/admin/users");
-        } catch (error) {
-          setMessage(error.message, true);
-        }
-
-        users = usersResult.users || [];
-        renderSummary(summary);
-        renderUsers(users);
-        if (usersResult.users) {
-          setMessage(`后台数据已刷新：${new Date().toLocaleTimeString()}`);
-        }
+        await loadSupabaseUsers(false);
+        setMessage(`后台数据已刷新：${new Date().toLocaleTimeString()}`);
       } catch (error) {
         setMessage(`刷新失败：${error.message}`, true);
       } finally {
@@ -517,206 +642,336 @@
       }
     }
 
-    function startAutoRefresh() {
-      clearInterval(autoRefreshTimer);
-      autoRefreshTimer = setInterval(() => {
-        const editorOpen = document.getElementById("editor").style.display === "block";
-        if (getPassword() && !editorOpen) {
-          refreshAll();
+    async function loadSupabaseUsers(showMessage = true) {
+      const search = document.getElementById("supabaseUserSearch").value.trim();
+      const query = search ? `?user_id=${encodeURIComponent(search)}` : "";
+
+      try {
+        if (showMessage) {
+          setSupabaseUserMessage("正在读取用户...");
         }
-      }, 30000);
+
+        const result = await adminFetch(`/api/admin/supabase-users${query}`);
+        supabaseUsers = result.users || [];
+        renderSupabaseUsers(supabaseUsers);
+        renderOverview(supabaseUsers);
+
+        if (showMessage) {
+          setSupabaseUserMessage(`用户列表已刷新：${new Date().toLocaleTimeString()}`);
+        }
+      } catch (error) {
+        supabaseUsers = [];
+        renderSupabaseUsers(supabaseUsers);
+        renderOverview(supabaseUsers);
+        setSupabaseUserMessage(error.message, true);
+        throw error;
+      }
     }
 
-    function renderSummary(summary) {
-      document.getElementById("usersTotal").textContent = summary.totals.users;
-      document.getElementById("eventsTotal").textContent = summary.totals.events;
-      document.getElementById("vipTotal").textContent = summary.totals.vipUsers;
-      document.getElementById("disabledTotal").textContent = summary.totals.disabledUsers;
-      document.getElementById("returningRate").textContent = `${summary.totals.returningRate || 0}%`;
-      document.getElementById("newUsersTotal").textContent = summary.totals.newUsers || 0;
-      document.getElementById("returningUsersTotal").textContent = summary.totals.returningUsers || 0;
-      document.getElementById("qualityUsersTotal").textContent = summary.totals.qualityUsers || 0;
-      document.getElementById("inactiveUsersTotal").textContent = (summary.totals.inactiveUsers || 0) + (summary.totals.lostUsers || 0);
+    function renderOverview(list) {
+      const vipCount = list.filter(user => Boolean(user.is_vip)).length;
+      const paidBalanceCount = list.filter(user =>
+        Number(user.paid_convert_count || 0) > 0 || Number(user.paid_judge_count || 0) > 0
+      ).length;
 
-      const flags = summary.featureFlags || {};
-      document.getElementById("flagAi").checked = Boolean(flags.aiOcrEnabled);
-      document.getElementById("flagXy").checked = Boolean(flags.xyConvertEnabled);
-      document.getElementById("flagKml").checked = Boolean(flags.kmlExportEnabled);
-      document.getElementById("flagManual").checked = Boolean(flags.manualSupportEnabled);
-      document.getElementById("flagJudge").checked = Boolean(flags.aiJudgeEnabled);
-
-      document.getElementById("eventsByName").innerHTML = Object.entries(summary.eventsByName || {})
-        .sort((a, b) => b[1] - a[1])
-        .map(([name, count]) => `<tr><td>${escapeHtml(name)}</td><td>${count}</td></tr>`)
-        .join("");
-
-      document.getElementById("recentEvents").innerHTML = (summary.recentEvents || [])
-        .map(event => `<tr><td>${formatTime(event.createdAt)}</td><td>${escapeHtml(event.visitorId)}</td><td>${escapeHtml(event.ip || "")}</td><td>${escapeHtml(event.ipLocation || "")}</td><td>${escapeHtml(describeTerminal(event.userAgent || ""))}</td><td>${escapeHtml(event.deviceModel || describeDeviceModel(event.userAgent || ""))}</td><td>${escapeHtml(event.eventLabel || event.eventName)}</td></tr>`)
-        .join("");
+      document.getElementById("totalUsers").textContent = list.length;
+      document.getElementById("vipUsers").textContent = vipCount;
+      document.getElementById("paidBalanceUsers").textContent = paidBalanceCount;
     }
 
-    function renderUsers(list) {
-      const keyword = (document.getElementById("userSearch")?.value || "").trim().toLowerCase();
-      const filtered = keyword
-        ? list.filter(user => String(user.visitorId || user.user_id || "").toLowerCase().includes(keyword))
-        : list;
+    function renderSupabaseUsers(list) {
+      const body = document.getElementById("supabaseUsersBody");
 
-      document.getElementById("usersBody").innerHTML = filtered
-        .map(user => `<tr>
-          <td>${escapeHtml(user.visitorId)}</td>
-          <td>${escapeHtml(user.plan || "free")}</td>
-          <td>${escapeHtml(user.status || "active")}</td>
-          <td>${user.isVip || user.is_vip ? "是" : "否"}</td>
-          <td>${escapeHtml(user.segmentLabel || "新用户")}</td>
-          <td>${escapeHtml(user.lastIp || "")}</td>
-          <td>${escapeHtml(user.lastIpLocation || "")}</td>
-          <td>${escapeHtml(describeTerminal(user.lastUserAgent || ""))}</td>
-          <td>${escapeHtml(user.lastDeviceModel || describeDeviceModel(user.lastUserAgent || ""))}</td>
-          <td>${Number(user.freeConvertCount ?? user.free_convert_count ?? 0)}</td>
-          <td>${Number(user.paidConvertCount ?? user.paid_convert_count ?? 0)}</td>
-          <td>${Number(user.freeJudgeCount ?? user.free_judge_count ?? 0)}</td>
-          <td>${Number(user.paidJudgeCount ?? user.paid_judge_count ?? 0)}</td>
-          <td>${Number(user.totalConvertCount ?? user.total_convert_count ?? 0)}</td>
-          <td>${Number(user.totalJudgeCount ?? user.total_judge_count ?? 0)}</td>
-          <td>${user.visitDays || 0}</td>
-          <td>${user.eventCount || 0}</td>
-          <td>${formatTime(user.lastSeenAt)}</td>
-          <td><button type="button" onclick="editUser('${escapeAttr(user.visitorId)}')">编辑</button></td>
-        </tr>`)
-        .join("");
-    }
-
-    function editUser(visitorId) {
-      selectedUser = users.find(user => user.visitorId === visitorId);
-      selectedVisitorId = visitorId;
-
-      if (!selectedUser) {
-        setMessage("没有找到这个用户，请先刷新后台数据。", true);
+      if (!list.length) {
+        body.innerHTML = `<tr><td colspan="14" class="muted">暂无用户</td></tr>`;
         return;
       }
 
-      const permissions = selectedUser.permissions || {};
-      document.getElementById("editor").style.display = "block";
-      document.getElementById("editor").dataset.visitorId = visitorId;
-      document.getElementById("editingUser").textContent = `正在编辑：${selectedUser.visitorId}`;
-      document.getElementById("plan").value = selectedUser.plan || "free";
-      document.getElementById("status").value = selectedUser.status || "active";
-      document.getElementById("isVip").checked = Boolean(selectedUser.isVip || selectedUser.is_vip);
-      document.getElementById("freeConvertCount").value = Number(selectedUser.freeConvertCount ?? selectedUser.free_convert_count ?? 0);
-      document.getElementById("paidConvertCount").value = Number(selectedUser.paidConvertCount ?? selectedUser.paid_convert_count ?? 0);
-      document.getElementById("freeJudgeCount").value = Number(selectedUser.freeJudgeCount ?? selectedUser.free_judge_count ?? 0);
-      document.getElementById("paidJudgeCount").value = Number(selectedUser.paidJudgeCount ?? selectedUser.paid_judge_count ?? 0);
-      document.getElementById("permAi").checked = Boolean(permissions.aiOcrEnabled);
-      document.getElementById("permXy").checked = Boolean(permissions.xyConvertEnabled);
-      document.getElementById("permKml").checked = Boolean(permissions.kmlExportEnabled);
-      document.getElementById("permManual").checked = Boolean(permissions.manualSupportEnabled);
-      document.getElementById("permJudge").checked = Boolean(permissions.aiJudgeEnabled);
-      document.getElementById("wechat").value = selectedUser.wechat || "";
-      document.getElementById("phone").value = selectedUser.phone || "";
-      document.getElementById("note").value = selectedUser.note || "";
-      setUserSaveStatus("");
-      document.getElementById("editor").scrollIntoView({ behavior: "smooth", block: "start" });
+      body.innerHTML = list
+        .map(user => {
+          const userId = String(user.user_id || "");
+          const encodedUserId = encodeURIComponent(userId);
+          const region = user.region || user["地区"] || "-";
+          const note = String(user.admin_note || "");
+          const noteSummary = note.length > 24 ? `${note.slice(0, 24)}...` : note;
+
+          return `<tr>
+            <td>${escapeHtml(userId)}</td>
+            <td>${user.is_vip ? "是" : "否"}</td>
+            <td>${escapeHtml(user.last_ip || "-")}</td>
+            <td>${escapeHtml(region)}</td>
+            <td>${escapeHtml(user.device_info || user.user_agent || "-")}</td>
+            <td>${formatTime(user.last_seen_at) || "-"}</td>
+            <td>${escapeHtml(noteSummary || "-")}</td>
+            <td>${Number(user.free_convert_count || 0)}</td>
+            <td>${Number(user.paid_convert_count || 0)}</td>
+            <td>${Number(user.free_judge_count || 0)}</td>
+            <td>${Number(user.paid_judge_count || 0)}</td>
+            <td>${formatTime(user.created_at)}</td>
+            <td>${formatTime(user.updated_at)}</td>
+            <td>
+              <div class="actions">
+                <button type="button" onclick="openSupabaseQuotaEditor('${encodedUserId}')">编辑</button>
+                <button type="button" class="${user.is_vip ? "danger" : "success"}" onclick="setSupabaseVip('${encodedUserId}', ${user.is_vip ? "false" : "true"})">${user.is_vip ? "取消VIP" : "设为VIP"}</button>
+              </div>
+            </td>
+          </tr>`;
+        })
+        .join("");
     }
 
-    function closeUserEditor() {
-      document.getElementById("editor").style.display = "none";
-      document.getElementById("editor").dataset.visitorId = "";
-      selectedUser = null;
-      selectedVisitorId = "";
-      setUserSaveStatus("");
+    function handleSearchKey(event) {
+      if (event.key === "Enter") {
+        loadSupabaseUsers();
+      }
     }
 
-    function setUserSaveStatus(text, isError = false) {
-      const status = document.getElementById("saveUserStatus");
-      status.textContent = text;
-      status.className = isError ? "save-status error" : "save-status";
+    function toggleReservedSwitch(input) {
+      const item = input.closest(".switch-item");
+      const state = item?.querySelector(".switch-state");
+
+      if (!item || !state) {
+        return;
+      }
+
+      item.classList.toggle("active", input.checked);
+      state.textContent = input.checked ? "开启" : "关闭";
     }
 
-    function quickAddCount(type, count) {
-      const targetId = type === "judge" ? "paidJudgeCount" : "paidConvertCount";
-      const input = document.getElementById(targetId);
-      input.value = Number(input.value || 0) + Number(count || 0);
-      setUserSaveStatus(`已准备增加 ${count} 次，点击保存生效`);
+    function toQuotaInputValue(value) {
+      const number = Number(value);
+      return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
     }
 
-    async function saveUser() {
-      const visitorId = selectedUser?.visitorId || selectedVisitorId || document.getElementById("editor").dataset.visitorId || "";
-      const button = document.getElementById("saveUserButton");
+    function openSupabaseQuotaEditor(userId) {
+      const decodedUserId = decodeURIComponent(userId);
+      selectedSupabaseUser = supabaseUsers.find(user => String(user.user_id || "") === decodedUserId) || null;
 
-      if (!visitorId) {
-        setMessage("请先在用户列表里点击“编辑”，再保存用户权限。", true);
-        setUserSaveStatus("请先选择用户", true);
+      if (!selectedSupabaseUser) {
+        setSupabaseUserMessage("没有找到这个用户，请先刷新用户列表。", true);
+        return;
+      }
+
+      document.getElementById("quotaEditUserId").textContent = selectedSupabaseUser.user_id || "-";
+      document.getElementById("quotaEditVip").textContent = selectedSupabaseUser.is_vip ? "是" : "否";
+      document.getElementById("quotaFreeConvert").value = toQuotaInputValue(selectedSupabaseUser.free_convert_count);
+      document.getElementById("quotaPaidConvert").value = toQuotaInputValue(selectedSupabaseUser.paid_convert_count);
+      document.getElementById("quotaFreeJudge").value = toQuotaInputValue(selectedSupabaseUser.free_judge_count);
+      document.getElementById("quotaPaidJudge").value = toQuotaInputValue(selectedSupabaseUser.paid_judge_count);
+      document.getElementById("quotaAdminNote").value = selectedSupabaseUser.admin_note || "";
+      renderAdminLogs([]);
+      setQuotaEditMessage("");
+      document.getElementById("supabaseQuotaModal").classList.add("active");
+      loadSupabaseLogs(selectedSupabaseUser.user_id);
+    }
+
+    function closeSupabaseQuotaEditor() {
+      selectedSupabaseUser = null;
+      document.getElementById("supabaseQuotaModal").classList.remove("active");
+      setQuotaEditMessage("");
+      renderAdminLogs([]);
+    }
+
+    function quickAddSupabaseQuota(type, amount) {
+      const inputId = type === "judge" ? "quotaPaidJudge" : "quotaPaidConvert";
+      const input = document.getElementById(inputId);
+      input.value = toQuotaInputValue(input.value) + toQuotaInputValue(amount);
+    }
+
+    async function saveSupabaseQuota() {
+      if (!selectedSupabaseUser?.user_id) {
+        setQuotaEditMessage("没有选中的用户，请重新打开编辑。", true);
         return;
       }
 
       try {
-        button.disabled = true;
-        button.textContent = "正在保存...";
-        setMessage("正在保存用户权限，请稍候...");
-        setUserSaveStatus("正在保存...");
-
-        const isVipChecked = document.getElementById("isVip").checked;
-        const selectedPlan = document.getElementById("plan").value;
-        const result = await adminFetch(`/api/admin/users/${encodeURIComponent(visitorId)}`, {
+        setQuotaEditMessage("正在保存修改...");
+        await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/quota`, {
           method: "PATCH",
           body: JSON.stringify({
-            plan: isVipChecked ? "vip" : (selectedPlan === "vip" ? "free" : selectedPlan),
-            status: document.getElementById("status").value,
-            isVip: isVipChecked,
-            freeConvertCount: Number(document.getElementById("freeConvertCount").value || 0),
-            paidConvertCount: Number(document.getElementById("paidConvertCount").value || 0),
-            freeJudgeCount: Number(document.getElementById("freeJudgeCount").value || 0),
-            paidJudgeCount: Number(document.getElementById("paidJudgeCount").value || 0),
-            permissions: {
-              aiOcrEnabled: document.getElementById("permAi").checked,
-              xyConvertEnabled: document.getElementById("permXy").checked,
-              kmlExportEnabled: document.getElementById("permKml").checked,
-              manualSupportEnabled: document.getElementById("permManual").checked,
-              aiJudgeEnabled: document.getElementById("permJudge").checked
-            },
-            wechat: document.getElementById("wechat").value,
-            phone: document.getElementById("phone").value,
-            note: document.getElementById("note").value
+            free_convert_count: document.getElementById("quotaFreeConvert").value,
+            paid_convert_count: document.getElementById("quotaPaidConvert").value,
+            free_judge_count: document.getElementById("quotaFreeJudge").value,
+            paid_judge_count: document.getElementById("quotaPaidJudge").value
           })
         });
 
-        selectedUser = result.user || selectedUser;
-        setMessage("用户权限已保存。");
-        setUserSaveStatus("已保存");
-        await refreshAll();
-        setTimeout(() => {
-          if (selectedVisitorId === visitorId || document.getElementById("editor").dataset.visitorId === visitorId) {
-            closeUserEditor();
-          }
-        }, 800);
+        closeSupabaseQuotaEditor();
+        setSupabaseUserMessage("操作成功。");
+        await loadSupabaseUsers(false);
       } catch (error) {
-        setMessage(`保存失败：${error.message}`, true);
-        setUserSaveStatus(`保存失败：${error.message}`, true);
-      } finally {
-        button.disabled = false;
-        button.textContent = "保存用户权限";
+        setQuotaEditMessage(`保存失败：${error.message}`, true);
       }
     }
 
-    async function saveFlags() {
+    async function saveSupabaseNote() {
+      if (!selectedSupabaseUser?.user_id) {
+        setQuotaEditMessage("没有选中的用户，请重新打开编辑。", true);
+        return;
+      }
+
       try {
-        await adminFetch("/api/admin/feature-flags", {
+        setQuotaEditMessage("正在保存备注...");
+        const result = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/note`, {
           method: "PATCH",
           body: JSON.stringify({
-            featureFlags: {
-              aiOcrEnabled: document.getElementById("flagAi").checked,
-              xyConvertEnabled: document.getElementById("flagXy").checked,
-              kmlExportEnabled: document.getElementById("flagKml").checked,
-              manualSupportEnabled: document.getElementById("flagManual").checked,
-              aiJudgeEnabled: document.getElementById("flagJudge").checked
-            }
+            admin_note: document.getElementById("quotaAdminNote").value
           })
         });
 
-        setMessage("功能开关已保存。");
-        refreshAll();
+        selectedSupabaseUser = result.user || selectedSupabaseUser;
+        setQuotaEditMessage("备注已保存。");
+        await loadSupabaseUsers(false);
+        await loadSupabaseLogs(selectedSupabaseUser.user_id);
       } catch (error) {
-        setMessage(error.message, true);
+        setQuotaEditMessage(`保存备注失败：${error.message}`, true);
+      }
+    }
+
+    async function loadSupabaseLogs(userId) {
+      const targetUserId = String(userId || "").trim();
+
+      if (!targetUserId) {
+        renderAdminLogs([]);
+        return;
+      }
+
+      try {
+        const result = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(targetUserId)}/logs`);
+        renderAdminLogs(result.logs || []);
+      } catch (error) {
+        document.getElementById("adminLogsList").innerHTML = `<div class="message error">读取日志失败：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function renderAdminLogs(logs) {
+      const list = document.getElementById("adminLogsList");
+
+      if (!list) {
+        return;
+      }
+
+      if (!logs.length) {
+        list.innerHTML = `<div class="muted">暂无操作日志。</div>`;
+        return;
+      }
+
+      list.innerHTML = logs.map(log => {
+        const actionLabel = getAdminLogActionLabel(log.action);
+        const detailText = formatAdminLogDetail(log);
+        const note = String(log.note || "").trim();
+
+        return `<div class="log-item">
+          <strong>${escapeHtml(formatLogTime(log.created_at) || "-")}｜${escapeHtml(actionLabel)}</strong>
+          <div class="log-detail">${escapeHtml(detailText)}</div>
+          <div class="log-json">备注：${escapeHtml(note || "-")}</div>
+        </div>`;
+      }).join("");
+    }
+
+    function getAdminLogActionLabel(action) {
+      const labels = {
+        update_quota: "修改次数",
+        set_vip: "设为VIP",
+        unset_vip: "取消VIP",
+        update_note: "修改备注"
+      };
+
+      return labels[action] || action || "未知操作";
+    }
+
+    function normalizeLogData(value) {
+      if (!value) {
+        return {};
+      }
+
+      if (typeof value === "object") {
+        return value;
+      }
+
+      try {
+        return JSON.parse(value);
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function formatAdminLogDetail(log) {
+      const beforeData = normalizeLogData(log.before_data);
+      const afterData = normalizeLogData(log.after_data);
+
+      if (log.action === "update_quota") {
+        return [
+          "坐标：",
+          `免费：${formatChangeValue(beforeData.free_convert_count)} → ${formatChangeValue(afterData.free_convert_count)}`,
+          `付费：${formatChangeValue(beforeData.paid_convert_count)} → ${formatChangeValue(afterData.paid_convert_count)}`,
+          "",
+          "判读：",
+          `免费：${formatChangeValue(beforeData.free_judge_count)} → ${formatChangeValue(afterData.free_judge_count)}`,
+          `付费：${formatChangeValue(beforeData.paid_judge_count)} → ${formatChangeValue(afterData.paid_judge_count)}`
+        ].join("\n");
+      }
+
+      if (log.action === "set_vip" || log.action === "unset_vip") {
+        return `VIP：${formatVipValue(beforeData.is_vip)} → ${formatVipValue(afterData.is_vip)}`;
+      }
+
+      if (log.action === "update_note") {
+        return `管理员备注：${formatChangeValue(beforeData.admin_note)} → ${formatChangeValue(afterData.admin_note)}`;
+      }
+
+      return "暂无可展示的变更内容。";
+    }
+
+    function formatChangeValue(value) {
+      if (value === undefined || value === null || value === "") {
+        return "-";
+      }
+
+      return String(value);
+    }
+
+    function formatVipValue(value) {
+      return value ? "是" : "否";
+    }
+
+    function formatLogTime(value) {
+      if (!value) {
+        return "";
+      }
+
+      const date = new Date(value);
+
+      if (Number.isNaN(date.getTime())) {
+        return "";
+      }
+
+      return date.toLocaleString("zh-CN", {
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      });
+    }
+
+    async function setSupabaseVip(userId, isVip) {
+      const decodedUserId = decodeURIComponent(userId);
+
+      try {
+        setSupabaseUserMessage("正在更新 VIP 状态...");
+        await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(decodedUserId)}/vip`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            is_vip: Boolean(isVip)
+          })
+        });
+        setSupabaseUserMessage("VIP 状态已更新。");
+        await loadSupabaseUsers(false);
+      } catch (error) {
+        setSupabaseUserMessage(error.message, true);
       }
     }
 
@@ -725,82 +980,17 @@
         return "";
       }
 
-      return new Date(value).toLocaleString();
-    }
-
-    function describeTerminal(userAgent) {
-      const ua = String(userAgent || "");
-
-      if (!ua) {
-        return "";
-      }
-
-      let device = "电脑";
-      let browser = "浏览器";
-
-      if (/ipad|tablet/i.test(ua)) {
-        device = "平板";
-      } else if (/mobile|iphone|android/i.test(ua)) {
-        device = "手机";
-      }
-
-      if (/MicroMessenger/i.test(ua)) {
-        browser = "微信";
-      } else if (/Edg\//i.test(ua)) {
-        browser = "Edge";
-      } else if (/Chrome\//i.test(ua) && !/Edg\//i.test(ua)) {
-        browser = "Chrome";
-      } else if (/Safari\//i.test(ua) && !/Chrome\//i.test(ua)) {
-        browser = "Safari";
-      } else if (/Firefox\//i.test(ua)) {
-        browser = "Firefox";
-      }
-
-      return `${device} / ${browser}`;
-    }
-
-    function describeDeviceModel(userAgent) {
-      const ua = String(userAgent || "");
-
-      if (!ua) {
-        return "";
-      }
-
-      const androidMatch = ua.match(/Android\s+[\d.]+;\s*([^;)]+?)(?:\s+Build|\)|;)/i);
-      if (androidMatch?.[1]) {
-        return androidMatch[1].replace(/^wv\s*/i, "").trim();
-      }
-
-      if (/iPhone/i.test(ua)) {
-        return "iPhone";
-      }
-
-      if (/iPad/i.test(ua)) {
-        return "iPad";
-      }
-
-      if (/Windows NT/i.test(ua)) {
-        return "Windows电脑";
-      }
-
-      if (/Macintosh/i.test(ua)) {
-        return "Mac";
-      }
-
-      return "";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
     }
 
     function escapeHtml(value) {
-      return String(value || "")
+      return String(value ?? "")
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-    }
-
-    function escapeAttr(value) {
-      return escapeHtml(value).replace(/`/g, "&#096;");
+        .replace(/'/g, "&#39;");
     }
   </script>
 </body>
