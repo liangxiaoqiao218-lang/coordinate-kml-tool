@@ -1391,6 +1391,23 @@
       border-color: #16a34a;
     }
 
+    .copy-float {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      z-index: 60;
+      display: none;
+      transform: translateX(-50%);
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.92);
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 700;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+      white-space: nowrap;
+    }
+
     .file-preview-icon {
       display: grid;
       place-items: center;
@@ -1877,6 +1894,7 @@ Au值 = 纯度 × 10 后取整数</div>
       </div>
     </section>
   </main>
+  <div id="goldCopyFloat" class="copy-float">结果已复制，可直接发送或对比报价</div>
 
   <div id="imageModal" class="image-modal" onclick="closeImageModal()">
     <div class="image-modal-content">
@@ -2936,6 +2954,14 @@ Au值 = 纯度 × 10 后取整数</div>
       return Number.isFinite(value) ? value.toFixed(digits) : "--";
     }
 
+    function formatGoldAmount(value) {
+      if (!Number.isFinite(value)) {
+        return "--";
+      }
+
+      return Math.round(value).toLocaleString("zh-CN");
+    }
+
     function updateGoldPriceInfo() {
       const infoEl = document.getElementById("goldPriceInfo");
 
@@ -3023,6 +3049,20 @@ Au值 = 纯度 × 10 后取整数</div>
       return "与参考金价基本一致";
     }
 
+    function showGoldCopyFloat() {
+      const floatEl = document.getElementById("goldCopyFloat");
+
+      if (!floatEl) {
+        return;
+      }
+
+      floatEl.style.display = "block";
+      clearTimeout(showGoldCopyFloat.timer);
+      showGoldCopyFloat.timer = setTimeout(() => {
+        floatEl.style.display = "none";
+      }, 1000);
+    }
+
     function renderGoldQuoteResult(result) {
       const quoteEl = document.getElementById("quoteResult");
       const settlementEl = document.getElementById("settlementPreview");
@@ -3059,7 +3099,7 @@ Au值 = 纯度 × 10 后取整数</div>
       if (settlementEl) {
         settlementEl.classList.add("is-visible");
         settlementEl.innerHTML = `<span>预计可卖总金额</span>
-        <strong class="settlement-value">¥${formatGoldNumber(result.settlementTotal)}</strong>
+        <strong class="settlement-value">¥${Math.round(result.settlementTotal).toLocaleString("zh-CN")}</strong>
         <small>按 黄金重量 × 金店报价 × 当前成色 估算</small>`;
       }
 
@@ -3179,7 +3219,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         `密度：${formatGoldNumber(result.density, 3)}`,
         `判断：${result.grade}`,
         result.shopQuote > 0 ? `金店报价（元/克）：${formatGoldNumber(result.shopQuote)}` : "金店报价（元/克）：未填写",
-        result.shopQuote > 0 ? `预计可卖金额（元）：${formatGoldNumber(result.settlementTotal)}` : "预计可卖金额（元）：未填写金店报价",
+        result.shopQuote > 0 ? `预计可卖金额（元）：${formatGoldAmount(result.settlementTotal)}` : "预计可卖金额（元）：未填写金店报价",
         currentGoldPriceSource === "realtime_api" ? `今日参考金价：${formatGoldNumber(currentGoldReferencePrice)}元/克` : "",
         currentGoldPriceSource === "realtime_api" && result.shopQuote > 0 ? `报价对比：${formatQuoteComparison(result.shopQuote, currentGoldReferencePrice)}` : "",
         `报价提示：${getGoldQuoteAdvice(result.shopQuote, currentGoldReferencePrice)}`,
@@ -3195,6 +3235,10 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       const originalText = "一键复制结果";
       copyButton.textContent = copied ? "已复制 ✓" : "复制失败，请手动复制";
       copyButton.classList.toggle("copy-success", copied);
+
+      if (copied) {
+        showGoldCopyFloat();
+      }
 
       setTimeout(() => {
         copyButton.textContent = originalText;
