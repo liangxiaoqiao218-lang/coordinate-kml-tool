@@ -1289,6 +1289,29 @@
       font-size: 15px;
     }
 
+    .field-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .field-label-row label {
+      margin-bottom: 0;
+    }
+
+    .inline-select {
+      min-height: 32px;
+      padding: 5px 8px;
+      border: 1px solid #d6dfeb;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #475569;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
     .gold-input-grid input {
       width: 100%;
       min-height: 52px;
@@ -1386,7 +1409,8 @@
       margin-top: 10px;
     }
 
-    .quote-grid input {
+    .quote-grid input,
+    .quote-grid select {
       min-height: 48px;
       font-size: 17px;
       font-weight: 700;
@@ -1915,7 +1939,13 @@
             <input id="goldWeight" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：10.00" oninput="calculateGoldPurity()" />
           </div>
           <div>
-            <label for="waterDiff">排水差重（g）</label>
+            <div class="field-label-row">
+              <label id="waterDiffLabel" for="waterDiff">排水差重（g）</label>
+              <select id="waterInputMode" class="inline-select" onchange="calculateGoldPurity()">
+                <option value="diff">排水差重</option>
+                <option value="float">水中浮重</option>
+              </select>
+            </div>
             <input id="waterDiff" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：0.55" oninput="calculateGoldPurity()" />
           </div>
         </div>
@@ -1962,7 +1992,17 @@ Au值 = 纯度 × 10 后取整数</div>
           <p id="goldPriceInfo">正在读取参考金价...</p>
           <div class="quote-grid">
             <div>
-              <label for="shopQuote">金店报价（元/克）</label>
+              <div class="field-label-row">
+                <label id="shopQuoteLabel" for="shopQuote">金店报价（元/克）</label>
+                <select id="quoteCurrency" class="inline-select" onchange="calculateGoldPurity()">
+                  <option value="CNY">CNY ¥</option>
+                  <option value="USD">USD $</option>
+                  <option value="XOF">XOF CFA</option>
+                  <option value="GNF">GNF FG</option>
+                  <option value="EUR">EUR €</option>
+                  <option value="AED">AED د.إ</option>
+                </select>
+              </div>
               <input id="shopQuote" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：980" oninput="calculateGoldPurity()" />
               <div id="settlementPreview" class="settlement-preview" aria-live="polite"></div>
             </div>
@@ -2044,6 +2084,14 @@ Au值 = 纯度 × 10 后取整数</div>
       coordinate: document.getElementById("coordinatePage"),
       judge: document.getElementById("judgePage"),
       gold: document.getElementById("goldPage")
+    };
+    const GOLD_CURRENCIES = {
+      CNY: { symbol: "¥", unit: "元/克", name: "CNY 人民币" },
+      USD: { symbol: "$", unit: "美元/克", name: "USD 美元" },
+      XOF: { symbol: "CFA", unit: "CFA/克", name: "XOF 西非法郎" },
+      GNF: { symbol: "FG", unit: "几郎/克", name: "GNF 几内亚法郎" },
+      EUR: { symbol: "€", unit: "欧元/克", name: "EUR 欧元" },
+      AED: { symbol: "د.إ", unit: "迪拉姆/克", name: "AED 迪拉姆" }
     };
     const coordinateUploadPanel = document.getElementById("coordinateUploadPanel");
     const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
@@ -3094,6 +3142,37 @@ Au值 = 纯度 × 10 后取整数</div>
       return Math.round(value).toLocaleString("zh-CN");
     }
 
+    function getSelectedGoldCurrency() {
+      const code = document.getElementById("quoteCurrency")?.value || "CNY";
+      return {
+        code,
+        ...(GOLD_CURRENCIES[code] || GOLD_CURRENCIES.CNY)
+      };
+    }
+
+    function formatCurrencyAmount(value, currency = getSelectedGoldCurrency()) {
+      if (!Number.isFinite(value)) {
+        return `${currency.symbol} --`;
+      }
+
+      return `${currency.symbol} ${formatGoldAmount(value)}`;
+    }
+
+    function updateGoldInputLabels() {
+      const mode = document.getElementById("waterInputMode")?.value || "diff";
+      const waterLabel = document.getElementById("waterDiffLabel");
+      const quoteLabel = document.getElementById("shopQuoteLabel");
+      const currency = getSelectedGoldCurrency();
+
+      if (waterLabel) {
+        waterLabel.textContent = mode === "float" ? "水中浮重（g）" : "排水差重（g）";
+      }
+
+      if (quoteLabel) {
+        quoteLabel.textContent = `金店报价（${currency.unit}）`;
+      }
+    }
+
     function updateGoldPriceInfo() {
       const infoEl = document.getElementById("goldPriceInfo");
 
@@ -3144,7 +3223,11 @@ Au值 = 纯度 × 10 后取整数</div>
       calculateGoldPurity();
     }
 
-    function getGoldQuoteAdvice(shopQuote, referencePrice) {
+    function getGoldQuoteAdvice(shopQuote, referencePrice, currencyCode = "CNY") {
+      if (currencyCode !== "CNY") {
+        return "已按当前币种报价估算总价，币种切换不做汇率换算。";
+      }
+
       if (currentGoldPriceSource !== "realtime_api") {
         return "已按当前成色估算总价，实际结算以现场复称、复检和双方确认价格为准。";
       }
@@ -3166,7 +3249,11 @@ Au值 = 纯度 × 10 后取整数</div>
       return "当前报价高于参考金价，建议确认是否已包含其他条件、成色复检或结算方式。";
     }
 
-    function formatQuoteComparison(shopQuote, referencePrice) {
+    function formatQuoteComparison(shopQuote, referencePrice, currencyCode = "CNY") {
+      if (currencyCode !== "CNY") {
+        return "";
+      }
+
       if (!Number.isFinite(shopQuote) || shopQuote <= 0 || !Number.isFinite(referencePrice) || referencePrice <= 0) {
         return "填写金店报价后显示报价对比。";
       }
@@ -3226,32 +3313,44 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      const realtimeReferenceHtml = currentGoldPriceSource === "realtime_api"
+      const realtimeReferenceHtml = currentGoldPriceSource === "realtime_api" && result.quoteCurrencyCode === "CNY"
         ? `<div>今日参考金价：${formatGoldNumber(currentGoldReferencePrice)} 元/克</div>
-        <div>报价对比：${formatQuoteComparison(result.shopQuote, currentGoldReferencePrice)}</div>`
+        <div>报价对比：${formatQuoteComparison(result.shopQuote, currentGoldReferencePrice, result.quoteCurrencyCode)}</div>`
         : "";
 
       if (settlementEl) {
         settlementEl.classList.add("is-visible");
         settlementEl.innerHTML = `<span>预计可卖总金额</span>
-        <strong class="settlement-value"><span class="settlement-symbol">¥</span>${Math.round(result.settlementTotal).toLocaleString("zh-CN")}</strong>
+        <strong class="settlement-value"><span class="settlement-symbol">${result.quoteCurrency.symbol}</span>${formatGoldAmount(result.settlementTotal)}</strong>
         <small>按 黄金重量 × 金店报价 × 当前成色 估算</small>`;
       }
 
       quoteEl.innerHTML = `<div class="quote-reference">
-        <div>金店报价：${formatGoldNumber(result.shopQuote)} 元/克</div>
+        <div>金店报价：${formatGoldNumber(result.shopQuote)} ${result.quoteCurrency.unit}</div>
         ${realtimeReferenceHtml}
       </div>
-      <div class="quote-advice">${getGoldQuoteAdvice(result.shopQuote, currentGoldReferencePrice)}</div>
+      <div class="quote-advice">${getGoldQuoteAdvice(result.shopQuote, currentGoldReferencePrice, result.quoteCurrencyCode)}</div>
       <small>按当前成色估算，实际结算以现场复称和复检为准。</small>`;
     }
 
     function getGoldCalculation() {
       const goldWeight = Number(document.getElementById("goldWeight")?.value || 0);
-      const waterDiff = Number(document.getElementById("waterDiff")?.value || 0);
+      const waterInput = Number(document.getElementById("waterDiff")?.value || 0);
+      const waterMode = document.getElementById("waterInputMode")?.value || "diff";
       const shopQuote = Number(document.getElementById("shopQuote")?.value || 0);
+      const quoteCurrency = getSelectedGoldCurrency();
+      const waterInputLabel = waterMode === "float" ? "水中浮重" : "排水差重";
+      const waterDiff = waterMode === "float" ? goldWeight - waterInput : waterInput;
 
-      if (!goldWeight || !waterDiff || goldWeight <= 0 || waterDiff <= 0) {
+      if (waterMode === "float" && goldWeight > 0 && waterInput >= goldWeight) {
+        return {
+          error: "水中浮重必须小于黄金重量",
+          waterMode,
+          waterInputLabel
+        };
+      }
+
+      if (!goldWeight || !waterInput || !waterDiff || goldWeight <= 0 || waterInput <= 0 || waterDiff <= 0) {
         return null;
       }
 
@@ -3263,8 +3362,13 @@ Au值 = 纯度 × 10 后取整数</div>
 
       return {
         goldWeight,
+        waterInput,
+        waterMode,
+        waterInputLabel,
         waterDiff,
         shopQuote,
+        quoteCurrencyCode: quoteCurrency.code,
+        quoteCurrency,
         settlementTotal,
         density,
         purity,
@@ -3275,6 +3379,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function calculateGoldPurity() {
+      updateGoldInputLabels();
       const result = getGoldCalculation();
       const purityEl = document.getElementById("goldPurityResult");
       const kEl = document.getElementById("goldKResult");
@@ -3283,6 +3388,20 @@ Au值 = 纯度 × 10 后取整数</div>
       const gradeEl = document.getElementById("goldGradeResult");
       const formulaEl = document.getElementById("goldFormulaText");
       const messageEl = document.getElementById("goldMessage");
+
+      if (result?.error) {
+        purityEl.textContent = "--";
+        kEl.textContent = "--";
+        auEl.textContent = "--";
+        densityEl.textContent = "--";
+        gradeEl.textContent = result.error;
+        formulaEl.textContent = `第一步：先算比重
+比重 = 黄金重量 ÷ 排水差重`;
+        renderGoldQuoteResult(null);
+        messageEl.textContent = result.error;
+        messageEl.className = "message error";
+        return null;
+      }
 
       if (!result) {
         purityEl.textContent = "--";
@@ -3312,9 +3431,14 @@ Au值 = 纯度 × 10 后取整数`;
       auEl.textContent = `Au${result.auValue}`;
       densityEl.textContent = formatGoldNumber(result.density, 3);
       gradeEl.textContent = result.grade;
+      const ratioFormula = result.waterMode === "float"
+        ? `比重 = 黄金重量 ÷ (黄金重量 - 水中浮重)
+排水差重 = ${result.goldWeight} - ${result.waterInput} = ${formatGoldNumber(result.waterDiff, 3)}
+比重 = ${result.goldWeight} ÷ ${formatGoldNumber(result.waterDiff, 3)} = ${formatGoldNumber(result.density, 3)}`
+        : `比重 = 黄金重量 ÷ 排水差重
+比重 = ${result.goldWeight} ÷ ${result.waterDiff} = ${formatGoldNumber(result.density, 3)}`;
       formulaEl.textContent = `第一步：先算比重
-比重 = 黄金重量 ÷ 排水差重
-比重 = ${result.goldWeight} ÷ ${result.waterDiff} = ${formatGoldNumber(result.density, 3)}
+${ratioFormula}
 
 第二步：再算纯度
 纯度 = 比重 ÷ 纯金比重 × 100
@@ -3339,7 +3463,9 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       const copyButton = document.getElementById("copyGoldButton");
 
       if (!result) {
-        messageEl.textContent = "请先输入有效的黄金重量和排水差重。";
+        if (messageEl.textContent !== "水中浮重必须小于黄金重量") {
+          messageEl.textContent = "请先输入有效的黄金重量和排水差重/水中浮重。";
+        }
         messageEl.className = "message error";
         return;
       }
@@ -3347,17 +3473,20 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       const text = [
         "黄金成色计算结果",
         `黄金重量（g）：${result.goldWeight}`,
-        `排水差重（g）：${result.waterDiff}`,
+        `输入类型：${result.waterInputLabel}`,
+        `${result.waterInputLabel}（g）：${result.waterInput}`,
+        `实际排水差重（g）：${formatGoldNumber(result.waterDiff, 3)}`,
         `成色：${formatGoldNumber(result.purity)}%`,
         `K值：${formatGoldNumber(result.kValue)}K`,
         `Au值：Au${result.auValue}`,
         `密度：${formatGoldNumber(result.density, 3)}`,
         `判断：${result.grade}`,
-        result.shopQuote > 0 ? `金店报价（元/克）：${formatGoldNumber(result.shopQuote)}` : "金店报价（元/克）：未填写",
-        result.shopQuote > 0 ? `预计可卖金额（元）：${formatGoldAmount(result.settlementTotal)}` : "预计可卖金额（元）：未填写金店报价",
+        `金店报价币种：${result.quoteCurrency.name}`,
+        result.shopQuote > 0 ? `金店报价（${result.quoteCurrency.unit}）：${formatGoldNumber(result.shopQuote)}` : `金店报价（${result.quoteCurrency.unit}）：未填写`,
+        result.shopQuote > 0 ? `预计可卖金额：${formatCurrencyAmount(result.settlementTotal, result.quoteCurrency)}` : "预计可卖金额：未填写金店报价",
         currentGoldPriceSource === "realtime_api" ? `今日参考金价：${formatGoldNumber(currentGoldReferencePrice)}元/克` : "",
-        currentGoldPriceSource === "realtime_api" && result.shopQuote > 0 ? `报价对比：${formatQuoteComparison(result.shopQuote, currentGoldReferencePrice)}` : "",
-        `报价提示：${getGoldQuoteAdvice(result.shopQuote, currentGoldReferencePrice)}`,
+        currentGoldPriceSource === "realtime_api" && result.shopQuote > 0 && result.quoteCurrencyCode === "CNY" ? `报价对比：${formatQuoteComparison(result.shopQuote, currentGoldReferencePrice, result.quoteCurrencyCode)}` : "",
+        `报价提示：${getGoldQuoteAdvice(result.shopQuote, currentGoldReferencePrice, result.quoteCurrencyCode)}`,
         "参考说明：按当前成色估算，实际结算以现场复称和复检为准。"
       ].filter(Boolean).join("\n");
 
