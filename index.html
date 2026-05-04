@@ -536,6 +536,56 @@
       cursor: not-allowed;
     }
 
+    .judge-panel .image-preview {
+      max-height: 132px;
+      overflow-y: auto;
+      margin-top: 8px;
+      padding: 6px;
+    }
+
+    .judge-panel .image-preview-row {
+      grid-template-columns: 54px minmax(0, 1fr) auto;
+      gap: 7px;
+      min-height: 58px;
+    }
+
+    .judge-panel .image-preview img {
+      width: 54px;
+      height: 42px;
+    }
+
+    .judge-panel .image-preview p {
+      overflow: hidden;
+      font-size: 12px;
+      line-height: 1.25;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .judge-panel .image-preview p strong {
+      display: block;
+      overflow: hidden;
+      max-width: 100%;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .judge-panel .image-preview p span {
+      display: block;
+      margin-top: 2px;
+      color: #94a3b8;
+      font-size: 11px;
+    }
+
+    .judge-panel .image-preview .remove-image {
+      top: -5px;
+      right: -5px;
+      width: 24px;
+      height: 24px;
+      min-height: 24px;
+      font-size: 16px;
+    }
+
     .image-modal {
       position: fixed;
       inset: 0;
@@ -1331,6 +1381,28 @@
       box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
     }
 
+    .gold-input-shell {
+      position: relative;
+    }
+
+    .gold-input-shell input {
+      padding-right: 92px;
+    }
+
+    .gold-input-shell .mini-toggle {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 1;
+      background: rgba(248, 250, 252, 0.96);
+    }
+
+    .gold-input-shell .mini-toggle button {
+      min-height: 24px;
+      padding: 2px 8px;
+      font-size: 11px;
+    }
+
     .currency-input {
       display: flex;
       align-items: stretch;
@@ -1762,11 +1834,33 @@
       }
 
       .judge-upload-footer {
-        align-items: stretch;
+        align-items: center;
       }
 
       .judge-add-image-button {
-        flex: 1;
+        flex: 0 0 auto;
+        min-height: 32px;
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+
+      .judge-panel textarea {
+        min-height: 210px;
+        max-height: 36vh;
+      }
+
+      .judge-panel .image-preview {
+        max-height: 108px;
+      }
+
+      .judge-panel .image-preview-row {
+        grid-template-columns: 48px minmax(0, 1fr) auto;
+        min-height: 52px;
+      }
+
+      .judge-panel .image-preview img {
+        width: 48px;
+        height: 38px;
       }
     }
 
@@ -2021,13 +2115,15 @@
           <div>
             <div class="field-label-row">
               <label id="waterDiffLabel" for="waterDiff">排水差重（g）</label>
+            </div>
+            <div class="gold-input-shell">
               <div class="mini-toggle" aria-label="选择输入方式">
                 <button id="waterModeDiff" type="button" class="is-active" onclick="setWaterInputMode('diff')">差重</button>
                 <button id="waterModeFloat" type="button" onclick="setWaterInputMode('float')">浮重</button>
               </div>
               <input id="waterInputMode" type="hidden" value="diff" />
+              <input id="waterDiff" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：0.55" oninput="calculateGoldPurity()" />
             </div>
-            <input id="waterDiff" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：0.55" oninput="calculateGoldPurity()" />
           </div>
         </div>
 
@@ -2201,6 +2297,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let selectedImageFile = null;
     let selectedJudgeImageUrls = [];
     let selectedJudgeImageFiles = [];
+    let recognitionStatusHideTimer = null;
 
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
@@ -2743,6 +2840,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function setRecognitionStatus(text = "", type = "") {
+      clearTimeout(recognitionStatusHideTimer);
       if (!text) {
         recognitionStatus.style.display = "none";
         recognitionStatus.textContent = "";
@@ -2753,6 +2851,16 @@ Au值 = 纯度 × 10 后取整数</div>
       recognitionStatus.style.display = "flex";
       recognitionStatus.textContent = text;
       recognitionStatus.className = `recognition-status ${type}`.trim();
+    }
+
+    function showRecognitionProgress(text, type = "loading", hideDelay = 0) {
+      setRecognitionStatus(text, type);
+
+      if (hideDelay > 0) {
+        recognitionStatusHideTimer = setTimeout(() => {
+          setRecognitionStatus("", "");
+        }, hideDelay);
+      }
     }
 
     function showUploadSupportMessage(text) {
@@ -2901,7 +3009,7 @@ Au值 = 纯度 × 10 后取整数</div>
           <button type="button" class="preview-button" onclick="openJudgeSelectedImage(${index})" title="点击查看上传图片">
             <img src="${selectedJudgeImageUrls[index]}" alt="已上传判读图片预览" />
           </button>
-          <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />点击图片可查看大图</p>
+          <p><strong>${escapeHtml(file.name)}</strong><span>${Math.round(file.size / 1024)} KB</span></p>
           <button type="button" class="remove-image" onclick="clearJudgeSelectedImage(${index})" title="删除图片" aria-label="删除图片">×</button>
         </div>`).join("");
       updateJudgeUploadControls();
@@ -5085,7 +5193,7 @@ ${placemarks}
       imageInput.disabled = true;
       supportPanel.style.display = "none";
       clearUploadMessage();
-      setRecognitionStatus("正在读取图片并识别坐标……", "loading");
+      showRecognitionProgress("正在上传图片...", "loading");
       trackEvent("image_upload_select", {
         fileSize: file.size,
         fileType: file.type
@@ -5100,6 +5208,7 @@ ${placemarks}
         appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
         appendDebug("正在调用识别接口");
         showMessage("正在调用识别接口……");
+        showRecognitionProgress("正在识别坐标...", "loading");
 
         const response = await fetch("/api/recognize-coordinates", {
           method: "POST",
@@ -5117,6 +5226,7 @@ ${placemarks}
             error: "后端没有返回 JSON，可能是服务异常。"
           };
         }
+        showRecognitionProgress("正在整理坐标格式...", "loading");
 
         if (!response.ok && data.reason === "limit_exceeded") {
           if (data.quota) {
@@ -5192,7 +5302,7 @@ ${placemarks}
         } else {
           showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。");
         }
-        setRecognitionStatus("识别完成，坐标已填入工作区，请核对后下载。", "success");
+        showRecognitionProgress("识别完成", "success", 1200);
       } catch (error) {
         const publicErrorMessage = sanitizeUserFacingTechMessage(error.message);
         appendDebug(`错误信息：${publicErrorMessage}`);
