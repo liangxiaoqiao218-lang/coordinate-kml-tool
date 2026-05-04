@@ -1312,6 +1312,95 @@
       font-weight: 700;
     }
 
+    .mini-toggle {
+      display: inline-flex;
+      padding: 2px;
+      border: 1px solid #dbe4ef;
+      border-radius: 999px;
+      background: #f8fafc;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+
+    .mini-toggle button {
+      min-height: 26px;
+      padding: 3px 9px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .mini-toggle button.is-active {
+      background: #ffffff;
+      color: #2563eb;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+    }
+
+    .currency-input {
+      display: flex;
+      align-items: stretch;
+      min-height: 48px;
+      border: 1px solid #cbd6e2;
+      border-radius: 8px;
+      background: #ffffff;
+      overflow: hidden;
+    }
+
+    .currency-input select {
+      width: 86px;
+      border: 0;
+      border-right: 1px solid #e2e8f0;
+      border-radius: 0;
+      background: #f8fafc;
+      color: #334155;
+      font-size: 14px;
+      font-weight: 800;
+      padding: 0 8px;
+      outline: none;
+      flex-shrink: 0;
+    }
+
+    .currency-input input {
+      border: 0 !important;
+      border-radius: 0 !important;
+      min-height: 48px;
+      flex: 1;
+      box-shadow: none !important;
+    }
+
+    .quote-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .quote-header strong {
+      color: #0f172a;
+    }
+
+    .ghost-action {
+      border: 1px solid #dbe4ef;
+      background: #ffffff;
+      color: #64748b;
+      border-radius: 999px;
+      padding: 6px 11px;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .ghost-action:hover {
+      color: #2563eb;
+      border-color: #bfdbfe;
+      background: #f8fbff;
+    }
+
     .gold-input-grid input {
       width: 100%;
       min-height: 52px;
@@ -1941,10 +2030,11 @@
           <div>
             <div class="field-label-row">
               <label id="waterDiffLabel" for="waterDiff">排水差重（g）</label>
-              <select id="waterInputMode" class="inline-select" onchange="calculateGoldPurity()">
-                <option value="diff">排水差重</option>
-                <option value="float">水中浮重</option>
-              </select>
+              <div class="mini-toggle" aria-label="选择输入方式">
+                <button id="waterModeDiff" type="button" class="is-active" onclick="setWaterInputMode('diff')">差重</button>
+                <button id="waterModeFloat" type="button" onclick="setWaterInputMode('float')">浮重</button>
+              </div>
+              <input id="waterInputMode" type="hidden" value="diff" />
             </div>
             <input id="waterDiff" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：0.55" oninput="calculateGoldPurity()" />
           </div>
@@ -1988,13 +2078,16 @@ Au值 = 纯度 × 10 后取整数</div>
         </details>
 
         <div class="quote-placeholder">
-          <strong>报价对比</strong>
+          <div class="quote-header">
+            <strong>报价对比</strong>
+            <button type="button" class="ghost-action" onclick="clearGoldCalculator()">清空全部</button>
+          </div>
           <p id="goldPriceInfo">正在读取参考金价...</p>
           <div class="quote-grid">
             <div>
-              <div class="field-label-row">
-                <label id="shopQuoteLabel" for="shopQuote">金店报价（元/克）</label>
-                <select id="quoteCurrency" class="inline-select" onchange="calculateGoldPurity()">
+              <label id="shopQuoteLabel" for="shopQuote">金店报价（元/克）</label>
+              <div class="currency-input">
+                <select id="quoteCurrency" aria-label="选择报价币种" onchange="calculateGoldPurity()">
                   <option value="CNY">CNY ¥</option>
                   <option value="USD">USD $</option>
                   <option value="XOF">XOF CFA</option>
@@ -2002,8 +2095,8 @@ Au值 = 纯度 × 10 后取整数</div>
                   <option value="EUR">EUR €</option>
                   <option value="AED">AED د.إ</option>
                 </select>
+                <input id="shopQuote" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：980" oninput="calculateGoldPurity()" />
               </div>
-              <input id="shopQuote" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：980" oninput="calculateGoldPurity()" />
               <div id="settlementPreview" class="settlement-preview" aria-live="polite"></div>
             </div>
             <div id="quoteResult" class="quote-result">输入成色数据和金店报价后，辅助判断当前报价区间是否合理。</div>
@@ -3163,6 +3256,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const waterLabel = document.getElementById("waterDiffLabel");
       const quoteLabel = document.getElementById("shopQuoteLabel");
       const currency = getSelectedGoldCurrency();
+      const diffButton = document.getElementById("waterModeDiff");
+      const floatButton = document.getElementById("waterModeFloat");
 
       if (waterLabel) {
         waterLabel.textContent = mode === "float" ? "水中浮重（g）" : "排水差重（g）";
@@ -3171,6 +3266,29 @@ Au值 = 纯度 × 10 后取整数</div>
       if (quoteLabel) {
         quoteLabel.textContent = `金店报价（${currency.unit}）`;
       }
+
+      diffButton?.classList.toggle("is-active", mode === "diff");
+      floatButton?.classList.toggle("is-active", mode === "float");
+    }
+
+    function setWaterInputMode(mode) {
+      const input = document.getElementById("waterInputMode");
+      if (input) {
+        input.value = mode === "float" ? "float" : "diff";
+      }
+
+      calculateGoldPurity();
+    }
+
+    function clearGoldCalculator() {
+      ["goldWeight", "waterDiff", "shopQuote"].forEach((id) => {
+        const field = document.getElementById(id);
+        if (field) {
+          field.value = "";
+        }
+      });
+
+      calculateGoldPurity();
     }
 
     function updateGoldPriceInfo() {
