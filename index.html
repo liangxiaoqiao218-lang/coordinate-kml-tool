@@ -1267,6 +1267,177 @@
       position: relative;
     }
 
+    .judge-decision-card {
+      display: grid;
+      gap: 10px;
+      margin: 0 0 12px;
+      padding: 14px;
+      border: 1px solid #dbeafe;
+      border-radius: 14px;
+      background: #f8fbff;
+      box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
+    }
+
+    .judge-decision-card[hidden] {
+      display: none;
+    }
+
+    .judge-decision-top {
+      display: grid;
+      grid-template-columns: 1.25fr 0.45fr 0.55fr 0.65fr;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .judge-decision-item {
+      min-width: 0;
+      padding: 9px 10px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .judge-decision-label {
+      display: block;
+      margin-bottom: 3px;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .judge-decision-value {
+      display: block;
+      color: #0f172a;
+      font-size: 20px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+
+    .judge-decision-grade {
+      font-size: 24px;
+      letter-spacing: 0.02em;
+    }
+
+    .judge-decision-summary {
+      margin: 0;
+      padding: 9px 10px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.72);
+      color: #334155;
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.45;
+    }
+
+    .judge-decision-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .judge-decision-actions button {
+      width: auto;
+      min-height: 34px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-size: 13px;
+      box-shadow: none;
+    }
+
+    .judge-decision-hint {
+      margin: -2px 0 0;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .judge-recent {
+      display: grid;
+      gap: 8px;
+      margin: 10px 0 12px;
+    }
+
+    .judge-recent[hidden] {
+      display: none;
+    }
+
+    .judge-recent-title {
+      color: #475569;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .judge-recent-list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .judge-recent-item {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 8px;
+      align-items: center;
+      min-height: 52px;
+      padding: 7px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #334155;
+      cursor: pointer;
+      text-align: left;
+      box-shadow: none;
+    }
+
+    .judge-recent-item img {
+      width: 44px;
+      height: 38px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: #f1f5f9;
+    }
+
+    .judge-recent-item img:not([src]) {
+      display: none;
+    }
+
+    .judge-recent-item strong {
+      display: block;
+      color: #0f172a;
+      font-size: 13px;
+      line-height: 1.2;
+    }
+
+    .judge-recent-item span {
+      display: block;
+      margin-top: 2px;
+      color: #64748b;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .judge-decision-card.grade-a {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+    }
+
+    .judge-decision-card.grade-b {
+      border-color: #bfdbfe;
+      background: #eff6ff;
+    }
+
+    .judge-decision-card.grade-c {
+      border-color: #fed7aa;
+      background: #fff7ed;
+    }
+
+    .judge-decision-card.grade-d {
+      border-color: #e2e8f0;
+      background: #f8fafc;
+    }
+
     .judge-result-tools {
       position: absolute;
       right: 10px;
@@ -1867,6 +2038,30 @@
         line-height: 1.7;
       }
 
+      .judge-decision-card {
+        padding: 12px;
+      }
+
+      .judge-decision-top {
+        grid-template-columns: 1fr;
+      }
+
+      .judge-decision-value {
+        font-size: 19px;
+      }
+
+      .judge-decision-grade {
+        font-size: 22px;
+      }
+
+      .judge-decision-actions button {
+        flex: 1 1 auto;
+      }
+
+      .judge-recent-list {
+        grid-template-columns: 1fr;
+      }
+
       .judge-panel .image-preview {
         max-height: 108px;
       }
@@ -2065,11 +2260,16 @@
           <span id="judgeProgressText">正在分析图片信息...</span>
         </div>
         <div class="judge-result-wrap">
+          <div id="judgeDecisionCard" class="judge-decision-card" hidden></div>
           <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里。"></textarea>
           <div class="judge-result-tools">
             <button type="button" class="icon-button" onclick="clearJudgeResult()" title="清除判读结果" aria-label="清除判读结果">×</button>
             <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">⧉</button>
           </div>
+        </div>
+        <div id="judgeRecentPanel" class="judge-recent" hidden>
+          <div class="judge-recent-title">最近判读</div>
+          <div id="judgeRecentList" class="judge-recent-list"></div>
         </div>
 
         <label for="judgeImageInput" style="margin-top: 12px;">上传图片</label>
@@ -2235,6 +2435,9 @@ Au值 = 纯度 × 10 后取整数</div>
     const judgeImagePreview = document.getElementById("judgeImagePreview");
     const judgeMessage = document.getElementById("judgeMessage");
     const judgeResult = document.getElementById("judgeResult");
+    const judgeDecisionCard = document.getElementById("judgeDecisionCard");
+    const judgeRecentPanel = document.getElementById("judgeRecentPanel");
+    const judgeRecentList = document.getElementById("judgeRecentList");
     const judgeProgressVisual = document.getElementById("judgeProgressVisual");
     const judgeProgressText = document.getElementById("judgeProgressText");
     const judgeAddImageButton = document.getElementById("judgeAddImageButton");
@@ -2291,6 +2494,7 @@ Au值 = 纯度 × 10 后取整数</div>
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
     loadUserQuota();
+    renderJudgeRecent();
     loadGoldReferencePrice();
     trackEvent("page_visit");
 
@@ -2579,8 +2783,8 @@ Au值 = 纯度 × 10 后取整数</div>
       quotaModal.dataset.stage = "price";
 
       if (type === "judge") {
-        quotaTitle.textContent = "AI判读次数已用完";
-        quotaDescription.innerHTML = "今天的免费判读次数已经用完<br>继续判读可以扫码添加我，人工开通次数";
+        quotaTitle.textContent = "解锁 AI 判读次数";
+        quotaDescription.innerHTML = "今天的免费判读次数已经用完<br>解锁后可以继续上传图片判读";
         quotaOptions.innerHTML = `
           <div class="quota-option">👉 10次判读：¥9.9 <span class="quota-badge">推荐</span></div>
           <div class="quota-option">👉 用于快速判断矿地是否值得继续投入</div>
@@ -3034,6 +3238,7 @@ Au值 = 纯度 × 10 后取整数</div>
         judgeImagePreview.style.display = "none";
         judgeImagePreview.innerHTML = "";
         updateJudgeUploadControls();
+        clearJudgeDecisionCard();
         hideJudgeProgressVisual();
         showJudgeMessage("请上传图片文件，当前判读暂不直接读取文档。", true);
         return;
@@ -3062,6 +3267,7 @@ Au值 = 纯度 × 10 后取整数</div>
       showJudgeSelectedImage(validFiles.slice(0, 1));
       judgeImageInput.value = "";
       judgeResult.value = "";
+      clearJudgeDecisionCard();
       hideJudgeProgressVisual();
       showJudgeMessage("已选择图片，点击“开始判读”后进行分析。");
     }
@@ -3103,6 +3309,7 @@ Au值 = 纯度 × 10 后取整数</div>
         judgeImageInput.value = "";
         updateJudgeUploadControls();
         judgeResult.value = "";
+        clearJudgeDecisionCard();
         hideJudgeProgressVisual();
         showJudgeMessage("已删除判读图片，可以重新选择。");
         return;
@@ -3170,6 +3377,190 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeProgressVisual.classList.remove("active");
     }
 
+    function clearJudgeDecisionCard() {
+      if (!judgeDecisionCard) {
+        return;
+      }
+
+      judgeDecisionCard.hidden = true;
+      judgeDecisionCard.className = "judge-decision-card";
+      judgeDecisionCard.innerHTML = "";
+    }
+
+    function getJudgeSection(text, sectionName) {
+      const source = String(text || "");
+      const match = source.match(new RegExp(`【${sectionName}】([\\s\\S]*?)(?=\\n?【|$)`));
+      return (match?.[1] || "").trim();
+    }
+
+    function getJudgeGrade(text) {
+      const gradeText = getJudgeSection(text, "等级") || text;
+      const match = String(gradeText || "").match(/\b([ABCD])\b|([ABCD])\s*[：:]/i);
+      return (match?.[1] || match?.[2] || "C").toUpperCase();
+    }
+
+    function getJudgeDecisionMeta(grade, text) {
+      const summary = getJudgeSection(text, "一句话总结") || getJudgeSection(text, "结论");
+      const sourceText = String(text || "");
+      const lowConfidence = /清晰度有限|看不清|信息不足|缺少.*参照|无法判断/.test(sourceText);
+      const map = {
+        A: {
+          worth: "✔ 值得继续",
+          confidence: lowConfidence ? "中" : "高",
+          score: lowConfidence ? 78 : 88,
+          summary: "👉 这张图有继续看的价值，可以进入下一步验证。"
+        },
+        B: {
+          worth: "⚠ 可以观察",
+          confidence: lowConfidence ? "低" : "中",
+          score: lowConfidence ? 58 : 68,
+          summary: "👉 这块目前看有机会，但不建议重投入。"
+        },
+        C: {
+          worth: "✖ 不建议投入",
+          confidence: lowConfidence ? "低" : "中",
+          score: lowConfidence ? 38 : 46,
+          summary: "👉 风险偏大，先补关键照片再决定。"
+        },
+        D: {
+          worth: "✖ 不建议投入",
+          confidence: sourceText.includes("直接排除") || !lowConfidence ? "高" : "中",
+          score: sourceText.includes("直接排除") ? 15 : 25,
+          summary: "👉 更像普通矿物或普通地貌，不建议继续花时间。"
+        }
+      };
+      const fallback = map[grade] || map.C;
+
+      return {
+        ...fallback,
+        summary: summary ? `👉 ${summary.replace(/^👉\s*/, "")}` : fallback.summary
+      };
+    }
+
+    function renderJudgeDecisionCard(text) {
+      if (!judgeDecisionCard || !String(text || "").trim()) {
+        clearJudgeDecisionCard();
+        return null;
+      }
+
+      const grade = getJudgeGrade(text);
+      const meta = getJudgeDecisionMeta(grade, text);
+      judgeDecisionCard.hidden = false;
+      judgeDecisionCard.className = `judge-decision-card grade-${grade.toLowerCase()}`;
+      judgeDecisionCard.innerHTML = `
+        <div class="judge-decision-top">
+          <div class="judge-decision-item">
+            <span class="judge-decision-label">是否值得继续</span>
+            <span class="judge-decision-value">${escapeHtml(meta.worth)}</span>
+          </div>
+          <div class="judge-decision-item">
+            <span class="judge-decision-label">判断等级</span>
+            <span class="judge-decision-value judge-decision-grade">${escapeHtml(grade)}</span>
+          </div>
+          <div class="judge-decision-item">
+            <span class="judge-decision-label">置信度</span>
+            <span class="judge-decision-value">${escapeHtml(meta.confidence)}</span>
+          </div>
+          <div class="judge-decision-item">
+            <span class="judge-decision-label">潜力评分</span>
+            <span class="judge-decision-value">${escapeHtml(String(meta.score))}</span>
+          </div>
+        </div>
+        <p class="judge-decision-summary">${escapeHtml(meta.summary)}</p>
+        <div class="judge-decision-actions">
+          <button type="button" class="secondary" onclick="startNewJudgeTest()">再测一张</button>
+          <button type="button" class="secondary" onclick="startAngleRetest()">换角度重测</button>
+          <button type="button" class="secondary" onclick="saveCurrentJudgeResult()">保存结果</button>
+        </div>
+        <p class="judge-decision-hint">试试换一张角度，结果可能不同。</p>`;
+      return { grade, ...meta };
+    }
+
+    function getJudgeRecentItems() {
+      try {
+        return JSON.parse(localStorage.getItem("judgeRecentResults") || "[]").slice(0, 3);
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function setJudgeRecentItems(items) {
+      localStorage.setItem("judgeRecentResults", JSON.stringify(items.slice(0, 3)));
+    }
+
+    function renderJudgeRecent() {
+      if (!judgeRecentPanel || !judgeRecentList) {
+        return;
+      }
+
+      const items = getJudgeRecentItems();
+      judgeRecentPanel.hidden = items.length === 0;
+      judgeRecentList.innerHTML = items.map((item, index) => `
+        <button type="button" class="judge-recent-item" onclick="restoreJudgeRecent(${index})">
+          <img src="${escapeHtml(item.thumb || "")}" alt="最近判读缩略图" />
+          <span>
+            <strong>${escapeHtml(item.grade || "C")} · ${escapeHtml(item.worth || "可以观察")}</strong>
+            <span>${escapeHtml(item.summary || "点击回看结果")}</span>
+          </span>
+        </button>`).join("");
+    }
+
+    function getCurrentJudgeThumb() {
+      return selectedJudgeImageUrls[0] || "";
+    }
+
+    function saveJudgeResultToRecent(text, meta) {
+      const result = String(text || "").trim();
+      if (!result) {
+        return false;
+      }
+
+      const item = {
+        id: Date.now(),
+        result,
+        grade: meta?.grade || getJudgeGrade(result),
+        worth: meta?.worth || getJudgeDecisionMeta(getJudgeGrade(result), result).worth,
+        summary: (meta?.summary || getJudgeSection(result, "一句话总结") || getJudgeSection(result, "结论") || "").replace(/^👉\s*/, ""),
+        thumb: getCurrentJudgeThumb()
+      };
+      setJudgeRecentItems([item, ...getJudgeRecentItems()].slice(0, 3));
+      renderJudgeRecent();
+      return true;
+    }
+
+    function saveCurrentJudgeResult() {
+      const meta = renderJudgeDecisionCard(judgeResult.value);
+      if (!saveJudgeResultToRecent(judgeResult.value, meta)) {
+        showJudgeMessage("暂无判读结果可保存。", true);
+        return;
+      }
+      showJudgeMessage("已保存到最近判读。");
+    }
+
+    function restoreJudgeRecent(index) {
+      const item = getJudgeRecentItems()[index];
+      if (!item) {
+        return;
+      }
+
+      judgeResult.value = item.result || "";
+      renderJudgeDecisionCard(judgeResult.value);
+      showJudgeMessage("已打开最近判读结果。");
+    }
+
+    function startNewJudgeTest() {
+      clearJudgeSelectedImage();
+      clearJudgeResult();
+      judgeImageInput.click();
+    }
+
+    function startAngleRetest() {
+      showJudgeMessage("请换一个角度拍摄：近景、断面或带比例物会更准。");
+      clearJudgeSelectedImage();
+      clearJudgeResult();
+      judgeImageInput.click();
+    }
+
     function startJudgeProgress(fileCount) {
       const steps = [
         "正在上传图片...",
@@ -3213,6 +3604,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       judgeResult.value = "";
+      clearJudgeDecisionCard();
       const progressTimer = startJudgeProgress(files.length);
       const compressedFiles = await Promise.all(files.slice(0, 1).map(compressJudgeImage));
       const formData = new FormData();
@@ -3266,6 +3658,8 @@ Au值 = 纯度 × 10 后取整数</div>
         await new Promise(resolve => setTimeout(resolve, 350));
         hideJudgeProgressVisual();
         judgeResult.value = data.result || "未返回判读结果。";
+        const decisionMeta = renderJudgeDecisionCard(judgeResult.value);
+        saveJudgeResultToRecent(judgeResult.value, decisionMeta);
         if (data.quota) {
           updateQuotaDisplay(data.quota);
         } else {
@@ -3279,6 +3673,7 @@ Au值 = 纯度 × 10 后取整数</div>
         clearInterval(progressTimer);
         hideJudgeProgressVisual();
         judgeResult.value = "";
+        clearJudgeDecisionCard();
         showJudgeMessage("AI判读失败，请检查图片或稍后重试。", true);
         trackEvent("ai_judge_fail", {
           message: error.message,
@@ -3313,6 +3708,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function clearJudgeResult() {
       judgeResult.value = "";
+      clearJudgeDecisionCard();
       showJudgeMessage("判读结果已清除。");
     }
 
