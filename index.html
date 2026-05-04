@@ -29,7 +29,7 @@
     }
 
     .page {
-      width: min(960px, 100%);
+      width: min(1100px, 100%);
       margin: 0 auto;
       padding: 20px;
     }
@@ -49,11 +49,11 @@
 
     .home-view {
       display: none;
-      width: min(760px, 100%);
-      min-height: 50vh;
+      width: min(980px, 100%);
+      min-height: 54vh;
       margin: 0 auto;
       place-content: center;
-      padding: 4px 0;
+      padding: 12px 0 0;
     }
 
     .home-view.active {
@@ -77,14 +77,14 @@
     }
 
     .home-hero h1 {
-      max-width: 560px;
+      max-width: 720px;
       margin: 0 auto 6px;
       font-size: 34px;
       line-height: 1.2;
     }
 
     .home-hero .intro {
-      max-width: 560px;
+      max-width: 680px;
       margin: 0 auto;
       padding-left: 0;
       border-left: 0;
@@ -145,13 +145,13 @@
     .module-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      margin-top: 14px;
+      gap: 16px;
+      margin-top: 24px;
     }
 
     .module-card {
-      min-height: 96px;
-      padding: 14px;
+      min-height: 128px;
+      padding: 18px;
       border: 1px solid #d6dfeb;
       border-radius: 8px;
       background: #ffffff;
@@ -170,8 +170,8 @@
 
     .module-card strong {
       display: block;
-      margin-bottom: 7px;
-      font-size: 18px;
+      margin-bottom: 8px;
+      font-size: 20px;
       color: #0f172a;
     }
 
@@ -179,7 +179,7 @@
       display: block;
       color: #526071;
       line-height: 1.5;
-      font-size: 13px;
+      font-size: 14px;
     }
 
     .module-card.primary-module {
@@ -1527,7 +1527,7 @@
       }
 
       .home-view {
-        padding-top: 0;
+        padding-top: 4px;
         min-height: auto;
       }
 
@@ -1603,21 +1603,21 @@
       }
 
       .module-card {
-        min-height: auto;
-        padding: 11px 13px;
+        min-height: 104px;
+        padding: 15px 16px;
       }
 
       .module-card strong {
-        font-size: 19px;
+        font-size: 18px;
       }
 
       .module-card span {
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.45;
       }
 
       .module-action {
-        margin-top: 12px;
+        margin-top: 10px;
       }
 
       .wechat-info {
@@ -1661,16 +1661,10 @@
     }
 
     .version-stamp {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 6px;
-      z-index: 2;
-      margin: 0 auto;
-      color: #cbd5e1;
+      margin: 18px auto 4px;
+      color: #b8c4d3;
       font-size: 11px;
       text-align: center;
-      pointer-events: none;
       user-select: text;
     }
   </style>
@@ -1963,7 +1957,7 @@ Au值 = 纯度 × 10 后取整数</div>
           <div class="quote-grid">
             <div>
               <label for="shopQuote">金店报价（元/克）</label>
-              <input id="shopQuote" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：560" oninput="calculateGoldPurity()" />
+              <input id="shopQuote" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：980" oninput="calculateGoldPurity()" />
               <div id="settlementPreview" class="settlement-preview" aria-live="polite"></div>
             </div>
             <div id="quoteResult" class="quote-result">输入成色数据和金店报价后，辅助判断当前报价区间是否合理。</div>
