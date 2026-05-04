@@ -231,14 +231,14 @@
     }
 
     .back-button {
-      min-height: 38px;
+      min-height: 40px;
       padding: 8px 12px;
       margin-bottom: 0;
       border: 1px solid #d6dfeb;
       border-radius: 8px;
       background: #ffffff;
       color: #334155;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 700;
     }
 
@@ -249,23 +249,23 @@
       margin-bottom: 14px;
     }
 
-    .nav-switch {
+    .back-button.is-active {
       background: #0f172a;
       color: #ffffff;
       border-color: #0f172a;
     }
 
-    .nav-switch.coordinate-switch {
+    .back-button.coordinate-switch.is-active {
       background: #2563eb;
       border-color: #2563eb;
     }
 
-    .nav-switch.judge-switch {
+    .back-button.judge-switch.is-active {
       background: #15803d;
       border-color: #15803d;
     }
 
-    .nav-switch.gold-switch {
+    .back-button.gold-switch.is-active {
       background: #d97706;
       border-color: #d97706;
     }
@@ -1217,6 +1217,21 @@
       gap: 12px;
     }
 
+    .gold-input-grid label {
+      margin-bottom: 8px;
+      color: #0f172a;
+      font-size: 15px;
+    }
+
+    .gold-input-grid input {
+      width: 100%;
+      min-height: 52px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
     .gold-result-card {
       padding: 18px;
       border: 1px solid #fde68a;
@@ -1476,6 +1491,12 @@
 <body>
   <main class="page">
     <section id="homePage" class="view active home-view">
+      <div class="page-nav">
+        <button type="button" class="back-button is-active" onclick="showPage('home')">首页</button>
+        <button type="button" class="back-button coordinate-switch" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button judge-switch" onclick="showPage('judge')">AI矿地判读</button>
+        <button type="button" class="back-button gold-switch" onclick="showPage('gold')">黄金成色计算器</button>
+      </div>
       <div class="home-hero">
         <p class="eyebrow">Geo Tool</p>
         <h1>矿业空间工具 Geo Tool</h1>
@@ -1510,7 +1531,9 @@
     <section id="coordinatePage" class="view">
       <div class="page-nav">
         <button type="button" class="back-button" onclick="showPage('home')">首页</button>
-        <button type="button" class="back-button nav-switch judge-switch" onclick="showPage('judge')">AI矿地判读</button>
+        <button type="button" class="back-button coordinate-switch is-active" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button judge-switch" onclick="showPage('judge')">AI矿地判读</button>
+        <button type="button" class="back-button gold-switch" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
       <h1>坐标处理工具</h1>
       <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
@@ -1633,7 +1656,9 @@
     <section id="judgePage" class="view">
       <div class="page-nav">
         <button type="button" class="back-button" onclick="showPage('home')">首页</button>
-        <button type="button" class="back-button nav-switch coordinate-switch" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button coordinate-switch" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button judge-switch is-active" onclick="showPage('judge')">AI矿地判读</button>
+        <button type="button" class="back-button gold-switch" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
       <h1>AI矿地判读</h1>
       <p class="intro">上传矿地、河道、卫星图或矿石照片，AI只做初筛判断：是否值得继续看、主要风险在哪里。不预测含量，不标具体金点。</p>
@@ -1694,8 +1719,9 @@
     <section id="goldPage" class="view">
       <div class="page-nav">
         <button type="button" class="back-button" onclick="showPage('home')">首页</button>
-        <button type="button" class="back-button nav-switch coordinate-switch" onclick="showPage('coordinate')">坐标处理工具</button>
-        <button type="button" class="back-button nav-switch judge-switch" onclick="showPage('judge')">AI矿地判读</button>
+        <button type="button" class="back-button coordinate-switch" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button judge-switch" onclick="showPage('judge')">AI矿地判读</button>
+        <button type="button" class="back-button gold-switch is-active" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
       <h1>黄金成色计算器</h1>
       <p class="intro">输入黄金重量和排水差重，快速估算纯度、K值和Au值。结果仅供现场快速参考。</p>
@@ -1736,10 +1762,17 @@
 
         <details class="formula-box">
           <summary>查看计算公式</summary>
-          <div id="goldFormulaText" class="formula-lines">density = gold_weight / water_diff
-purity = density / 19.32 * 100
-k_value = purity / 100 * 24
-au_value = round(purity * 10)</div>
+          <div id="goldFormulaText" class="formula-lines">第一步：先算比重
+比重 = 黄金重量 ÷ 排水差重
+
+第二步：再算纯度
+纯度 = 比重 ÷ 纯金比重 × 100
+
+第三步：换算 K 值
+K值 = 纯度 ÷ 100 × 24
+
+第四步：换算 Au 值
+Au值 = 纯度 × 10 后取整数</div>
         </details>
 
         <div class="quote-placeholder">
@@ -1856,7 +1889,7 @@ au_value = round(purity * 10)</div>
       if (updateUrl) {
         const pathMap = {
           home: "/",
-          coordinate: focusTarget === "upload" ? "/ocr" : "/convert",
+          coordinate: focusTarget === "upload" ? "/ocr" : "/tool",
           judge: "/judge",
           gold: "/gold"
         };
@@ -1881,7 +1914,7 @@ au_value = round(purity * 10)</div>
     }
 
     function openPageFromPath() {
-      if (location.pathname === "/convert" || location.hash === "#coordinate") {
+      if (location.pathname === "/tool" || location.pathname === "/convert" || location.hash === "#coordinate") {
         showPage("coordinate", "", false);
       } else if (location.pathname === "/ocr") {
         showPage("coordinate", "upload", false);
@@ -2846,10 +2879,17 @@ au_value = round(purity * 10)</div>
         auEl.textContent = "--";
         densityEl.textContent = "--";
         gradeEl.textContent = "输入数据后自动判断成色等级。";
-        formulaEl.textContent = `density = gold_weight / water_diff
-purity = density / 19.32 * 100
-k_value = purity / 100 * 24
-au_value = round(purity * 10)`;
+        formulaEl.textContent = `第一步：先算比重
+比重 = 黄金重量 ÷ 排水差重
+
+第二步：再算纯度
+纯度 = 比重 ÷ 纯金比重 × 100
+
+第三步：换算 K 值
+K值 = 纯度 ÷ 100 × 24
+
+第四步：换算 Au 值
+Au值 = 纯度 × 10 后取整数`;
         messageEl.textContent = "";
         messageEl.className = "message";
         return null;
@@ -2860,10 +2900,21 @@ au_value = round(purity * 10)`;
       auEl.textContent = `Au${result.auValue}`;
       densityEl.textContent = formatGoldNumber(result.density, 3);
       gradeEl.textContent = result.grade;
-      formulaEl.textContent = `density = ${result.goldWeight} / ${result.waterDiff} = ${formatGoldNumber(result.density, 3)}
-purity = ${formatGoldNumber(result.density, 3)} / 19.32 * 100 = ${formatGoldNumber(result.purity)}%
-k_value = ${formatGoldNumber(result.purity)} / 100 * 24 = ${formatGoldNumber(result.kValue)}K
-au_value = round(${formatGoldNumber(result.purity)} * 10) = Au${result.auValue}`;
+      formulaEl.textContent = `第一步：先算比重
+比重 = 黄金重量 ÷ 排水差重
+比重 = ${result.goldWeight} ÷ ${result.waterDiff} = ${formatGoldNumber(result.density, 3)}
+
+第二步：再算纯度
+纯度 = 比重 ÷ 纯金比重 × 100
+纯度 = ${formatGoldNumber(result.density, 3)} ÷ 19.32 × 100 = ${formatGoldNumber(result.purity)}%
+
+第三步：换算 K 值
+K值 = 纯度 ÷ 100 × 24
+K值 = ${formatGoldNumber(result.purity)} ÷ 100 × 24 = ${formatGoldNumber(result.kValue)}K
+
+第四步：换算 Au 值
+Au值 = 纯度 × 10 后取整数
+Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       messageEl.textContent = "";
       messageEl.className = "message";
       return result;
