@@ -3340,6 +3340,24 @@ A / B / C / D，并解释一句。A=明显值得继续；B=有潜力但需要验
     });
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
+    const aliyunStatus = error.response?.status || error.status || null;
+    const aliyunData = error.response?.data || error.details || null;
+    const aliyunDetail = error.response?.data?.message
+      || error.details?.error?.message
+      || error.details?.message
+      || error.message
+      || "未知错误";
+
+    console.error("[Aliyun] 请求失败");
+    if (error.response) {
+      console.error("status:", error.response.status);
+      console.error("data:", JSON.stringify(error.response.data || {}).slice(0, 2000));
+    } else {
+      console.error("status:", aliyunStatus || "无HTTP状态");
+      console.error("data:", aliyunData ? JSON.stringify(aliyunData).slice(0, 2000) : "无响应数据");
+      console.error("error:", error.message);
+    }
+
     console.error("阿里云 AI 判读失败：", {
       message: error.message,
       code: error.code,
@@ -3350,7 +3368,12 @@ A / B / C / D，并解释一句。A=明显值得继续；B=有潜力但需要验
       fileNames: uploadedFiles.map(file => file.originalname || "image")
     });
     res.status(500).json({
-      error: errorMessage || "AI判读失败，请稍后重试。"
+      success: false,
+      error: "AI判读失败",
+      reason: "aliyun_failed",
+      detail: aliyunDetail,
+      status: aliyunStatus || undefined,
+      requestId: error.requestId || undefined
     });
   }
 });
