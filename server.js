@@ -41,7 +41,7 @@ app.use(express.json({ limit: "1mb" }));
 const appVersion = "2026-05-01-quota-contact-v2";
 
 app.use((req, res, next) => {
-  const noCachePaths = new Set(["/", "/convert", "/ocr", "/judge", "/gold", "/index.html"]);
+  const noCachePaths = new Set(["/", "/convert", "/ocr", "/judge", "/gold", "/admin", "/index.html", "/admin.html"]);
 
   if (noCachePaths.has(req.path) || req.path.endsWith(".html")) {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -3718,6 +3718,10 @@ The expected result for a BFTM table is a list of real row pairs such as X,Y onl
       });
     }
   }
+});
+
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "admin.html"));
 });
 
 const port = process.env.PORT || 3000;
