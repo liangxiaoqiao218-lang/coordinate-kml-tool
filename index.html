@@ -25,6 +25,7 @@
       font-family: Arial, "Microsoft YaHei", sans-serif;
       background: #eef3f8;
       color: #172033;
+      padding-bottom: 28px;
     }
 
     .page {
@@ -49,10 +50,10 @@
     .home-view {
       display: none;
       width: min(760px, 100%);
-      min-height: 58vh;
+      min-height: 50vh;
       margin: 0 auto;
       place-content: center;
-      padding: 10px 0;
+      padding: 4px 0;
     }
 
     .home-view.active {
@@ -77,7 +78,7 @@
 
     .home-hero h1 {
       max-width: 560px;
-      margin: 0 auto 8px;
+      margin: 0 auto 6px;
       font-size: 34px;
       line-height: 1.2;
     }
@@ -145,7 +146,7 @@
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
-      margin-top: 18px;
+      margin-top: 14px;
     }
 
     .module-card {
@@ -262,9 +263,22 @@
 
     .page-nav {
       display: flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      overflow-x: auto;
       gap: 10px;
       margin-bottom: 14px;
+      padding: 0 20px 4px 0;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .page-nav::-webkit-scrollbar {
+      display: none;
+    }
+
+    .page-nav .back-button {
+      flex: 0 0 auto;
+      white-space: nowrap;
     }
 
     .back-button.is-active {
@@ -490,6 +504,36 @@
       box-shadow: 0 4px 12px rgba(15, 23, 42, 0.16);
       font-size: 18px;
       line-height: 1;
+    }
+
+    .judge-upload-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 10px;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .judge-add-image-button {
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      box-shadow: none;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .judge-add-image-button:disabled {
+      border-color: #e2e8f0;
+      background: #f8fafc;
+      color: #94a3b8;
+      cursor: not-allowed;
     }
 
     .image-modal {
@@ -1461,7 +1505,7 @@
         overflow-x: auto;
         gap: 8px;
         margin-bottom: 10px;
-        padding-bottom: 4px;
+        padding: 0 28px 4px 0;
         scrollbar-width: none;
         -webkit-overflow-scrolling: touch;
       }
@@ -1473,6 +1517,8 @@
       .page-nav .back-button {
         flex: 0 0 auto;
         white-space: nowrap;
+        padding-left: 14px;
+        padding-right: 14px;
       }
 
       h1 {
@@ -1481,20 +1527,21 @@
       }
 
       .home-view {
-        padding-top: 2px;
+        padding-top: 0;
         min-height: auto;
       }
 
       .home-hero {
-        padding: 4px 0 0;
+        padding: 0;
       }
 
       .home-hero h1 {
-        font-size: 26px;
+        margin-bottom: 4px;
+        font-size: 25px;
       }
 
       .intro {
-        margin-bottom: 14px;
+        margin-bottom: 10px;
         font-size: 15px;
       }
 
@@ -1557,7 +1604,7 @@
 
       .module-card {
         min-height: auto;
-        padding: 13px 14px;
+        padding: 11px 13px;
       }
 
       .module-card strong {
@@ -1603,13 +1650,27 @@
         top: -7px;
         right: -7px;
       }
+
+      .judge-upload-footer {
+        align-items: stretch;
+      }
+
+      .judge-add-image-button {
+        flex: 1;
+      }
     }
 
     .version-stamp {
-      margin: 44px auto 6px;
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 6px;
+      z-index: 2;
+      margin: 0 auto;
       color: #cbd5e1;
       font-size: 11px;
       text-align: center;
+      pointer-events: none;
       user-select: text;
     }
   </style>
@@ -1802,6 +1863,10 @@
         <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片（最多5张）</label>
         <input id="judgeImageInput" type="file" accept="image/*" multiple />
         <div id="judgeImagePreview" class="image-preview"></div>
+        <div class="judge-upload-footer">
+          <button id="judgeAddImageButton" type="button" class="judge-add-image-button" onclick="judgeImageInput.click()">继续添加图片</button>
+          <span id="judgeImageCount">0/5</span>
+        </div>
 
         <div class="judge-actions">
           <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
@@ -1966,6 +2031,8 @@ Au值 = 纯度 × 10 后取整数</div>
     const judgeResult = document.getElementById("judgeResult");
     const judgeProgressVisual = document.getElementById("judgeProgressVisual");
     const judgeProgressText = document.getElementById("judgeProgressText");
+    const judgeAddImageButton = document.getElementById("judgeAddImageButton");
+    const judgeImageCount = document.getElementById("judgeImageCount");
     const judgeQrPanel = document.getElementById("judgeQrPanel");
     const judgeQrImage = document.getElementById("judgeQrImage");
     const judgeQrTitle = document.getElementById("judgeQrTitle");
@@ -2568,6 +2635,19 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeImageInput.files = transfer.files;
     }
 
+    function updateJudgeUploadControls() {
+      const count = selectedJudgeImageFiles.length;
+
+      if (judgeImageCount) {
+        judgeImageCount.textContent = `${count}/5`;
+      }
+
+      if (judgeAddImageButton) {
+        judgeAddImageButton.disabled = count >= 5;
+        judgeAddImageButton.textContent = count >= 5 ? "已达5张上限" : "继续添加图片";
+      }
+    }
+
     function openSelectedImage() {
       if (!selectedImageUrl) {
         showMessage("当前没有可查看的上传图片。", true);
@@ -2609,6 +2689,7 @@ Au值 = 纯度 × 10 后取整数</div>
       if (selectedJudgeImageFiles.length === 0) {
         judgeImagePreview.style.display = "none";
         judgeImagePreview.innerHTML = "";
+        updateJudgeUploadControls();
         hideJudgeProgressVisual();
         showJudgeMessage("请上传图片文件，当前判读暂不直接读取文档。", true);
         return;
@@ -2623,6 +2704,7 @@ Au值 = 纯度 × 10 后取整数</div>
           <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />点击图片可查看大图</p>
           <button type="button" class="remove-image" onclick="clearJudgeSelectedImage(${index})" title="删除图片" aria-label="删除图片">×</button>
         </div>`).join("");
+      updateJudgeUploadControls();
     }
 
     function handleJudgeImageChange() {
@@ -2632,14 +2714,27 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      if (files.length > 5) {
+      const validFiles = files.filter(isImageUpload);
+      const existingKeys = new Set(selectedJudgeImageFiles.map(file => `${file.name}-${file.size}-${file.lastModified}`));
+      const nextFiles = [...selectedJudgeImageFiles];
+
+      validFiles.forEach(file => {
+        const key = `${file.name}-${file.size}-${file.lastModified}`;
+        if (!existingKeys.has(key) && nextFiles.length < 5) {
+          existingKeys.add(key);
+          nextFiles.push(file);
+        }
+      });
+
+      if (validFiles.length + selectedJudgeImageFiles.length > 5) {
         showJudgeMessage("最多上传5张，已自动保留前5张。", true);
       }
 
-      showJudgeSelectedImage(files);
+      showJudgeSelectedImage(nextFiles);
+      judgeImageInput.value = "";
       judgeResult.value = "";
       hideJudgeProgressVisual();
-      showJudgeMessage(`已选择 ${Math.min(files.length, 5)} 张图片，点击“开始判读”后进行分析。`);
+      showJudgeMessage(`已选择 ${selectedJudgeImageFiles.length} / 5 张图片，点击“开始判读”后进行分析。`);
     }
 
     function openJudgeSelectedImage(index = 0) {
@@ -2677,6 +2772,7 @@ Au值 = 纯度 × 10 后取整数</div>
         judgeImagePreview.style.display = "none";
         judgeImagePreview.innerHTML = "";
         judgeImageInput.value = "";
+        updateJudgeUploadControls();
         judgeResult.value = "";
         hideJudgeProgressVisual();
         showJudgeMessage("已删除判读图片，可以重新选择。");
