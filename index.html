@@ -1245,12 +1245,18 @@
     }
 
     .judge-panel textarea {
-      min-height: 280px;
-      max-height: 58vh;
+      min-height: 360px;
+      max-height: 68vh;
       overflow-y: auto;
       margin-top: 10px;
-      padding: 12px 12px 58px 12px;
+      padding: 16px 16px 64px 16px;
       background: #ffffff;
+      border: 1px solid #d7e4dc;
+      border-radius: 14px;
+      color: #0f172a;
+      font-size: 15px;
+      line-height: 1.75;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 10px 28px rgba(15, 23, 42, 0.06);
     }
 
     .judge-result-wrap {
@@ -1851,8 +1857,10 @@
       }
 
       .judge-panel textarea {
-        min-height: 210px;
-        max-height: 36vh;
+        min-height: 320px;
+        max-height: 52vh;
+        font-size: 15px;
+        line-height: 1.7;
       }
 
       .judge-panel .image-preview {
@@ -2054,10 +2062,16 @@
         </div>
         <div class="judge-result-wrap">
           <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里：
-【判读结论】不确定
-【是否建议继续】谨慎
-【风险】图片信息不足
-【依据】需要更清晰图片或现场核对"></textarea>
+【初筛结论】
+需要补充现场照片后再判断
+
+【主要观察点】
+1. 图片信息不足。
+2. 缺少尺度参照。
+3. 建议补充更多角度照片。
+
+【是否建议继续】
+C：谨慎，不建议投入太多"></textarea>
           <div class="judge-result-tools">
             <button type="button" class="icon-button" onclick="clearJudgeResult()" title="清除判读结果" aria-label="清除判读结果">×</button>
             <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">⧉</button>
