@@ -2233,7 +2233,7 @@ function getAliyunChatCompletionsUrl() {
   return base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
 }
 
-async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0.1 }) {
+async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0.1, maxTokens }) {
   if (!aliyunApiKey) {
     console.error("[Aliyun] 缺少环境变量：ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
     const error = new Error("阿里云 API 未配置");
@@ -2251,25 +2251,31 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
     baseURL: aliyunBaseURL
   });
 
+  const requestBody = {
+    model: modelName,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          ...imageItems
+        ]
+      }
+    ],
+    temperature
+  };
+
+  if (Number.isFinite(Number(maxTokens)) && Number(maxTokens) > 0) {
+    requestBody.max_tokens = Number(maxTokens);
+  }
+
   const response = await fetch(getAliyunChatCompletionsUrl(), {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${aliyunApiKey}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      model: modelName,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            ...imageItems
-          ]
-        }
-      ],
-      temperature
-    })
+    body: JSON.stringify(requestBody)
   });
   const data = await response.json().catch(() => ({}));
 
@@ -2313,22 +2319,18 @@ async function runLocalOcrFallback(imageBuffer, reason = "") {
 function normalizeJudgeOutput(text) {
   const raw = String(text || "").trim();
   const sectionNames = [
-    "初筛结论",
-    "图像类型",
-    "主要观察点",
-    "支持继续看的理由",
-    "主要风险",
-    "建议补拍",
-    "是否建议继续"
+    "结论",
+    "等级",
+    "依据",
+    "风险",
+    "下一步"
   ];
   const defaults = {
-    "初筛结论": "需要补充现场照片后再判断",
-    "图像类型": "其他",
-    "主要观察点": "1. 图片信息不足。\n2. 缺少明确尺度参照。\n3. 建议补充更多角度照片。",
-    "支持继续看的理由": "当前信息不足，先补图再决定是否继续。",
-    "主要风险": "1. 缺少尺度参照。\n2. 只看到局部表面，容易误判。\n3. 仅一张图，缺少周边关系。",
-    "建议补拍": "近景清晰图、比例参照图、原地环境图。",
-    "是否建议继续": "C：谨慎，不建议投入太多"
+    "结论": "需要补充现场照片后再判断。",
+    "等级": "C 谨慎",
+    "依据": "1. 图片信息不足。\n2. 缺少明确尺度参照。",
+    "风险": "1. 缺少尺度参照。\n2. 单张图容易误判。",
+    "下一步": "补拍近景清晰图和带比例参照的现场图。"
   };
 
   if (!raw) {
@@ -2347,15 +2349,13 @@ function normalizeJudgeOutput(text) {
     values[current] = (match?.[1] || "").trim();
   }
 
-  if (!values["初筛结论"] && !values["图像类型"] && !values["主要观察点"]) {
+  if (!values["结论"] && !values["等级"] && !values["依据"]) {
     const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    values["初筛结论"] = lines[0] || defaults["初筛结论"];
-    values["图像类型"] = "其他";
-    values["主要观察点"] = lines.slice(1, 4).map((line, index) => `${index + 1}. ${line.replace(/^\d+[.、]\s*/, "")}`).join("\n") || defaults["主要观察点"];
-    values["支持继续看的理由"] = "根据当前图片信息做初筛，建议结合补拍资料再判断。";
-    values["主要风险"] = defaults["主要风险"];
-    values["建议补拍"] = defaults["建议补拍"];
-    values["是否建议继续"] = defaults["是否建议继续"];
+    values["结论"] = lines[0] || defaults["结论"];
+    values["等级"] = defaults["等级"];
+    values["依据"] = lines.slice(1, 4).map((line, index) => `${index + 1}. ${line.replace(/^\d+[.、]\s*/, "")}`).join("\n") || defaults["依据"];
+    values["风险"] = defaults["风险"];
+    values["下一步"] = defaults["下一步"];
   }
 
   return sectionNames
@@ -3197,30 +3197,22 @@ app.post("/api/analyze-mining-image", upload.fields([
     }
 
     if (!isImageFile) {
-      const rawOutput = `【初筛结论】
-资料文件已收到，但当前版本建议上传关键页面截图后再判断
+      const rawOutput = `【结论】
+资料文件已收到，建议上传关键页面截图后再判读。
 
-【图像类型】
-其他
+【等级】
+B 可以观察
 
-【主要观察点】
-1. 当前上传内容不是可直接视觉判读的图片。
-2. 文件内容没有进入矿石、河道或地图图像分析。
-3. 需要关键页截图才能做有效初筛。
+【依据】
+1. 当前文件不是可直接视觉判读的图片。
+2. 需要矿石、河道、卫星图或资料关键页截图。
 
-【支持继续看的理由】
-如果资料中包含矿地、河道、卫星图、矿石或坐标表，截取关键页面后仍可继续判断。
-
-【主要风险】
+【风险】
 1. 文档未被直接解析，容易漏掉关键信息。
-2. 缺少现场图或位置图，无法判断地貌关系。
-3. 仅凭文件名无法判断投入价值。
+2. 缺少现场图或位置图。
 
-【建议补拍】
-上传矿石近景、原地环境图、河道上下游图、卫星位置截图或资料关键页截图。
-
-【是否建议继续】
-B：可以继续观察，先补充关键截图`;
+【下一步】
+上传关键页面截图或现场清晰照片。`;
       const normalizedOutput = normalizeJudgeOutput(rawOutput);
       const record = {
         id: makeId("record"),
@@ -3262,57 +3254,47 @@ B：可以继续观察，先补充关键截图`;
       });
     }
 
-    const imageItems = imageFiles.map(file => ({
+    const judgeImageFiles = imageFiles.slice(0, 1);
+    const imageItems = judgeImageFiles.map(file => ({
       type: "image_url",
       image_url: {
         url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`
       }
     }));
-    const prompt = `你是矿业空间判读助手，只做矿业决策辅助。请根据上传的1到5张图片做现场初筛，图片可能是矿石/样本照片、河道/地形照片、卫星图/地图截图、坐标/矿区截图或资料页截图。
+    const prompt = `你是矿业空间判读助手，只做矿业决策辅助。请根据这一张图片做快速初筛，图片可能是矿石样本、河道地形、卫星图、地图截图或矿区资料截图。
 
 重要原则：
 1. 不要默认怀疑图片是AI生成图。
-2. 只有在明显存在结构严重不自然、光影明显不一致、纹理重复异常、物体边界明显融合、缺少任何真实尺度和环境信息时，才提示“图片真实性存疑”。
+2. 只有明显结构不自然、光影不一致、纹理重复异常、边界融合或完全缺少真实尺度环境时，才写“图片真实性存疑”。
 3. 普通手机拍摄、模糊、低清、压缩图，不得直接判断为AI图，只能写“图片清晰度有限”。
-4. 专业但不要过度免责，不要输出空话，每次都要给用户一个下一步动作。
-5. 不允许输出含量预测、储量预测，不允许报具体金点、坐标点或采样点。
+4. 不预测含量、储量，不报具体金点、坐标点或采样点。
 
-必须严格按下面结构输出，不能增加其他大标题：
+输出必须简短，严格按下面结构，不要增加其他标题：
 
-【初筛结论】
-直接给判断，例如：有继续观察价值 / 信息不足，暂不建议投入 / 更像普通矿物或围岩，价值有限 / 需要补充现场照片后再判断。
+【结论】
+一句话判断。
 
-【图像类型】
-从这些类型里选一个：矿石/样本照片、河道/地形照片、卫星图/地图截图、坐标/矿区截图、其他。
+【等级】
+A 建议继续 / B 可以观察 / C 谨慎 / D 排除
 
-【主要观察点】
-至少输出3条具体观察，用1、2、3编号。
+【依据】
+最多3条，每条一句。
 
-【支持继续看的理由】
-如果有价值，说明为什么；如果没价值，也要说明为什么。
+【风险】
+最多2条，每条一句。
 
-【主要风险】
-列出2到3条具体风险，不要只说“需专业鉴定”。可包括：缺少尺度参照、只看到表面无法判断内部结构、光线反光强可能误判金属光泽、仅一张图缺少周边地貌关系。
+【下一步】
+给1到2条明确动作。
 
-【建议补拍】
-告诉用户下一步补什么图，例如：近景清晰图、放硬币或手指做比例、敲开断面图、原地环境图、河道上下游图、卫星位置截图。
-
-【是否建议继续】
-只给一个等级并说明一句理由：
-A：建议继续
-B：可以继续观察
-C：谨慎，不建议投入太多
-D：直接排除
-
-矿石/样本照片重点看：颜色是否像自然金属光泽，是否有晶面、解理、黄铁矿/云母误判风险，是否有石英脉、氧化铁染色、硫化物特征，是否需要敲开断面观察，是否建议做比重、划痕、火烧、酸洗或专业检测。
-
-河道/地形/卫星图重点看：河道弯曲、收窄、汇流、阶地、老河道、沉积空间、本地开挖痕迹，以及是否值得继续做坐标/范围判断。`;
+矿石照片重点看：金属光泽、晶面/解理、黄铁矿或云母误判、石英脉、氧化铁染色、硫化物、是否需敲开断面。
+河道/地形/卫星图重点看：弯曲、收窄、汇流、阶地、老河道、沉积空间、开挖痕迹。`;
 
     const response = await callAliyunVision({
       modelName: aliyunVisionModel,
       prompt,
       imageItems,
-      temperature: 0.1
+      temperature: 0.1,
+      maxTokens: 520
     });
 
     const rawOutput = response.choices?.[0]?.message?.content || "";
@@ -3321,8 +3303,8 @@ D：直接排除
       id: makeId("record"),
       user_id: visitorId,
       imageURL: "",
-      imageName: imageFiles.map(file => file.originalname || "").filter(Boolean).join(", "),
-      imageSize: imageFiles.reduce((sum, file) => sum + Number(file.size || 0), 0),
+      imageName: judgeImageFiles.map(file => file.originalname || "").filter(Boolean).join(", "),
+      imageSize: judgeImageFiles.reduce((sum, file) => sum + Number(file.size || 0), 0),
       judgeType,
       aiRawOutput: rawOutput,
       result: normalizedOutput,

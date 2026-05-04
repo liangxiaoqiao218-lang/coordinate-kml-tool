@@ -1246,8 +1246,8 @@
     }
 
     .judge-panel textarea {
-      min-height: 360px;
-      max-height: 68vh;
+      min-height: 300px;
+      max-height: 62vh;
       overflow-y: auto;
       margin-top: 10px;
       padding: 16px 16px 64px 16px;
@@ -1858,8 +1858,8 @@
       }
 
       .judge-panel textarea {
-        min-height: 320px;
-        max-height: 52vh;
+        min-height: 260px;
+        max-height: 44vh;
         font-size: 15px;
         line-height: 1.7;
       }
@@ -2052,7 +2052,7 @@
         <button type="button" class="back-button gold-switch" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
       <h1>AI矿地判读</h1>
-      <p class="intro">上传矿地、河道、卫星图或矿石照片，AI只做初筛判断：是否值得继续看、主要风险在哪里。不预测含量，不标具体金点。</p>
+      <p class="intro">上传一张矿石、河道或卫星图，快速判断是否值得继续看。</p>
       <div id="judgeQuotaStatus" class="quota-status" hidden></div>
 
       <div class="panel judge-panel">
@@ -2062,59 +2062,21 @@
           <span id="judgeProgressText">正在分析图片信息...</span>
         </div>
         <div class="judge-result-wrap">
-          <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里：
-【初筛结论】
-需要补充现场照片后再判断
-
-【主要观察点】
-1. 图片信息不足。
-2. 缺少尺度参照。
-3. 建议补充更多角度照片。
-
-【是否建议继续】
-C：谨慎，不建议投入太多"></textarea>
+          <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里。"></textarea>
           <div class="judge-result-tools">
             <button type="button" class="icon-button" onclick="clearJudgeResult()" title="清除判读结果" aria-label="清除判读结果">×</button>
             <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">⧉</button>
           </div>
         </div>
 
-        <label for="judgeImageInput" style="margin-top: 12px;">上传判读图片（最多5张）</label>
-        <input id="judgeImageInput" type="file" accept="image/*" multiple />
+        <label for="judgeImageInput" style="margin-top: 12px;">上传图片</label>
+        <input id="judgeImageInput" type="file" accept="image/*" />
         <div id="judgeImagePreview" class="image-preview"></div>
-        <div class="judge-upload-footer">
-          <button id="judgeAddImageButton" type="button" class="judge-add-image-button" onclick="judgeImageInput.click()">继续添加图片</button>
-          <span id="judgeImageCount">0/5</span>
-        </div>
 
         <div class="judge-actions">
           <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
         </div>
       </div>
-
-      <div id="judgeSupportPanel" class="panel judge-manual">
-        <strong>当前判读仅供参考</strong>
-        <p>如需更高精度分析，可以提交图片给人工经验判断。适合水印严重、手写不清、河道复杂或需要投资前复核的情况。</p>
-        <div class="contact-card">
-          <strong>开通判读次数：</strong><br />
-          添加微信或 WhatsApp，发送“开通 AI 判读次数”加当前页面截图。人工确认后，会在后台为你增加判读次数。
-        </div>
-        <div class="judge-manual-actions">
-          <button type="button" class="secondary" onclick="toggleJudgeQr('whatsapp')">WhatsApp</button>
-          <button type="button" class="secondary" onclick="toggleJudgeQr('wechat')">微信</button>
-        </div>
-        <div id="judgeQrPanel" class="qr-toggle-panel">
-          <img id="judgeQrImage" src="" alt="联系二维码" />
-          <strong id="judgeQrTitle"></strong>
-          <p id="judgeQrText"></p>
-        </div>
-      </div>
-
-      <section class="help">
-        <strong>判读说明：</strong><br />
-        AI判读只做矿地初筛，帮助你判断是否值得继续看。<br />
-        不预测含量，不报具体金点，不能替代现场勘查、取样检测和合规审批。
-      </section>
     </section>
 
     <section id="goldPage" class="view">
@@ -2322,7 +2284,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
-    judgeImageInput.multiple = true;
+    judgeImageInput.multiple = false;
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
     loadUserQuota();
@@ -2960,7 +2922,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       const transfer = new DataTransfer();
-      selectedJudgeImageFiles.slice(0, 5).forEach(file => transfer.items.add(file));
+      selectedJudgeImageFiles.slice(0, 1).forEach(file => transfer.items.add(file));
       judgeImageInput.files = transfer.files;
     }
 
@@ -2968,12 +2930,12 @@ Au值 = 纯度 × 10 后取整数</div>
       const count = selectedJudgeImageFiles.length;
 
       if (judgeImageCount) {
-        judgeImageCount.textContent = `${count}/5`;
+        judgeImageCount.textContent = count ? "已选择 1 张图片" : "";
       }
 
       if (judgeAddImageButton) {
-        judgeAddImageButton.disabled = count >= 5;
-        judgeAddImageButton.textContent = count >= 5 ? "已达5张上限" : "继续添加图片";
+        judgeAddImageButton.disabled = false;
+        judgeAddImageButton.textContent = count ? "更换图片" : "选择图片";
       }
     }
 
@@ -3011,7 +2973,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function showJudgeSelectedImage(files) {
       selectedJudgeImageUrls.forEach(url => URL.revokeObjectURL(url));
 
-      selectedJudgeImageFiles = Array.from(files).filter(isImageUpload).slice(0, 5);
+      selectedJudgeImageFiles = Array.from(files).filter(isImageUpload).slice(0, 1);
       syncJudgeImageInputFiles();
       selectedJudgeImageUrls = selectedJudgeImageFiles.map(file => URL.createObjectURL(file));
 
@@ -3044,26 +3006,11 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       const validFiles = files.filter(isImageUpload);
-      const existingKeys = new Set(selectedJudgeImageFiles.map(file => `${file.name}-${file.size}-${file.lastModified}`));
-      const nextFiles = [...selectedJudgeImageFiles];
-
-      validFiles.forEach(file => {
-        const key = `${file.name}-${file.size}-${file.lastModified}`;
-        if (!existingKeys.has(key) && nextFiles.length < 5) {
-          existingKeys.add(key);
-          nextFiles.push(file);
-        }
-      });
-
-      if (validFiles.length + selectedJudgeImageFiles.length > 5) {
-        showJudgeMessage("最多上传5张，已自动保留前5张。", true);
-      }
-
-      showJudgeSelectedImage(nextFiles);
+      showJudgeSelectedImage(validFiles.slice(0, 1));
       judgeImageInput.value = "";
       judgeResult.value = "";
       hideJudgeProgressVisual();
-      showJudgeMessage(`已选择 ${selectedJudgeImageFiles.length} / 5 张图片，点击“开始判读”后进行分析。`);
+      showJudgeMessage("已选择图片，点击“开始判读”后进行分析。");
     }
 
     function openJudgeSelectedImage(index = 0) {
@@ -3170,33 +3117,9 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeProgressVisual.classList.remove("active");
     }
 
-    function toggleJudgeQr(type) {
-      const currentType = judgeQrPanel.dataset.type || "";
-
-      if (judgeQrPanel.style.display === "block" && currentType === type) {
-        judgeQrPanel.style.display = "none";
-        judgeQrPanel.dataset.type = "";
-        return;
-      }
-
-      if (type === "whatsapp") {
-        judgeQrImage.src = "whatsapp-qr.jpg";
-        judgeQrTitle.textContent = "WhatsApp 人工判读";
-        judgeQrText.textContent = "长按保存图片，或直接识别二维码添加 Miro。";
-      } else {
-        judgeQrImage.src = "wechat-qr.jpg";
-        judgeQrTitle.textContent = "微信人工判读";
-        judgeQrText.textContent = "微信号：Mir-2188。长按保存图片，或直接识别二维码添加。";
-      }
-
-      judgeQrPanel.dataset.type = type;
-      judgeQrPanel.style.display = "block";
-      trackEvent("judge_contact_qr_click", { contactType: type });
-    }
-
     function startJudgeProgress(fileCount) {
       const steps = [
-        `正在上传图片（${fileCount}张）...`,
+        "正在上传图片...",
         "正在识别图片...",
         "正在分析图片信息...",
         "正在分析矿地结构...",
@@ -3217,7 +3140,7 @@ Au值 = 纯度 × 10 后取整数</div>
     async function analyzeMiningImage() {
       let files = selectedJudgeImageFiles.length > 0
         ? selectedJudgeImageFiles
-        : Array.from(judgeImageInput.files || []).filter(isImageUpload).slice(0, 5);
+        : Array.from(judgeImageInput.files || []).filter(isImageUpload).slice(0, 1);
 
       if (selectedJudgeImageFiles.length === 0 && files.length > 0) {
         showJudgeSelectedImage(files);
@@ -3225,7 +3148,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       if (files.length === 0) {
-        showJudgeMessage("请先选择要判读的图片，最多5张。", true);
+        showJudgeMessage("请先选择要判读的图片。", true);
         return;
       }
 
@@ -3237,7 +3160,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       const formData = new FormData();
-      files.slice(0, 5).forEach(file => formData.append("images", file, file.name));
+      files.slice(0, 1).forEach(file => formData.append("images", file, file.name));
       formData.append("judgeType", judgeType.value);
       judgeResult.value = "";
       const progressTimer = startJudgeProgress(files.length);
@@ -3327,20 +3250,6 @@ Au值 = 纯度 × 10 后取整数</div>
 联系方式：${MANUAL_CONTACT_TEXT}`;
 
       copyText(text, "人工服务说明已复制。");
-    }
-
-    function copyJudgeManualMessage() {
-      const text = `我需要人工协助做矿地判读。
-请帮我判断是否值得继续、主要风险和需要补充的信息。
-我会发送图片和AI判读结果。
-联系方式：${MANUAL_CONTACT_TEXT}`;
-
-      copyText(text, "人工判读说明已复制，请连同图片一起发送。");
-    }
-
-    function copyWhatsAppTip() {
-      const text = `请通过页面里的 WhatsApp 二维码添加 Miro，并发送图片和判读结果截图。`;
-      copyText(text, "WhatsApp说明已复制。");
     }
 
     function copyWechatId() {
