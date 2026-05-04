@@ -1339,10 +1339,55 @@
       font-weight: 700;
     }
 
+    .settlement-card {
+      display: grid;
+      gap: 6px;
+    }
+
+    .settlement-preview {
+      display: none;
+      margin-top: 10px;
+      padding: 12px;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      background: #fff8e6;
+    }
+
+    .settlement-preview.is-visible {
+      display: grid;
+      gap: 6px;
+    }
+
+    .settlement-value {
+      color: #b45309;
+      font-size: clamp(26px, 7vw, 38px);
+      line-height: 1.15;
+      font-weight: 900;
+    }
+
+    .quote-reference {
+      display: grid;
+      gap: 4px;
+      margin-top: 8px;
+      padding-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      font-weight: 600;
+    }
+
+    .quote-advice {
+      margin-top: 8px;
+      color: #0f172a;
+    }
+
     .gold-actions .primary-action {
       min-height: 56px;
       margin-top: 4px;
       margin-bottom: 2px;
+    }
+
+    .gold-actions .primary-action.copy-success {
+      background: #16a34a;
+      border-color: #16a34a;
     }
 
     .file-preview-icon {
@@ -1816,13 +1861,14 @@ Au值 = 纯度 × 10 后取整数</div>
             <div>
               <label for="shopQuote">金店报价（元/克）</label>
               <input id="shopQuote" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：560" oninput="calculateGoldPurity()" />
+              <div id="settlementPreview" class="settlement-preview" aria-live="polite"></div>
             </div>
             <div id="quoteResult" class="quote-result">输入成色数据和金店报价后，辅助判断当前报价区间是否合理。</div>
           </div>
         </div>
 
         <div class="gold-actions">
-          <button type="button" class="primary-action" onclick="copyGoldResult()">一键复制结果</button>
+          <button id="copyGoldButton" type="button" class="primary-action" onclick="copyGoldResult()">一键复制结果</button>
         </div>
 
         <div id="goldMessage" class="message"></div>
@@ -2804,8 +2850,10 @@ Au值 = 纯度 × 10 后取整数</div>
       try {
         await navigator.clipboard.writeText(text);
         showMessage(successMessage);
+        return true;
       } catch (error) {
         showMessage("复制失败，请手动选择内容复制。", true);
+        return false;
       }
     }
 
@@ -2894,11 +2942,13 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       if (currentGoldPriceSource === "realtime_api") {
-        infoEl.innerHTML = `参考纯金价：${formatGoldNumber(currentGoldReferencePrice)} 元/克<br>更新时间：${currentGoldPriceUpdatedAt || "--"}<br><small>* 金价仅作估算参考，实际回收价会受地区、手续费、成色复检影响。</small>`;
+        infoEl.hidden = false;
+        infoEl.innerHTML = `今日参考金价：${formatGoldNumber(currentGoldReferencePrice)} 元/克<br>更新时间：${currentGoldPriceUpdatedAt || "--"}<br><small>* 金价仅作估算参考，实际回收价会受地区、手续费、成色复检影响。</small>`;
         return;
       }
 
-      infoEl.innerHTML = `参考纯金价：${formatGoldNumber(currentGoldReferencePrice)} 元/克<br>当前使用默认参考价，实际交易前建议查询当日金价。`;
+      infoEl.hidden = true;
+      infoEl.textContent = "";
     }
 
     async function loadGoldReferencePrice() {
@@ -2931,20 +2981,92 @@ Au值 = 纯度 × 10 后取整数</div>
       calculateGoldPurity();
     }
 
-    function getGoldQuoteAdvice(shopQuote, theoreticalPrice) {
-      if (!Number.isFinite(shopQuote) || shopQuote <= 0 || !Number.isFinite(theoreticalPrice) || theoreticalPrice <= 0) {
+    function getGoldQuoteAdvice(shopQuote, referencePrice) {
+      if (currentGoldPriceSource !== "realtime_api") {
+        return "已根据当前成色估算总价，建议对比当日市场金价进行判断。";
+      }
+
+      if (!Number.isFinite(shopQuote) || shopQuote <= 0 || !Number.isFinite(referencePrice) || referencePrice <= 0) {
         return "输入金店报价后，辅助判断当前报价区间是否合理。";
       }
 
-      if (shopQuote < theoreticalPrice * 0.9) {
-        return "当前报价偏低，建议多对比几家或复核成色。";
+      const quoteRatio = shopQuote / referencePrice;
+
+      if (quoteRatio < 0.9) {
+        return "当前报价明显低于参考金价，建议多对比几家或确认扣费方式。";
       }
 
-      if (shopQuote <= theoreticalPrice * 1.05) {
+      if (quoteRatio <= 1.05) {
         return "当前报价接近参考区间，可作为交易参考。";
       }
 
-      return "当前报价较高，建议确认重量、成色和结算方式。";
+      return "当前报价高于参考金价，建议确认是否已包含其他条件、成色复检或结算方式。";
+    }
+
+    function formatQuoteComparison(shopQuote, referencePrice) {
+      if (!Number.isFinite(shopQuote) || shopQuote <= 0 || !Number.isFinite(referencePrice) || referencePrice <= 0) {
+        return "填写金店报价后显示报价对比。";
+      }
+
+      const percent = Math.abs((shopQuote / referencePrice - 1) * 100);
+
+      if (shopQuote < referencePrice) {
+        return `低于参考金价约 ${formatGoldNumber(percent, 1)}%`;
+      }
+
+      if (shopQuote > referencePrice) {
+        return `高于参考金价约 ${formatGoldNumber(percent, 1)}%`;
+      }
+
+      return "与参考金价基本一致";
+    }
+
+    function renderGoldQuoteResult(result) {
+      const quoteEl = document.getElementById("quoteResult");
+      const settlementEl = document.getElementById("settlementPreview");
+
+      if (!quoteEl) {
+        return;
+      }
+
+      if (settlementEl) {
+        settlementEl.classList.remove("is-visible");
+        settlementEl.innerHTML = "";
+      }
+
+      if (!result) {
+        quoteEl.innerHTML = `<div class="quote-reference">
+          <div>输入成色数据和金店报价后，将显示预计可卖金额。</div>
+        </div>`;
+        return;
+      }
+
+      if (!Number.isFinite(result.shopQuote) || result.shopQuote <= 0) {
+        quoteEl.innerHTML = `<div class="quote-reference">
+          <div>金店报价：未填写</div>
+          <div>填写金店报价后，将显示预计可卖金额。</div>
+        </div>`;
+        return;
+      }
+
+      const realtimeReferenceHtml = currentGoldPriceSource === "realtime_api"
+        ? `<div>今日参考金价：${formatGoldNumber(currentGoldReferencePrice)} 元/克</div>
+        <div>报价对比：${formatQuoteComparison(result.shopQuote, currentGoldReferencePrice)}</div>`
+        : "";
+
+      if (settlementEl) {
+        settlementEl.classList.add("is-visible");
+        settlementEl.innerHTML = `<span>预计可卖金额</span>
+        <strong class="settlement-value">¥${formatGoldNumber(result.settlementTotal)}</strong>
+        <small>按 黄金重量 × 金店报价 × 当前成色 估算</small>`;
+      }
+
+      quoteEl.innerHTML = `<div class="quote-reference">
+        <div>金店报价：${formatGoldNumber(result.shopQuote)} 元/克</div>
+        ${realtimeReferenceHtml}
+      </div>
+      <div class="quote-advice">${getGoldQuoteAdvice(result.shopQuote, currentGoldReferencePrice)}</div>
+      <small>按当前成色估算，实际结算以现场复称和复检为准。</small>`;
     }
 
     function getGoldCalculation() {
@@ -2960,13 +3082,13 @@ Au值 = 纯度 × 10 后取整数</div>
       const purity = density / 19.32 * 100;
       const kValue = purity / 100 * 24;
       const auValue = Math.round(purity * 10);
-      const theoreticalPrice = currentGoldReferencePrice * (purity / 100);
+      const settlementTotal = shopQuote > 0 ? goldWeight * shopQuote * (purity / 100) : 0;
 
       return {
         goldWeight,
         waterDiff,
         shopQuote,
-        theoreticalPrice,
+        settlementTotal,
         density,
         purity,
         kValue,
@@ -2984,7 +3106,6 @@ Au值 = 纯度 × 10 后取整数</div>
       const gradeEl = document.getElementById("goldGradeResult");
       const formulaEl = document.getElementById("goldFormulaText");
       const messageEl = document.getElementById("goldMessage");
-      const quoteEl = document.getElementById("quoteResult");
 
       if (!result) {
         purityEl.textContent = "--";
@@ -3003,9 +3124,7 @@ K值 = 纯度 ÷ 100 × 24
 
 第四步：换算 Au 值
 Au值 = 纯度 × 10 后取整数`;
-        if (quoteEl) {
-          quoteEl.textContent = "输入成色数据和金店报价后，辅助判断当前报价区间是否合理。";
-        }
+        renderGoldQuoteResult(null);
         messageEl.textContent = "";
         messageEl.className = "message";
         return null;
@@ -3031,17 +3150,16 @@ K值 = ${formatGoldNumber(result.purity)} ÷ 100 × 24 = ${formatGoldNumber(resu
 第四步：换算 Au 值
 Au值 = 纯度 × 10 后取整数
 Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
-      if (quoteEl) {
-        quoteEl.textContent = `按当前成色折算参考价：${formatGoldNumber(result.theoreticalPrice)} 元/克。${getGoldQuoteAdvice(result.shopQuote, result.theoreticalPrice)}`;
-      }
+      renderGoldQuoteResult(result);
       messageEl.textContent = "";
       messageEl.className = "message";
       return result;
     }
 
-    function copyGoldResult() {
+    async function copyGoldResult() {
       const result = calculateGoldPurity();
       const messageEl = document.getElementById("goldMessage");
+      const copyButton = document.getElementById("copyGoldButton");
 
       if (!result) {
         messageEl.textContent = "请先输入有效的黄金重量和排水差重。";
@@ -3051,20 +3169,35 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
       const text = [
         "黄金成色计算结果",
-        `黄金重量：${result.goldWeight}`,
-        `排水差重：${result.waterDiff}g`,
-        `密度：${formatGoldNumber(result.density, 3)}`,
+        `黄金重量（g）：${result.goldWeight}`,
+        `排水差重（g）：${result.waterDiff}`,
         `成色：${formatGoldNumber(result.purity)}%`,
         `K值：${formatGoldNumber(result.kValue)}K`,
         `Au值：Au${result.auValue}`,
+        `密度：${formatGoldNumber(result.density, 3)}`,
         `判断：${result.grade}`,
-        `参考纯金价：${formatGoldNumber(currentGoldReferencePrice)}元/克`,
-        `按当前成色折算参考价：${formatGoldNumber(result.theoreticalPrice)}元/克`,
-        result.shopQuote > 0 ? `金店报价：${formatGoldNumber(result.shopQuote)}元/克` : "",
-        `报价判断：${getGoldQuoteAdvice(result.shopQuote, result.theoreticalPrice)}`
+        result.shopQuote > 0 ? `金店报价（元/克）：${formatGoldNumber(result.shopQuote)}` : "金店报价（元/克）：未填写",
+        result.shopQuote > 0 ? `预计可卖金额（元）：${formatGoldNumber(result.settlementTotal)}` : "预计可卖金额（元）：未填写金店报价",
+        currentGoldPriceSource === "realtime_api" ? `今日参考金价：${formatGoldNumber(currentGoldReferencePrice)}元/克` : "",
+        currentGoldPriceSource === "realtime_api" && result.shopQuote > 0 ? `报价对比：${formatQuoteComparison(result.shopQuote, currentGoldReferencePrice)}` : "",
+        `报价提示：${getGoldQuoteAdvice(result.shopQuote, currentGoldReferencePrice)}`,
+        "参考说明：按当前成色估算，实际结算以现场复称和复检为准。"
       ].filter(Boolean).join("\n");
 
-      copyText(text, "成色计算结果已复制。");
+      const copied = await copyText(text, "成色计算结果已复制。");
+
+      if (!copyButton) {
+        return;
+      }
+
+      const originalText = "一键复制结果";
+      copyButton.textContent = copied ? "已复制 ✓" : "复制失败，请手动复制";
+      copyButton.classList.toggle("copy-success", copied);
+
+      setTimeout(() => {
+        copyButton.textContent = originalText;
+        copyButton.classList.remove("copy-success");
+      }, 1500);
     }
 
     function copyDebugText() {
