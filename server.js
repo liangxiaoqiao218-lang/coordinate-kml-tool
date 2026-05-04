@@ -2321,16 +2321,18 @@ function normalizeJudgeOutput(text) {
   const sectionNames = [
     "结论",
     "等级",
-    "依据",
-    "风险",
-    "下一步"
+    "关键依据",
+    "主要风险",
+    "下一步",
+    "一句话总结"
   ];
   const defaults = {
     "结论": "需要补充现场照片后再判断。",
     "等级": "C 谨慎",
-    "依据": "1. 图片信息不足。\n2. 缺少明确尺度参照。",
-    "风险": "1. 缺少尺度参照。\n2. 单张图容易误判。",
-    "下一步": "补拍近景清晰图和带比例参照的现场图。"
+    "关键依据": "1. 图片清晰度有限。\n2. 缺少明确尺度参照。\n3. 需要更多现场角度。",
+    "主要风险": "1. 缺少断面信息，无法判断内部结构。\n2. 单张图容易误判表面反光。",
+    "下一步": "1. 加硬币或手指做比例后补拍。\n2. 敲开样本拍断面。",
+    "一句话总结": "先补充关键照片，再决定是否继续投入时间。"
   };
 
   if (!raw) {
@@ -2349,13 +2351,14 @@ function normalizeJudgeOutput(text) {
     values[current] = (match?.[1] || "").trim();
   }
 
-  if (!values["结论"] && !values["等级"] && !values["依据"]) {
+  if (!values["结论"] && !values["等级"] && !values["关键依据"]) {
     const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     values["结论"] = lines[0] || defaults["结论"];
     values["等级"] = defaults["等级"];
-    values["依据"] = lines.slice(1, 4).map((line, index) => `${index + 1}. ${line.replace(/^\d+[.、]\s*/, "")}`).join("\n") || defaults["依据"];
-    values["风险"] = defaults["风险"];
+    values["关键依据"] = lines.slice(1, 4).map((line, index) => `${index + 1}. ${line.replace(/^\d+[.、]\s*/, "")}`).join("\n") || defaults["关键依据"];
+    values["主要风险"] = defaults["主要风险"];
     values["下一步"] = defaults["下一步"];
+    values["一句话总结"] = defaults["一句话总结"];
   }
 
   return sectionNames
@@ -3203,16 +3206,21 @@ app.post("/api/analyze-mining-image", upload.fields([
 【等级】
 B 可以观察
 
-【依据】
+【关键依据】
 1. 当前文件不是可直接视觉判读的图片。
 2. 需要矿石、河道、卫星图或资料关键页截图。
+3. 截图后才能看到具体地貌或样本特征。
 
-【风险】
+【主要风险】
 1. 文档未被直接解析，容易漏掉关键信息。
 2. 缺少现场图或位置图。
 
 【下一步】
-上传关键页面截图或现场清晰照片。`;
+1. 上传关键页面截图。
+2. 上传现场清晰照片。
+
+【一句话总结】
+先把关键页面截成图片，再做这一步判读更有效。`;
       const normalizedOutput = normalizeJudgeOutput(rawOutput);
       const record = {
         id: makeId("record"),
@@ -3261,33 +3269,41 @@ B 可以观察
         url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`
       }
     }));
-    const prompt = `你是矿业空间判读助手。直接根据这一张图片输出快速初筛结果。
+    const prompt = `你是矿业空间判读助手。直接根据这一张图片输出短而有价值的初筛结果。
 
 规则：不预测含量/储量/金点；不要默认怀疑AI图；少用“可能、疑似、信息不足”，除非确实看不清。结论要明确，依据要具体，下一步要可执行。
 
-只输出下面5段，越短越好：
+只输出下面6段，不要长篇解释：
 
 【结论】
 1句话。
 
 【等级】
-A 明显值得继续 / B 有潜力，但需要验证 / C 风险较大，不建议投入太多 / D 直接排除
+A / B / C / D，并解释一句。A=明显值得继续；B=有潜力但需要验证；C=风险较大不建议投入太多；D=直接排除。
 
-【依据】
-最多2条，每条一句，写具体观察，不写“需要专业鉴定”。
+【关键依据】
+1.
+2.
+3.
+每条一句，写具体观察，不写“需要专业鉴定”。
 
-【风险】
-最多1条。
+【主要风险】
+1.
+2.
+每条一句。
 
 【下一步】
-最多1条可执行动作，如敲开看断面、加比例物拍照、补拍原地环境或河道上下游图。`;
+给2条具体动作，如敲开看断面、加比例物拍照、补拍原地环境或河道上下游图。
+
+【一句话总结】
+用一句人话告诉用户：这张图现在值不值得继续投入时间。`;
 
     const response = await callAliyunVision({
       modelName: aliyunVisionModel,
       prompt,
       imageItems,
       temperature: 0.3,
-      maxTokens: 260
+      maxTokens: 360
     });
 
     const rawOutput = response.choices?.[0]?.message?.content || "";

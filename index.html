@@ -906,11 +906,12 @@
       width: fit-content;
       max-width: 100%;
       margin: -6px 0 12px;
-      padding: 0;
-      border: 0;
-      background: transparent;
+      padding: 4px 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      background: #f8fafc;
       color: #64748b;
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 600;
       line-height: 1.35;
     }
@@ -928,7 +929,9 @@
     }
 
     .quota-status.quota-vip {
-      color: #1d4ed8;
+      border-color: #dbeafe;
+      background: #eef2f7;
+      color: #64748b;
     }
 
     .quota-status[hidden] {
@@ -2411,13 +2414,13 @@ Au值 = 纯度 × 10 后取整数</div>
 
       setQuotaStatus(
         convertQuotaStatus,
-        formatRemainingText("识别", convertRemaining),
+        `剩余 ${convertRemaining} 次${convertRemaining === 0 ? "（已用完）" : ""}`,
         convertRemaining,
         false
       );
       setQuotaStatus(
         judgeQuotaStatus,
-        formatRemainingText("判读", judgeRemaining),
+        `剩余 ${judgeRemaining} 次${judgeRemaining === 0 ? "（已用完）" : ""}`,
         judgeRemaining,
         false
       );
@@ -2496,8 +2499,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const isVip = Boolean(quota.is_vip || quota.isVip);
 
       if (isVip) {
-        setQuotaStatus(convertQuotaStatus, "剩余识别次数：VIP不限次数", 0, true);
-        setQuotaStatus(judgeQuotaStatus, "剩余判读次数：VIP不限次数", 0, true);
+        setQuotaStatus(convertQuotaStatus, "VIP 不限次数", 0, true);
+        setQuotaStatus(judgeQuotaStatus, "VIP 不限次数", 0, true);
         return;
       }
 
@@ -2508,13 +2511,13 @@ Au值 = 纯度 × 10 后取整数</div>
 
       setQuotaStatus(
         convertQuotaStatus,
-        formatRemainingText("识别", freeConvert + paidConvert),
+        `剩余 ${freeConvert + paidConvert} 次`,
         freeConvert + paidConvert,
         false
       );
       setQuotaStatus(
         judgeQuotaStatus,
-        formatRemainingText("判读", freeJudge + paidJudge),
+        `剩余 ${freeJudge + paidJudge} 次`,
         freeJudge + paidJudge,
         false
       );
@@ -2916,6 +2919,56 @@ Au值 = 纯度 × 10 后取整数</div>
         || /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif)$/i.test(name);
     }
 
+    function loadImageForCompression(file) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const image = new Image();
+
+        image.onload = () => {
+          URL.revokeObjectURL(url);
+          resolve(image);
+        };
+        image.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("图片压缩失败"));
+        };
+        image.src = url;
+      });
+    }
+
+    async function compressJudgeImage(file) {
+      if (!file || file.size <= 900 * 1024) {
+        return file;
+      }
+
+      try {
+        const image = await loadImageForCompression(file);
+        const longestSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height);
+        const scale = longestSide > 1024 ? 1024 / longestSide : 1;
+        const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+        const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, width, height);
+
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.72));
+        if (!blob) {
+          return file;
+        }
+
+        const baseName = String(file.name || "judge-image").replace(/\.[^.]+$/, "");
+        return new File([blob], `${baseName}-compressed.jpg`, {
+          type: "image/jpeg",
+          lastModified: Date.now()
+        });
+      } catch (error) {
+        console.warn("AI判读图片压缩失败，使用原图", error);
+        return file;
+      }
+    }
+
     function syncJudgeImageInputFiles() {
       if (!window.DataTransfer || !judgeImageInput) {
         return;
@@ -3159,15 +3212,17 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      const formData = new FormData();
-      files.slice(0, 1).forEach(file => formData.append("images", file, file.name));
-      formData.append("judgeType", judgeType.value);
       judgeResult.value = "";
       const progressTimer = startJudgeProgress(files.length);
+      const compressedFiles = await Promise.all(files.slice(0, 1).map(compressJudgeImage));
+      const formData = new FormData();
+      compressedFiles.forEach(file => formData.append("images", file, file.name));
+      formData.append("judgeType", judgeType.value);
       trackEvent("ai_judge_upload_select", {
-        fileCount: files.length,
-        fileSize: files.reduce((sum, file) => sum + file.size, 0),
-        fileType: files.map(file => file.type).join(","),
+        fileCount: compressedFiles.length,
+        fileSize: compressedFiles.reduce((sum, file) => sum + file.size, 0),
+        originalFileSize: files.reduce((sum, file) => sum + file.size, 0),
+        fileType: compressedFiles.map(file => file.type).join(","),
         judgeType: judgeType.value
       });
 
