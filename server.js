@@ -3413,6 +3413,43 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
       });
     }
 
+    if (!visitorId) {
+      return res.status(400).json({
+        success: false,
+        reason: "missing_user",
+        error: "缺少用户信息，请刷新页面后重试。",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+
+    await updateSupabaseUserVisitMeta(visitorId, req);
+
+    const usageStatus = await checkSupabaseUsageAvailable(visitorId, "convert");
+
+    if (!usageStatus.allowed && usageStatus.reason === "limit_exceeded") {
+      return res.status(403).json({
+        success: false,
+        reason: "limit_exceeded",
+        type: "convert",
+        quota: usageStatus.quota,
+        error: "今日免费坐标次数已用完，请购买次数或联系人工开通。",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+
+    if (!usageStatus.allowed) {
+      return res.status(500).json({
+        success: false,
+        reason: usageStatus.reason || "db_error",
+        quota: usageStatus.quota,
+        error: "读取坐标识别次数失败，请稍后重试。",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+
     if (!aliyunApiKey) {
       console.error("坐标识别失败：缺少环境变量 ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
       return res.status(400).json({
@@ -3650,7 +3687,8 @@ The expected result for a BFTM table is a list of real row pairs such as X,Y onl
       rawText,
       coordinates,
       precisionMode: "preserve-original-decimals-and-parse-dms",
-      warning
+      warning,
+      quota: usageStatus.quota
     });
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);

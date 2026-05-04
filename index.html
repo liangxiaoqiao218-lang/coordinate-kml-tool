@@ -5059,6 +5059,15 @@ ${placemarks}
           };
         }
 
+        if (!response.ok && data.reason === "limit_exceeded") {
+          if (data.quota) {
+            updateQuotaDisplay(data.quota);
+          }
+          setRecognitionStatus("", "");
+          showQuotaModal("convert");
+          return;
+        }
+
         const preservedCoordinates = extractCoordinatesPreservePrecision(data.rawText);
         const dmsCoordinates = extractDmsCoordinates(data.rawText);
         const recognizedLines = extractRecognizedCoordinateLines(data.rawText);
