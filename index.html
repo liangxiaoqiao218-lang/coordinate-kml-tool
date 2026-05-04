@@ -1420,10 +1420,16 @@
     }
 
     .settlement-value {
+      display: inline-flex;
+      align-items: baseline;
       color: #b45309;
       font-size: clamp(26px, 7vw, 38px);
       line-height: 1.15;
       font-weight: 900;
+    }
+
+    .settlement-symbol {
+      margin-right: 4px;
     }
 
     .quote-reference {
@@ -3030,7 +3036,25 @@ Au值 = 纯度 × 10 后取整数</div>
         .catch(() => showJudgeMessage("复制失败，请手动选择内容复制。", true));
     }
 
-    function getGoldPurityGrade(purity) {
+    function getGoldKDescription(kValue) {
+      if (!Number.isFinite(kValue)) {
+        return "";
+      }
+
+      if (kValue >= 23) {
+        return "接近 24K";
+      }
+
+      if (kValue >= 20) {
+        return `约 ${formatGoldNumber(kValue)}K`;
+      }
+
+      return "";
+    }
+
+    function getGoldPurityGrade(purity, kValue = 0) {
+      const kDescription = getGoldKDescription(kValue);
+
       if (!Number.isFinite(purity) || purity <= 0) {
         return "输入数据后自动判断成色等级。";
       }
@@ -3044,11 +3068,11 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       if (purity >= 96.5) {
-        return "这块金成色较高，接近 23K，可作为报价参考。";
+        return `这块金成色较高，${kDescription || "接近 24K"}，可作为报价参考。`;
       }
 
       if (purity >= 91.6) {
-        return "这块金约为 22K，属于常见较高成色范围。";
+        return `这块金${kDescription || "约为 22K"}，属于常见较高成色范围。`;
       }
 
       if (purity >= 75) {
@@ -3210,7 +3234,7 @@ Au值 = 纯度 × 10 后取整数</div>
       if (settlementEl) {
         settlementEl.classList.add("is-visible");
         settlementEl.innerHTML = `<span>预计可卖总金额</span>
-        <strong class="settlement-value">¥${Math.round(result.settlementTotal).toLocaleString("zh-CN")}</strong>
+        <strong class="settlement-value"><span class="settlement-symbol">¥</span>${Math.round(result.settlementTotal).toLocaleString("zh-CN")}</strong>
         <small>按 黄金重量 × 金店报价 × 当前成色 估算</small>`;
       }
 
@@ -3246,7 +3270,7 @@ Au值 = 纯度 × 10 后取整数</div>
         purity,
         kValue,
         auValue,
-        grade: getGoldPurityGrade(purity)
+        grade: getGoldPurityGrade(purity, kValue)
       };
     }
 
