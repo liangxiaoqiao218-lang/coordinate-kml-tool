@@ -3405,28 +3405,28 @@ Au值 = 纯度 × 10 后取整数</div>
       const lowConfidence = /清晰度有限|看不清|信息不足|缺少.*参照|无法判断/.test(sourceText);
       const map = {
         A: {
-          worth: "✔ 值得继续",
+          worth: "🔥 值得继续（有机会）",
           confidence: lowConfidence ? "中" : "高",
           score: lowConfidence ? 78 : 88,
-          summary: "👉 这张图有继续看的价值，可以进入下一步验证。"
+          summary: "👉 再试一张，这张可能没拍到关键点。"
         },
         B: {
-          worth: "⚠ 可以观察",
+          worth: "👍 有点意思（可以再看）",
           confidence: lowConfidence ? "低" : "中",
           score: lowConfidence ? 58 : 68,
-          summary: "👉 这块目前看有机会，但不建议重投入。"
+          summary: "👉 换个角度，结果可能完全不同。"
         },
         C: {
-          worth: "✖ 不建议投入",
+          worth: "⚠ 风险偏高（别重投入）",
           confidence: lowConfidence ? "低" : "中",
           score: lowConfidence ? 38 : 46,
-          summary: "👉 风险偏大，先补关键照片再决定。"
+          summary: "👉 拍断面或加比例物，判断更准。"
         },
         D: {
-          worth: "✖ 不建议投入",
+          worth: "❌ 不建议（直接换）",
           confidence: sourceText.includes("直接排除") || !lowConfidence ? "高" : "中",
           score: sourceText.includes("直接排除") ? 15 : 25,
-          summary: "👉 更像普通矿物或普通地貌，不建议继续花时间。"
+          summary: "👉 更像普通目标，直接换下一张更省时间。"
         }
       };
       const fallback = map[grade] || map.C;
@@ -3437,6 +3437,17 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
+    function getJudgeBestScore() {
+      return Math.max(0, Number(localStorage.getItem("judgeBestScore") || 0));
+    }
+
+    function updateJudgeBestScore(score) {
+      const current = getJudgeBestScore();
+      const next = Math.max(current, Number(score || 0));
+      localStorage.setItem("judgeBestScore", String(next));
+      return next;
+    }
+
     function renderJudgeDecisionCard(text) {
       if (!judgeDecisionCard || !String(text || "").trim()) {
         clearJudgeDecisionCard();
@@ -3445,6 +3456,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
       const grade = getJudgeGrade(text);
       const meta = getJudgeDecisionMeta(grade, text);
+      const bestScore = updateJudgeBestScore(meta.score);
       judgeDecisionCard.hidden = false;
       judgeDecisionCard.className = `judge-decision-card grade-${grade.toLowerCase()}`;
       judgeDecisionCard.innerHTML = `
@@ -3462,8 +3474,10 @@ Au值 = 纯度 × 10 后取整数</div>
             <span class="judge-decision-value">${escapeHtml(meta.confidence)}</span>
           </div>
           <div class="judge-decision-item">
-            <span class="judge-decision-label">潜力评分</span>
+            <span class="judge-decision-label">本次评分</span>
             <span class="judge-decision-value">${escapeHtml(String(meta.score))}</span>
+            <span class="judge-decision-label">最高记录</span>
+            <span class="judge-decision-value" style="font-size: 15px;">${escapeHtml(String(bestScore))}</span>
           </div>
         </div>
         <p class="judge-decision-summary">${escapeHtml(meta.summary)}</p>
@@ -3472,8 +3486,8 @@ Au值 = 纯度 × 10 后取整数</div>
           <button type="button" class="secondary" onclick="startAngleRetest()">换角度重测</button>
           <button type="button" class="secondary" onclick="saveCurrentJudgeResult()">保存结果</button>
         </div>
-        <p class="judge-decision-hint">试试换一张角度，结果可能不同。</p>`;
-      return { grade, ...meta };
+        <p class="judge-decision-hint">连续测 2–3 张，判断更稳定。</p>`;
+      return { grade, bestScore, ...meta };
     }
 
     function getJudgeRecentItems() {
