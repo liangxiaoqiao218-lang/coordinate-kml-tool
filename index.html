@@ -48,9 +48,9 @@
 
     .home-view {
       display: none;
-      min-height: 62vh;
+      min-height: 56vh;
       place-content: center;
-      padding: 14px 0;
+      padding: 8px 0;
     }
 
     .home-view.active {
@@ -66,18 +66,18 @@
     }
 
     .home-hero .eyebrow {
-      margin: 0 0 8px;
+      margin: 0 0 10px;
       color: #2563eb;
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 800;
       letter-spacing: 0;
     }
 
     .home-hero h1 {
-      max-width: 560px;
-      margin: 0 auto 12px;
-      font-size: 42px;
-      line-height: 1.18;
+      max-width: 620px;
+      margin: 0 auto 14px;
+      font-size: 48px;
+      line-height: 1.12;
     }
 
     .home-hero .intro {
@@ -89,12 +89,12 @@
     }
 
     .home-primary-entry {
-      width: min(420px, 100%);
-      min-height: 60px;
-      margin: 26px auto 14px;
-      border-radius: 10px;
-      font-size: 18px;
-      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
+      width: min(520px, 100%);
+      min-height: 70px;
+      margin: 30px auto 18px;
+      border-radius: 12px;
+      font-size: 21px;
+      box-shadow: 0 16px 30px rgba(37, 99, 235, 0.2);
     }
 
     .home-secondary-links {
@@ -104,6 +104,11 @@
       gap: 10px;
       color: #94a3b8;
       font-size: 14px;
+    }
+
+    .home-secondary-label {
+      color: #94a3b8;
+      font-weight: 700;
     }
 
     .home-secondary-links button {
@@ -1483,7 +1488,12 @@
       }
 
       .home-hero h1 {
-        font-size: 34px;
+        font-size: 36px;
+      }
+
+      .home-primary-entry {
+        min-height: 64px;
+        font-size: 19px;
       }
 
       .intro {
@@ -1611,17 +1621,18 @@
   <main class="page">
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
-        <p class="eyebrow">Geo Tool</p>
-        <h1>卖金前，先算一次成色和总价</h1>
-        <p class="intro">避免盲目报价，一个工具快速判断</p>
+        <p class="eyebrow">卖金判断工具</p>
+        <h1>先算成色，再谈价格</h1>
+        <p class="intro">一键算清这批黄金能卖多少钱</p>
         <p class="eyebrow">版本：gold-ui-20260504-v3</p>
       </div>
 
-      <button type="button" class="home-primary-entry primary-action" onclick="showPage('gold')">开始计算黄金成色</button>
+      <button type="button" class="home-primary-entry primary-action" onclick="showPage('gold')">立即计算黄金成色</button>
 
       <div class="home-secondary-links" aria-label="其他工具入口">
+        <span class="home-secondary-label">其他功能：</span>
         <button type="button" onclick="showPage('coordinate')">坐标处理</button>
-        <span>｜</span>
+        <span>·</span>
         <button type="button" onclick="showPage('judge')">矿地判读</button>
       </div>
     </section>
