@@ -1374,6 +1374,7 @@
     }
 
     .judge-recent-item {
+      position: relative;
       display: grid;
       grid-template-columns: 44px 1fr;
       gap: 8px;
@@ -1387,6 +1388,22 @@
       cursor: pointer;
       text-align: left;
       box-shadow: none;
+    }
+
+    .judge-recent-delete {
+      position: absolute;
+      top: -7px;
+      right: -7px;
+      width: 22px;
+      min-height: 22px;
+      padding: 0;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #64748b;
+      font-size: 15px;
+      line-height: 1;
+      box-shadow: 0 4px 10px rgba(15, 23, 42, 0.14);
     }
 
     .judge-recent-item img {
@@ -3140,6 +3157,20 @@ Au值 = 纯度 × 10 后取整数</div>
       });
     }
 
+    function fileToDataUrl(file) {
+      return new Promise(resolve => {
+        if (!file) {
+          resolve("");
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => resolve("");
+        reader.readAsDataURL(file);
+      });
+    }
+
     async function compressJudgeImage(file) {
       if (!file || file.size <= 900 * 1024) {
         return file;
@@ -3227,7 +3258,7 @@ Au值 = 纯度 × 10 后取整数</div>
       showMessage("已删除上传图片，可以重新选择。");
     }
 
-    function showJudgeSelectedImage(files) {
+    async function showJudgeSelectedImage(files) {
       selectedJudgeImageUrls.forEach(url => URL.revokeObjectURL(url));
 
       selectedJudgeImageFiles = Array.from(files).filter(isImageUpload).slice(0, 1);
@@ -3245,10 +3276,11 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       judgeImagePreview.style.display = "block";
+      const imageDataUrls = await Promise.all(selectedJudgeImageFiles.map(fileToDataUrl));
       judgeImagePreview.innerHTML = selectedJudgeImageFiles.map((file, index) => `
         <div class="image-preview-row">
           <button type="button" class="preview-button" onclick="openJudgeSelectedImage(${index})" title="点击查看上传图片">
-            <img src="${selectedJudgeImageUrls[index]}" alt="已上传判读图片预览" />
+            <img src="${escapeHtml(imageDataUrls[index] || selectedJudgeImageUrls[index] || "")}" alt="已上传判读图片预览" />
           </button>
           <p><strong>${escapeHtml(file.name)}</strong><span>${Math.round(file.size / 1024)} KB</span></p>
           <button type="button" class="remove-image" onclick="clearJudgeSelectedImage(${index})" title="删除图片" aria-label="删除图片">×</button>
@@ -3256,7 +3288,7 @@ Au值 = 纯度 × 10 后取整数</div>
       updateJudgeUploadControls();
     }
 
-    function handleJudgeImageChange() {
+    async function handleJudgeImageChange() {
       const files = Array.from(judgeImageInput.files || []);
 
       if (files.length === 0) {
@@ -3264,7 +3296,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       const validFiles = files.filter(isImageUpload);
-      showJudgeSelectedImage(validFiles.slice(0, 1));
+      await showJudgeSelectedImage(validFiles.slice(0, 1));
       judgeImageInput.value = "";
       judgeResult.value = "";
       clearJudgeDecisionCard();
@@ -3284,7 +3316,7 @@ Au值 = 纯度 × 10 后取整数</div>
       imageModal.style.display = "flex";
     }
 
-    function clearJudgeSelectedImage(index = -1) {
+    async function clearJudgeSelectedImage(index = -1) {
       if (index >= 0) {
         const url = selectedJudgeImageUrls[index];
         if (url) {
@@ -3315,7 +3347,7 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      showJudgeSelectedImage(selectedJudgeImageFiles);
+      await showJudgeSelectedImage(selectedJudgeImageFiles);
       showJudgeMessage("已删除该图片。");
     }
 
@@ -3499,7 +3531,14 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function setJudgeRecentItems(items) {
-      localStorage.setItem("judgeRecentResults", JSON.stringify(items.slice(0, 3)));
+      const normalized = items.slice(0, 3).map(item => ({
+        image: item.image || item.thumb || "",
+        result: item.result || "",
+        grade: item.grade || "C",
+        score: Number(item.score || 0),
+        time: item.time || Date.now()
+      }));
+      localStorage.setItem("judgeRecentResults", JSON.stringify(normalized));
     }
 
     function renderJudgeRecent() {
@@ -3510,17 +3549,24 @@ Au值 = 纯度 × 10 后取整数</div>
       const items = getJudgeRecentItems();
       judgeRecentPanel.hidden = items.length === 0;
       judgeRecentList.innerHTML = items.map((item, index) => `
-        <button type="button" class="judge-recent-item" onclick="restoreJudgeRecent(${index})">
-          <img src="${escapeHtml(item.thumb || "")}" alt="最近判读缩略图" />
+        <div class="judge-recent-item" role="button" tabindex="0" onclick="restoreJudgeRecent(${index})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();restoreJudgeRecent(${index});}">
+          <button type="button" class="judge-recent-delete" onclick="deleteJudgeRecent(event, ${index})" aria-label="删除该条最近判读">×</button>
+          <img src="${escapeHtml(item.image || item.thumb || "")}" alt="最近判读缩略图" />
           <span>
-            <strong>${escapeHtml(item.grade || "C")} · ${escapeHtml(item.worth || "可以观察")}</strong>
-            <span>${escapeHtml(item.summary || "点击回看结果")}</span>
+            <strong>${escapeHtml(item.grade || "C")} · ${escapeHtml(String(item.score || 0))}分</strong>
+            <span>${escapeHtml(formatJudgeRecentTime(item.time))}</span>
           </span>
-        </button>`).join("");
+        </div>`).join("");
     }
 
-    function getCurrentJudgeThumb() {
-      return selectedJudgeImageUrls[0] || "";
+    function formatJudgeRecentTime(time) {
+      const date = new Date(Number(time || Date.now()));
+      return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    }
+
+    function getCurrentJudgeImageDataUrl() {
+      const image = judgeImagePreview?.querySelector("img");
+      return image?.src || "";
     }
 
     function saveJudgeResultToRecent(text, meta) {
@@ -3530,12 +3576,11 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       const item = {
-        id: Date.now(),
+        image: getCurrentJudgeImageDataUrl(),
         result,
         grade: meta?.grade || getJudgeGrade(result),
-        worth: meta?.worth || getJudgeDecisionMeta(getJudgeGrade(result), result).worth,
-        summary: (meta?.summary || getJudgeSection(result, "一句话总结") || getJudgeSection(result, "结论") || "").replace(/^👉\s*/, ""),
-        thumb: getCurrentJudgeThumb()
+        score: Number(meta?.score || getJudgeDecisionMeta(getJudgeGrade(result), result).score || 0),
+        time: Date.now()
       };
       setJudgeRecentItems([item, ...getJudgeRecentItems()].slice(0, 3));
       renderJudgeRecent();
@@ -3562,17 +3607,26 @@ Au值 = 纯度 × 10 后取整数</div>
       showJudgeMessage("已打开最近判读结果。");
     }
 
+    function deleteJudgeRecent(event, index) {
+      event.stopPropagation();
+      const items = getJudgeRecentItems();
+      items.splice(index, 1);
+      setJudgeRecentItems(items);
+      renderJudgeRecent();
+      showJudgeMessage("已删除该条最近判读。");
+    }
+
     function startNewJudgeTest() {
       clearJudgeSelectedImage();
       clearJudgeResult();
-      judgeImageInput.click();
+      setTimeout(() => judgeImageInput.click(), 0);
     }
 
     function startAngleRetest() {
       showJudgeMessage("请换一个角度拍摄：近景、断面或带比例物会更准。");
       clearJudgeSelectedImage();
       clearJudgeResult();
-      judgeImageInput.click();
+      setTimeout(() => judgeImageInput.click(), 0);
     }
 
     function startJudgeProgress(fileCount) {
@@ -3601,7 +3655,7 @@ Au值 = 纯度 × 10 后取整数</div>
         : Array.from(judgeImageInput.files || []).filter(isImageUpload).slice(0, 1);
 
       if (selectedJudgeImageFiles.length === 0 && files.length > 0) {
-        showJudgeSelectedImage(files);
+        await showJudgeSelectedImage(files);
         files = selectedJudgeImageFiles;
       }
 
@@ -3726,8 +3780,40 @@ Au值 = 纯度 × 10 后取整数</div>
       showJudgeMessage("判读结果已清除。");
     }
 
+    function buildJudgeCopyText() {
+      const resultText = String(judgeResult?.value || "").trim();
+      if (!resultText) {
+        return "";
+      }
+
+      const allowedSections = ["结论", "等级", "关键依据", "主要风险", "下一步", "一句话总结"];
+      const sections = allowedSections
+        .map(name => {
+          const value = getJudgeSection(resultText, name);
+          return value ? `【${name}】\n${value}` : "";
+        })
+        .filter(Boolean);
+      const grade = getJudgeGrade(resultText);
+      const meta = getJudgeDecisionMeta(grade, resultText);
+      const decisionText = [
+        "【核心判断】",
+        `是否值得继续：${meta.worth}`,
+        `判断等级：${grade}`,
+        `置信度：${meta.confidence}`,
+        `本次评分：${meta.score}`
+      ].join("\n");
+      const text = [decisionText, sections.join("\n\n") || resultText].join("\n\n").trim();
+
+      return text
+        .split(/\r?\n/)
+        .filter(line => !/^\s*git\s+(add|commit|push|status)\b/i.test(line))
+        .filter(line => !/::git-(stage|commit|push|create-branch|create-pr)\b/i.test(line))
+        .join("\n")
+        .trim();
+    }
+
     function copyJudgeResult() {
-      const text = judgeResult.value.trim();
+      const text = buildJudgeCopyText();
 
       if (!text) {
         showJudgeMessage("暂无判读结果可复制。", true);
