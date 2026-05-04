@@ -30,7 +30,6 @@ const adminDataFile = path.join(__dirname, "admin-data.json");
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const DAILY_FREE_CONVERT_LIMIT = 3;
 const DAILY_FREE_JUDGE_LIMIT = 2;
-const DEFAULT_GOLD_PRICE_CNY_PER_GRAM = 600;
 const USD_PER_TROY_OUNCE_GRAMS = 31.1035;
 const DEFAULT_USD_CNY_RATE = 7.2;
 const usdCnyRate = Number(process.env.USD_CNY_RATE || DEFAULT_USD_CNY_RATE);
@@ -99,10 +98,10 @@ function normalizeGoldApiPayload(payload) {
   };
 }
 
-function getDefaultGoldPricePayload() {
+function getUnavailableGoldPricePayload() {
   return {
-    price_cny_per_gram: DEFAULT_GOLD_PRICE_CNY_PER_GRAM,
-    source: "default_price",
+    price_cny_per_gram: null,
+    source: "unavailable",
     updated_at: formatGoldPriceUpdatedAt()
   };
 }
@@ -139,10 +138,10 @@ async function fetchRealtimeGoldPrice() {
 app.get("/api/gold-price", async (req, res) => {
   try {
     const realtimePrice = await fetchRealtimeGoldPrice();
-    res.json(realtimePrice || getDefaultGoldPricePayload());
+    res.json(realtimePrice || getUnavailableGoldPricePayload());
   } catch (error) {
-    console.error("读取实时金价失败，使用默认参考价：", error.message || error);
-    res.json(getDefaultGoldPricePayload());
+    console.error("读取实时金价失败，返回不可用状态：", error.message || error);
+    res.json(getUnavailableGoldPricePayload());
   }
 });
 
