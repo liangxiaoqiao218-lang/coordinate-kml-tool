@@ -855,39 +855,30 @@
       align-items: center;
       width: fit-content;
       max-width: 100%;
-      margin: -4px 0 14px;
-      padding: 5px 9px;
-      border-radius: 999px;
-      border: 1px solid #d8e1ee;
-      background: rgba(255, 255, 255, 0.72);
+      margin: -6px 0 12px;
+      padding: 0;
+      border: 0;
+      background: transparent;
       color: #64748b;
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 600;
       line-height: 1.35;
     }
 
     .quota-status.quota-ok {
-      border-color: #bbf7d0;
-      color: #15803d;
-      background: #f0fdf4;
+      color: #64748b;
     }
 
     .quota-status.quota-low {
-      border-color: #fed7aa;
       color: #c2410c;
-      background: #fff7ed;
     }
 
     .quota-status.quota-empty {
-      border-color: #fecaca;
       color: #b91c1c;
-      background: #fef2f2;
     }
 
     .quota-status.quota-vip {
-      border-color: #bfdbfe;
       color: #1d4ed8;
-      background: #eff6ff;
     }
 
     .quota-status[hidden] {
@@ -2302,6 +2293,18 @@ Au值 = 纯度 × 10 后取整数</div>
 
     async function loadUserQuota() {
       try {
+        const usageResponse = await fetch(`/api/user-usage?visitorId=${encodeURIComponent(visitorId)}`, {
+          headers: {
+            "x-visitor-id": visitorId
+          }
+        });
+        const usageData = await usageResponse.json().catch(() => ({}));
+
+        if (usageResponse.ok && typeof usageData.judge_remaining !== "undefined" && typeof usageData.convert_remaining !== "undefined") {
+          updateSimpleUsageDisplay(usageData);
+          return;
+        }
+
         const response = await fetch(`/api/usage/quota?visitorId=${encodeURIComponent(visitorId)}`, {
           headers: {
             "x-visitor-id": visitorId
@@ -2315,6 +2318,29 @@ Au值 = 纯度 × 10 后取整数</div>
       } catch (error) {
         console.warn("读取剩余次数失败", error);
       }
+    }
+
+    function formatRemainingText(label, value) {
+      const count = Math.max(0, Number(value || 0));
+      return `剩余${label}次数：${count} 次${count === 0 ? "（已用完）" : ""}`;
+    }
+
+    function updateSimpleUsageDisplay(usage) {
+      const convertRemaining = Math.max(0, Number(usage?.convert_remaining || 0));
+      const judgeRemaining = Math.max(0, Number(usage?.judge_remaining || 0));
+
+      setQuotaStatus(
+        convertQuotaStatus,
+        formatRemainingText("识别", convertRemaining),
+        convertRemaining,
+        false
+      );
+      setQuotaStatus(
+        judgeQuotaStatus,
+        formatRemainingText("判读", judgeRemaining),
+        judgeRemaining,
+        false
+      );
     }
 
     function getQuotaNumber(quota, snakeKey, camelKey) {
@@ -2376,6 +2402,39 @@ Au值 = 纯度 × 10 后取整数</div>
       setQuotaStatus(
         judgeQuotaStatus,
         `今日免费判读：${freeJudge}次｜付费判读：${paidJudge}次`,
+        freeJudge + paidJudge,
+        false
+      );
+    }
+
+    function updateQuotaDisplay(quota) {
+      if (!quota) {
+        return;
+      }
+
+      currentQuota = quota;
+      const isVip = Boolean(quota.is_vip || quota.isVip);
+
+      if (isVip) {
+        setQuotaStatus(convertQuotaStatus, "剩余识别次数：VIP不限次数", 0, true);
+        setQuotaStatus(judgeQuotaStatus, "剩余判读次数：VIP不限次数", 0, true);
+        return;
+      }
+
+      const freeConvert = getQuotaNumber(quota, "free_convert_count", "freeConvertCount");
+      const paidConvert = getQuotaNumber(quota, "paid_convert_count", "paidConvertCount");
+      const freeJudge = getQuotaNumber(quota, "free_judge_count", "freeJudgeCount");
+      const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
+
+      setQuotaStatus(
+        convertQuotaStatus,
+        formatRemainingText("识别", freeConvert + paidConvert),
+        freeConvert + paidConvert,
+        false
+      );
+      setQuotaStatus(
+        judgeQuotaStatus,
+        formatRemainingText("判读", freeJudge + paidJudge),
         freeJudge + paidJudge,
         false
       );
