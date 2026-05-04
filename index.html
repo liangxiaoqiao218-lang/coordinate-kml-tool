@@ -48,9 +48,9 @@
 
     .home-view {
       display: none;
-      min-height: 68vh;
+      min-height: 58vh;
       place-content: center;
-      padding: 12px 0;
+      padding: 8px 0;
     }
 
     .home-view.active {
@@ -86,35 +86,13 @@
       color: #526071;
     }
 
-    .home-flow {
-      display: none;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-      margin: 12px 0 16px;
-    }
-
-    .home-flow span {
-      padding: 8px 6px;
-      border: 1px solid #d8e1ee;
-      border-radius: 8px;
-      background: #ffffff;
-      color: #475569;
-      font-size: 13px;
-      font-weight: 800;
-      text-align: center;
-    }
-
-    .home-flow span:nth-child(1),
-    .home-flow span:nth-child(2) {
-      border-color: #bfdbfe;
-      background: #eff6ff;
-      color: #1d4ed8;
-    }
-
-    .home-flow span:nth-child(3) {
-      border-color: #bbf7d0;
-      background: #f0fdf4;
-      color: #15803d;
+    .home-primary-entry {
+      width: min(420px, 100%);
+      min-height: 58px;
+      margin: 22px auto 14px;
+      border-radius: 10px;
+      font-size: 18px;
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
     }
 
     .view {
@@ -132,13 +110,13 @@
     .module-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      margin-top: 18px;
+      gap: 10px;
+      margin-top: 0;
     }
 
     .module-card {
-      min-height: 126px;
-      padding: 16px;
+      min-height: 92px;
+      padding: 13px 14px;
       border: 1px solid #d6dfeb;
       border-radius: 8px;
       background: #ffffff;
@@ -157,30 +135,30 @@
 
     .module-card strong {
       display: block;
-      margin-bottom: 8px;
-      font-size: 20px;
+      margin-bottom: 5px;
+      font-size: 17px;
       color: #0f172a;
     }
 
     .module-card span {
       display: block;
       color: #526071;
-      line-height: 1.6;
-      font-size: 14px;
+      line-height: 1.45;
+      font-size: 13px;
     }
 
     .module-card.primary-module {
-      border-color: #bfdbfe;
+      border-color: #d6dfeb;
       background: #ffffff;
     }
 
     .module-card.judge-module {
-      border-color: #bbf7d0;
+      border-color: #d6dfeb;
       background: #ffffff;
     }
 
     .module-card.gold-module {
-      border-color: #fde68a;
+      border-color: #d6dfeb;
       background: #ffffff;
     }
 
@@ -201,9 +179,9 @@
 
     .module-action {
       display: inline-block;
-      margin-top: 14px;
+      margin-top: 8px;
       color: #1d4ed8;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 800;
     }
 
@@ -217,12 +195,12 @@
 
     .module-tag {
       display: inline-block;
-      margin-bottom: 12px;
-      padding: 5px 9px;
+      margin-bottom: 8px;
+      padding: 4px 8px;
       border-radius: 999px;
       background: #eaf1ff;
       color: #1d4ed8;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
     }
 
@@ -1570,6 +1548,35 @@
         margin-top: 12px;
       }
 
+      .home-view .module-grid {
+        grid-template-columns: repeat(3, minmax(108px, 1fr));
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        scrollbar-width: none;
+      }
+
+      .home-view .module-grid::-webkit-scrollbar {
+        display: none;
+      }
+
+      .home-view .module-card {
+        min-width: 108px;
+        padding: 11px 10px;
+      }
+
+      .home-view .module-card strong {
+        font-size: 15px;
+      }
+
+      .home-view .module-card span {
+        font-size: 12px;
+      }
+
+      .home-view .module-action {
+        margin-top: 6px;
+      }
+
       .wechat-info {
         grid-template-columns: 1fr;
       }
@@ -1616,34 +1623,30 @@
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
         <p class="eyebrow">Geo Tool</p>
-        <h1>矿业空间工具 Geo Tool</h1>
+        <h1>矿业空间工具</h1>
+        <p class="intro">卖金判断、矿地初筛、坐标处理，一个入口完成现场决策</p>
         <p class="eyebrow">版本：gold-ui-20260504-v3</p>
-        <p class="intro">坐标整理、矿地初筛、黄金成色估算，一个入口完成现场常用判断。</p>
       </div>
 
-      <div class="home-flow">
-        <span>坐标整理</span>
-        <span>KML导出</span>
-        <span>成色快算</span>
-      </div>
+      <button type="button" class="home-primary-entry primary-action" onclick="showPage('gold')">开始使用工具</button>
 
       <div class="module-grid">
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
           <small class="module-tag">KML / 坐标转换</small>
           <strong>坐标处理工具</strong>
-          <span>整理坐标，生成 KML。</span>
+          <span>坐标整理与导出。</span>
           <small class="module-action">进入</small>
         </button>
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
           <small class="module-tag">图片识别</small>
           <strong>AI矿地判读</strong>
-          <span>上传图片，做矿地初筛。</span>
+          <span>矿地图片初筛。</span>
           <small class="module-action">进入</small>
         </button>
         <button type="button" class="module-card gold-module" onclick="showPage('gold')">
           <small class="module-tag">成色估算</small>
           <strong>黄金成色计算器</strong>
-          <span>快速了解黄金成色，报价更有依据。</span>
+          <span>纯度、K值与报价参考。</span>
           <small class="module-action">进入</small>
         </button>
       </div>
