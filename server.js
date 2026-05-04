@@ -4,7 +4,6 @@ import multer from "multer";
 import { createClient } from "@supabase/supabase-js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import fs from "node:fs/promises";
 import Tesseract from "tesseract.js";
 
 const app = express();
@@ -26,7 +25,6 @@ const supabase = supabaseUrl && supabaseServiceRoleKey
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
-const adminDataFile = path.join(__dirname, "admin-data.json");
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const DAILY_FREE_CONVERT_LIMIT = 3;
 const DAILY_FREE_JUDGE_LIMIT = 2;
@@ -167,52 +165,14 @@ function createDefaultAdminData() {
 }
 
 async function readAdminData() {
-  try {
-    const text = await fs.readFile(adminDataFile, "utf8");
-    const data = JSON.parse(text || "{}");
-    const defaults = createDefaultAdminData();
-
-    return {
-      ...defaults,
-      ...data,
-      users: data.users || {},
-      events: Array.isArray(data.events) ? data.events : [],
-      records: Array.isArray(data.records) ? data.records : [],
-      usage: data.usage && typeof data.usage === "object" ? data.usage : {},
-      ipGeoCache: data.ipGeoCache && typeof data.ipGeoCache === "object" ? data.ipGeoCache : {},
-      featureFlags: {
-        ...defaults.featureFlags,
-        ...(data.featureFlags || {})
-      }
-    };
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return createDefaultAdminData();
-    }
-
-    if (error instanceof SyntaxError) {
-      const backupFile = `${adminDataFile}.${Date.now()}.broken`;
-
-      try {
-        await fs.rename(adminDataFile, backupFile);
-        console.error(`admin-data.json 已损坏，已备份到 ${backupFile} 并重建。`);
-      } catch (renameError) {
-        console.error("admin-data.json 损坏，备份失败，将直接重建。", renameError);
-      }
-
-      return createDefaultAdminData();
-    }
-
-    throw error;
-  }
+  return createDefaultAdminData();
 }
 
 async function writeAdminData(data) {
-  const tempFile = `${adminDataFile}.tmp`;
-  await fs.writeFile(tempFile, JSON.stringify(data, null, 2), "utf8");
-  await fs.rename(tempFile, adminDataFile);
+  // Render does not provide durable writable storage in the app directory.
+  // Local admin-data.json persistence is disabled; official admin data lives in Supabase.
+  return data;
 }
-
 function getNowISO() {
   return new Date().toISOString();
 }
