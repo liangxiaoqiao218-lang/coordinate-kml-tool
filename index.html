@@ -48,9 +48,9 @@
 
     .home-view {
       display: none;
-      min-height: 58vh;
+      min-height: 62vh;
       place-content: center;
-      padding: 8px 0;
+      padding: 14px 0;
     }
 
     .home-view.active {
@@ -74,8 +74,10 @@
     }
 
     .home-hero h1 {
-      margin-bottom: 8px;
-      font-size: 34px;
+      max-width: 560px;
+      margin: 0 auto 12px;
+      font-size: 42px;
+      line-height: 1.18;
     }
 
     .home-hero .intro {
@@ -88,11 +90,36 @@
 
     .home-primary-entry {
       width: min(420px, 100%);
-      min-height: 58px;
-      margin: 22px auto 14px;
+      min-height: 60px;
+      margin: 26px auto 14px;
       border-radius: 10px;
       font-size: 18px;
       box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
+    }
+
+    .home-secondary-links {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      color: #94a3b8;
+      font-size: 14px;
+    }
+
+    .home-secondary-links button {
+      min-height: auto;
+      padding: 6px 2px;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      color: #64748b;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .home-secondary-links button:hover {
+      background: transparent;
+      color: #2563eb;
     }
 
     .view {
@@ -1456,16 +1483,7 @@
       }
 
       .home-hero h1 {
-        font-size: 26px;
-      }
-
-      .home-flow {
-        margin: 10px 0 12px;
-      }
-
-      .home-flow span {
-        padding: 8px 4px;
-        font-size: 12px;
+        font-size: 34px;
       }
 
       .intro {
@@ -1548,35 +1566,6 @@
         margin-top: 12px;
       }
 
-      .home-view .module-grid {
-        grid-template-columns: repeat(3, minmax(108px, 1fr));
-        gap: 8px;
-        overflow-x: auto;
-        padding-bottom: 4px;
-        scrollbar-width: none;
-      }
-
-      .home-view .module-grid::-webkit-scrollbar {
-        display: none;
-      }
-
-      .home-view .module-card {
-        min-width: 108px;
-        padding: 11px 10px;
-      }
-
-      .home-view .module-card strong {
-        font-size: 15px;
-      }
-
-      .home-view .module-card span {
-        font-size: 12px;
-      }
-
-      .home-view .module-action {
-        margin-top: 6px;
-      }
-
       .wechat-info {
         grid-template-columns: 1fr;
       }
@@ -1623,32 +1612,17 @@
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
         <p class="eyebrow">Geo Tool</p>
-        <h1>矿业空间工具</h1>
-        <p class="intro">卖金判断、矿地初筛、坐标处理，一个入口完成现场决策</p>
+        <h1>卖金前，先算一次成色和总价</h1>
+        <p class="intro">避免盲目报价，一个工具快速判断</p>
         <p class="eyebrow">版本：gold-ui-20260504-v3</p>
       </div>
 
-      <button type="button" class="home-primary-entry primary-action" onclick="showPage('gold')">开始使用工具</button>
+      <button type="button" class="home-primary-entry primary-action" onclick="showPage('gold')">开始计算黄金成色</button>
 
-      <div class="module-grid">
-        <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
-          <small class="module-tag">KML / 坐标转换</small>
-          <strong>坐标处理工具</strong>
-          <span>坐标整理与导出。</span>
-          <small class="module-action">进入</small>
-        </button>
-        <button type="button" class="module-card judge-module" onclick="showPage('judge')">
-          <small class="module-tag">图片识别</small>
-          <strong>AI矿地判读</strong>
-          <span>矿地图片初筛。</span>
-          <small class="module-action">进入</small>
-        </button>
-        <button type="button" class="module-card gold-module" onclick="showPage('gold')">
-          <small class="module-tag">成色估算</small>
-          <strong>黄金成色计算器</strong>
-          <span>纯度、K值与报价参考。</span>
-          <small class="module-action">进入</small>
-        </button>
+      <div class="home-secondary-links" aria-label="其他工具入口">
+        <button type="button" onclick="showPage('coordinate')">坐标处理</button>
+        <span>｜</span>
+        <button type="button" onclick="showPage('judge')">矿地判读</button>
       </div>
     </section>
 
