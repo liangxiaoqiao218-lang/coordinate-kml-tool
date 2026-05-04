@@ -3516,7 +3516,6 @@ Au值 = 纯度 × 10 后取整数</div>
         <div class="judge-decision-actions">
           <button type="button" class="secondary" onclick="startNewJudgeTest()">再测一张</button>
           <button type="button" class="secondary" onclick="startAngleRetest()">换角度重测</button>
-          <button type="button" class="secondary" onclick="saveCurrentJudgeResult()">保存结果</button>
         </div>
         <p class="judge-decision-hint">连续测 2–3 张，判断更稳定。</p>`;
       return { grade, bestScore, ...meta };
@@ -3524,7 +3523,13 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function getJudgeRecentItems() {
       try {
-        return JSON.parse(localStorage.getItem("judgeRecentResults") || "[]").slice(0, 3);
+        const history = JSON.parse(localStorage.getItem("judgeHistory") || "[]");
+        if (Array.isArray(history) && history.length > 0) {
+          return history.slice(0, 3);
+        }
+
+        const legacy = JSON.parse(localStorage.getItem("judgeRecentResults") || "[]");
+        return Array.isArray(legacy) ? legacy.slice(0, 3) : [];
       } catch (error) {
         return [];
       }
@@ -3538,7 +3543,7 @@ Au值 = 纯度 × 10 后取整数</div>
         score: Number(item.score || 0),
         time: item.time || Date.now()
       }));
-      localStorage.setItem("judgeRecentResults", JSON.stringify(normalized));
+      localStorage.setItem("judgeHistory", JSON.stringify(normalized));
     }
 
     function renderJudgeRecent() {
@@ -3585,15 +3590,6 @@ Au值 = 纯度 × 10 后取整数</div>
       setJudgeRecentItems([item, ...getJudgeRecentItems()].slice(0, 3));
       renderJudgeRecent();
       return true;
-    }
-
-    function saveCurrentJudgeResult() {
-      const meta = renderJudgeDecisionCard(judgeResult.value);
-      if (!saveJudgeResultToRecent(judgeResult.value, meta)) {
-        showJudgeMessage("暂无判读结果可保存。", true);
-        return;
-      }
-      showJudgeMessage("已保存到最近判读。");
     }
 
     function restoreJudgeRecent(index) {
