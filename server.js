@@ -30,6 +30,9 @@ const adminDataFile = path.join(__dirname, "admin-data.json");
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const DAILY_FREE_CONVERT_LIMIT = 3;
 const DAILY_FREE_JUDGE_LIMIT = 2;
+const DEFAULT_GOLD_PRICE_CNY_PER_GRAM = 600;
+const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "").trim();
+const goldPriceApiKey = String(process.env.GOLD_PRICE_API_KEY || "").trim();
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -63,6 +66,80 @@ app.get("/api/version", (req, res) => {
   res.json({
     version: appVersion
   });
+});
+
+function formatGoldPriceUpdatedAt(date = new Date()) {
+  const pad = value => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function normalizeGoldPricePayload(payload) {
+  const candidates = [
+    payload?.price_cny_per_gram,
+    payload?.price,
+    payload?.data?.price_cny_per_gram,
+    payload?.data?.price,
+    payload?.result?.price_cny_per_gram,
+    payload?.result?.price
+  ];
+  const price = candidates.map(Number).find(value => Number.isFinite(value) && value > 0);
+
+  if (!price) {
+    return null;
+  }
+
+  return {
+    price_cny_per_gram: Number(price.toFixed(2)),
+    source: payload?.source || "realtime_api",
+    updated_at: payload?.updated_at || payload?.data?.updated_at || payload?.result?.updated_at || formatGoldPriceUpdatedAt()
+  };
+}
+
+function getDefaultGoldPricePayload() {
+  return {
+    price_cny_per_gram: DEFAULT_GOLD_PRICE_CNY_PER_GRAM,
+    source: "default_price",
+    updated_at: formatGoldPriceUpdatedAt()
+  };
+}
+
+async function fetchRealtimeGoldPrice() {
+  if (!goldPriceApiUrl || !goldPriceApiKey) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+
+  try {
+    const response = await fetch(goldPriceApiUrl, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${goldPriceApiKey}`,
+        "X-API-Key": goldPriceApiKey
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`gold price api status ${response.status}`);
+    }
+
+    const payload = await response.json();
+    return normalizeGoldPricePayload(payload);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+app.get("/api/gold-price", async (req, res) => {
+  try {
+    const realtimePrice = await fetchRealtimeGoldPrice();
+    res.json(realtimePrice || getDefaultGoldPricePayload());
+  } catch (error) {
+    console.error("读取实时金价失败，使用默认参考价：", error.message || error);
+    res.json(getDefaultGoldPricePayload());
+  }
 });
 
 app.get(["/convert", "/ocr", "/judge", "/gold"], (req, res) => {
