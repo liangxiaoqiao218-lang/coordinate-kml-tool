@@ -1374,6 +1374,10 @@
       gap: 8px;
     }
 
+    .judge-recent-head .judge-recent-title {
+      margin-right: auto;
+    }
+
     .judge-recent-best {
       color: #64748b;
       font-size: 12px;
@@ -1383,6 +1387,19 @@
 
     .judge-recent-best.is-new-high {
       color: #047857;
+    }
+
+    .judge-recent-clear {
+      width: auto;
+      min-height: 26px;
+      padding: 4px 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 800;
+      box-shadow: none;
     }
 
     .judge-recent-list {
@@ -2311,6 +2328,7 @@
           <div class="judge-recent-head">
             <div class="judge-recent-title">最近判读对比</div>
             <div id="judgeRecentBest" class="judge-recent-best"></div>
+            <button type="button" class="judge-recent-clear" onclick="clearJudgeRecent(event)">清空</button>
           </div>
           <div id="judgeRecentList" class="judge-recent-list"></div>
         </div>
@@ -2531,6 +2549,16 @@ Au值 = 纯度 × 10 后取整数</div>
     let selectedJudgeImageUrls = [];
     let selectedJudgeImageFiles = [];
     let recognitionStatusHideTimer = null;
+    const JUDGE_HISTORY_KEY = "judgeHistory";
+    const OLD_JUDGE_HISTORY_KEYS = [
+      "aiJudgeHistory",
+      "judgeRecentHistory",
+      "recentJudgeHistory",
+      "judgeRecords",
+      "miningJudgeHistory",
+      "judgeRecentResults",
+      "judgeBestScore"
+    ];
 
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
@@ -2538,6 +2566,7 @@ Au值 = 纯度 × 10 后取整数</div>
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
     loadUserQuota();
+    cleanupJudgeHistoryStorage();
     renderJudgeRecent();
     loadGoldReferencePrice();
     trackEvent("page_visit");
@@ -3167,6 +3196,14 @@ Au值 = 纯度 × 10 后取整数</div>
         || /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif)$/i.test(name);
     }
 
+    function isUnsupportedJudgeImage(file) {
+      const name = String(file?.name || "").toLowerCase();
+      const type = String(file?.type || "").toLowerCase();
+      return type.includes("heic")
+        || type.includes("heif")
+        || /\.(heic|heif)$/i.test(name);
+    }
+
     function loadImageForCompression(file) {
       return new Promise((resolve, reject) => {
         const url = URL.createObjectURL(file);
@@ -3199,35 +3236,55 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function compressJudgeImage(file) {
-      if (!file || file.size <= 900 * 1024) {
-        return file;
+      if (!file) {
+        throw new Error("请先选择要判读的图片。");
+      }
+
+      if (isUnsupportedJudgeImage(file)) {
+        throw new Error("当前图片格式不支持，请截图后上传或转为 JPG。");
       }
 
       try {
         const image = await loadImageForCompression(file);
-        const longestSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height);
-        const scale = longestSide > 1024 ? 1024 / longestSide : 1;
-        const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
-        const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+        const sourceWidth = image.naturalWidth || image.width;
+        const sourceHeight = image.naturalHeight || image.height;
+        const longestSide = Math.max(sourceWidth, sourceHeight);
+        const maxSide = longestSide > 1280 || file.size > 8 * 1024 * 1024 ? 1024 : 1280;
+        const scale = longestSide > maxSide ? maxSide / longestSide : 1;
+        const width = Math.max(1, Math.round(sourceWidth * scale));
+        const height = Math.max(1, Math.round(sourceHeight * scale));
         const canvas = document.createElement("canvas");
         canvas.width = width;
         canvas.height = height;
-        const context = canvas.getContext("2d");
+        const context = canvas.getContext("2d", { alpha: false });
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, width, height);
         context.drawImage(image, 0, 0, width, height);
 
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.72));
-        if (!blob) {
-          return file;
+        let blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.7));
+        if (blob && blob.size > 900 * 1024 && Math.max(width, height) > 1024) {
+          const retryScale = 1024 / Math.max(width, height);
+          const retryCanvas = document.createElement("canvas");
+          retryCanvas.width = Math.max(1, Math.round(width * retryScale));
+          retryCanvas.height = Math.max(1, Math.round(height * retryScale));
+          const retryContext = retryCanvas.getContext("2d", { alpha: false });
+          retryContext.fillStyle = "#ffffff";
+          retryContext.fillRect(0, 0, retryCanvas.width, retryCanvas.height);
+          retryContext.drawImage(canvas, 0, 0, retryCanvas.width, retryCanvas.height);
+          blob = await new Promise(resolve => retryCanvas.toBlob(resolve, "image/jpeg", 0.7));
         }
 
-        const baseName = String(file.name || "judge-image").replace(/\.[^.]+$/, "");
-        return new File([blob], `${baseName}-compressed.jpg`, {
+        if (!blob) {
+          throw new Error("图片标准化失败，请重新选择截图或 JPG 图片。");
+        }
+
+        return new File([blob], "judge-upload.jpg", {
           type: "image/jpeg",
           lastModified: Date.now()
         });
       } catch (error) {
-        console.warn("AI判读图片压缩失败，使用原图", error);
-        return file;
+        console.warn("AI判读图片标准化失败", error);
+        throw new Error(error.message || "图片处理失败，请重新选择截图或 JPG 图片。");
       }
     }
 
@@ -3319,6 +3376,12 @@ Au值 = 纯度 × 10 后取整数</div>
       const files = Array.from(judgeImageInput.files || []);
 
       if (files.length === 0) {
+        return;
+      }
+
+      if (files.some(isUnsupportedJudgeImage)) {
+        judgeImageInput.value = "";
+        showJudgeMessage("当前图片格式不支持，请截图后上传或转为 JPG。", true);
         return;
       }
 
@@ -3496,15 +3559,22 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
+    function cleanupJudgeHistoryStorage() {
+      OLD_JUDGE_HISTORY_KEYS.forEach(key => localStorage.removeItem(key));
+      const items = getJudgeRecentItems();
+      if (items.length === 0) {
+        localStorage.removeItem(JUDGE_HISTORY_KEY);
+      }
+    }
+
     function getJudgeBestScore() {
-      return Math.max(0, Number(localStorage.getItem("judgeBestScore") || 0));
+      const best = getJudgeHistoryBest(getJudgeRecentItems());
+      return Math.max(0, Number(best?.score || 0));
     }
 
     function updateJudgeBestScore(score) {
       const current = getJudgeBestScore();
-      const next = Math.max(current, Number(score || 0));
-      localStorage.setItem("judgeBestScore", String(next));
-      return next;
+      return Math.max(current, Number(score || 0));
     }
 
     function getJudgeDecisionText(grade, text, meta) {
@@ -3570,13 +3640,11 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function getJudgeRecentItems() {
       try {
-        const history = JSON.parse(localStorage.getItem("judgeHistory") || "[]");
+        const history = JSON.parse(localStorage.getItem(JUDGE_HISTORY_KEY) || "[]");
         if (Array.isArray(history) && history.length > 0) {
           return history.slice(0, 3);
         }
-
-        const legacy = JSON.parse(localStorage.getItem("judgeRecentResults") || "[]");
-        return Array.isArray(legacy) ? legacy.slice(0, 3) : [];
+        return [];
       } catch (error) {
         return [];
       }
@@ -3592,10 +3660,11 @@ Au值 = 纯度 × 10 后取整数</div>
         time: item.time || Date.now()
       }));
       if (normalized.length === 0) {
-        localStorage.removeItem("judgeHistory");
+        localStorage.removeItem(JUDGE_HISTORY_KEY);
+        localStorage.removeItem("judgeBestScore");
         return;
       }
-      localStorage.setItem("judgeHistory", JSON.stringify(normalized));
+      localStorage.setItem(JUDGE_HISTORY_KEY, JSON.stringify(normalized));
     }
 
     function renderJudgeRecent(newHighItem = null) {
@@ -3685,11 +3754,30 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function deleteJudgeRecent(event, index) {
       event.stopPropagation();
-      const items = getJudgeRecentItems();
+      let items = [];
+      try {
+        const stored = JSON.parse(localStorage.getItem(JUDGE_HISTORY_KEY) || "[]");
+        items = Array.isArray(stored) ? stored : [];
+      } catch (error) {
+        items = [];
+      }
       items.splice(index, 1);
-      setJudgeRecentItems(items);
+      if (items.length === 0) {
+        localStorage.removeItem(JUDGE_HISTORY_KEY);
+        localStorage.removeItem("judgeBestScore");
+      } else {
+        setJudgeRecentItems(items);
+      }
       renderJudgeRecent();
       showJudgeMessage("已删除该条最近判读。");
+    }
+
+    function clearJudgeRecent(event) {
+      event?.stopPropagation?.();
+      localStorage.removeItem(JUDGE_HISTORY_KEY);
+      localStorage.removeItem("judgeBestScore");
+      renderJudgeRecent();
+      showJudgeMessage("已清空最近判读。");
     }
 
     function startNewJudgeTest() {
@@ -3750,19 +3838,20 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeResult.value = "";
       clearJudgeDecisionCard();
       const progressTimer = startJudgeProgress(files.length);
-      const compressedFiles = await Promise.all(files.slice(0, 1).map(compressJudgeImage));
-      const formData = new FormData();
-      compressedFiles.forEach(file => formData.append("images", file, file.name));
-      formData.append("judgeType", judgeType.value);
-      trackEvent("ai_judge_upload_select", {
-        fileCount: compressedFiles.length,
-        fileSize: compressedFiles.reduce((sum, file) => sum + file.size, 0),
-        originalFileSize: files.reduce((sum, file) => sum + file.size, 0),
-        fileType: compressedFiles.map(file => file.type).join(","),
-        judgeType: judgeType.value
-      });
 
       try {
+        const compressedFiles = await Promise.all(files.slice(0, 1).map(compressJudgeImage));
+        const formData = new FormData();
+        compressedFiles.forEach(file => formData.append("images", file, "judge-upload.jpg"));
+        formData.append("judgeType", judgeType.value);
+        trackEvent("ai_judge_upload_select", {
+          fileCount: compressedFiles.length,
+          fileSize: compressedFiles.reduce((sum, file) => sum + file.size, 0),
+          originalFileSize: files.reduce((sum, file) => sum + file.size, 0),
+          fileType: compressedFiles.map(file => file.type).join(","),
+          judgeType: judgeType.value
+        });
+
         const response = await fetch("/api/analyze-mining-image", {
           method: "POST",
           headers: {
@@ -3819,7 +3908,10 @@ Au值 = 纯度 × 10 后取整数</div>
         hideJudgeProgressVisual();
         judgeResult.value = "";
         clearJudgeDecisionCard();
-        showJudgeMessage("AI判读失败，请检查图片或稍后重试。", true);
+        const message = /图片|格式|JPG|JPEG|截图|处理|标准化/.test(error.message || "")
+          ? error.message
+          : "AI判读失败，请检查图片或稍后重试。";
+        showJudgeMessage(message, true);
         trackEvent("ai_judge_fail", {
           message: error.message,
           judgeType: judgeType.value
