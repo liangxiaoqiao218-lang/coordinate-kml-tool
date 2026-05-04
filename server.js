@@ -36,7 +36,7 @@ app.use(express.json({ limit: "1mb" }));
 const appVersion = "2026-05-01-quota-contact-v2";
 
 app.use((req, res, next) => {
-  const noCachePaths = new Set(["/", "/convert", "/ocr", "/judge", "/index.html"]);
+  const noCachePaths = new Set(["/", "/convert", "/ocr", "/judge", "/gold", "/index.html"]);
 
   if (noCachePaths.has(req.path) || req.path.endsWith(".html")) {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -65,7 +65,7 @@ app.get("/api/version", (req, res) => {
   });
 });
 
-app.get(["/convert", "/ocr", "/judge"], (req, res) => {
+app.get(["/convert", "/ocr", "/judge", "/gold"], (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 

@@ -130,7 +130,7 @@
 
     .module-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
       margin-top: 22px;
     }
@@ -178,6 +178,11 @@
       background: #ffffff;
     }
 
+    .module-card.gold-module {
+      border-color: #fde68a;
+      background: #ffffff;
+    }
+
     .module-card.primary-module:hover {
       border-color: #2563eb;
       box-shadow: 0 10px 22px rgba(37, 99, 235, 0.08);
@@ -186,6 +191,11 @@
     .module-card.judge-module:hover {
       border-color: #15803d;
       box-shadow: 0 10px 22px rgba(21, 128, 61, 0.08);
+    }
+
+    .module-card.gold-module:hover {
+      border-color: #d97706;
+      box-shadow: 0 10px 22px rgba(217, 119, 6, 0.08);
     }
 
     .module-action {
@@ -198,6 +208,10 @@
 
     .judge-module .module-action {
       color: #15803d;
+    }
+
+    .gold-module .module-action {
+      color: #b45309;
     }
 
     .module-tag {
@@ -249,6 +263,11 @@
     .nav-switch.judge-switch {
       background: #15803d;
       border-color: #15803d;
+    }
+
+    .nav-switch.gold-switch {
+      background: #d97706;
+      border-color: #d97706;
     }
 
     label {
@@ -1187,6 +1206,99 @@
       margin-top: 12px;
     }
 
+    .gold-panel {
+      display: grid;
+      gap: 14px;
+    }
+
+    .gold-input-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .gold-result-card {
+      padding: 18px;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      background: #fffbeb;
+    }
+
+    .gold-result-main {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .gold-metric {
+      padding: 12px;
+      border: 1px solid #f5e4b8;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .gold-metric span {
+      display: block;
+      color: #72521a;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .gold-metric strong {
+      display: block;
+      margin-top: 6px;
+      color: #0f172a;
+      font-size: 30px;
+      line-height: 1.1;
+    }
+
+    .gold-grade {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #374151;
+      font-weight: 800;
+    }
+
+    .formula-box {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #ffffff;
+      overflow: hidden;
+    }
+
+    .formula-box summary {
+      padding: 12px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .formula-lines {
+      padding: 0 12px 12px;
+      color: #475569;
+      line-height: 1.7;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 14px;
+      white-space: pre-line;
+    }
+
+    .gold-actions {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .quote-placeholder {
+      padding: 12px;
+      border: 1px dashed #d6dfeb;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #64748b;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
     .file-preview-icon {
       display: grid;
       place-items: center;
@@ -1300,6 +1412,8 @@
 
       .buttons,
       .settings-grid,
+      .gold-input-grid,
+      .gold-result-main,
       .module-grid,
       .support-actions {
         grid-template-columns: 1fr;
@@ -1371,7 +1485,7 @@
       <div class="home-flow">
         <span>坐标整理</span>
         <span>KML导出</span>
-        <span>AI初筛</span>
+        <span>成色快算</span>
       </div>
 
       <div class="module-grid">
@@ -1383,6 +1497,11 @@
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
           <strong>AI矿地判读</strong>
           <span>上传图片做矿地初筛。</span>
+          <small class="module-action">进入</small>
+        </button>
+        <button type="button" class="module-card gold-module" onclick="showPage('gold')">
+          <strong>黄金成色计算器</strong>
+          <span>输入黄金重量和排水差重，快速估算纯度、K值和Au值，避免卖金被压价。</span>
           <small class="module-action">进入</small>
         </button>
       </div>
@@ -1571,6 +1690,69 @@
         不预测含量，不报具体金点，不能替代现场勘查、取样检测和合规审批。
       </section>
     </section>
+
+    <section id="goldPage" class="view">
+      <div class="page-nav">
+        <button type="button" class="back-button" onclick="showPage('home')">首页</button>
+        <button type="button" class="back-button nav-switch coordinate-switch" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button nav-switch judge-switch" onclick="showPage('judge')">AI矿地判读</button>
+      </div>
+      <h1>黄金成色计算器</h1>
+      <p class="intro">输入黄金重量和排水差重，快速估算纯度、K值和Au值。结果仅供现场快速参考。</p>
+
+      <div class="panel gold-panel">
+        <div class="gold-input-grid">
+          <div>
+            <label for="goldWeight">黄金重量</label>
+            <input id="goldWeight" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：10.00" oninput="calculateGoldPurity()" />
+          </div>
+          <div>
+            <label for="waterDiff">排水差重（g）</label>
+            <input id="waterDiff" type="number" min="0" step="0.01" inputmode="decimal" placeholder="例如：0.55" oninput="calculateGoldPurity()" />
+          </div>
+        </div>
+
+        <div class="gold-result-card">
+          <div class="gold-result-main">
+            <div class="gold-metric">
+              <span>成色</span>
+              <strong id="goldPurityResult">--</strong>
+            </div>
+            <div class="gold-metric">
+              <span>K值</span>
+              <strong id="goldKResult">--</strong>
+            </div>
+            <div class="gold-metric">
+              <span>Au值</span>
+              <strong id="goldAuResult">--</strong>
+            </div>
+            <div class="gold-metric">
+              <span>密度</span>
+              <strong id="goldDensityResult">--</strong>
+            </div>
+          </div>
+          <div id="goldGradeResult" class="gold-grade">输入数据后自动判断成色等级。</div>
+        </div>
+
+        <details class="formula-box">
+          <summary>查看计算公式</summary>
+          <div id="goldFormulaText" class="formula-lines">density = gold_weight / water_diff
+purity = density / 19.32 * 100
+k_value = purity / 100 * 24
+au_value = round(purity * 10)</div>
+        </details>
+
+        <div class="quote-placeholder">
+          报价对比功能即将上线：输入金店报价，自动判断是否被压价。
+        </div>
+
+        <div class="gold-actions">
+          <button type="button" class="primary-action" onclick="copyGoldResult()">一键复制结果</button>
+        </div>
+
+        <div id="goldMessage" class="message"></div>
+      </div>
+    </section>
   </main>
 
   <div id="imageModal" class="image-modal" onclick="closeImageModal()">
@@ -1633,7 +1815,8 @@
     const pages = {
       home: document.getElementById("homePage"),
       coordinate: document.getElementById("coordinatePage"),
-      judge: document.getElementById("judgePage")
+      judge: document.getElementById("judgePage"),
+      gold: document.getElementById("goldPage")
     };
     const coordinateUploadPanel = document.getElementById("coordinateUploadPanel");
     const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
@@ -1674,7 +1857,8 @@
         const pathMap = {
           home: "/",
           coordinate: focusTarget === "upload" ? "/ocr" : "/convert",
-          judge: "/judge"
+          judge: "/judge",
+          gold: "/gold"
         };
         history.pushState({ pageName, focusTarget }, "", pathMap[pageName] || "/");
       }
@@ -1703,6 +1887,8 @@
         showPage("coordinate", "upload", false);
       } else if (location.pathname === "/judge" || location.hash === "#judge") {
         showPage("judge", "", false);
+      } else if (location.pathname === "/gold" || location.hash === "#gold") {
+        showPage("gold", "", false);
       } else {
         showPage("home", "", false);
       }
@@ -2586,6 +2772,125 @@
       navigator.clipboard.writeText(text)
         .then(() => showJudgeMessage("判读结果已复制。"))
         .catch(() => showJudgeMessage("复制失败，请手动选择内容复制。", true));
+    }
+
+    function getGoldPurityGrade(purity) {
+      if (!Number.isFinite(purity) || purity <= 0) {
+        return "输入数据后自动判断成色等级。";
+      }
+
+      if (purity >= 99.9) {
+        return "这块金接近足金级别，可以作为交易参考，最终仍建议以专业检测为准。";
+      }
+
+      if (purity >= 99) {
+        return "这块金属于高成色金，可以作为交易参考。";
+      }
+
+      if (purity >= 96.5) {
+        return "这块金成色较高，接近 23K，可作为报价参考。";
+      }
+
+      if (purity >= 91.6) {
+        return "这块金约为 22K，属于常见较高成色范围。";
+      }
+
+      if (purity >= 75) {
+        return "这块金约为 18K，交易前建议结合实测和报价再判断。";
+      }
+
+      return "成色偏低，建议复检后再交易。";
+    }
+
+    function formatGoldNumber(value, digits = 2) {
+      return Number.isFinite(value) ? value.toFixed(digits) : "--";
+    }
+
+    function getGoldCalculation() {
+      const goldWeight = Number(document.getElementById("goldWeight")?.value || 0);
+      const waterDiff = Number(document.getElementById("waterDiff")?.value || 0);
+
+      if (!goldWeight || !waterDiff || goldWeight <= 0 || waterDiff <= 0) {
+        return null;
+      }
+
+      const density = goldWeight / waterDiff;
+      const purity = density / 19.32 * 100;
+      const kValue = purity / 100 * 24;
+      const auValue = Math.round(purity * 10);
+
+      return {
+        goldWeight,
+        waterDiff,
+        density,
+        purity,
+        kValue,
+        auValue,
+        grade: getGoldPurityGrade(purity)
+      };
+    }
+
+    function calculateGoldPurity() {
+      const result = getGoldCalculation();
+      const purityEl = document.getElementById("goldPurityResult");
+      const kEl = document.getElementById("goldKResult");
+      const auEl = document.getElementById("goldAuResult");
+      const densityEl = document.getElementById("goldDensityResult");
+      const gradeEl = document.getElementById("goldGradeResult");
+      const formulaEl = document.getElementById("goldFormulaText");
+      const messageEl = document.getElementById("goldMessage");
+
+      if (!result) {
+        purityEl.textContent = "--";
+        kEl.textContent = "--";
+        auEl.textContent = "--";
+        densityEl.textContent = "--";
+        gradeEl.textContent = "输入数据后自动判断成色等级。";
+        formulaEl.textContent = `density = gold_weight / water_diff
+purity = density / 19.32 * 100
+k_value = purity / 100 * 24
+au_value = round(purity * 10)`;
+        messageEl.textContent = "";
+        messageEl.className = "message";
+        return null;
+      }
+
+      purityEl.textContent = `${formatGoldNumber(result.purity)}%`;
+      kEl.textContent = `${formatGoldNumber(result.kValue)}K`;
+      auEl.textContent = `Au${result.auValue}`;
+      densityEl.textContent = formatGoldNumber(result.density, 3);
+      gradeEl.textContent = result.grade;
+      formulaEl.textContent = `density = ${result.goldWeight} / ${result.waterDiff} = ${formatGoldNumber(result.density, 3)}
+purity = ${formatGoldNumber(result.density, 3)} / 19.32 * 100 = ${formatGoldNumber(result.purity)}%
+k_value = ${formatGoldNumber(result.purity)} / 100 * 24 = ${formatGoldNumber(result.kValue)}K
+au_value = round(${formatGoldNumber(result.purity)} * 10) = Au${result.auValue}`;
+      messageEl.textContent = "";
+      messageEl.className = "message";
+      return result;
+    }
+
+    function copyGoldResult() {
+      const result = calculateGoldPurity();
+      const messageEl = document.getElementById("goldMessage");
+
+      if (!result) {
+        messageEl.textContent = "请先输入有效的黄金重量和排水差重。";
+        messageEl.className = "message error";
+        return;
+      }
+
+      const text = [
+        "黄金成色计算结果",
+        `黄金重量：${result.goldWeight}`,
+        `排水差重：${result.waterDiff}g`,
+        `密度：${formatGoldNumber(result.density, 3)}`,
+        `成色：${formatGoldNumber(result.purity)}%`,
+        `K值：${formatGoldNumber(result.kValue)}K`,
+        `Au值：Au${result.auValue}`,
+        `判断：${result.grade}`
+      ].join("\n");
+
+      copyText(text, "成色计算结果已复制。");
     }
 
     function copyDebugText() {
