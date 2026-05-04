@@ -143,7 +143,7 @@ app.get("/api/gold-price", async (req, res) => {
   }
 });
 
-app.get(["/convert", "/ocr", "/judge", "/gold"], (req, res) => {
+app.get(["/tool", "/convert", "/ocr", "/judge", "/gold"], (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
