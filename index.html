@@ -145,12 +145,12 @@
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
-      margin-top: 20px;
+      margin-top: 18px;
     }
 
     .module-card {
-      min-height: 112px;
-      padding: 15px;
+      min-height: 96px;
+      padding: 14px;
       border: 1px solid #d6dfeb;
       border-radius: 8px;
       background: #ffffff;
@@ -232,20 +232,20 @@
       margin-bottom: 8px;
       padding: 4px 8px;
       border-radius: 999px;
-      background: #eaf1ff;
-      color: #1d4ed8;
+      background: #f1f5f9;
+      color: #64748b;
       font-size: 12px;
       font-weight: 700;
     }
 
     .judge-module .module-tag {
-      background: #dcfce7;
-      color: #15803d;
+      background: #f0fdf4;
+      color: #64748b;
     }
 
     .gold-module .module-tag {
-      background: #fef3c7;
-      color: #b45309;
+      background: #fffbeb;
+      color: #64748b;
     }
 
     .back-button {
@@ -1606,9 +1606,9 @@
     }
 
     .version-stamp {
-      margin: 22px auto 8px;
-      color: #94a3b8;
-      font-size: 12px;
+      margin: 44px auto 6px;
+      color: #cbd5e1;
+      font-size: 11px;
       text-align: center;
       user-select: text;
     }
@@ -1620,26 +1620,26 @@
       <div class="home-hero">
         <p class="eyebrow">Geo Tool</p>
         <h1>矿业空间工具 Geo Tool</h1>
-        <p class="intro">坐标整理、矿地初筛、黄金成色估算，一个入口完成现场常用判断。</p>
+        <p class="intro">坐标、判读、成色估算，一页进入。</p>
       </div>
 
       <div class="module-grid">
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
-          <small class="module-tag">KML / 坐标转换</small>
+          <small class="module-tag">KML</small>
           <strong>坐标处理工具</strong>
-          <span>整理坐标，生成 KML。</span>
+          <span>生成 KML</span>
           <small class="module-action">进入</small>
         </button>
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
-          <small class="module-tag">图片识别</small>
+          <small class="module-tag">AI判读</small>
           <strong>AI矿地判读</strong>
-          <span>上传图片，做矿地初筛。</span>
+          <span>图片初筛</span>
           <small class="module-action">进入</small>
         </button>
         <button type="button" class="module-card gold-module" onclick="showPage('gold')">
-          <small class="module-tag">成色估算</small>
+          <small class="module-tag">成色</small>
           <strong>黄金成色计算器</strong>
-          <span>估算成色与可卖金额。</span>
+          <span>成色与总价</span>
           <small class="module-action">进入</small>
         </button>
       </div>
