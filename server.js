@@ -2275,10 +2275,21 @@ function getAliyunChatCompletionsUrl() {
 
 async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0.1 }) {
   if (!aliyunApiKey) {
+    console.error("[Aliyun] 缺少环境变量：ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
     const error = new Error("阿里云 API 未配置");
     error.code = "ALIYUN_API_KEY_MISSING";
     throw error;
   }
+
+  const requestUrl = getAliyunChatCompletionsUrl();
+  console.log("[Aliyun] 请求开始：", {
+    url: requestUrl,
+    model: modelName,
+    imageCount: Array.isArray(imageItems) ? imageItems.length : 0,
+    hasAliyunApiKey: Boolean(process.env.ALIYUN_API_KEY),
+    hasDashscopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY),
+    baseURL: aliyunBaseURL
+  });
 
   const response = await fetch(getAliyunChatCompletionsUrl(), {
     method: "POST",
@@ -2303,10 +2314,20 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    console.error("[Aliyun] 请求失败：", {
+      status: response.status,
+      statusText: response.statusText,
+      model: modelName,
+      errorCode: data?.error?.code || data?.code,
+      errorMessage: data?.error?.message || data?.message,
+      requestId: data?.request_id || data?.requestId || data?.RequestId,
+      responseBody: JSON.stringify(data).slice(0, 1200)
+    });
     const error = new Error(data?.error?.message || data?.message || `阿里云 API 请求失败：HTTP ${response.status}`);
     error.status = response.status;
     error.code = data?.error?.code || data?.code;
     error.requestId = data?.request_id || data?.requestId || data?.RequestId;
+    error.details = data;
     throw error;
   }
 
@@ -3117,6 +3138,15 @@ app.post("/api/analyze-mining-image", upload.fields([
   console.log("是否收到图片：", uploadedFiles.length > 0);
   console.log("收到图片数量：", uploadedFiles.length);
   console.log("图片大小：", uploadedFiles.map(file => `${file.originalname || "image"}=${file.size} bytes`).join(", "));
+  console.log("AI判读环境变量检查：", {
+    hasAliyunApiKey: Boolean(process.env.ALIYUN_API_KEY),
+    hasDashscopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY),
+    aliyunBaseURL,
+    aliyunVisionModel,
+    aliyunOcrModel,
+    hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
+    hasSupabaseServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
+  });
 
   try {
     const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
@@ -3234,6 +3264,7 @@ app.post("/api/analyze-mining-image", upload.fields([
     }
 
     if (!aliyunApiKey) {
+      console.error("AI判读失败：缺少环境变量 ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
       return res.status(400).json({
         error: "阿里云 API 未配置"
       });
@@ -3305,7 +3336,15 @@ app.post("/api/analyze-mining-image", upload.fields([
     });
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
-    console.error("阿里云 AI 判读失败：", errorMessage);
+    console.error("阿里云 AI 判读失败：", {
+      message: error.message,
+      code: error.code,
+      status: error.status,
+      details: error.details,
+      formatted: errorMessage,
+      uploadedFileCount: uploadedFiles.length,
+      fileNames: uploadedFiles.map(file => file.originalname || "image")
+    });
     res.status(500).json({
       error: errorMessage || "AI判读失败，请稍后重试。"
     });
@@ -3336,6 +3375,16 @@ app.post("/api/analyze-mining-image", upload.fields([
 app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) => {
   console.log("---- 收到阿里云识别请求 ----");
   console.log("是否收到图片：", Boolean(req.file));
+  console.log("坐标识别环境变量检查：", {
+    hasAliyunApiKey: Boolean(process.env.ALIYUN_API_KEY),
+    hasDashscopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY),
+    aliyunBaseURL,
+    aliyunVisionModel,
+    aliyunOcrModel,
+    hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
+    hasSupabaseServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+    uploadedFileCount: req.file ? 1 : 0
+  });
 
   try {
     const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
@@ -3365,6 +3414,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
     }
 
     if (!aliyunApiKey) {
+      console.error("坐标识别失败：缺少环境变量 ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
       return res.status(400).json({
         error: "阿里云 API 未配置",
         rawText: "",
@@ -3604,7 +3654,15 @@ The expected result for a BFTM table is a list of real row pairs such as X,Y onl
     });
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
-    console.error("阿里云识别失败，尝试备用OCR。真实错误信息：", errorMessage);
+    console.error("阿里云识别失败，尝试备用OCR。真实错误信息：", {
+      message: error.message,
+      code: error.code,
+      status: error.status,
+      details: error.details,
+      formatted: errorMessage,
+      uploadedFileCount: req.file ? 1 : 0,
+      fileName: req.file?.originalname || ""
+    });
 
     try {
       if (!req.file) {

@@ -2972,7 +2972,7 @@ Au值 = 纯度 × 10 后取整数</div>
         clearInterval(progressTimer);
         hideJudgeProgressVisual();
         judgeResult.value = "";
-        showJudgeMessage(`AI判读失败：${sanitizeUserFacingTechMessage(error.message)}`, true);
+        showJudgeMessage("AI判读失败，请检查图片或稍后重试。", true);
         trackEvent("ai_judge_fail", {
           message: error.message,
           judgeType: judgeType.value
@@ -4867,7 +4867,7 @@ ${placemarks}
           message: error.message
         });
         setRecognitionStatus("", "");
-        showMessage(`识别失败：${publicErrorMessage}`, true);
+        showMessage("识别失败，请检查图片或稍后重试。", true);
         showUploadSupportMessage(getRecognitionFailureMessage(error.message));
         openManualSupport();
       } finally {
