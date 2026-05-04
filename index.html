@@ -48,9 +48,11 @@
 
     .home-view {
       display: none;
-      min-height: 56vh;
+      width: min(760px, 100%);
+      min-height: 58vh;
+      margin: 0 auto;
       place-content: center;
-      padding: 8px 0;
+      padding: 10px 0;
     }
 
     .home-view.active {
@@ -66,18 +68,18 @@
     }
 
     .home-hero .eyebrow {
-      margin: 0 0 10px;
+      margin: 0 0 8px;
       color: #2563eb;
-      font-size: 15px;
+      font-size: 13px;
       font-weight: 800;
       letter-spacing: 0;
     }
 
     .home-hero h1 {
-      max-width: 620px;
-      margin: 0 auto 14px;
-      font-size: 48px;
-      line-height: 1.12;
+      max-width: 560px;
+      margin: 0 auto 8px;
+      font-size: 34px;
+      line-height: 1.2;
     }
 
     .home-hero .intro {
@@ -142,13 +144,13 @@
     .module-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 0;
+      gap: 12px;
+      margin-top: 20px;
     }
 
     .module-card {
-      min-height: 92px;
-      padding: 13px 14px;
+      min-height: 112px;
+      padding: 15px;
       border: 1px solid #d6dfeb;
       border-radius: 8px;
       background: #ffffff;
@@ -167,15 +169,15 @@
 
     .module-card strong {
       display: block;
-      margin-bottom: 5px;
-      font-size: 17px;
+      margin-bottom: 7px;
+      font-size: 18px;
       color: #0f172a;
     }
 
     .module-card span {
       display: block;
       color: #526071;
-      line-height: 1.45;
+      line-height: 1.5;
       font-size: 13px;
     }
 
@@ -1488,12 +1490,7 @@
       }
 
       .home-hero h1 {
-        font-size: 36px;
-      }
-
-      .home-primary-entry {
-        min-height: 64px;
-        font-size: 19px;
+        font-size: 26px;
       }
 
       .intro {
@@ -1621,19 +1618,30 @@
   <main class="page">
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
-        <p class="eyebrow">卖金判断工具</p>
-        <h1>先算成色，再谈价格</h1>
-        <p class="intro">一键算清这批黄金能卖多少钱</p>
-        <p class="eyebrow">版本：gold-ui-20260504-v3</p>
+        <p class="eyebrow">Geo Tool</p>
+        <h1>矿业空间工具 Geo Tool</h1>
+        <p class="intro">坐标整理、矿地初筛、黄金成色估算，一个入口完成现场常用判断。</p>
       </div>
 
-      <button type="button" class="home-primary-entry primary-action" onclick="showPage('gold')">立即计算黄金成色</button>
-
-      <div class="home-secondary-links" aria-label="其他工具入口">
-        <span class="home-secondary-label">其他功能：</span>
-        <button type="button" onclick="showPage('coordinate')">坐标处理</button>
-        <span>·</span>
-        <button type="button" onclick="showPage('judge')">矿地判读</button>
+      <div class="module-grid">
+        <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
+          <small class="module-tag">KML / 坐标转换</small>
+          <strong>坐标处理工具</strong>
+          <span>整理坐标，生成 KML。</span>
+          <small class="module-action">进入</small>
+        </button>
+        <button type="button" class="module-card judge-module" onclick="showPage('judge')">
+          <small class="module-tag">图片识别</small>
+          <strong>AI矿地判读</strong>
+          <span>上传图片，做矿地初筛。</span>
+          <small class="module-action">进入</small>
+        </button>
+        <button type="button" class="module-card gold-module" onclick="showPage('gold')">
+          <small class="module-tag">成色估算</small>
+          <strong>黄金成色计算器</strong>
+          <span>估算成色与可卖金额。</span>
+          <small class="module-action">进入</small>
+        </button>
       </div>
     </section>
 
