@@ -3591,6 +3591,10 @@ Au值 = 纯度 × 10 后取整数</div>
         decisionText: item.decisionText || getJudgeDecisionText(item.grade || "C", item.result || ""),
         time: item.time || Date.now()
       }));
+      if (normalized.length === 0) {
+        localStorage.removeItem("judgeHistory");
+        return;
+      }
       localStorage.setItem("judgeHistory", JSON.stringify(normalized));
     }
 
@@ -3601,6 +3605,14 @@ Au值 = 纯度 × 10 后取整数</div>
 
       const items = getJudgeRecentItems();
       judgeRecentPanel.hidden = items.length === 0;
+      if (items.length === 0) {
+        judgeRecentList.innerHTML = "";
+        if (judgeRecentBest) {
+          judgeRecentBest.classList.remove("is-new-high");
+          judgeRecentBest.textContent = "";
+        }
+        return;
+      }
       if (judgeRecentBest) {
         const best = getJudgeHistoryBest(items);
         judgeRecentBest.classList.toggle("is-new-high", Boolean(newHighItem));
