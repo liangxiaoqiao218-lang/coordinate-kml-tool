@@ -31,8 +31,11 @@ const adminPassword = process.env.ADMIN_PASSWORD || "";
 const DAILY_FREE_CONVERT_LIMIT = 3;
 const DAILY_FREE_JUDGE_LIMIT = 2;
 const DEFAULT_GOLD_PRICE_CNY_PER_GRAM = 600;
-const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "").trim();
-const goldPriceApiKey = String(process.env.GOLD_PRICE_API_KEY || "").trim();
+const USD_PER_TROY_OUNCE_GRAMS = 31.1035;
+const DEFAULT_USD_CNY_RATE = 7.2;
+const usdCnyRate = Number(process.env.USD_CNY_RATE || DEFAULT_USD_CNY_RATE);
+const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "https://www.goldapi.io/api/XAU/USD").trim();
+const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE_API_KEY || "").trim();
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -73,25 +76,26 @@ function formatGoldPriceUpdatedAt(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function normalizeGoldPricePayload(payload) {
-  const candidates = [
-    payload?.price_cny_per_gram,
-    payload?.price,
-    payload?.data?.price_cny_per_gram,
-    payload?.data?.price,
-    payload?.result?.price_cny_per_gram,
-    payload?.result?.price
-  ];
-  const price = candidates.map(Number).find(value => Number.isFinite(value) && value > 0);
+function normalizeGoldApiPayload(payload) {
+  const usdPerGram = Number(payload?.price_gram_24k || payload?.price_gram_24K || payload?.data?.price_gram_24k);
+  const usdPerOunce = Number(payload?.price || payload?.ask || payload?.data?.price || payload?.result?.price);
+  const cnyRate = Number.isFinite(usdCnyRate) && usdCnyRate > 0 ? usdCnyRate : DEFAULT_USD_CNY_RATE;
+  let priceCnyPerGram = 0;
 
-  if (!price) {
+  if (Number.isFinite(usdPerGram) && usdPerGram > 0) {
+    priceCnyPerGram = usdPerGram * cnyRate;
+  } else if (Number.isFinite(usdPerOunce) && usdPerOunce > 0) {
+    priceCnyPerGram = (usdPerOunce / USD_PER_TROY_OUNCE_GRAMS) * cnyRate;
+  }
+
+  if (!Number.isFinite(priceCnyPerGram) || priceCnyPerGram <= 0) {
     return null;
   }
 
   return {
-    price_cny_per_gram: Number(price.toFixed(2)),
-    source: payload?.source || "realtime_api",
-    updated_at: payload?.updated_at || payload?.data?.updated_at || payload?.result?.updated_at || formatGoldPriceUpdatedAt()
+    price_cny_per_gram: Number(priceCnyPerGram.toFixed(2)),
+    source: "realtime_api",
+    updated_at: payload?.updated_at || payload?.timestamp || payload?.date || formatGoldPriceUpdatedAt()
   };
 }
 
@@ -115,8 +119,8 @@ async function fetchRealtimeGoldPrice() {
     const response = await fetch(goldPriceApiUrl, {
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${goldPriceApiKey}`,
-        "X-API-Key": goldPriceApiKey
+        "Content-Type": "application/json",
+        "x-access-token": goldPriceApiKey
       },
       signal: controller.signal
     });
@@ -126,7 +130,7 @@ async function fetchRealtimeGoldPrice() {
     }
 
     const payload = await response.json();
-    return normalizeGoldPricePayload(payload);
+    return normalizeGoldApiPayload(payload);
   } finally {
     clearTimeout(timer);
   }
