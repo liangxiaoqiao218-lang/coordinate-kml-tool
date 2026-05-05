@@ -942,15 +942,40 @@
     }
 
     .quota-status.quota-vip {
-      border-color: #f2d08a;
-      background: linear-gradient(135deg, #fff7e6, #ffe8b3);
-      color: #9a5b00;
-      font-size: 12px;
+      border-color: #ead39c;
+      background: #f8f1df;
+      color: #8a5a00;
+      font-size: 11px;
       font-weight: 600;
-      padding: 3px 8px;
+      padding: 2px 6px;
       border-radius: 999px;
       box-shadow: 0 0 0 1px rgba(255, 200, 0, 0.15);
-      margin-top: 6px;
+    }
+
+    .judge-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .judge-title-row h1 {
+      margin-bottom: 0;
+    }
+
+    .judge-title-row .quota-status {
+      flex-shrink: 0;
+      margin: 0;
+      font-size: 12px;
+      padding: 2px 7px;
+      background: transparent;
+    }
+
+    .judge-title-row .quota-status.quota-vip {
+      background: #f8f1df;
+      font-size: 11px;
+      padding: 2px 6px;
     }
 
     .quota-status[hidden] {
@@ -2326,9 +2351,11 @@
         <button type="button" class="back-button judge-switch is-active" onclick="showPage('judge')">AI矿地判读</button>
         <button type="button" class="back-button gold-switch" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
-      <h1>AI矿地判读</h1>
+      <div class="judge-title-row">
+        <h1>AI矿地判读</h1>
+        <div id="judgeQuotaStatus" class="quota-status" hidden></div>
+      </div>
       <p class="intro">上传一张矿石、河道或卫星图，快速判断是否值得继续看。</p>
-      <div id="judgeQuotaStatus" class="quota-status" hidden></div>
 
       <div class="panel judge-panel">
         <div id="judgeMessage" class="message"></div>
