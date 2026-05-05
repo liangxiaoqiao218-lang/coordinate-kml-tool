@@ -4,6 +4,7 @@ import multer from "multer";
 import { createClient } from "@supabase/supabase-js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
 import Tesseract from "tesseract.js";
 
 const app = express();
@@ -33,13 +34,45 @@ const DEFAULT_USD_CNY_RATE = 7.2;
 const usdCnyRate = Number(process.env.USD_CNY_RATE || DEFAULT_USD_CNY_RATE);
 const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "https://www.goldapi.io/api/XAU/USD").trim();
 const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE_API_KEY || "").trim();
+const shareMetaMap = {
+  "/": {
+    title: "矿业空间工具 Geo Tool",
+    desc: "坐标处理、AI判读、黄金成色，一页搞定。",
+    image: "/share-home.png"
+  },
+  "/tool": {
+    title: "坐标处理工具",
+    desc: "一键识别坐标、生成KML，支持图片识别。",
+    image: "/share-tool.png"
+  },
+  "/convert": {
+    title: "坐标处理工具",
+    desc: "一键识别坐标、生成KML，支持图片识别。",
+    image: "/share-tool.png"
+  },
+  "/ocr": {
+    title: "坐标处理工具",
+    desc: "一键识别坐标、生成KML，支持图片识别。",
+    image: "/share-tool.png"
+  },
+  "/judge": {
+    title: "AI矿地判读",
+    desc: "上传一张图，快速判断是否值得继续投入。",
+    image: "/share-judge.png"
+  },
+  "/gold": {
+    title: "黄金成色计算器",
+    desc: "快速计算成色、K值和预估价格。",
+    image: "/share-gold.png"
+  }
+};
 
 app.use(express.json({ limit: "1mb" }));
 
 const appVersion = "2026-05-01-quota-contact-v2";
 
 app.use((req, res, next) => {
-  const noCachePaths = new Set(["/", "/convert", "/ocr", "/judge", "/gold", "/admin", "/index.html", "/admin.html"]);
+  const noCachePaths = new Set(["/", "/tool", "/convert", "/ocr", "/judge", "/gold", "/admin", "/index.html", "/admin.html"]);
 
   if (noCachePaths.has(req.path) || req.path.endsWith(".html")) {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -50,7 +83,46 @@ app.use((req, res, next) => {
   next();
 });
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function getRequestOrigin(req) {
+  const protocol = req.get("x-forwarded-proto") || req.protocol || "https";
+  const host = req.get("x-forwarded-host") || req.get("host") || "";
+  return host ? `${protocol}://${host}` : "";
+}
+
+function getShareMeta(req) {
+  const normalizedPath = req.path === "/index.html" ? "/" : req.path;
+  const meta = shareMetaMap[normalizedPath] || shareMetaMap["/"];
+  const origin = getRequestOrigin(req);
+  return {
+    ...meta,
+    url: `${origin}${normalizedPath === "/index.html" ? "/" : normalizedPath}`,
+    imageUrl: `${origin}${meta.image}`
+  };
+}
+
+function renderIndexWithMeta(req, res) {
+  const meta = getShareMeta(req);
+  const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8")
+    .replaceAll("<!--TITLE-->", escapeHtml(meta.title))
+    .replaceAll("<!--DESC-->", escapeHtml(meta.desc))
+    .replaceAll("<!--IMAGE-->", escapeHtml(meta.imageUrl))
+    .replaceAll("<!--URL-->", escapeHtml(meta.url));
+
+  res.type("html").send(html);
+}
+
+app.get(["/", "/index.html", "/tool", "/convert", "/ocr", "/judge", "/gold"], renderIndexWithMeta);
+
 app.use(express.static(__dirname, {
+  index: false,
   etag: false,
   lastModified: false,
   setHeaders(res, filePath) {
@@ -141,10 +213,6 @@ app.get("/api/gold-price", async (req, res) => {
     console.error("读取实时金价失败，返回不可用状态：", error.message || error);
     res.json(getUnavailableGoldPricePayload());
   }
-});
-
-app.get(["/tool", "/convert", "/ocr", "/judge", "/gold"], (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
 });
 
 function createDefaultAdminData() {
