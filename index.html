@@ -1460,6 +1460,7 @@
       border-radius: 8px;
       object-fit: cover;
       background: #f1f5f9;
+      cursor: pointer;
     }
 
     .judge-recent-item img:not([src]) {
@@ -3262,7 +3263,7 @@ Au值 = 纯度 × 10 后取整数</div>
         const sourceWidth = image.naturalWidth || image.width;
         const sourceHeight = image.naturalHeight || image.height;
         const longestSide = Math.max(sourceWidth, sourceHeight);
-        const maxSide = 1024;
+        const maxSide = 900;
         const scale = longestSide > maxSide ? maxSide / longestSide : 1;
         const width = Math.max(1, Math.round(sourceWidth * scale));
         const height = Math.max(1, Math.round(sourceHeight * scale));
@@ -3274,9 +3275,11 @@ Au值 = 纯度 × 10 后取整数</div>
         context.fillRect(0, 0, width, height);
         context.drawImage(image, 0, 0, width, height);
 
-        let blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.68));
-        if (blob && blob.size > 800 * 1024 && Math.max(width, height) > 900) {
-          const retryScale = 900 / Math.max(width, height);
+        let outputWidth = width;
+        let outputHeight = height;
+        let blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.6));
+        if (blob && blob.size > 800 * 1024) {
+          const retryScale = Math.min(1, 800 / Math.max(width, height));
           const retryCanvas = document.createElement("canvas");
           retryCanvas.width = Math.max(1, Math.round(width * retryScale));
           retryCanvas.height = Math.max(1, Math.round(height * retryScale));
@@ -3284,21 +3287,39 @@ Au值 = 纯度 × 10 后取整数</div>
           retryContext.fillStyle = "#ffffff";
           retryContext.fillRect(0, 0, retryCanvas.width, retryCanvas.height);
           retryContext.drawImage(canvas, 0, 0, retryCanvas.width, retryCanvas.height);
-          blob = await new Promise(resolve => retryCanvas.toBlob(resolve, "image/jpeg", 0.68));
+          blob = await new Promise(resolve => retryCanvas.toBlob(resolve, "image/jpeg", 0.5));
+          outputWidth = retryCanvas.width;
+          outputHeight = retryCanvas.height;
         }
 
         if (!blob) {
           throw new Error("图片标准化失败，请重新选择截图或 JPG 图片。");
         }
 
-        if (blob.size > 3 * 1024 * 1024) {
+        if (blob.size > 800 * 1024) {
+          console.warn("AI判读图片压缩后仍偏大，建议截图上传", {
+            originalSize: file.size,
+            compressedSize: blob.size,
+            width: outputWidth,
+            height: outputHeight
+          });
+        }
+
+        if (blob.size > 1024 * 1024) {
           throw new Error("图片过大，当前图片处理失败，请截图后重新上传。");
         }
 
-        return new File([blob], "judge-upload.jpg", {
+        const outputFile = new File([blob], "judge-upload.jpg", {
           type: "image/jpeg",
           lastModified: Date.now()
         });
+        console.log("AI判读上传图片标准化结果：", {
+          size: outputFile.size,
+          type: outputFile.type,
+          width: outputWidth,
+          height: outputHeight
+        });
+        return outputFile;
       } catch (error) {
         console.warn("AI判读图片标准化失败", error);
         throw new Error(error.message || "图片处理失败，请重新选择截图或 JPG 图片。");
@@ -3334,7 +3355,15 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      imageModalImg.src = selectedImageUrl;
+      openImageModal(selectedImageUrl);
+    }
+
+    function openImageModal(url) {
+      if (!url) {
+        return;
+      }
+
+      imageModalImg.src = url;
       imageModal.style.display = "flex";
     }
 
@@ -3421,8 +3450,18 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      imageModalImg.src = url;
-      imageModal.style.display = "flex";
+      openImageModal(url);
+    }
+
+    function openJudgeHistoryImage(event, index) {
+      event?.stopPropagation?.();
+      const item = getJudgeRecentItems()[index];
+      const url = item?.image || item?.thumb || "";
+      if (!url) {
+        showJudgeMessage("当前没有可预览的历史图片。", true);
+        return;
+      }
+      openImageModal(url);
     }
 
     async function clearJudgeSelectedImage(index = -1) {
@@ -3713,7 +3752,7 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeRecentList.innerHTML = items.map((item, index) => `
         <div class="judge-recent-item" role="button" tabindex="0" onclick="restoreJudgeRecent(${index})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();restoreJudgeRecent(${index});}">
           <button type="button" class="judge-recent-delete" onclick="deleteJudgeRecent(event, ${index})" aria-label="删除该条最近判读">×</button>
-          <img src="${escapeHtml(item.image || item.thumb || "")}" alt="最近判读缩略图" />
+          <img src="${escapeHtml(item.image || item.thumb || "")}" alt="最近判读缩略图" onclick="openJudgeHistoryImage(event, ${index})" />
           <span>
             <strong>${escapeHtml(item.grade || "C")} · ${escapeHtml(String(item.score || 0))}分</strong>
             <span class="judge-recent-decision">${escapeHtml(item.decisionText || getJudgeDecisionText(item.grade || "C", item.result || ""))}</span>
@@ -3845,6 +3884,10 @@ Au值 = 纯度 × 10 后取整数</div>
       if (files.length === 0) {
         showJudgeMessage("请先选择要判读的图片。", true);
         return;
+      }
+
+      if (files.some(file => Number(file.size || 0) > 5 * 1024 * 1024)) {
+        showJudgeMessage("图片过大，建议截图后上传（识别更稳定）。", true);
       }
 
       await loadUserConfig();
