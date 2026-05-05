@@ -49,10 +49,10 @@
 
     .home-view {
       display: none;
-      width: min(980px, 100%);
+      width: min(1080px, 100%);
       min-height: 54vh;
       margin: 0 auto;
-      place-content: center;
+      place-content: start center;
       padding: 12px 0 0;
     }
 
@@ -145,8 +145,10 @@
     .module-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 16px;
-      margin-top: 24px;
+      gap: 18px;
+      width: 100%;
+      max-width: 960px;
+      margin: 28px auto 0;
     }
 
     .module-card {
@@ -2022,6 +2024,7 @@
       }
 
       .home-view {
+        width: 100%;
         padding-top: 4px;
         min-height: auto;
       }
@@ -2098,8 +2101,9 @@
       }
 
       .module-card {
-        min-height: 104px;
-        padding: 15px 16px;
+        width: 100%;
+        min-height: 112px;
+        padding: 16px 18px;
       }
 
       .module-card strong {
@@ -2204,7 +2208,7 @@
     }
 
     .version-stamp {
-      margin: 18px auto 4px;
+      margin: 72px auto 24px;
       color: #b8c4d3;
       font-size: 11px;
       text-align: center;
@@ -2218,7 +2222,7 @@
       <div class="home-hero">
         <p class="eyebrow">Geo Tool</p>
         <h1>矿业空间工具 Geo Tool</h1>
-        <p class="intro">坐标、判读、成色估算，一页进入。</p>
+        <p class="intro">一键识别坐标，快速判读矿地，顺手估算成色。</p>
       </div>
 
       <div class="module-grid">
