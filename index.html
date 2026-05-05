@@ -942,17 +942,16 @@
     }
 
     .quota-status.quota-vip {
-      border-color: #ead39c;
-      background: #f8f1df;
-      color: #8a5a00;
+      border-color: #e6cf9a;
+      background: #f6efe0;
+      color: #7a4d00;
       font-size: 11px;
       font-weight: 600;
-      padding: 2px 6px;
+      padding: 2px 7px;
       border-radius: 999px;
-      box-shadow: 0 0 0 1px rgba(255, 200, 0, 0.15);
     }
 
-    .judge-title-row {
+    .page-title-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -960,22 +959,23 @@
       margin-bottom: 8px;
     }
 
-    .judge-title-row h1 {
+    .page-title-row h1 {
+      min-width: 0;
       margin-bottom: 0;
     }
 
-    .judge-title-row .quota-status {
+    .page-title-row .quota-status {
       flex-shrink: 0;
       margin: 0;
       font-size: 12px;
       padding: 2px 7px;
-      background: transparent;
+      background: #f8fafc;
     }
 
-    .judge-title-row .quota-status.quota-vip {
-      background: #f8f1df;
+    .page-title-row .quota-status.quota-vip {
+      background: #f6efe0;
       font-size: 11px;
-      padding: 2px 6px;
+      padding: 2px 7px;
     }
 
     .quota-status[hidden] {
@@ -2226,9 +2226,11 @@
         <button type="button" class="back-button judge-switch" onclick="showPage('judge')">AI矿地判读</button>
         <button type="button" class="back-button gold-switch" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
-      <h1>坐标处理工具</h1>
+      <div class="page-title-row">
+        <h1>坐标处理工具</h1>
+        <div id="convertQuotaStatus" class="quota-status" hidden></div>
+      </div>
       <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
-      <div id="convertQuotaStatus" class="quota-status" hidden></div>
 
       <div class="workspace-head">
       <label for="coordinateInput">坐标工作区</label>
@@ -2351,7 +2353,7 @@
         <button type="button" class="back-button judge-switch is-active" onclick="showPage('judge')">AI矿地判读</button>
         <button type="button" class="back-button gold-switch" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
-      <div class="judge-title-row">
+      <div class="page-title-row">
         <h1>AI矿地判读</h1>
         <div id="judgeQuotaStatus" class="quota-status" hidden></div>
       </div>
