@@ -2233,7 +2233,7 @@ function getAliyunChatCompletionsUrl() {
   return base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
 }
 
-async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0.1, maxTokens }) {
+async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0.1, maxTokens, timeoutMs = 35000 }) {
   if (!aliyunApiKey) {
     console.error("[Aliyun] 缺少环境变量：ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
     const error = new Error("阿里云 API 未配置");
@@ -2242,10 +2242,15 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
   }
 
   const requestUrl = getAliyunChatCompletionsUrl();
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   console.log("[Aliyun] 请求开始：", {
     url: requestUrl,
     model: modelName,
     imageCount: Array.isArray(imageItems) ? imageItems.length : 0,
+    startedAt: new Date(startedAt).toISOString(),
+    timeoutMs,
     hasAliyunApiKey: Boolean(process.env.ALIYUN_API_KEY),
     hasDashscopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY),
     baseURL: aliyunBaseURL
@@ -2269,15 +2274,57 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
     requestBody.max_tokens = Number(maxTokens);
   }
 
-  const response = await fetch(getAliyunChatCompletionsUrl(), {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${aliyunApiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(requestBody)
+  let response;
+  let data;
+
+  try {
+    response = await fetch(getAliyunChatCompletionsUrl(), {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${aliyunApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
+    });
+    data = await response.json().catch(() => ({}));
+  } catch (error) {
+    const endedAt = Date.now();
+    if (error.name === "AbortError") {
+      const timeoutError = new Error("阿里云接口超时");
+      timeoutError.code = "ALIYUN_TIMEOUT";
+      timeoutError.reason = "timeout";
+      timeoutError.durationMs = endedAt - startedAt;
+      console.error("[Aliyun] 请求超时：", {
+        model: modelName,
+        startedAt: new Date(startedAt).toISOString(),
+        endedAt: new Date(endedAt).toISOString(),
+        durationMs: timeoutError.durationMs,
+        timeoutMs
+      });
+      throw timeoutError;
+    }
+    error.durationMs = endedAt - startedAt;
+    console.error("[Aliyun] 网络请求失败：", {
+      model: modelName,
+      message: error.message,
+      code: error.code,
+      durationMs: error.durationMs
+    });
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const endedAt = Date.now();
+  console.log("[Aliyun] 请求结束：", {
+    status: response.status,
+    model: modelName,
+    startedAt: new Date(startedAt).toISOString(),
+    endedAt: new Date(endedAt).toISOString(),
+    durationMs: endedAt - startedAt,
+    requestId: data?.request_id || data?.requestId || data?.RequestId
   });
-  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     console.error("[Aliyun] 请求失败：", {
@@ -2287,12 +2334,14 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
       errorCode: data?.error?.code || data?.code,
       errorMessage: data?.error?.message || data?.message,
       requestId: data?.request_id || data?.requestId || data?.RequestId,
+      durationMs: endedAt - startedAt,
       responseBody: JSON.stringify(data).slice(0, 1200)
     });
     const error = new Error(data?.error?.message || data?.message || `阿里云 API 请求失败：HTTP ${response.status}`);
     error.status = response.status;
     error.code = data?.error?.code || data?.code;
     error.requestId = data?.request_id || data?.requestId || data?.RequestId;
+    error.durationMs = endedAt - startedAt;
     error.details = data;
     throw error;
   }
@@ -3108,11 +3157,16 @@ app.post("/api/analyze-mining-image", upload.fields([
   const uploadedFiles = [
     ...(req.files?.images || []),
     ...(req.files?.image || [])
-  ].slice(0, 5);
+  ].slice(0, 1);
   const firstFile = uploadedFiles[0];
   console.log("是否收到图片：", uploadedFiles.length > 0);
   console.log("收到图片数量：", uploadedFiles.length);
-  console.log("图片大小：", uploadedFiles.map(file => `${file.originalname || "image"}=${file.size} bytes`).join(", "));
+  console.log("AI判读收到文件详情：", uploadedFiles.map(file => ({
+    originalname: file.originalname || "image",
+    mimetype: file.mimetype,
+    size: file.size,
+    isCompressedJudgeUpload: file.originalname === "judge-upload.jpg" && file.mimetype === "image/jpeg"
+  })));
   console.log("AI判读环境变量检查：", {
     hasAliyunApiKey: Boolean(process.env.ALIYUN_API_KEY),
     hasDashscopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY),
@@ -3143,12 +3197,46 @@ app.post("/api/analyze-mining-image", upload.fields([
 
     if (uploadedFiles.length === 0) {
       return res.status(400).json({
-        error: "后端没有收到文件，请重新选择图片或资料文件上传。"
+        success: false,
+        reason: "image_invalid",
+        detail: "后端没有收到图片文件，请重新选择图片上传。",
+        error: "图片格式不支持或文件无效。"
       });
     }
 
     const imageFiles = uploadedFiles.filter(file => String(file.mimetype || "").startsWith("image/"));
     const isImageFile = imageFiles.length > 0;
+
+    const allowedImageTypes = new Set(["image/jpeg", "image/png"]);
+    const invalidImageFile = uploadedFiles.find(file => !allowedImageTypes.has(String(file.mimetype || "").toLowerCase()));
+    if (invalidImageFile) {
+      console.error("AI判读图片格式不支持：", {
+        originalname: invalidImageFile.originalname,
+        mimetype: invalidImageFile.mimetype,
+        size: invalidImageFile.size
+      });
+      return res.status(400).json({
+        success: false,
+        reason: "image_invalid",
+        detail: `图片格式不支持：${invalidImageFile.mimetype || "unknown"}，请上传 JPG 或 PNG。`,
+        error: "图片格式不支持。"
+      });
+    }
+
+    const oversizedImageFile = uploadedFiles.find(file => Number(file.size || 0) > 3 * 1024 * 1024);
+    if (oversizedImageFile) {
+      console.error("AI判读图片过大：", {
+        originalname: oversizedImageFile.originalname,
+        mimetype: oversizedImageFile.mimetype,
+        size: oversizedImageFile.size
+      });
+      return res.status(413).json({
+        success: false,
+        reason: "image_too_large",
+        detail: "图片超过 3MB，前端压缩可能失败，请截图后重新上传。",
+        error: "图片过大。"
+      });
+    }
 
     if (user) {
       await updateUserVisitMeta(user, req, data);
@@ -3258,6 +3346,9 @@ B 可以观察
     if (!aliyunApiKey) {
       console.error("AI判读失败：缺少环境变量 ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
       return res.status(400).json({
+        success: false,
+        reason: "config_missing",
+        detail: "识别服务暂未配置，请联系管理员。",
         error: "阿里云 API 未配置"
       });
     }
@@ -3298,12 +3389,29 @@ A / B / C / D，并解释一句。A=明显值得继续；B=有潜力但需要验
 【一句话总结】
 用一句人话告诉用户：这张图现在值不值得继续投入时间。`;
 
+    const aliyunStartedAt = Date.now();
+    console.log("AI判读调用阿里云开始：", {
+      startedAt: new Date(aliyunStartedAt).toISOString(),
+      model: aliyunVisionModel,
+      fileNames: judgeImageFiles.map(file => file.originalname || "image"),
+      mimeTypes: judgeImageFiles.map(file => file.mimetype),
+      sizes: judgeImageFiles.map(file => file.size)
+    });
+
     const response = await callAliyunVision({
       modelName: aliyunVisionModel,
       prompt,
       imageItems,
       temperature: 0.3,
-      maxTokens: 360
+      maxTokens: 360,
+      timeoutMs: 35000
+    });
+
+    const aliyunEndedAt = Date.now();
+    console.log("AI判读调用阿里云结束：", {
+      endedAt: new Date(aliyunEndedAt).toISOString(),
+      durationMs: aliyunEndedAt - aliyunStartedAt,
+      requestId: response?.request_id || response?.requestId || response?.RequestId
     });
 
     const rawOutput = response.choices?.[0]?.message?.content || "";
@@ -3364,15 +3472,28 @@ A / B / C / D，并解释一句。A=明显值得继续；B=有潜力但需要验
       status: error.status,
       details: error.details,
       formatted: errorMessage,
+      durationMs: error.durationMs,
+      requestId: error.requestId,
       uploadedFileCount: uploadedFiles.length,
-      fileNames: uploadedFiles.map(file => file.originalname || "image")
+      fileNames: uploadedFiles.map(file => file.originalname || "image"),
+      mimeTypes: uploadedFiles.map(file => file.mimetype),
+      sizes: uploadedFiles.map(file => file.size)
     });
+    const reason = error.reason === "timeout" || error.code === "ALIYUN_TIMEOUT"
+      ? "timeout"
+      : error.code === "ALIYUN_API_KEY_MISSING"
+        ? "config_missing"
+        : error.status
+          ? "aliyun_failed"
+          : "network_failed";
     res.status(500).json({
       success: false,
       error: "AI判读失败",
-      reason: "aliyun_failed",
+      reason,
       detail: aliyunDetail,
       status: aliyunStatus || undefined,
+      code: error.code || undefined,
+      durationMs: error.durationMs || undefined,
       requestId: error.requestId || undefined
     });
   }

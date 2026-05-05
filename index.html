@@ -482,11 +482,21 @@
       background: transparent;
     }
 
-    .image-preview p {
+    .image-preview p,
+    .preview-file-name {
       margin: 0;
       color: #475569;
       line-height: 1.5;
       word-break: break-word;
+    }
+
+    .preview-file-name {
+      min-height: auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      text-align: left;
     }
 
     .image-preview .remove-image {
@@ -554,7 +564,8 @@
       height: 42px;
     }
 
-    .judge-panel .image-preview p {
+    .judge-panel .image-preview p,
+    .judge-panel .preview-file-name {
       overflow: hidden;
       font-size: 12px;
       line-height: 1.25;
@@ -562,7 +573,8 @@
       text-overflow: ellipsis;
     }
 
-    .judge-panel .image-preview p strong {
+    .judge-panel .image-preview p strong,
+    .judge-panel .preview-file-name strong {
       display: block;
       overflow: hidden;
       max-width: 100%;
@@ -570,7 +582,8 @@
       text-overflow: ellipsis;
     }
 
-    .judge-panel .image-preview p span {
+    .judge-panel .image-preview p span,
+    .judge-panel .preview-file-name span {
       display: block;
       margin-top: 2px;
       color: #94a3b8;
@@ -3249,7 +3262,7 @@ Au值 = 纯度 × 10 后取整数</div>
         const sourceWidth = image.naturalWidth || image.width;
         const sourceHeight = image.naturalHeight || image.height;
         const longestSide = Math.max(sourceWidth, sourceHeight);
-        const maxSide = longestSide > 1280 || file.size > 8 * 1024 * 1024 ? 1024 : 1280;
+        const maxSide = 1024;
         const scale = longestSide > maxSide ? maxSide / longestSide : 1;
         const width = Math.max(1, Math.round(sourceWidth * scale));
         const height = Math.max(1, Math.round(sourceHeight * scale));
@@ -3261,9 +3274,9 @@ Au值 = 纯度 × 10 后取整数</div>
         context.fillRect(0, 0, width, height);
         context.drawImage(image, 0, 0, width, height);
 
-        let blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.7));
-        if (blob && blob.size > 900 * 1024 && Math.max(width, height) > 1024) {
-          const retryScale = 1024 / Math.max(width, height);
+        let blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.68));
+        if (blob && blob.size > 800 * 1024 && Math.max(width, height) > 900) {
+          const retryScale = 900 / Math.max(width, height);
           const retryCanvas = document.createElement("canvas");
           retryCanvas.width = Math.max(1, Math.round(width * retryScale));
           retryCanvas.height = Math.max(1, Math.round(height * retryScale));
@@ -3271,11 +3284,15 @@ Au值 = 纯度 × 10 后取整数</div>
           retryContext.fillStyle = "#ffffff";
           retryContext.fillRect(0, 0, retryCanvas.width, retryCanvas.height);
           retryContext.drawImage(canvas, 0, 0, retryCanvas.width, retryCanvas.height);
-          blob = await new Promise(resolve => retryCanvas.toBlob(resolve, "image/jpeg", 0.7));
+          blob = await new Promise(resolve => retryCanvas.toBlob(resolve, "image/jpeg", 0.68));
         }
 
         if (!blob) {
           throw new Error("图片标准化失败，请重新选择截图或 JPG 图片。");
+        }
+
+        if (blob.size > 3 * 1024 * 1024) {
+          throw new Error("图片过大，当前图片处理失败，请截图后重新上传。");
         }
 
         return new File([blob], "judge-upload.jpg", {
@@ -3366,8 +3383,10 @@ Au值 = 纯度 × 10 后取整数</div>
           <button type="button" class="preview-button" onclick="openJudgeSelectedImage(${index})" title="点击查看上传图片">
             <img src="${escapeHtml(imageDataUrls[index] || selectedJudgeImageUrls[index] || "")}" alt="已上传判读图片预览" />
           </button>
-          <p><strong>${escapeHtml(file.name)}</strong><span>${Math.round(file.size / 1024)} KB</span></p>
-          <button type="button" class="remove-image" onclick="clearJudgeSelectedImage(${index})" title="删除图片" aria-label="删除图片">×</button>
+          <button type="button" class="preview-file-name" onclick="openJudgeSelectedImage(${index})" title="点击查看上传图片">
+            <strong>${escapeHtml(file.name)}</strong><span>${Math.round(file.size / 1024)} KB</span>
+          </button>
+          <button type="button" class="remove-image" onclick="event.stopPropagation(); clearJudgeSelectedImage(${index})" title="删除图片" aria-label="删除图片">×</button>
         </div>`).join("");
       updateJudgeUploadControls();
     }
@@ -3882,7 +3901,19 @@ Au值 = 纯度 × 10 后取整数</div>
         }
 
         if (!response.ok) {
-          throw new Error(sanitizeUserFacingTechMessage(data.error || data.detail || "AI判读失败"));
+          const detail = sanitizeUserFacingTechMessage(data.detail || data.error || "AI判读失败");
+          const reasonText = {
+            image_invalid: detail || "图片格式不支持，请重新选择 JPG 或 PNG 图片。",
+            image_too_large: detail || "图片过大，请截图后重新上传。",
+            timeout: "阿里云接口超时，请换一张更清晰、更小的图片后重试。",
+            aliyun_failed: detail || "阿里云返回错误，请稍后重试。",
+            network_failed: "网络失败，请检查网络后重试。",
+            config_missing: "识别服务暂未配置，请联系管理员。"
+          };
+          const error = new Error(reasonText[data.reason] || detail || "未知错误，请稍后重试。");
+          error.reason = data.reason || "unknown";
+          error.detail = detail;
+          throw error;
         }
 
         clearInterval(progressTimer);
@@ -3908,9 +3939,9 @@ Au值 = 纯度 × 10 后取整数</div>
         hideJudgeProgressVisual();
         judgeResult.value = "";
         clearJudgeDecisionCard();
-        const message = /图片|格式|JPG|JPEG|截图|处理|标准化/.test(error.message || "")
+        const message = /图片|格式|JPG|JPEG|截图|处理|标准化|过大|超时|阿里云|网络|配置|未知/.test(error.message || "")
           ? error.message
-          : "AI判读失败，请检查图片或稍后重试。";
+          : "网络失败或服务暂时不可用，请稍后重试。";
         showJudgeMessage(message, true);
         trackEvent("ai_judge_fail", {
           message: error.message,
