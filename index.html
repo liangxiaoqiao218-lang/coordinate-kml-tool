@@ -942,9 +942,11 @@
     }
 
     .quota-status.quota-vip {
-      border-color: #dbeafe;
-      background: #eef2f7;
-      color: #64748b;
+      border-color: #f2d08a;
+      background: #fff7e6;
+      color: #9a5b00;
+      font-size: 12px;
+      font-weight: 600;
     }
 
     .quota-status[hidden] {
@@ -2757,8 +2759,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const isVip = Boolean(quota.is_vip || quota.isVip);
 
       if (isVip) {
-        setQuotaStatus(convertQuotaStatus, "VIP不限次数", 0, true);
-        setQuotaStatus(judgeQuotaStatus, "VIP不限次数", 0, true);
+        setQuotaStatus(convertQuotaStatus, "VIP", 0, true);
+        setQuotaStatus(judgeQuotaStatus, "VIP", 0, true);
         return;
       }
 
@@ -2790,8 +2792,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const isVip = Boolean(quota.is_vip || quota.isVip);
 
       if (isVip) {
-        setQuotaStatus(convertQuotaStatus, "VIP 不限次数", 0, true);
-        setQuotaStatus(judgeQuotaStatus, "VIP 不限次数", 0, true);
+        setQuotaStatus(convertQuotaStatus, "VIP", 0, true);
+        setQuotaStatus(judgeQuotaStatus, "VIP", 0, true);
         return;
       }
 
