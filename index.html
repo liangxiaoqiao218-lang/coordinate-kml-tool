@@ -1410,7 +1410,7 @@
 
     .judge-official-card {
       display: grid;
-      gap: 12px;
+      gap: 10px;
     }
 
     .judge-official-head {
@@ -1464,7 +1464,8 @@
 
     .judge-official-content {
       display: grid;
-      gap: 7px;
+      align-content: center;
+      gap: 8px;
       min-width: 0;
     }
 
@@ -1491,15 +1492,21 @@
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+      align-items: center;
     }
 
     .judge-official-tag {
-      padding: 4px 7px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
+      padding: 4px 8px;
       border-radius: 999px;
       background: rgba(148, 163, 184, 0.14);
       color: #475569;
       font-size: 12px;
       font-weight: 800;
+      line-height: 1;
     }
 
     .judge-official-foot {
@@ -1592,11 +1599,19 @@
 
     .judge-decision-card .judge-official-head {
       display: grid;
-      grid-template-columns: minmax(92px, 34%) minmax(0, 1fr);
-      align-items: stretch;
+      grid-template-columns: minmax(108px, 34%) minmax(0, 1fr);
+      align-items: center;
       gap: 12px;
       padding: 0;
       border-bottom: 0;
+    }
+
+    .judge-export-image-wrap {
+      position: relative;
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      min-width: 0;
     }
 
     .judge-decision-card .judge-export-image {
@@ -1607,6 +1622,23 @@
       border: 0;
       background: #eef2f7;
       box-shadow: none;
+    }
+
+    .judge-image-label {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: fit-content;
+      max-width: 100%;
+      min-height: 22px;
+      padding: 4px 7px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.06);
+      color: #475569;
+      font-size: 12px;
+      font-weight: 850;
+      line-height: 1;
+      white-space: nowrap;
     }
 
     .judge-decision-card .judge-official-kicker {
@@ -1626,19 +1658,24 @@
       flex-wrap: wrap;
       gap: 6px;
       align-items: center;
+      justify-content: flex-start;
       padding-top: 2px;
     }
 
     .judge-decision-metric {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 4px;
-      padding: 5px 8px;
+      min-height: 26px;
+      padding: 5px 9px;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.7);
       color: #475569;
       font-size: 12px;
       font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
     }
 
     .judge-decision-metric strong {
@@ -2467,6 +2504,30 @@
 
       .judge-decision-card {
         padding: 12px;
+      }
+
+      .judge-decision-card .judge-official-head {
+        grid-template-columns: 116px minmax(0, 1fr);
+        gap: 10px;
+      }
+
+      .judge-decision-card .judge-export-image {
+        height: 118px;
+      }
+
+      .judge-official-verdict {
+        font-size: 16px;
+        line-height: 1.35;
+      }
+
+      .judge-official-reason {
+        font-size: 12px;
+      }
+
+      .judge-official-tag,
+      .judge-decision-metric,
+      .judge-image-label {
+        font-size: 11px;
       }
 
       .judge-decision-top {
@@ -3873,6 +3934,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function clearJudgeSelectedImage(index = -1) {
+      const currentImageBeforeDelete = getCurrentJudgeImageDataUrl();
       if (index >= 0) {
         const url = selectedJudgeImageUrls[index];
         if (url) {
@@ -3896,10 +3958,18 @@ Au值 = 纯度 × 10 后取整数</div>
         judgeImagePreview.innerHTML = "";
         judgeImageInput.value = "";
         updateJudgeUploadControls();
-        judgeResult.value = "";
-        clearJudgeDecisionCard();
+        const removedCurrent = removeJudgeRecentByCurrentImage(currentImageBeforeDelete);
+        if (removedCurrent) {
+          const latest = getJudgeRecentItems()[0];
+          activateJudgeRecentItem(latest, latest ? "已删除当前图片，已切换到最近一条。" : "已删除当前图片，可以重新选择。");
+        } else if (!getJudgeRecentItems().length) {
+          judgeResult.value = "";
+          clearJudgeDecisionCard();
+        }
         hideJudgeProgressVisual();
-        showJudgeMessage("已删除判读图片，可以重新选择。");
+        if (!removedCurrent) {
+          showJudgeMessage("已删除判读图片，可以重新选择。");
+        }
         return;
       }
 
@@ -4200,8 +4270,11 @@ Au值 = 纯度 × 10 后取整数</div>
         return "其他";
       }
 
-      if (/河道沉积|河道|溪流|砂滩|沉积|阶地|老河道/i.test(source)) {
-        return "河道沉积";
+      if (/卫星图|卫星|地图|遥感|航拍|俯视|截图|底图|比例尺|图层|坐标网格|地图界面|google|earth|satellite|map/i.test(source)) {
+        return "卫星图";
+      }
+      if (/海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) {
+        return "其他";
       }
       if (/金豆\/熔炼物|金豆|熔炼|熔融|成品金|已提炼金属/i.test(source)) {
         return "金豆/熔炼物";
@@ -4209,11 +4282,11 @@ Au值 = 纯度 × 10 后取整数</div>
       if (/矿化岩石|矿化|石英脉|氧化带/i.test(source)) {
         return "矿化岩石";
       }
-      if (/卫星图|卫星|地图|遥感|航拍/i.test(source)) {
-        return "卫星图";
-      }
       if (/老鼠洞|洞采|矿洞|盗洞/i.test(source)) {
         return "老鼠洞";
+      }
+      if (/河道沉积|河道|溪流|河床|河流|冲沟|砂滩|沉积|阶地|老河道/i.test(source)) {
+        return "河道沉积";
       }
       if (/原矿石|矿石|样本|岩石/i.test(source)) {
         return "原矿石";
@@ -4229,15 +4302,27 @@ Au值 = 纯度 × 10 后取整数</div>
         getJudgeSection(source, "图片类型")
       ].filter(Boolean).join("\n");
 
+      const sourceScene = normalizeJudgeSceneName(source);
+      if (sourceScene === "卫星图") {
+        return "卫星图";
+      }
+      if (sourceScene === "其他" && /海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) {
+        return "其他";
+      }
+
       if (explicitText.trim()) {
         const exact = JUDGE_SCENE_ENUM.find(scene => explicitText.includes(scene));
         return exact || normalizeJudgeSceneName(explicitText);
       }
 
-      return normalizeJudgeSceneName(source);
+      return sourceScene;
     }
 
-    function displaySceneName(scene) {
+    function displaySceneName(scene, text = "") {
+      const source = String(text || "");
+      if (/海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) {
+        return "环境照片";
+      }
       const displayMap = {
         "河道沉积": "河道照片",
         "原矿石": "原矿样本",
@@ -4245,13 +4330,25 @@ Au值 = 纯度 × 10 后取整数</div>
         "卫星图": "卫星图",
         "老鼠洞": "老鼠洞",
         "金豆/熔炼物": "熔炼金属",
-        "其他": "快判对象"
+        "其他": "待确认样本"
       };
-      return displayMap[scene] || "快判对象";
+      return displayMap[scene] || "待确认样本";
     }
 
-    function getJudgeMisjudgeTags(text) {
+    function getJudgeMisjudgeTags(text, sceneType = "") {
       const source = String(text || "");
+      if (sceneType === "卫星图") {
+        const remoteTags = [
+          ["遥感图", /卫星|遥感|地图|航拍|俯视|截图|图层|底图/i],
+          ["河道结构", /河道|水系|弯曲|汇流|沟谷|冲沟/i],
+          ["沉积空间", /沉积|砂洲|阶地|河漫滩|冲积/i],
+          ["地貌线索", /地貌|坡度|山脊|谷地|构造|线性/i]
+        ].filter(([, pattern]) => pattern.test(source)).map(([tag]) => tag);
+        return [...new Set(remoteTags.length ? remoteTags : ["遥感图"])].slice(0, 3);
+      }
+      if (/海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) {
+        return ["环境照片", "非矿石样本", "无直接金线索"];
+      }
       const tagRules = [
         ["云母感", /云母|片状反光|片状/i],
         ["黄铁矿感", /黄铁矿|硫化物|金属硫化/i],
@@ -4275,15 +4372,16 @@ Au值 = 纯度 × 10 后取整数</div>
         : ["缺少清楚赋存关系", "未见强结构证据"];
       const tags = getJudgeMisjudgeTags(text);
       const sceneType = getJudgeSceneType(text);
+      const sceneTags = getJudgeMisjudgeTags(text, sceneType);
       return {
         title: "快判结果",
         brand: "Geo Tool",
         grade,
         conclusion: getCompactJudgeConclusion(text, meta),
         reasons,
-        tags,
+        tags: sceneTags.length ? sceneTags : tags,
         sceneType,
-        sampleType: displaySceneName(sceneType),
+        sampleType: displaySceneName(sceneType, text),
         confidence: meta?.confidence || "中",
         score: Number(meta?.score || 0)
       };
@@ -4344,6 +4442,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function setJudgeRecentItems(items) {
       const normalized = items.slice(0, 3).map(item => ({
+        id: item.id || `judge-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         image: item.image || item.thumb || "",
         result: item.result || "",
         grade: item.grade || "C",
@@ -4416,6 +4515,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const grade = meta?.grade || getJudgeGrade(result);
       const score = Number(meta?.score || getJudgeDecisionMeta(grade, result).score || 0);
       const item = {
+        id: `judge-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         image: getCurrentJudgeImageDataUrl(),
         result,
         grade,
@@ -4439,9 +4539,47 @@ Au值 = 纯度 × 10 后取整数</div>
       renderJudgeDecisionCard(judgeResult.value, {
         restored: true,
         previousBest: getJudgeHistoryBest(getJudgeRecentItems()),
-        item
+        item,
+        image: item.image || item.thumb || ""
       });
       showJudgeMessage("已打开最近判读结果，不会重新扣次数。");
+    }
+
+    function activateJudgeRecentItem(item, message = "") {
+      if (!item) {
+        judgeResult.value = "";
+        clearJudgeDecisionCard();
+        if (message) {
+          showJudgeMessage(message);
+        }
+        return;
+      }
+
+      judgeResult.value = item.result || "";
+      renderJudgeDecisionCard(judgeResult.value, {
+        restored: true,
+        previousBest: getJudgeHistoryBest(getJudgeRecentItems()),
+        item,
+        image: item.image || item.thumb || ""
+      });
+      if (message) {
+        showJudgeMessage(message);
+      }
+    }
+
+    function removeJudgeRecentByCurrentImage(imageValue = "") {
+      const image = imageValue || getCurrentJudgeImageDataUrl();
+      if (!image) {
+        return false;
+      }
+      const items = getJudgeRecentItems();
+      const nextItems = items.filter(item => (item.image || item.thumb || "") !== image);
+      if (nextItems.length === items.length) {
+        return false;
+      }
+      setJudgeRecentItems(nextItems);
+      renderJudgeRecent();
+      return true;
     }
 
     function deleteJudgeRecent(event, index) {
@@ -4453,6 +4591,7 @@ Au值 = 纯度 × 10 后取整数</div>
       } catch (error) {
         items = [];
       }
+      const removed = items[index];
       items.splice(index, 1);
       if (items.length === 0) {
         localStorage.removeItem(JUDGE_HISTORY_KEY);
@@ -4461,6 +4600,10 @@ Au值 = 纯度 × 10 后取整数</div>
         setJudgeRecentItems(items);
       }
       renderJudgeRecent();
+      if (removed && String(judgeResult.value || "") === String(removed.result || "")) {
+        activateJudgeRecentItem(items[0], items[0] ? "已删除当前记录，已切换到最近一条。" : "已删除当前记录。");
+        return;
+      }
       showJudgeMessage("已删除该条最近判读。");
     }
 
