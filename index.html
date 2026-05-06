@@ -3326,7 +3326,7 @@ Au值 = 纯度 × 10 后取整数</div>
         const sourceWidth = image.naturalWidth || image.width;
         const sourceHeight = image.naturalHeight || image.height;
         const longestSide = Math.max(sourceWidth, sourceHeight);
-        const maxSide = 900;
+        const maxSide = 800;
         const scale = longestSide > maxSide ? maxSide / longestSide : 1;
         const width = Math.max(1, Math.round(sourceWidth * scale));
         const height = Math.max(1, Math.round(sourceHeight * scale));
@@ -3340,9 +3340,9 @@ Au值 = 纯度 × 10 后取整数</div>
 
         let outputWidth = width;
         let outputHeight = height;
-        let blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.6));
-        if (blob && blob.size > 800 * 1024) {
-          const retryScale = Math.min(1, 800 / Math.max(width, height));
+        let blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.55));
+        if (blob && blob.size > 700 * 1024) {
+          const retryScale = Math.min(1, 700 / Math.max(width, height));
           const retryCanvas = document.createElement("canvas");
           retryCanvas.width = Math.max(1, Math.round(width * retryScale));
           retryCanvas.height = Math.max(1, Math.round(height * retryScale));
@@ -3350,7 +3350,7 @@ Au值 = 纯度 × 10 后取整数</div>
           retryContext.fillStyle = "#ffffff";
           retryContext.fillRect(0, 0, retryCanvas.width, retryCanvas.height);
           retryContext.drawImage(canvas, 0, 0, retryCanvas.width, retryCanvas.height);
-          blob = await new Promise(resolve => retryCanvas.toBlob(resolve, "image/jpeg", 0.5));
+          blob = await new Promise(resolve => retryCanvas.toBlob(resolve, "image/jpeg", 0.45));
           outputWidth = retryCanvas.width;
           outputHeight = retryCanvas.height;
         }
@@ -3359,7 +3359,7 @@ Au值 = 纯度 × 10 后取整数</div>
           throw new Error("图片标准化失败，请重新选择截图或 JPG 图片。");
         }
 
-        if (blob.size > 800 * 1024) {
+        if (blob.size > 700 * 1024) {
           console.warn("AI判读图片压缩后仍偏大，建议截图上传", {
             originalSize: file.size,
             compressedSize: blob.size,
@@ -3387,6 +3387,52 @@ Au值 = 纯度 × 10 后取整数</div>
         console.warn("AI判读图片标准化失败", error);
         throw new Error(error.message || "图片处理失败，请重新选择截图或 JPG 图片。");
       }
+    }
+
+    async function compressCoordinateImage(file) {
+      if (!file) {
+        throw new Error("请先选择坐标图片。");
+      }
+
+      const startedAt = performance.now();
+      const image = await loadImageForCompression(file);
+      const sourceWidth = image.naturalWidth || image.width;
+      const sourceHeight = image.naturalHeight || image.height;
+      const maxSide = 1200;
+      const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+      const width = Math.max(1, Math.round(sourceWidth * scale));
+      const height = Math.max(1, Math.round(sourceHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { alpha: false });
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+
+      let blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.75));
+      if (blob && blob.size > 1024 * 1024) {
+        blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.62));
+      }
+
+      if (!blob) {
+        throw new Error("坐标图片压缩失败，请重新截图后上传。");
+      }
+
+      const outputFile = new File([blob], "coordinate-upload.jpg", {
+        type: "image/jpeg",
+        lastModified: Date.now()
+      });
+      const durationMs = Math.round(performance.now() - startedAt);
+      console.log("坐标图片压缩结果：", {
+        originalSize: file.size,
+        compressedSize: outputFile.size,
+        type: outputFile.type,
+        width,
+        height,
+        durationMs
+      });
+      return { file: outputFile, width, height, durationMs };
     }
 
     function syncJudgeImageInputFiles() {
@@ -3650,17 +3696,31 @@ Au值 = 纯度 × 10 后取整数</div>
       const scoreText = getJudgeSection(text, "潜力评分");
       const match = scoreText.match(/(\d{1,3})\s*(?:分|\/\s*100)?/);
       const ranges = {
-        A: [80, 95],
-        B: [60, 79],
-        C: [35, 59],
+        A: [82, 96],
+        B: [62, 81],
+        C: [35, 61],
         D: [0, 34]
       };
-      const [min, max] = ranges[grade] || ranges.C;
+      const source = String(text || "");
+      let [min, max] = ranges[grade] || ranges.C;
+      if (grade === "B") {
+        if (/值得|有潜力|矿化线索|沉积条件|结构线索|继续投入/.test(source)) {
+          [min, max] = [72, 81];
+        } else {
+          [min, max] = [62, 71];
+        }
+      }
+      if (grade === "C") {
+        if (/可再看|补充|局部|少量线索|有一点/.test(source) && !/直接排除|无关|不建议/.test(source)) {
+          [min, max] = [50, 61];
+        } else {
+          [min, max] = [35, 49];
+        }
+      }
       if (scoreText && match) {
         return Math.round(clampNumber(match[1], min, max));
       }
 
-      const source = String(text || "");
       let score = Math.round((min + max) / 2);
       const plusRules = [
         [/明显|值得继续|继续观察价值|有继续观察价值|有潜力|有机会/g, 6],
@@ -3681,7 +3741,7 @@ Au值 = 纯度 × 10 后取整数</div>
       });
 
       const variationSeed = Array.from(source.slice(0, 160)).reduce((sum, char) => sum + char.charCodeAt(0), 0);
-      score += (variationSeed % 7) - 3;
+      score += (variationSeed % 11) - 5;
       return Math.round(clampNumber(score, min, max));
     }
 
@@ -3705,33 +3765,54 @@ Au值 = 纯度 × 10 后取整数</div>
       return "中";
     }
 
+    function extractJudgeImageQuality(text) {
+      const qualityText = getJudgeSection(text, "图像信息质量") || "";
+      const explicit = qualityText.match(/[高中低]/)?.[0];
+      if (explicit) {
+        return explicit;
+      }
+      const source = String(text || "");
+      if (/模糊|过曝|反光强|截图内容无关|缺少主体|看不清/.test(source)) {
+        return "低";
+      }
+      if (/缺少尺度|缺少环境|角度单一|单张图|清晰度有限/.test(source)) {
+        return "中";
+      }
+      return /清晰|主体明确|细节可见/.test(source) ? "高" : "中";
+    }
+
     function getJudgeDecisionMeta(grade, text) {
       const summary = getJudgeSection(text, "一句话总结") || getJudgeSection(text, "结论");
       const sourceText = String(text || "");
       const confidence = extractJudgeConfidence(sourceText);
+      const imageQuality = extractJudgeImageQuality(sourceText);
       const score = extractJudgeScore(sourceText, grade);
       const map = {
         A: {
           worth: "🔥 值得继续（有机会）",
           confidence,
+          imageQuality,
           score,
           summary: "👉 再试一张，这张可能没拍到关键点。"
         },
         B: {
           worth: "👍 有点意思（可以再看）",
           confidence,
+          imageQuality,
           score,
           summary: "👉 换个角度，结果可能完全不同。"
         },
         C: {
           worth: "⚠ 风险偏高（别重投入）",
           confidence,
+          imageQuality,
           score,
           summary: "👉 拍断面或加比例物，判断更准。"
         },
         D: {
           worth: "❌ 不建议（直接换）",
           confidence,
+          imageQuality,
           score,
           summary: "👉 更像普通目标，直接换下一张更省时间。"
         }
@@ -3806,6 +3887,10 @@ Au值 = 纯度 × 10 后取整数</div>
           <div class="judge-decision-item">
             <span class="judge-decision-label">判读可信度</span>
             <span class="judge-decision-value">${escapeHtml(meta.confidence)}</span>
+          </div>
+          <div class="judge-decision-item">
+            <span class="judge-decision-label">图像信息质量</span>
+            <span class="judge-decision-value">${escapeHtml(meta.imageQuality || "中")}</span>
           </div>
           <div class="judge-decision-item">
             <span class="judge-decision-label">本次评分</span>
@@ -4013,8 +4098,8 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      if (files.some(file => Number(file.size || 0) > 5 * 1024 * 1024)) {
-        showJudgeMessage("图片过大，建议截图后上传（识别更稳定）。", true);
+      if (files.some(file => Number(file.size || 0) > 8 * 1024 * 1024)) {
+        showJudgeMessage("原图过大，已自动压缩；如仍失败，请截图后上传。", true);
       }
 
       await loadUserConfig();
@@ -4066,7 +4151,7 @@ Au值 = 纯度 × 10 后取整数</div>
         };
 
         let { response, data } = await sendJudgeRequest();
-        if (!response.ok && ["network_failed", "timeout"].includes(data.reason)) {
+        if (!response.ok && ["network_failed", "timeout", "aliyun_failed"].includes(data.reason)) {
           showJudgeProgressVisual("网络波动，正在自动重试...");
           judgeResult.value = `${judgeResult.value}\n网络波动，正在自动重试...`;
           ({ response, data } = await sendJudgeRequest());
@@ -4176,7 +4261,7 @@ Au值 = 纯度 × 10 后取整数</div>
         return "";
       }
 
-      const allowedSections = ["结论", "等级", "判读可信度", "潜力评分", "关键依据", "主要风险", "下一步", "一句话总结"];
+      const allowedSections = ["结论", "等级", "判读可信度", "图像信息质量", "潜力评分", "关键依据", "主要风险", "下一步", "一句话总结"];
       const sections = allowedSections
         .map(name => {
           const value = getJudgeSection(resultText, name);
@@ -4190,6 +4275,7 @@ Au值 = 纯度 × 10 后取整数</div>
         `是否值得继续：${meta.worth}`,
         `判断等级：${grade}`,
         `判读可信度：${meta.confidence}`,
+        `图像信息质量：${meta.imageQuality || "中"}`,
         `本次评分：${meta.score}`
       ].join("\n");
       const text = [decisionText, sections.join("\n\n") || resultText].join("\n\n").trim();
@@ -4998,7 +5084,101 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return false;
       }
 
-      return commaSeparatedDmsRows >= Math.max(8, Math.floor(lines.length * 0.7));
+      const dmsLikeRows = lines.filter(line => /[,，]/.test(line) && /[°º˚'′″"NSEWO]/i.test(line)).length;
+      return Math.max(commaSeparatedDmsRows, dmsLikeRows) >= Math.max(8, Math.floor(lines.length * 0.65));
+    }
+
+    function repairOcrCoordinateText(text) {
+      return String(text || "")
+        .replace(/[，、；;]/g, ",")
+        .replace(/[º˚]/g, "°")
+        .replace(/[‘’´`′]/g, "'")
+        .replace(/[“”″]/g, '"')
+        .replace(/(\d)[oO](?=\d)/g, "$10")
+        .replace(/(\d)[lI](?=\d)/g, "$11")
+        .replace(/(\d)\s*,\s*(?=\d|[-+])/g, "$1,")
+        .replace(/[^\dNSEWO°'".,\-+\s]/gi, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+    }
+
+    function decimalRepairCandidates(value, axis) {
+      const raw = String(value || "").trim();
+      if (!raw || raw.includes(".")) {
+        return [raw];
+      }
+      const sign = raw.startsWith("-") ? "-" : "";
+      const digits = raw.replace(/^[-+]/, "");
+      if (!/^\d{4,}$/.test(digits)) {
+        return [raw];
+      }
+      const limit = axis === "lat" ? 90 : 180;
+      const preferredMax = axis === "lat" ? 25 : 25;
+      const candidates = [];
+      for (let pos = 1; pos <= Math.min(3, digits.length - 1); pos += 1) {
+        const candidate = `${sign}${digits.slice(0, pos)}.${digits.slice(pos)}`;
+        const number = Number(candidate);
+        if (Number.isFinite(number) && Math.abs(number) <= limit) {
+          candidates.push(candidate);
+        }
+      }
+      const regional = candidates.find(candidate => Math.abs(Number(candidate)) <= preferredMax);
+      return regional ? [regional, ...candidates.filter(candidate => candidate !== regional)] : (candidates.length ? candidates : [raw]);
+    }
+
+    function repairDecimalCoordinateLine(line) {
+      const text = repairOcrCoordinateText(line);
+      const match = text.match(/^([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)$/);
+      if (!match) {
+        return text;
+      }
+
+      const lonCandidates = decimalRepairCandidates(match[1], "lon");
+      const latCandidates = decimalRepairCandidates(match[2], "lat");
+      for (const lon of lonCandidates) {
+        for (const lat of latCandidates) {
+          const candidate = `${lon},${lat}`;
+          if (parseCoordinateLine(candidate)) {
+            return candidate;
+          }
+        }
+      }
+      return text;
+    }
+
+    function validateCoordinateDisplay(text) {
+      const validLines = [];
+      const abnormalLines = [];
+      const sourceLines = String(text || "")
+        .replace(/[；;]/g, "\n")
+        .split(/\r?\n/);
+
+      for (const sourceLine of sourceLines) {
+        const trimmed = sourceLine.trim();
+        if (!trimmed) {
+          if (validLines.length && validLines[validLines.length - 1] !== "") {
+            validLines.push("");
+          }
+          continue;
+        }
+
+        const repaired = repairDecimalCoordinateLine(trimmed);
+        const pair = parseCoordinateLine(repaired) || parseProjectedCoordinateLine(repaired);
+        if (pair) {
+          validLines.push(repaired.replace(/\s*,\s*/g, ","));
+        } else {
+          abnormalLines.push(`${trimmed} 需人工核对`);
+        }
+      }
+
+      while (validLines[validLines.length - 1] === "") {
+        validLines.pop();
+      }
+
+      return {
+        coordinates: validLines.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+        abnormalLines
+      };
     }
 
     function extractProjectedCoordinateLines(text) {
@@ -6116,15 +6296,23 @@ ${placemarks}
       });
       setDebug(`正在上传图片\n文件名：${file.name}\n大小：${Math.round(file.size / 1024)} KB`);
       showMessage("正在上传图片……");
+      let slowRecognitionTimer = null;
 
       try {
+        const recognitionStartedAt = performance.now();
+        const compressed = await compressCoordinateImage(file);
+        const uploadFile = compressed.file;
         const formData = new FormData();
-        formData.append("image", file);
+        formData.append("image", uploadFile, "coordinate-upload.jpg");
 
-        appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
+        appendDebug(`图片压缩耗时：${compressed.durationMs} ms\n压缩后大小：${Math.round(uploadFile.size / 1024)} KB`);
         appendDebug("正在调用识别接口");
         showMessage("正在调用识别接口……");
         showRecognitionProgress("正在识别坐标...", "loading");
+        slowRecognitionTimer = setTimeout(() => {
+          showRecognitionProgress("正在识别复杂图片，请稍等", "loading");
+        }, 15000);
+        const requestStartedAt = performance.now();
 
         const response = await fetch("/api/recognize-coordinates", {
           method: "POST",
@@ -6133,6 +6321,8 @@ ${placemarks}
           },
           body: formData
         });
+        clearTimeout(slowRecognitionTimer);
+        appendDebug(`识别接口耗时：${Math.round(performance.now() - requestStartedAt)} ms`);
 
         let data;
         try {
@@ -6172,13 +6362,15 @@ ${placemarks}
         // 固定规则：这是旧版验证有效的坐标工作区显示路径，不要轻易改动。
         // recognizedLines 来自 rawText，优先保留原图坐标格式；手写 DMS 由 groupEveryFourLinesWhenLikely() 分组。
         // data.coordinates 是后端转换后的结果，只作为兜底，避免覆盖用户核对所需的原始格式。
-        const finalCoordinates = chooseBestCoordinateResult([
+        const candidateCoordinates = chooseBestCoordinateResult([
           recognizedLines,
           projectedLines,
           preservedCoordinates,
           data.coordinates || "",
           dmsCoordinates
         ]);
+        const validated = validateCoordinateDisplay(candidateCoordinates);
+        const finalCoordinates = validated.coordinates || (validated.abnormalLines.length ? "" : candidateCoordinates);
 
         appendDebug(`识别原文：\n${data.rawText || "无"}`);
         appendDebug(`平面坐标系判断：${detectedProjection || projectionType.value || "自动"}`);
@@ -6189,6 +6381,8 @@ ${placemarks}
         appendDebug(`前端DMS兜底提取结果：\n${dmsCoordinates || "无"}`);
         appendDebug(`精度模式：${data.precisionMode || "未知"}`);
         appendDebug(`识别提示：${data.warning || "无"}`);
+        appendDebug(`疑似异常行：\n${[...(data.abnormalLines || []), ...validated.abnormalLines].join("\n") || "无"}`);
+        appendDebug(`总耗时：${Math.round(performance.now() - recognitionStartedAt)} ms`);
 
         if (!response.ok) {
           setRecognitionStatus("", "");
@@ -6220,6 +6414,9 @@ ${placemarks}
         }
         showRecognitionProgress("识别完成", "success", 1500);
       } catch (error) {
+        if (slowRecognitionTimer) {
+          clearTimeout(slowRecognitionTimer);
+        }
         const publicErrorMessage = sanitizeUserFacingTechMessage(error.message);
         appendDebug(`错误信息：${publicErrorMessage}`);
         trackEvent("image_recognize_fail", {
