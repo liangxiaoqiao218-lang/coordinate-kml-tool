@@ -228,18 +228,29 @@ function createDefaultAdminData() {
       xyConvertEnabled: true,
       kmlExportEnabled: true,
       manualSupportEnabled: true,
-      aiJudgeEnabled: true
+      aiJudgeEnabled: true,
+      goldCalculatorEnabled: true
     }
   };
 }
 
+let adminDataStore = createDefaultAdminData();
+
 async function readAdminData() {
-  return createDefaultAdminData();
+  return adminDataStore;
 }
 
 async function writeAdminData(data) {
   // Render does not provide durable writable storage in the app directory.
   // Local admin-data.json persistence is disabled; official admin data lives in Supabase.
+  adminDataStore = {
+    ...createDefaultAdminData(),
+    ...(data || {}),
+    featureFlags: {
+      ...createDefaultAdminData().featureFlags,
+      ...((data && data.featureFlags) || {})
+    }
+  };
   return data;
 }
 function getNowISO() {
@@ -756,7 +767,8 @@ function ensureUser(data, visitorId) {
         xyConvertEnabled: true,
         kmlExportEnabled: true,
         manualSupportEnabled: true,
-        aiJudgeEnabled: true
+        aiJudgeEnabled: true,
+        goldCalculatorEnabled: true
       },
       createdAt: getNowISO(),
       lastSeenAt: getNowISO(),
@@ -786,7 +798,8 @@ function normalizeAdminUser(user, fallbackId = "") {
       xyConvertEnabled: safeUser.permissions?.xyConvertEnabled !== false,
       kmlExportEnabled: safeUser.permissions?.kmlExportEnabled !== false,
       manualSupportEnabled: safeUser.permissions?.manualSupportEnabled !== false,
-      aiJudgeEnabled: safeUser.permissions?.aiJudgeEnabled !== false
+      aiJudgeEnabled: safeUser.permissions?.aiJudgeEnabled !== false,
+      goldCalculatorEnabled: safeUser.permissions?.goldCalculatorEnabled !== false
     },
     created_at: safeUser.createdAt || "",
     createdAt: safeUser.createdAt || "",
@@ -1318,7 +1331,8 @@ function getEffectivePermissions(user, featureFlags) {
       xyConvertEnabled: false,
       kmlExportEnabled: false,
       manualSupportEnabled: false,
-      aiJudgeEnabled: false
+      aiJudgeEnabled: false,
+      goldCalculatorEnabled: false
     };
   }
 
@@ -1327,7 +1341,8 @@ function getEffectivePermissions(user, featureFlags) {
     xyConvertEnabled: Boolean(featureFlags.xyConvertEnabled && permissions.xyConvertEnabled),
     kmlExportEnabled: Boolean(featureFlags.kmlExportEnabled && permissions.kmlExportEnabled),
     manualSupportEnabled: Boolean(featureFlags.manualSupportEnabled && permissions.manualSupportEnabled),
-    aiJudgeEnabled: Boolean(featureFlags.aiJudgeEnabled && permissions.aiJudgeEnabled)
+    aiJudgeEnabled: Boolean(featureFlags.aiJudgeEnabled && permissions.aiJudgeEnabled),
+    goldCalculatorEnabled: featureFlags.goldCalculatorEnabled !== false
   };
 }
 
@@ -3033,7 +3048,8 @@ app.patch("/api/admin/users/:visitorId", requireAdmin, async (req, res) => {
         xyConvertEnabled: Boolean(req.body.permissions.xyConvertEnabled),
         kmlExportEnabled: Boolean(req.body.permissions.kmlExportEnabled),
         manualSupportEnabled: Boolean(req.body.permissions.manualSupportEnabled),
-        aiJudgeEnabled: Boolean(req.body.permissions.aiJudgeEnabled)
+        aiJudgeEnabled: Boolean(req.body.permissions.aiJudgeEnabled),
+        goldCalculatorEnabled: req.body.permissions.goldCalculatorEnabled !== false
       };
     }
 
@@ -3097,7 +3113,8 @@ app.patch("/api/admin/feature-flags", requireAdmin, async (req, res) => {
       xyConvertEnabled: Boolean(nextFlags.xyConvertEnabled),
       kmlExportEnabled: Boolean(nextFlags.kmlExportEnabled),
       manualSupportEnabled: Boolean(nextFlags.manualSupportEnabled),
-      aiJudgeEnabled: Boolean(nextFlags.aiJudgeEnabled)
+      aiJudgeEnabled: Boolean(nextFlags.aiJudgeEnabled),
+      goldCalculatorEnabled: nextFlags.goldCalculatorEnabled !== false
     };
 
     await writeAdminData(data);

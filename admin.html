@@ -416,40 +416,47 @@
 
     <section class="panel">
       <h2>系统功能开关</h2>
-      <p class="muted">功能开关接口待接入。当前仅做新版后台 UI 预留，不读取 admin-data.json。</p>
+      <p class="muted">开关状态由后端统一保存，前台刷新后自动生效。</p>
       <div class="switch-grid">
-        <div class="switch-item active">
+        <div class="switch-item active" data-feature="aiOcrEnabled">
           <strong>坐标图片识别</strong>
           <label class="switch-control">
-            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <input type="checkbox" checked onchange="saveFeatureFlags(this)" />
             <span class="switch-state">开启</span>
           </label>
         </div>
-        <div class="switch-item active">
+        <div class="switch-item active" data-feature="xyConvertEnabled">
           <strong>标准化坐标</strong>
           <label class="switch-control">
-            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <input type="checkbox" checked onchange="saveFeatureFlags(this)" />
             <span class="switch-state">开启</span>
           </label>
         </div>
-        <div class="switch-item active">
+        <div class="switch-item active" data-feature="kmlExportEnabled">
           <strong>KML导出</strong>
           <label class="switch-control">
-            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <input type="checkbox" checked onchange="saveFeatureFlags(this)" />
             <span class="switch-state">开启</span>
           </label>
         </div>
-        <div class="switch-item active">
+        <div class="switch-item active" data-feature="aiJudgeEnabled">
           <strong>AI矿地判读</strong>
           <label class="switch-control">
-            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <input type="checkbox" checked onchange="saveFeatureFlags(this)" />
             <span class="switch-state">开启</span>
           </label>
         </div>
-        <div class="switch-item active">
+        <div class="switch-item active" data-feature="goldCalculatorEnabled">
+          <strong>黄金成色计算器</strong>
+          <label class="switch-control">
+            <input type="checkbox" checked onchange="saveFeatureFlags(this)" />
+            <span class="switch-state">开启</span>
+          </label>
+        </div>
+        <div class="switch-item active" data-feature="manualSupportEnabled">
           <strong>人工开通入口</strong>
           <label class="switch-control">
-            <input type="checkbox" checked onchange="toggleReservedSwitch(this)" />
+            <input type="checkbox" checked onchange="saveFeatureFlags(this)" />
             <span class="switch-state">开启</span>
           </label>
         </div>
@@ -630,6 +637,7 @@
 
         adminPassword = getPassword();
         localStorage.setItem("coordinateToolAdminPassword", adminPassword);
+        await loadFeatureFlags();
         await loadSupabaseUsers(false);
         setMessage(`后台数据已刷新：${new Date().toLocaleTimeString()}`);
       } catch (error) {
@@ -726,7 +734,7 @@
       }
     }
 
-    function toggleReservedSwitch(input) {
+    function setFeatureSwitchState(input) {
       const item = input.closest(".switch-item");
       const state = item?.querySelector(".switch-state");
 
@@ -736,6 +744,53 @@
 
       item.classList.toggle("active", input.checked);
       state.textContent = input.checked ? "开启" : "关闭";
+    }
+
+    function getFeatureFlagPayload() {
+      const featureFlags = {};
+      document.querySelectorAll(".switch-item[data-feature]").forEach(item => {
+        const key = item.dataset.feature;
+        const input = item.querySelector("input[type='checkbox']");
+        featureFlags[key] = Boolean(input?.checked);
+      });
+      return featureFlags;
+    }
+
+    function renderFeatureFlags(featureFlags = {}) {
+      document.querySelectorAll(".switch-item[data-feature]").forEach(item => {
+        const key = item.dataset.feature;
+        const input = item.querySelector("input[type='checkbox']");
+        if (!input) {
+          return;
+        }
+        input.checked = featureFlags[key] !== false;
+        setFeatureSwitchState(input);
+      });
+    }
+
+    async function loadFeatureFlags() {
+      const result = await adminFetch("/api/admin/summary");
+      renderFeatureFlags(result.featureFlags || {});
+    }
+
+    async function saveFeatureFlags(changedInput) {
+      if (changedInput) {
+        setFeatureSwitchState(changedInput);
+      }
+
+      try {
+        const result = await adminFetch("/api/admin/feature-flags", {
+          method: "PATCH",
+          body: JSON.stringify({
+            featureFlags: getFeatureFlagPayload()
+          })
+        });
+        renderFeatureFlags(result.featureFlags || {});
+        setMessage("功能开关已保存。");
+      } catch (error) {
+        setMessage(`保存功能开关失败：${error.message}`, true);
+        await loadFeatureFlags().catch(() => {});
+      }
     }
 
     function toQuotaInputValue(value) {

@@ -1633,6 +1633,17 @@
       gap: 14px;
     }
 
+    .feature-unavailable {
+      margin-top: 18px;
+      padding: 22px;
+      border: 1px solid #d8e0ec;
+      border-radius: 14px;
+      background: #ffffff;
+      color: #475569;
+      font-weight: 700;
+      text-align: center;
+    }
+
     .gold-input-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2238,7 +2249,7 @@
           <span>图片初筛</span>
           <small class="module-action">进入</small>
         </button>
-        <button type="button" class="module-card gold-module" onclick="showPage('gold')">
+        <button id="homeGoldEntry" type="button" class="module-card gold-module" onclick="showPage('gold')">
           <small class="module-tag">成色</small>
           <strong>黄金成色计算器</strong>
           <span>成色与总价</span>
@@ -2430,7 +2441,9 @@
       <h1>黄金成色计算器</h1>
       <p class="intro">输入黄金重量和排水差重，快速估算纯度、K值和Au值。结果仅供现场快速参考。</p>
 
-      <div class="panel gold-panel">
+      <div id="goldUnavailableNotice" class="feature-unavailable" hidden>该功能暂未开放</div>
+
+      <div id="goldCalculatorPanel" class="panel gold-panel">
         <div class="gold-input-grid">
           <div>
             <label for="goldWeight">黄金重量（g）</label>
@@ -2587,6 +2600,9 @@ Au值 = 纯度 × 10 后取整数</div>
     const judgeQrText = document.getElementById("judgeQrText");
     const convertQuotaStatus = document.getElementById("convertQuotaStatus");
     const judgeQuotaStatus = document.getElementById("judgeQuotaStatus");
+    const homeGoldEntry = document.getElementById("homeGoldEntry");
+    const goldCalculatorPanel = document.getElementById("goldCalculatorPanel");
+    const goldUnavailableNotice = document.getElementById("goldUnavailableNotice");
     const pages = {
       home: document.getElementById("homePage"),
       coordinate: document.getElementById("coordinatePage"),
@@ -2616,7 +2632,8 @@ Au值 = 纯度 × 10 后取整数</div>
         xyConvertEnabled: true,
         kmlExportEnabled: true,
         manualSupportEnabled: true,
-        aiJudgeEnabled: true
+        aiJudgeEnabled: true,
+        goldCalculatorEnabled: true
       }
     };
     const historyStack = [];
@@ -2723,8 +2740,34 @@ Au值 = 纯度 × 10 后取整数</div>
       try {
         const response = await fetch(`/api/config?visitorId=${encodeURIComponent(visitorId)}`);
         appConfig = await response.json();
+        applyFeatureAvailability();
       } catch (error) {
         console.warn("读取用户配置失败", error);
+      }
+    }
+
+    function isGoldCalculatorEnabled() {
+      return appConfig?.permissions?.goldCalculatorEnabled !== false
+        && appConfig?.featureFlags?.goldCalculatorEnabled !== false;
+    }
+
+    function applyFeatureAvailability() {
+      const goldEnabled = isGoldCalculatorEnabled();
+
+      if (homeGoldEntry) {
+        homeGoldEntry.hidden = !goldEnabled;
+      }
+
+      document.querySelectorAll(".gold-switch").forEach(button => {
+        button.hidden = !goldEnabled;
+      });
+
+      if (goldCalculatorPanel) {
+        goldCalculatorPanel.hidden = !goldEnabled;
+      }
+
+      if (goldUnavailableNotice) {
+        goldUnavailableNotice.hidden = goldEnabled;
       }
     }
 
