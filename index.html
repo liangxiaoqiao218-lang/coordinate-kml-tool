@@ -1378,7 +1378,7 @@
       max-height: 62vh;
       overflow-y: auto;
       margin-top: 10px;
-      padding: 16px 16px 64px 16px;
+      padding: 52px 16px 24px 16px;
       background: #ffffff;
       border: 1px solid #d7e4dc;
       border-radius: 14px;
@@ -1991,9 +1991,10 @@
     .judge-result-tools {
       position: absolute;
       right: 10px;
-      bottom: 10px;
+      top: 44px;
       display: flex;
       gap: 8px;
+      z-index: 2;
     }
 
     .judge-progress-visual {
@@ -4015,9 +4016,6 @@ Au值 = 纯度 × 10 后取整数</div>
       const validFiles = files.filter(isImageUpload);
       await showJudgeSelectedImage(validFiles.slice(0, 1));
       judgeImageInput.value = "";
-      judgeResult.value = "";
-      clearJudgeDecisionCard();
-      hideJudgeProgressVisual();
       showJudgeMessage("");
       setTimeout(() => analyzeMiningImage(), 0);
     }
@@ -4678,8 +4676,6 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      judgeResult.value = "";
-      clearJudgeDecisionCard();
       const progressTimer = startJudgeProgress(files.length);
 
       try {
@@ -4923,7 +4919,45 @@ Au值 = 纯度 × 10 后取整数</div>
       return Math.min(lines.length, maxLines) * lineHeight;
     }
 
-    function buildJudgeResultCardCanvas() {
+    function loadJudgeCanvasImage(src) {
+      return new Promise(resolve => {
+        if (!src) {
+          resolve(null);
+          return;
+        }
+
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => resolve(null);
+        image.src = src;
+      });
+    }
+
+    function drawCanvasCoverImage(context, image, x, y, width, height, radius = 0) {
+      context.save();
+      if (radius && context.roundRect) {
+        context.beginPath();
+        context.roundRect(x, y, width, height, radius);
+        context.clip();
+      }
+
+      if (!image) {
+        context.fillStyle = "#e2e8f0";
+        context.fillRect(x, y, width, height);
+        context.restore();
+        return;
+      }
+
+      const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+      const drawWidth = image.naturalWidth * scale;
+      const drawHeight = image.naturalHeight * scale;
+      const drawX = x + (width - drawWidth) / 2;
+      const drawY = y + (height - drawHeight) / 2;
+      context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+      context.restore();
+    }
+
+    async function buildJudgeResultCardCanvas() {
       const resultText = String(judgeResult?.value || "").trim();
       if (!resultText) {
         return null;
@@ -4932,83 +4966,83 @@ Au值 = 纯度 × 10 后取整数</div>
       const grade = getJudgeGrade(resultText);
       const meta = getJudgeDecisionMeta(grade, resultText);
       const official = buildJudgeOfficialCardMeta(resultText, meta, grade);
+      const image = await loadJudgeCanvasImage(getCurrentJudgeImageDataUrl());
       const gradeColors = {
-        A: ["#dcfce7", "#166534"],
-        B: ["#dbeafe", "#1d4ed8"],
-        C: ["#ffedd5", "#c2410c"],
-        D: ["#f1f5f9", "#334155"]
+        A: ["#dcfce7", "#166534", "#16a34a"],
+        B: ["#dbeafe", "#1d4ed8", "#2563eb"],
+        C: ["#ffedd5", "#c2410c", "#ea580c"],
+        D: ["#f1f5f9", "#334155", "#64748b"]
       };
-      const [gradeBg, gradeColor] = gradeColors[grade] || gradeColors.C;
+      const [gradeBg, gradeColor, accentColor] = gradeColors[grade] || gradeColors.C;
       const canvas = document.createElement("canvas");
       canvas.width = 1080;
       canvas.height = 1350;
       const context = canvas.getContext("2d");
+      const background = context.createLinearGradient(0, 0, 0, canvas.height);
+      background.addColorStop(0, "#f8fafc");
+      background.addColorStop(0.46, "#ffffff");
+      background.addColorStop(1, "#f1f5f9");
 
-      context.fillStyle = "#f8fafc";
+      context.fillStyle = background;
       context.fillRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = "#ffffff";
-      context.roundRect(70, 70, 940, 1210, 34);
-      context.fill();
-      context.strokeStyle = "#dbeafe";
-      context.lineWidth = 3;
-      context.stroke();
 
-      context.fillStyle = "#15803d";
-      context.font = "700 34px Arial, sans-serif";
-      context.fillText("砂金快判", 110, 150);
+      drawCanvasCoverImage(context, image, 64, 64, 952, 690, 36);
+      context.fillStyle = "rgba(15, 23, 42, 0.36)";
+      context.fillRect(64, 594, 952, 160);
+
+      context.fillStyle = "#ffffff";
+      context.font = "900 32px Arial, sans-serif";
+      context.fillText("快判结果", 104, 670);
+
       context.fillStyle = "#0f172a";
-      context.font = "900 56px Arial, sans-serif";
-      context.fillText("官方快判结果", 110, 225);
-      context.fillStyle = "#64748b";
-      context.font = "700 26px Arial, sans-serif";
-      context.fillText("Geo Tool · 矿业空间工具", 110, 270);
+      context.font = "900 54px Arial, sans-serif";
+      wrapCanvasText(context, official.conclusion, 84, 850, 912, 68, 3);
 
       context.fillStyle = gradeBg;
-      context.roundRect(110, 340, 220, 220, 28);
+      context.roundRect(104, 696, 116, 44, 22);
       context.fill();
       context.fillStyle = gradeColor;
-      context.font = "900 138px Arial, sans-serif";
-      context.textAlign = "center";
-      context.fillText(grade, 220, 500);
-      context.textAlign = "left";
+      context.font = "900 24px Arial, sans-serif";
+      context.fillText(`等级 ${grade}`, 132, 726);
 
-      context.fillStyle = "#0f172a";
-      context.font = "900 42px Arial, sans-serif";
-      wrapCanvasText(context, official.conclusion, 370, 385, 560, 56, 3);
-
-      context.fillStyle = "#475569";
-      context.font = "700 28px Arial, sans-serif";
-      wrapCanvasText(context, official.reason, 110, 650, 860, 42, 4);
+      context.fillStyle = "#ffffff";
+      context.font = "800 24px Arial, sans-serif";
+      context.fillText(`${official.score}分 · 可信度 ${official.confidence}`, 242, 726);
 
       const tags = official.tags.length ? official.tags : ["快判结果"];
-      let tagX = 110;
-      let tagY = 875;
-      context.font = "800 24px Arial, sans-serif";
+      let tagX = 84;
+      let tagY = 1060;
+      context.font = "800 25px Arial, sans-serif";
       tags.slice(0, 4).forEach(tag => {
-        const width = Math.min(280, context.measureText(tag).width + 42);
-        if (tagX + width > 970) {
-          tagX = 110;
+        const width = Math.min(300, context.measureText(tag).width + 48);
+        if (tagX + width > 996) {
+          tagX = 84;
           tagY += 58;
         }
-        context.fillStyle = "#eef2f7";
-        context.roundRect(tagX, tagY, width, 42, 21);
+        context.fillStyle = "#ffffff";
+        context.roundRect(tagX, tagY, width, 44, 22);
         context.fill();
-        context.fillStyle = "#475569";
-        context.fillText(tag, tagX + 21, tagY + 29);
-        tagX += width + 14;
+        context.strokeStyle = "#e2e8f0";
+        context.lineWidth = 2;
+        context.stroke();
+        context.fillStyle = "#334155";
+        context.fillText(tag, tagX + 24, tagY + 30);
+        tagX += width + 16;
       });
 
-      context.fillStyle = "#0f172a";
-      context.font = "900 30px Arial, sans-serif";
-      context.fillText(`等级 ${grade} · ${official.score}分 · 可信度 ${official.confidence}`, 110, 1080);
-      context.fillStyle = "#64748b";
-      context.font = "700 24px Arial, sans-serif";
-      context.fillText("结论偏保守：优先排除云母、黄铁矿、金属膜等常见误判。", 110, 1130);
-      context.fillText(new Date().toLocaleString("zh-CN"), 110, 1180);
+      context.strokeStyle = "#e2e8f0";
+      context.lineWidth = 2;
+      context.beginPath();
+      context.moveTo(84, 1222);
+      context.lineTo(996, 1222);
+      context.stroke();
 
-      context.fillStyle = "#15803d";
-      context.font = "900 30px Arial, sans-serif";
-      context.fillText("砂金快判 · Geo Tool", 110, 1235);
+      context.fillStyle = accentColor;
+      context.font = "900 28px Arial, sans-serif";
+      context.fillText("Geo Tool", 84, 1280);
+      context.fillStyle = "#94a3b8";
+      context.font = "700 22px Arial, sans-serif";
+      context.fillText(new Date().toLocaleString("zh-CN"), 742, 1280);
       return canvas;
     }
 
@@ -5138,31 +5172,6 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function captureJudgeResultCardCanvas() {
-      const element = createJudgeResultCardElement();
-      if (!element) {
-        return null;
-      }
-
-      document.body.appendChild(element);
-      await document.fonts?.ready?.catch?.(() => {});
-      await waitForElementImages(element);
-      await new Promise(resolve => setTimeout(resolve, 300));
-
-      try {
-        const html2canvas = await loadHtml2Canvas();
-        if (typeof html2canvas === "function") {
-          return await html2canvas(element, {
-            backgroundColor: null,
-            scale: 2,
-            useCORS: true
-          });
-        }
-      } catch (error) {
-        console.warn("结果卡片 DOM 截图失败，改用 Canvas 兜底：", error);
-      } finally {
-        element.remove();
-      }
-
       return buildJudgeResultCardCanvas();
     }
 
