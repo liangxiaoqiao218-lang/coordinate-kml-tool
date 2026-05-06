@@ -1558,13 +1558,13 @@
     }
 
     .judge-export-capture .judge-official-main {
-      grid-template-columns: 112px minmax(0, 1fr);
+      display: flex;
+      flex-wrap: wrap;
       gap: 22px;
     }
 
     .judge-export-capture .judge-official-grade {
-      min-height: 112px;
-      font-size: 58px;
+      display: none;
     }
 
     .judge-export-capture .judge-official-verdict {
@@ -1718,6 +1718,125 @@
       color: #64748b;
       font-size: 13px;
       font-weight: 700;
+    }
+
+    .judge-decision-card .judge-official-head {
+      display: grid;
+      grid-template-columns: minmax(92px, 34%) minmax(0, 1fr);
+      align-items: stretch;
+      gap: 12px;
+      padding: 0;
+      border-bottom: 0;
+    }
+
+    .judge-decision-card .judge-export-image {
+      width: 100%;
+      height: 132px;
+      border-radius: 14px;
+      object-fit: cover;
+      border: 0;
+      background: #eef2f7;
+      box-shadow: none;
+    }
+
+    .judge-decision-card .judge-official-kicker {
+      color: #15803d;
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .judge-decision-card .judge-official-title,
+    .judge-decision-card .judge-official-brand {
+      display: none;
+    }
+
+    .judge-decision-card .judge-official-main {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding-top: 2px;
+    }
+
+    .judge-decision-metric {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.7);
+      color: #475569;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .judge-decision-metric strong {
+      color: #0f172a;
+      font-size: 13px;
+      font-weight: 950;
+    }
+
+    .judge-detail-title {
+      margin: 12px 0 -2px;
+      color: #0f172a;
+      font-size: 15px;
+      font-weight: 900;
+    }
+
+    .judge-share-preview {
+      display: grid;
+      gap: 8px;
+      margin-top: 6px;
+      padding: 10px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .judge-share-preview[hidden] {
+      display: none;
+    }
+
+    .judge-share-preview img {
+      width: 100%;
+      max-height: 360px;
+      object-fit: contain;
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .judge-share-preview-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .judge-share-preview-actions button {
+      min-height: 38px;
+      border-radius: 10px;
+      font-size: 14px;
+    }
+
+    .judge-quick-upload {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: fit-content;
+      min-height: 34px;
+      margin: 0 0 10px;
+      padding: 6px 12px;
+      border: 1px solid #bbf7d0;
+      border-radius: 999px;
+      background: #f0fdf4;
+      color: #166534;
+      font-size: 13px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .judge-quick-upload[hidden],
+    .judge-upload-card[hidden] {
+      display: none;
     }
 
     .judge-actions[hidden] {
@@ -2501,8 +2620,8 @@
       }
 
       .judge-panel textarea {
-        min-height: 260px;
-        max-height: 44vh;
+        min-height: 340px;
+        max-height: 54vh;
         font-size: 15px;
         line-height: 1.7;
       }
@@ -2744,11 +2863,13 @@
         </div>
         <div class="judge-result-wrap">
           <div id="judgeDecisionCard" class="judge-decision-card" hidden></div>
+          <div class="judge-detail-title">快判详情</div>
           <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里。"></textarea>
           <div class="judge-result-tools">
             <button type="button" class="icon-button" onclick="clearJudgeResult()" title="清除判读结果" aria-label="清除判读结果">×</button>
             <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">⧉</button>
           </div>
+          <button id="judgeReuploadButton" type="button" class="judge-reupload-button" onclick="startNewJudgeTest()" hidden>重新上传图片</button>
         </div>
         <div id="judgeRecentPanel" class="judge-recent" hidden>
           <div class="judge-recent-head">
@@ -2758,7 +2879,8 @@
           </div>
           <div id="judgeRecentList" class="judge-recent-list"></div>
         </div>
-        <label for="judgeImageInput" class="judge-upload-card">
+        <label id="judgeQuickUpload" for="judgeImageInput" class="judge-quick-upload" hidden>上传图片</label>
+        <label id="judgeUploadCard" for="judgeImageInput" class="judge-upload-card">
           <span class="judge-upload-icon" aria-hidden="true">+</span>
           <span class="judge-upload-title">&#28857;&#20987;&#19978;&#20256;&#30719;&#30707; / &#27827;&#36947; / &#21355;&#26143;&#22270;</span>
           <span class="judge-upload-subtitle">&#19978;&#20256;&#21518;&#33258;&#21160;&#24320;&#22987;&#24555;&#21028;</span>
@@ -2921,9 +3043,12 @@ Au值 = 纯度 × 10 后取整数</div>
     const judgeType = { value: "mine-land" };
     const judgeImageInput = document.getElementById("judgeImageInput");
     const judgeImagePreview = document.getElementById("judgeImagePreview");
+    const judgeUploadCard = document.getElementById("judgeUploadCard");
+    const judgeQuickUpload = document.getElementById("judgeQuickUpload");
     const judgeMessage = document.getElementById("judgeMessage");
     const judgeResult = document.getElementById("judgeResult");
     const judgeDecisionCard = document.getElementById("judgeDecisionCard");
+    const judgeReuploadButton = document.getElementById("judgeReuploadButton");
     const judgeRecentPanel = document.getElementById("judgeRecentPanel");
     const judgeRecentBest = document.getElementById("judgeRecentBest");
     const judgeRecentList = document.getElementById("judgeRecentList");
@@ -2981,6 +3106,8 @@ Au值 = 纯度 × 10 后取整数</div>
     let selectedJudgeImageFiles = [];
     let recognitionStatusHideTimer = null;
     const JUDGE_HISTORY_KEY = "judgeHistory";
+    let currentJudgeShareBlob = null;
+    let currentJudgeShareUrl = "";
     const OLD_JUDGE_HISTORY_KEYS = [
       "aiJudgeHistory",
       "judgeRecentHistory",
@@ -3791,6 +3918,14 @@ Au值 = 纯度 × 10 后取整数</div>
         judgeAddImageButton.disabled = false;
         judgeAddImageButton.textContent = count ? "更换图片" : "选择图片";
       }
+
+      if (judgeUploadCard) {
+        judgeUploadCard.hidden = count > 0;
+      }
+
+      if (judgeQuickUpload) {
+        judgeQuickUpload.hidden = count === 0;
+      }
     }
 
     function openSelectedImage() {
@@ -4009,9 +4144,13 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
+      clearJudgeSharePreviewState();
       judgeDecisionCard.hidden = true;
       judgeDecisionCard.className = "judge-decision-card";
       judgeDecisionCard.innerHTML = "";
+      if (judgeReuploadButton) {
+        judgeReuploadButton.hidden = true;
+      }
     }
 
     function getJudgeSection(text, sectionName) {
@@ -4209,8 +4348,8 @@ Au值 = 纯度 × 10 后取整数</div>
         : "未看到足够清楚的结构、裂隙、石英脉或局部赋存关系。";
       const tags = getJudgeMisjudgeTags(text);
       return {
-        title: "砂金快判官方快判结果",
-        brand: "Geo Tool · 砂金快判",
+        title: "快判结果",
+        brand: "Geo Tool",
         grade,
         conclusion,
         reason,
@@ -4237,6 +4376,39 @@ Au值 = 纯度 × 10 后取整数</div>
           : "连续测 2–3 张，判断更稳定。";
       judgeDecisionCard.hidden = false;
       judgeDecisionCard.className = `judge-decision-card grade-${grade.toLowerCase()}`;
+      clearJudgeSharePreviewState();
+      const imageSrc = getCurrentJudgeImageDataUrl();
+      judgeDecisionCard.innerHTML = `
+        <div class="judge-official-card">
+          <div class="judge-official-head">
+            ${imageSrc ? `<img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" />` : `<div class="judge-export-image" aria-label="无图片"></div>`}
+            <div class="judge-official-content">
+              <div class="judge-official-kicker">${escapeHtml(official.title)}</div>
+              <div class="judge-official-verdict">${escapeHtml(official.conclusion)}</div>
+              <div class="judge-official-reason">${escapeHtml(official.reason)}</div>
+              <div class="judge-official-tags">
+                ${(official.tags.length ? official.tags : ["快判结果"]).map(tag => `<span class="judge-official-tag">${escapeHtml(tag)}</span>`).join("")}
+              </div>
+            </div>
+          </div>
+          <div class="judge-official-main">
+            <span class="judge-decision-metric"><strong>等级 ${escapeHtml(grade)}</strong></span>
+            <span class="judge-decision-metric"><strong>${escapeHtml(String(official.score))}分</strong></span>
+            <span class="judge-decision-metric">可信度 <strong>${escapeHtml(official.confidence)}</strong></span>
+            <span class="judge-decision-metric">建议 <strong>${escapeHtml(getJudgeDecisionText(grade, text, meta))}</strong></span>
+          </div>
+        </div>
+        <div class="judge-decision-actions">
+          <button type="button" class="judge-action-menu-button" onclick="toggleJudgeActionMenu(event)" title="分享/操作" aria-label="分享/操作">⋯</button>
+          <div class="judge-action-menu" onclick="event.stopPropagation()">
+            <button type="button" onclick="generateJudgeShareCardPreview()">生成分享图</button>
+          </div>
+        </div>
+        <div id="judgeSharePreview" class="judge-share-preview" hidden></div>`;
+      if (judgeReuploadButton) {
+        judgeReuploadButton.hidden = false;
+      }
+      return { grade, bestScore, ...meta };
       judgeDecisionCard.innerHTML = `
         <div class="judge-official-card">
           <div class="judge-official-head">
@@ -4642,7 +4814,9 @@ Au值 = 纯度 × 10 后取整数</div>
         } catch (quotaError) {
           console.error("AI判读额度刷新失败，已保留文本结果：", quotaError);
         }
-        showJudgeMessage(sanitizeUserFacingTechMessage(data.warning || "AI判读完成，请结合现场情况核对。"));
+        if (data.warning && !/完成/.test(data.warning)) {
+          showJudgeMessage(sanitizeUserFacingTechMessage(data.warning));
+        }
         trackEvent("ai_judge_success", {
           judgeType: judgeType.value
         });
@@ -4876,9 +5050,9 @@ Au值 = 纯度 × 10 后取整数</div>
       const card = makeDiv("judge-official-card");
       const head = makeDiv("judge-official-head");
       const titleBlock = document.createElement("div");
-      titleBlock.appendChild(makeDiv("judge-official-kicker", "\u7802\u91d1\u5feb\u5224\uff5cAI\u5feb\u5224\u7ed3\u679c"));
-      titleBlock.appendChild(makeDiv("judge-official-title", official.title));
-      titleBlock.appendChild(makeDiv("judge-official-brand", "\u7802\u91d1\u5feb\u5224 \u00b7 Geo Tool"));
+      titleBlock.appendChild(makeDiv("judge-official-kicker", official.title));
+      titleBlock.appendChild(makeDiv("judge-official-title", official.conclusion));
+      titleBlock.appendChild(makeDiv("judge-official-brand", official.brand));
       head.appendChild(titleBlock);
 
       if (imageSrc) {
@@ -4918,7 +5092,7 @@ Au值 = 纯度 × 10 后取整数</div>
       foot.appendChild(summary);
       foot.appendChild(time);
       card.appendChild(foot);
-      card.appendChild(makeDiv("judge-official-note", "\u7ed3\u679c\u504f\u4fdd\u5b88\uff1a\u4f18\u5148\u6392\u9664\u4e91\u6bcd\u3001\u9ec4\u94c1\u77ff\u3001\u91d1\u5c5e\u819c\u3001\u6574\u9762\u7edf\u4e00\u53cd\u5149\u7b49\u5e38\u89c1\u8bef\u5224\u3002"));
+      card.appendChild(makeDiv("judge-official-note", "\u7ed3\u679c\u504f\u4fdd\u5b88\uff1a\u4f18\u5148\u6392\u9664\u5e38\u89c1\u8bef\u5224\uff0c\u4ec5\u4f5c\u73b0\u573a\u5feb\u5224\u53c2\u8003\u3002"));
 
       element.appendChild(card);
       return element;
@@ -4998,37 +5172,74 @@ Au值 = 纯度 × 10 后取整数</div>
       });
     }
 
-    async function downloadJudgeResultCard() {
-      const canvas = await captureJudgeResultCardCanvas();
-      if (!canvas) {
-        showJudgeMessage("暂无判读结果可生成图片。", true);
-        return;
+    function clearJudgeSharePreviewState() {
+      if (currentJudgeShareUrl) {
+        URL.revokeObjectURL(currentJudgeShareUrl);
       }
-      downloadCanvas(canvas, `砂金快判结果-${Date.now()}.png`);
-      showJudgeMessage("结果卡片图片已生成。");
+      currentJudgeShareUrl = "";
+      currentJudgeShareBlob = null;
     }
 
-    async function saveJudgeResultCard() {
-      await downloadJudgeResultCard();
-    }
-
-    async function shareJudgeResultCard() {
+    async function generateJudgeShareCardPreview() {
+      closeJudgeActionMenu();
       const canvas = await captureJudgeResultCardCanvas();
       if (!canvas) {
-        showJudgeMessage("暂无判读结果可转发。", true);
-        return;
+        showJudgeMessage("暂无判读结果可生成分享图。", true);
+        return null;
       }
 
       const blob = await canvasToBlob(canvas);
       if (!blob) {
-        showJudgeMessage("结果卡片生成失败，请重试。", true);
+        showJudgeMessage("分享图生成失败，请重试。", true);
+        return null;
+      }
+
+      clearJudgeSharePreviewState();
+      currentJudgeShareBlob = blob;
+      currentJudgeShareUrl = URL.createObjectURL(blob);
+      const preview = document.getElementById("judgeSharePreview");
+      if (preview) {
+        preview.hidden = false;
+        preview.innerHTML = `
+          <img src="${escapeHtml(currentJudgeShareUrl)}" alt="快判结果分享图预览" />
+          <div class="judge-share-preview-actions">
+            <button type="button" onclick="saveCurrentJudgeShareCard()">保存图片</button>
+            <button type="button" onclick="shareCurrentJudgeShareCard()">立即转发</button>
+          </div>`;
+      }
+      showJudgeMessage("分享图已生成，可保存或转发。");
+      return { blob, url: currentJudgeShareUrl };
+    }
+
+    async function ensureJudgeShareCardReady() {
+      if (currentJudgeShareBlob && currentJudgeShareUrl) {
+        return { blob: currentJudgeShareBlob, url: currentJudgeShareUrl };
+      }
+      return generateJudgeShareCardPreview();
+    }
+
+    async function saveCurrentJudgeShareCard() {
+      const share = await ensureJudgeShareCardReady();
+      if (!share?.url) {
+        return;
+      }
+      const link = document.createElement("a");
+      link.download = `砂金快判结果-${Date.now()}.png`;
+      link.href = share.url;
+      link.click();
+      showJudgeMessage("分享图已保存。");
+    }
+
+    async function shareCurrentJudgeShareCard() {
+      const share = await ensureJudgeShareCardReady();
+      if (!share?.blob) {
         return;
       }
 
-      const file = new File([blob], `砂金快判结果-${Date.now()}.png`, { type: "image/png" });
+      const file = new File([share.blob], `砂金快判结果-${Date.now()}.png`, { type: "image/png" });
       const shareData = {
         title: "砂金快判 · AI快判结果",
-        text: "这是一张砂金快判 AI 快判结果卡片。",
+        text: "这是一张砂金快判 AI 快判结果图。",
         files: [file]
       };
 
@@ -5044,28 +5255,33 @@ Au值 = 纯度 × 10 后取整数</div>
         }
       }
 
-      const previewUrl = URL.createObjectURL(blob);
-      openImageModal(previewUrl);
-      setTimeout(() => URL.revokeObjectURL(previewUrl), 60000);
+      openImageModal(share.url);
       showJudgeMessage("当前浏览器不支持直接转发，请长按图片保存或转发。");
     }
 
-    async function promptJudgeMoments() {
+    async function downloadJudgeResultCard() {
       const canvas = await captureJudgeResultCardCanvas();
       if (!canvas) {
-        showJudgeMessage("暂无判读结果可生成朋友圈卡片。", true);
+        showJudgeMessage("暂无判读结果可生成图片。", true);
         return;
       }
+      downloadCanvas(canvas, `砂金快判结果-${Date.now()}.png`);
+      showJudgeMessage("结果卡片图片已生成。");
+    }
 
-      const blob = await canvasToBlob(canvas);
-      if (!blob) {
-        showJudgeMessage("结果卡片生成失败，请重试。", true);
-        return;
+    async function saveJudgeResultCard() {
+      await generateJudgeShareCardPreview();
+    }
+
+    async function shareJudgeResultCard() {
+      await shareCurrentJudgeShareCard();
+    }
+
+    async function promptJudgeMoments() {
+      const share = await ensureJudgeShareCardReady();
+      if (share?.url) {
+        openImageModal(share.url);
       }
-
-      const previewUrl = URL.createObjectURL(blob);
-      openImageModal(previewUrl);
-      setTimeout(() => URL.revokeObjectURL(previewUrl), 60000);
       showJudgeMessage("请长按图片保存后发朋友圈。");
     }
 
