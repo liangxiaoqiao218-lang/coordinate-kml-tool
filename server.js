@@ -1927,6 +1927,234 @@ function reconstructBftmColumnsIfPossible(text) {
   return [];
 }
 
+function repairBftmXToken(token, previousX = "") {
+  const digits = String(token || "").replace(/\D/g, "");
+
+  if (!digits) {
+    return "";
+  }
+
+  if (isBftmXValue(digits)) {
+    return digits;
+  }
+
+  for (let end = digits.length - 1; end >= 6; end -= 1) {
+    const candidate = digits.slice(0, end);
+
+    if (isBftmXValue(candidate)) {
+      return candidate;
+    }
+  }
+
+  if (previousX && previousX.endsWith(digits)) {
+    return previousX;
+  }
+
+  return "";
+}
+
+function repairBftmYToken(token) {
+  const digits = String(token || "").replace(/\D/g, "");
+
+  if (!digits) {
+    return "";
+  }
+
+  if (isBftmYValue(digits)) {
+    return digits;
+  }
+
+  for (let start = 1; start < digits.length - 5; start += 1) {
+    const candidate = digits.slice(start);
+
+    if (isBftmYValue(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (let end = digits.length - 1; end >= 7; end -= 1) {
+    const candidate = digits.slice(0, end);
+
+    if (isBftmYValue(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
+function extractBftmRowPair(line, previousX = "") {
+  const source = String(line || "");
+  const digitTokens = source.match(/\d+/g) || [];
+
+  if (digitTokens.length < 2) {
+    return null;
+  }
+
+  const leadingRowMatch = source.match(/^\D*(\d{1,2})(?=\D)/);
+  const rowNumber = leadingRowMatch ? Number(leadingRowMatch[1]) : null;
+  const tokens = leadingRowMatch ? digitTokens.slice(1) : digitTokens.slice();
+  let x = "";
+  let y = "";
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const repairedX = repairBftmXToken(tokens[index], previousX);
+
+    if (!repairedX) {
+      continue;
+    }
+
+    for (let yIndex = index + 1; yIndex < tokens.length; yIndex += 1) {
+      const repairedY = repairBftmYToken(tokens[yIndex]);
+
+      if (repairedY) {
+        x = repairedX;
+        y = repairedY;
+        break;
+      }
+    }
+
+    if (x && y) {
+      break;
+    }
+  }
+
+  if (!x || !y) {
+    return null;
+  }
+
+  return { rowNumber, x, y };
+}
+
+function extractBftmLongTableCoordinateLines(text) {
+  if (!hasBftmContext(text)) {
+    return { lines: [], rows: [], missingRows: [], expectedRowCount: 0, incomplete: false };
+  }
+
+  const rows = [];
+  let previousX = "";
+  let previousRowNumber = 0;
+
+  normalizeText(text)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .forEach(line => {
+      if (/hectares|telephone|t[eé]l[eé]phone|article|scann[eé]|validit|systeme|syst[eè]me|reference|r[eé]f[eé]rence/i.test(line)) {
+        return;
+      }
+
+      const pair = extractBftmRowPair(line, previousX);
+
+      if (!pair) {
+        return;
+      }
+
+      let rowNumber = pair.rowNumber;
+
+      if (!Number.isFinite(rowNumber) || rowNumber <= previousRowNumber) {
+        rowNumber = previousRowNumber > 0 ? previousRowNumber + 1 : rows.length + 1;
+      }
+
+      rows.push({
+        rowNumber,
+        line: `${pair.x},${pair.y}`
+      });
+      previousX = pair.x;
+      previousRowNumber = rowNumber;
+    });
+
+  const rowNumbers = rows
+    .map(row => row.rowNumber)
+    .filter(rowNumber => Number.isInteger(rowNumber) && rowNumber > 0);
+  const expectedRowCount = rowNumbers.length >= 4 ? Math.max(...rowNumbers) : 0;
+  const missingRows = [];
+
+  if (expectedRowCount >= 4) {
+    const rowSet = new Set(rowNumbers);
+
+    for (let row = 1; row <= expectedRowCount; row += 1) {
+      if (!rowSet.has(row)) {
+        missingRows.push(row);
+      }
+    }
+  }
+
+  return {
+    lines: rows.map(row => row.line),
+    rows,
+    missingRows,
+    expectedRowCount,
+    incomplete: expectedRowCount >= 4 && missingRows.length > 0
+  };
+}
+
+function getBftmLongTableInfo(rawText, coordinates = "") {
+  const extracted = extractBftmLongTableCoordinateLines(rawText);
+  const coordinateRows = countValidBftmProjectedRows(coordinates);
+  const recognizedRows = extracted.lines.length || coordinateRows;
+  const expectedRowCount = extracted.expectedRowCount || Math.max(recognizedRows, coordinateRows);
+  const missingRows = extracted.missingRows.slice();
+
+  if (expectedRowCount >= 4 && coordinateRows > 0 && coordinateRows < expectedRowCount) {
+    const coordinateRowSet = new Set();
+    const extractedLines = new Set(String(coordinates || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean));
+
+    extracted.rows.forEach(row => {
+      if (extractedLines.has(row.line)) {
+        coordinateRowSet.add(row.rowNumber);
+      }
+    });
+
+    for (let row = 1; row <= expectedRowCount; row += 1) {
+      if (!coordinateRowSet.has(row) && !missingRows.includes(row)) {
+        missingRows.push(row);
+      }
+    }
+  }
+
+  missingRows.sort((a, b) => a - b);
+
+  return {
+    isBftmLongTable: hasBftmContext(rawText) && expectedRowCount >= 8,
+    recognizedRows,
+    expectedRows: expectedRowCount,
+    missingRows,
+    incomplete: expectedRowCount >= 8 && missingRows.length > 0
+  };
+}
+
+function makeBftmIncompleteWarning(info) {
+  if (!info?.isBftmLongTable) {
+    return "";
+  }
+
+  const missingText = info.missingRows?.length
+    ? `\u7f3a\u5931\u884c\u53f7\uff1a${info.missingRows.join("\u3001")}\u3002`
+    : "";
+
+  return `\u8be5\u56fe\u4e3a BFTM \u5750\u6807\u957f\u8868\uff0c\u5efa\u8bae\u53ea\u622a\u53d6\u5750\u6807\u8868\u533a\u57df\u540e\u91cd\u8bd5\uff0c\u8bc6\u522b\u4f1a\u66f4\u7a33\u5b9a\u3002\u5df2\u8bc6\u522b ${info.recognizedRows || 0}/${info.expectedRows || 0} \u884c\u3002${missingText}`;
+}
+
+function getBftmLongTableRetryPrompt(expectedRows = 0) {
+  return `Read only the BFTM coordinate table in this image.
+The table columns are SOMMETS / X / Y or Coordonnees en BFTM (XY).
+Use the visual table layout. Read each horizontal table row from left to right.
+Output only coordinate rows in the exact format X,Y.
+X must be between 500000 and 760000.
+Y must be between 1200000 and 1600000.
+Ignore article text, phone numbers, dates, money, page numbers, signatures, watermarks, slashes, ticks, and OCR bounding boxes.
+Do not output row numbers.
+Do not output explanations or markdown.
+Do not pair X values with X values or Y values with Y values.
+If a row has marks like /, ~, \\, or 7 after the number, treat them as handwriting marks, not coordinates.
+${expectedRows ? `The table appears to have about ${expectedRows} rows. Do not skip middle rows.` : "Do not skip middle rows."}
+Examples:
+655000,1333600
+654500,1333600
+654500,1334100`;
+}
+
 function shouldAcceptProjectedPair(first, second, strictBftm) {
   if (!looksLikeProjectedPair(first, second)) {
     return false;
@@ -1988,6 +2216,14 @@ function extractProjectedCoordinateLines(text) {
     .filter(Boolean);
   const coordinateLines = [];
   const strictBftm = shouldUseStrictBftmValidation(text);
+
+  if (strictBftm) {
+    const bftmLongTable = extractBftmLongTableCoordinateLines(text);
+
+    if (bftmLongTable.lines.length >= 4) {
+      return bftmLongTable.lines;
+    }
+  }
 
   for (const line of lines) {
     if (/annoter|tourner|rechercher|partager|hectares|latitude|longitude/i.test(line)) {
@@ -3926,12 +4162,20 @@ The expected result for a BFTM table is a list of real row pairs such as X,Y onl
     console.log("坐标提取结果：");
     console.log(coordinates);
 
+    const bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
+    const bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
+
+    if (bftmIncompleteWarning) {
+      warning = warning ? `${warning} ${bftmIncompleteWarning}` : bftmIncompleteWarning;
+    }
+
     res.json({
       model: usedModel,
       rawText,
       coordinates,
       precisionMode: "preserve-original-decimals-and-parse-dms",
       warning,
+      bftmLongTable,
       quota: usageStatus.quota
     });
   } catch (error) {
@@ -3952,6 +4196,49 @@ The expected result for a BFTM table is a list of real row pairs such as X,Y onl
       }
 
       const fallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
+      let bftmLongTable = getBftmLongTableInfo(fallback.rawText, fallback.coordinates);
+      let bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
+
+      if (bftmIncompleteWarning && aliyunApiKey && req.file) {
+        try {
+          console.log("BFTM long table fallback is incomplete, retrying Aliyun visual table extraction once.");
+          const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+          const retryResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: getBftmLongTableRetryPrompt(bftmLongTable.expectedRows),
+            imageItems: [{
+              type: "image_url",
+              image_url: { url: imageDataUrl }
+            }],
+            temperature: 0,
+            maxTokens: 900,
+            timeoutMs: 35000
+          });
+          const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
+          const retryCoordinates = extractCoordinateLines(retryRawText);
+          const retryInfo = getBftmLongTableInfo(retryRawText, retryCoordinates);
+
+          if (
+            countValidBftmProjectedRows(retryCoordinates) > countValidBftmProjectedRows(fallback.coordinates)
+            || (bftmLongTable.incomplete && !retryInfo.incomplete && countValidBftmProjectedRows(retryCoordinates) >= 4)
+          ) {
+            fallback.rawText = retryRawText;
+            fallback.coordinates = retryCoordinates;
+            fallback.model = `${aliyunVisionModel}+bftm-long-table-retry`;
+            fallback.precisionMode = "preserve-original-decimals-and-parse-dms";
+            bftmLongTable = retryInfo;
+            bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
+          }
+        } catch (retryError) {
+          console.error("BFTM long table Aliyun retry failed:", retryError.message || retryError);
+        }
+      }
+
+      if (bftmIncompleteWarning) {
+        fallback.warning = fallback.warning ? `${fallback.warning} ${bftmIncompleteWarning}` : bftmIncompleteWarning;
+        fallback.bftmLongTable = bftmLongTable;
+      }
+
       res.json(fallback);
     } catch (fallbackError) {
       console.error(fallbackError);
