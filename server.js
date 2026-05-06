@@ -28,7 +28,28 @@ const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const DAILY_FREE_CONVERT_LIMIT = 3;
-const DAILY_FREE_JUDGE_LIMIT = 2;
+const DAILY_FREE_JUDGE_LIMIT = 3;
+const USAGE_RULES = {
+  convert: {
+    freeDailyLimit: DAILY_FREE_CONVERT_LIMIT,
+    vipMonthlyLimit: 100,
+    paidField: "paid_convert_count",
+    freeField: "free_convert_count"
+  },
+  judge: {
+    freeDailyLimit: DAILY_FREE_JUDGE_LIMIT,
+    vipMonthlyLimit: 50,
+    paidField: "paid_judge_count",
+    freeField: "free_judge_count"
+  },
+  gold: {
+    unlimited: true,
+    freeDailyLimit: Infinity,
+    vipMonthlyLimit: Infinity,
+    paidField: "",
+    freeField: ""
+  }
+};
 const USD_PER_TROY_OUNCE_GRAMS = 31.1035;
 const DEFAULT_USD_CNY_RATE = 7.2;
 const usdCnyRate = Number(process.env.USD_CNY_RATE || DEFAULT_USD_CNY_RATE);
@@ -310,7 +331,7 @@ function buildQuotaPayload(user) {
   };
 }
 
-function checkUsageAvailable(user, type) {
+function checkLocalUsageAvailable(user, type) {
   normalizeUsageCounters(user);
 
   if (!user) {
@@ -355,8 +376,8 @@ function checkUsageAvailable(user, type) {
   };
 }
 
-function consumeUsage(user, type) {
-  const status = checkUsageAvailable(user, type);
+function consumeLocalUsage(user, type) {
+  const status = checkLocalUsageAvailable(user, type);
 
   if (!status.allowed) {
     return {
@@ -476,6 +497,63 @@ function buildSupabaseQuotaPayload(user) {
     paidJudgeCount: Number(user?.paid_judge_count || 0),
     freeQuotaDate: user?.free_quota_date || "",
     isVip: Boolean(user?.is_vip)
+  };
+}
+
+function getUsageRule(type) {
+  const featureType = normalizeUsageFeatureType(type);
+  return USAGE_RULES[featureType] || USAGE_RULES.convert;
+}
+
+function getCurrentMonthStartISO() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0)).toISOString();
+}
+
+async function getVipMonthlyUsage(userId, type) {
+  if (!supabase || !userId) {
+    return 0;
+  }
+
+  try {
+    const { count, error } = await supabase
+      .from("usage_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", String(userId))
+      .eq("feature_type", normalizeUsageFeatureType(type))
+      .eq("consume_type", "vip")
+      .eq("success", true)
+      .gte("created_at", getCurrentMonthStartISO());
+
+    if (error) {
+      throw error;
+    }
+
+    return Number(count || 0);
+  } catch (error) {
+    console.error("VIP monthly usage count failed:", {
+      userId,
+      type,
+      message: error?.message,
+      code: error?.code,
+      details: error?.details
+    });
+    return 0;
+  }
+}
+
+function buildUsageQuotaPayload(user, monthlyUsage = {}) {
+  const quota = buildSupabaseQuotaPayload(user);
+  const convertUsed = Number(monthlyUsage.convert || 0);
+  const judgeUsed = Number(monthlyUsage.judge || 0);
+  return {
+    ...quota,
+    vip_convert_limit: USAGE_RULES.convert.vipMonthlyLimit,
+    vip_judge_limit: USAGE_RULES.judge.vipMonthlyLimit,
+    vip_convert_used: convertUsed,
+    vip_judge_used: judgeUsed,
+    vip_convert_remaining: Math.max(0, USAGE_RULES.convert.vipMonthlyLimit - convertUsed),
+    vip_judge_remaining: Math.max(0, USAGE_RULES.judge.vipMonthlyLimit - judgeUsed)
   };
 }
 
@@ -730,7 +808,22 @@ app.get("/api/gold-price", async (req, res) => {
   }
 });
 
-async function checkSupabaseUsageAvailable(userId, type) {
+async function checkUsage(userId, type) {
+  const featureType = normalizeUsageFeatureType(type);
+  const rule = getUsageRule(featureType);
+
+  if (rule.unlimited) {
+    return {
+      allowed: true,
+      success: true,
+      reason: "ok",
+      source: "unlimited",
+      featureType,
+      user: null,
+      quota: {}
+    };
+  }
+
   const user = await getOrCreateSupabaseUser(userId);
 
   if (!user) {
@@ -742,19 +835,27 @@ async function checkSupabaseUsageAvailable(userId, type) {
     };
   }
 
+  const monthlyUsage = {};
+
   if (user.is_vip) {
-    return {
-      allowed: true,
-      success: true,
-      reason: "ok",
-      source: "vip",
-      user,
-      quota: buildSupabaseQuotaPayload(user)
-    };
+    monthlyUsage[featureType] = await getVipMonthlyUsage(userId, featureType);
+    const vipUsed = Number(monthlyUsage[featureType] || 0);
+
+    if (vipUsed < rule.vipMonthlyLimit) {
+      return {
+        allowed: true,
+        success: true,
+        reason: "ok",
+        source: "vip",
+        featureType,
+        user,
+        quota: buildUsageQuotaPayload(user, monthlyUsage)
+      };
+    }
   }
 
-  const paidKey = type === "judge" ? "paid_judge_count" : "paid_convert_count";
-  const freeKey = type === "judge" ? "free_judge_count" : "free_convert_count";
+  const paidKey = rule.paidField;
+  const freeKey = rule.freeField;
   const paidCount = Number(user[paidKey] || 0);
   const freeCount = Number(user[freeKey] || 0);
 
@@ -764,8 +865,9 @@ async function checkSupabaseUsageAvailable(userId, type) {
       success: true,
       reason: "ok",
       source: "free",
+      featureType,
       user,
-      quota: buildSupabaseQuotaPayload(user)
+      quota: buildUsageQuotaPayload(user, monthlyUsage)
     };
   }
 
@@ -775,8 +877,9 @@ async function checkSupabaseUsageAvailable(userId, type) {
       success: true,
       reason: "ok",
       source: "paid",
+      featureType,
       user,
-      quota: buildSupabaseQuotaPayload(user)
+      quota: buildUsageQuotaPayload(user, monthlyUsage)
     };
   }
 
@@ -785,21 +888,38 @@ async function checkSupabaseUsageAvailable(userId, type) {
     success: false,
     reason: "limit_exceeded",
     source: "none",
+    featureType,
     user,
-    quota: buildSupabaseQuotaPayload(user)
+    quota: buildUsageQuotaPayload(user, monthlyUsage)
   };
 }
 
-async function consumeSupabaseUsage(userId, type, req = null) {
-  const status = await checkSupabaseUsageAvailable(userId, type);
+async function consumeUsage(userId, type, req = null) {
+  const featureType = normalizeUsageFeatureType(type);
+  const rule = getUsageRule(featureType);
+  const status = await checkUsage(userId, featureType);
   const user = status.user;
   const beforeBalance = extractUsageBalanceFields(user);
+
+  if (rule.unlimited) {
+    await writeUsageLog({
+      userId,
+      req,
+      featureType,
+      consumeType: "none",
+      beforeBalance,
+      afterBalance: beforeBalance,
+      success: true,
+      note: "Unlimited feature, no quota consumed"
+    });
+    return status;
+  }
 
   if (!status.allowed) {
     await writeUsageLog({
       userId,
       req,
-      featureType: type,
+      featureType,
       consumeType: status.source || "none",
       beforeBalance,
       afterBalance: beforeBalance,
@@ -813,18 +933,18 @@ async function consumeSupabaseUsage(userId, type, req = null) {
     await writeUsageLog({
       userId,
       req,
-      featureType: type,
+      featureType,
       consumeType: "vip",
       beforeBalance,
       afterBalance: beforeBalance,
       success: true,
-      note: "VIP user, no quota consumed"
+      note: `VIP monthly quota used, no paid quota consumed`
     });
     return status;
   }
 
-  const paidKey = type === "judge" ? "paid_judge_count" : "paid_convert_count";
-  const freeKey = type === "judge" ? "free_judge_count" : "free_convert_count";
+  const paidKey = rule.paidField;
+  const freeKey = rule.freeField;
   const sourceKey = status.source === "free" ? freeKey : paidKey;
   const currentCount = Number(user?.[sourceKey] || 0);
 
@@ -848,7 +968,7 @@ async function consumeSupabaseUsage(userId, type, req = null) {
       await writeUsageLog({
         userId,
         req,
-        featureType: type,
+        featureType,
         consumeType: status.source,
         beforeBalance,
         afterBalance: extractUsageBalanceFields(data),
@@ -865,17 +985,17 @@ async function consumeSupabaseUsage(userId, type, req = null) {
     }
   }
 
-  const freshStatus = await checkSupabaseUsageAvailable(userId, type);
+  const freshStatus = await checkUsage(userId, featureType);
 
   if (freshStatus.allowed && freshStatus.source !== status.source) {
-    return consumeSupabaseUsage(userId, type, req);
+    return consumeUsage(userId, featureType, req);
   }
 
   const freshUser = freshStatus.user || await getOrCreateSupabaseUser(userId);
   await writeUsageLog({
     userId,
     req,
-    featureType: type,
+    featureType,
     consumeType: status.source || "none",
     beforeBalance,
     afterBalance: extractUsageBalanceFields(freshUser || user),
@@ -887,7 +1007,7 @@ async function consumeSupabaseUsage(userId, type, req = null) {
     success: false,
     reason: "limit_exceeded",
     user: freshUser || user,
-    quota: buildSupabaseQuotaPayload(freshUser || user)
+    quota: freshStatus.quota || buildSupabaseQuotaPayload(freshUser || user)
   };
 }
 
@@ -3642,10 +3762,16 @@ app.get("/api/usage/quota", async (req, res) => {
     }
 
     await updateSupabaseUserVisitMeta(visitorId, req);
+    const monthlyUsage = user.is_vip
+      ? {
+          convert: await getVipMonthlyUsage(visitorId, "convert"),
+          judge: await getVipMonthlyUsage(visitorId, "judge")
+        }
+      : {};
 
     res.json({
       success: true,
-      quota: buildSupabaseQuotaPayload(user)
+      quota: buildUsageQuotaPayload(user, monthlyUsage)
     });
   } catch (error) {
     console.error("Supabase usage quota failed:", {
@@ -3682,7 +3808,7 @@ app.post("/api/usage/consume", async (req, res) => {
       });
     }
 
-    const result = await consumeSupabaseUsage(visitorId, type, req);
+    const result = await consumeUsage(visitorId, type, req);
     await updateSupabaseUserVisitMeta(visitorId, req);
 
     if (result.reason === "limit_exceeded") {
@@ -3844,7 +3970,7 @@ app.post("/api/analyze-mining-image", upload.fields([
       });
     }
 
-    const usageStatus = await checkSupabaseUsageAvailable(visitorId, "judge");
+    const usageStatus = await checkUsage(visitorId, "judge");
     if (!usageStatus.allowed && usageStatus.reason !== "limit_exceeded") {
       await writeAdminData(data);
       return res.status(500).json({
@@ -3918,7 +4044,7 @@ B 可以观察
       data.records.push(record);
       data.usage[visitorId] = data.usage[visitorId] || {};
       data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
-      const usageResult = await consumeSupabaseUsage(visitorId, "judge", req);
+      const usageResult = await consumeUsage(visitorId, "judge", req);
       await appendUsageLog(data, user, req, "judge", usageResult.source);
 
       if (user) {
@@ -4095,7 +4221,7 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
     data.records.push(record);
     data.usage[visitorId] = data.usage[visitorId] || {};
     data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
-    const usageResult = await consumeSupabaseUsage(visitorId, "judge", req);
+    const usageResult = await consumeUsage(visitorId, "judge", req);
     await appendUsageLog(data, user, req, "judge", usageResult.source);
 
     if (user) {
@@ -4252,7 +4378,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 
     await updateSupabaseUserVisitMeta(visitorId, req);
 
-    const usageStatus = await checkSupabaseUsageAvailable(visitorId, "convert");
+    const usageStatus = await checkUsage(visitorId, "convert");
 
     if (!usageStatus.allowed && usageStatus.reason === "limit_exceeded") {
       return res.status(403).json({

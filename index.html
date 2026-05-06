@@ -3385,26 +3385,25 @@ Au值 = 纯度 × 10 后取整数</div>
       quotaModal.dataset.stage = "price";
 
       if (type === "judge") {
-        quotaTitle.textContent = "解锁 AI 判读次数";
-        quotaDescription.innerHTML = "今天的免费判读次数已经用完<br>解锁后可以继续上传图片判读";
+        quotaTitle.textContent = "\u4eca\u65e5\u514d\u8d39 AI \u5224\u8bfb\u6b21\u6570\u5df2\u7528\u5b8c";
+        quotaDescription.innerHTML = "\u4eca\u65e5\u514d\u8d39\u6b21\u6570\u5df2\u7528\u5b8c\uff0c<br>\u53ef\u5347\u7ea7\u4e13\u4e1a\u7248\u6216\u589e\u52a0 AI \u5224\u8bfb\u6b21\u6570\u7ee7\u7eed\u4f7f\u7528\u3002";
         quotaOptions.innerHTML = `
-          <div class="quota-option">👉 10次判读：¥9.9 <span class="quota-badge">推荐</span></div>
-          <div class="quota-option">👉 用于快速判断矿地是否值得继续投入</div>
+          <div class="quota-option">\u4e13\u4e1a\u7248\uff1aAI \u5224\u8bfb\u6bcf\u6708 50 \u6b21\uff0c\u9002\u5408\u9ad8\u9891\u521d\u7b5b</div>
+          <div class="quota-option">\u5355\u72ec\u52a0\u6b21\uff1a\u6309\u9700\u589e\u52a0 AI \u5224\u8bfb\u6b21\u6570</div>
           ${quotaContactHtml()}
         `;
-        quotaHelper.textContent = "用于快速判断矿地是否值得继续投入";
-        quotaFootnote.textContent = "人工确认后，我会在后台为你增加次数，通常几分钟内完成。";
+        quotaHelper.textContent = "\u4eba\u5de5\u786e\u8ba4\u540e\uff0c\u6211\u4f1a\u5728\u540e\u53f0\u4e3a\u4f60\u589e\u52a0\u6b21\u6570\uff0c\u901a\u5e38\u51e0\u5206\u949f\u5185\u5b8c\u6210\u3002";
+        quotaFootnote.textContent = "\u9ec4\u91d1\u6210\u8272\u8ba1\u7b97\u5668\u4e0d\u9650\u5236\u6b21\u6570\uff0cAI \u5224\u8bfb\u548c\u5750\u6807\u5de5\u5177\u6309\u6b21\u6570\u7ba1\u7406\u3002";
       } else {
-        quotaTitle.textContent = "今日免费次数已用完";
-        quotaDescription.innerHTML = "坐标识别和 KML 生成已达到今日免费额度<br>继续使用可以扫码添加我，人工开通次数";
+        quotaTitle.textContent = "\u4eca\u65e5\u514d\u8d39\u5750\u6807\u6b21\u6570\u5df2\u7528\u5b8c";
+        quotaDescription.innerHTML = "\u4eca\u65e5\u514d\u8d39\u6b21\u6570\u5df2\u7528\u5b8c\uff0c<br>\u53ef\u5347\u7ea7\u4e13\u4e1a\u7248\u6216\u589e\u52a0\u5750\u6807/KML \u6b21\u6570\u7ee7\u7eed\u4f7f\u7528\u3002";
         quotaOptions.innerHTML = `
-          <div class="quota-option">👉 10次使用：¥9.9 <span class="quota-badge">推荐</span></div>
-          <div class="quota-option">👉 50次使用：¥29</div>
-          <div class="quota-option">👉 100次使用：¥49</div>
+          <div class="quota-option">\u4e13\u4e1a\u7248\uff1a\u5750\u6807/KML \u6bcf\u6708 100 \u6b21\uff0c\u9002\u5408\u6279\u91cf\u6574\u7406</div>
+          <div class="quota-option">\u5355\u72ec\u52a0\u6b21\uff1a\u6309\u9700\u589e\u52a0\u5750\u6807\u8bc6\u522b\u548c KML \u6b21\u6570</div>
           ${quotaContactHtml()}
         `;
-        quotaHelper.textContent = "适用于矿区坐标识别、KML生成、批量整理坐标";
-        quotaFootnote.textContent = "人工确认后，我会在后台为你增加次数，通常几分钟内完成。";
+        quotaHelper.textContent = "\u9002\u7528\u4e8e\u77ff\u533a\u5750\u6807\u8bc6\u522b\u3001KML \u751f\u6210\u548c\u6279\u91cf\u6574\u7406\u5750\u6807\u3002";
+        quotaFootnote.textContent = "\u4eba\u5de5\u786e\u8ba4\u540e\uff0c\u6211\u4f1a\u5728\u540e\u53f0\u4e3a\u4f60\u589e\u52a0\u6b21\u6570\uff0c\u901a\u5e38\u51e0\u5206\u949f\u5185\u5b8c\u6210\u3002";
       }
 
       quotaModal.style.display = "flex";
