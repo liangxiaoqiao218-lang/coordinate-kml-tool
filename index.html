@@ -4127,10 +4127,12 @@ Au值 = 纯度 × 10 后取整数</div>
         };
 
         let { response, data } = await sendJudgeRequest();
+        console.log("AI判读前端收到后端响应", data);
         if (!response.ok && ["network_failed", "timeout"].includes(data.reason)) {
           showJudgeProgressVisual("网络波动，正在自动重试...");
           judgeResult.value = `${judgeResult.value}\n网络波动，正在自动重试...`;
           ({ response, data } = await sendJudgeRequest());
+          console.log("AI判读前端收到后端重试响应", data);
         }
 
         if (!response.ok && data.reason === "limit_exceeded") {
@@ -4171,11 +4173,13 @@ Au值 = 纯度 × 10 后取整数</div>
         }
 
         clearInterval(progressTimer);
+        console.log("AI判读进入成功展示分支");
         judgeResult.value = `${judgeResult.value}\n判读完成`;
         showJudgeMessage("判读完成", false, true);
         await new Promise(resolve => setTimeout(resolve, 350));
         hideJudgeProgressVisual();
         const judgeText = data.result || data.analysis || data.message || data.content || data.rawOutput || "";
+        console.log("AI判读最终展示文本", judgeText);
         if (!judgeText) {
           console.error("AI判读成功响应缺少展示字段：", {
             success: data.success,
@@ -4185,13 +4189,21 @@ Au值 = 纯度 × 10 后取整数</div>
           });
         }
         judgeResult.value = judgeText || "未返回判读结果。";
-        const decisionMeta = renderJudgeDecisionCard(judgeResult.value);
-        const recentSave = saveJudgeResultToRecent(judgeResult.value, decisionMeta);
-        renderJudgeDecisionCard(judgeResult.value, recentSave);
-        if (data.quota) {
-          updateQuotaDisplay(data.quota);
-        } else {
-          loadUserQuota();
+        try {
+          const decisionMeta = renderJudgeDecisionCard(judgeResult.value);
+          const recentSave = saveJudgeResultToRecent(judgeResult.value, decisionMeta);
+          renderJudgeDecisionCard(judgeResult.value, recentSave);
+        } catch (renderError) {
+          console.error("AI判读结果附加渲染失败，已保留文本结果：", renderError);
+        }
+        try {
+          if (data.quota) {
+            updateQuotaDisplay(data.quota);
+          } else {
+            loadUserQuota();
+          }
+        } catch (quotaError) {
+          console.error("AI判读额度刷新失败，已保留文本结果：", quotaError);
         }
         showJudgeMessage(sanitizeUserFacingTechMessage(data.warning || "AI判读完成，请结合现场情况核对。"));
         trackEvent("ai_judge_success", {
@@ -4200,8 +4212,9 @@ Au值 = 纯度 × 10 后取整数</div>
       } catch (error) {
         clearInterval(progressTimer);
         hideJudgeProgressVisual();
-        judgeResult.value = "";
-        clearJudgeDecisionCard();
+        if (!String(judgeResult.value || "").trim()) {
+          clearJudgeDecisionCard();
+        }
         const message = /图片|格式|JPG|JPEG|截图|处理|标准化|过大|超时|阿里云|网络|配置|未知/.test(error.message || "")
           ? error.message
           : "网络失败或服务暂时不可用，请稍后重试。";
