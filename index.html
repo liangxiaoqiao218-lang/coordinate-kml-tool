@@ -4098,9 +4098,22 @@ Au值 = 纯度 × 10 后取整数</div>
               },
               body: formData
             });
-            const data = await response.json().catch(() => ({
-              error: "后端没有返回有效结果。"
-            }));
+            let data;
+            try {
+              data = await response.clone().json();
+            } catch (parseError) {
+              const rawText = await response.text().catch(() => "");
+              console.error("AI判读响应 JSON 解析失败：", {
+                status: response.status,
+                message: parseError.message,
+                rawText
+              });
+              data = {
+                success: false,
+                reason: "server_parse_failed",
+                detail: `后端返回内容解析失败：${parseError.message || "未知解析错误"}`
+              };
+            }
             return { response, data };
           } catch (error) {
             return {

@@ -2739,6 +2739,12 @@ function normalizeJudgeOutput(text) {
     .join("\n\n");
 }
 
+function stripMarkdownCodeBlock(content) {
+  const raw = String(content || "").trim();
+  const match = raw.match(/^```(?:json|markdown|md|text)?\s*([\s\S]*?)\s*```$/i);
+  return match ? match[1].trim() : raw;
+}
+
 app.get("/api/config", async (req, res) => {
   try {
     const visitorId = String(req.query.visitorId || "").trim();
@@ -3766,7 +3772,32 @@ A / B / C / D，并解释一句。A=明显值得继续；B=有潜力但需要验
       requestId: response?.request_id || response?.requestId || response?.RequestId
     });
 
-    const rawOutput = response.choices?.[0]?.message?.content || "";
+    console.log("AI判读阿里云完整返回：", {
+      data: response,
+      choices: response?.choices,
+      message: response?.choices?.[0]?.message,
+      content: response?.choices?.[0]?.message?.content,
+      usage: response?.usage,
+      requestId: response?.request_id || response?.requestId || response?.RequestId
+    });
+
+    const originalContent = response.choices?.[0]?.message?.content || "";
+    const rawOutput = stripMarkdownCodeBlock(originalContent);
+    if (String(originalContent || "").trim() !== String(rawOutput || "").trim()) {
+      console.log("AI判读 content 已清理 markdown/code block 外壳。");
+    }
+
+    if (/^[\[{]/.test(String(rawOutput || "").trim())) {
+      try {
+        JSON.parse(rawOutput);
+      } catch (parseError) {
+        console.error("AI判读 content JSON.parse 失败：", {
+          message: parseError.message,
+          content: rawOutput
+        });
+      }
+    }
+
     if (!String(rawOutput || "").trim()) {
       console.error("AI判读阿里云返回空结果：", {
         requestId: response?.request_id || response?.requestId || response?.RequestId,
