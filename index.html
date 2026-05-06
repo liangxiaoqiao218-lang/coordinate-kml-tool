@@ -6189,6 +6189,10 @@ ${placemarks}
         appendDebug(`前端DMS兜底提取结果：\n${dmsCoordinates || "无"}`);
         appendDebug(`精度模式：${data.precisionMode || "未知"}`);
         appendDebug(`识别提示：${data.warning || "无"}`);
+        if (data.bftmLongTable?.isBftmLongTable) {
+          appendDebug(`BFTM长表识别：已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行`);
+          appendDebug(`BFTM缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}`);
+        }
 
         if (!response.ok) {
           setRecognitionStatus("", "");
@@ -6211,7 +6215,9 @@ ${placemarks}
           rows: countCoordinateRows(finalCoordinates),
           projected: hasProjectedCoordinateRows(finalCoordinates)
         });
-        if (hasProjectedCoordinateRows(finalCoordinates)) {
+        if (data.bftmLongTable?.incomplete) {
+          showMessage(`该图为 BFTM 坐标长表，建议只截取坐标表区域后重试，识别会更稳定。已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行，缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}。`, true);
+        } else if (hasProjectedCoordinateRows(finalCoordinates)) {
           showMessage("已识别到 X/Y 平面坐标，请先确认坐标系后再转换成经纬度。", true);
         } else if (data.warning) {
           showMessage(`${data.warning} 坐标已填入工作区，请核对后再生成 KML。`, true);
