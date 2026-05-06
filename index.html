@@ -5249,8 +5249,11 @@ Au值 = 纯度 × 10 后取整数</div>
 
     async function loadGoldReferencePrice() {
       try {
-        const response = await fetch("/api/gold-price", {
-          cache: "no-store"
+        const response = await fetch(`/api/gold-price?visitorId=${encodeURIComponent(visitorId)}`, {
+          cache: "no-store",
+          headers: {
+            "x-visitor-id": visitorId
+          }
         });
 
         if (!response.ok) {

@@ -206,16 +206,6 @@ async function fetchRealtimeGoldPrice() {
   }
 }
 
-app.get("/api/gold-price", async (req, res) => {
-  try {
-    const realtimePrice = await fetchRealtimeGoldPrice();
-    res.json(realtimePrice || getUnavailableGoldPricePayload());
-  } catch (error) {
-    console.error("读取实时金价失败，返回不可用状态：", error.message || error);
-    res.json(getUnavailableGoldPricePayload());
-  }
-});
-
 function createDefaultAdminData() {
   return {
     users: {},
@@ -630,6 +620,116 @@ async function writeAdminLog({ targetUserId, action, beforeData, afterData, note
   }
 }
 
+function extractUsageBalanceFields(user) {
+  if (!user) return null;
+  return {
+    is_vip: !!user.is_vip,
+    free_convert_count: toNonNegativeInteger(user.free_convert_count, 0),
+    paid_convert_count: toNonNegativeInteger(user.paid_convert_count, 0),
+    free_judge_count: toNonNegativeInteger(user.free_judge_count, 0),
+    paid_judge_count: toNonNegativeInteger(user.paid_judge_count, 0)
+  };
+}
+
+function normalizeUsageFeatureType(type) {
+  if (type === "gold") return "gold";
+  return type === "judge" ? "judge" : "convert";
+}
+
+async function writeUsageLog({
+  userId,
+  req,
+  featureType,
+  consumeType,
+  beforeBalance,
+  afterBalance,
+  success,
+  note = "",
+  errorReason = ""
+}) {
+  if (!supabase || !userId) {
+    return;
+  }
+
+  try {
+    const ip = req ? getClientIp(req) : "";
+    const userAgent = req ? String(req.headers["user-agent"] || "") : "";
+    const deviceInfo = normalizeClientDeviceInfo(
+      req?.body?.deviceInfo || req?.body?.extra?.deviceInfo,
+      userAgent
+    );
+    const device = buildSupabaseDeviceSummary(deviceInfo, userAgent);
+    let region = "";
+
+    if (ip) {
+      try {
+        const adminData = await readAdminData();
+        const geo = await lookupIpLocation(ip, adminData);
+        region = geo.label || "";
+        await writeAdminData(adminData);
+      } catch (geoError) {
+        console.error("Usage log region lookup failed:", geoError?.message || geoError);
+      }
+    }
+
+    const { error } = await supabase
+      .from("usage_logs")
+      .insert({
+        user_id: String(userId),
+        ip,
+        region,
+        user_agent: userAgent,
+        device_info: device,
+        feature_type: normalizeUsageFeatureType(featureType),
+        consume_type: consumeType || "none",
+        before_balance: beforeBalance || null,
+        after_balance: afterBalance || null,
+        success: !!success,
+        note: String(note || "").slice(0, 1000) || null,
+        error_reason: String(errorReason || "").slice(0, 1000) || null
+      });
+
+    if (error) {
+      console.error("Usage log write failed:", {
+        userId,
+        featureType,
+        consumeType,
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+    }
+  } catch (error) {
+    console.error("Usage log write exception:", error?.message || error);
+  }
+}
+
+app.get("/api/gold-price", async (req, res) => {
+  const visitorId = String(req.query.visitorId || req.get("x-visitor-id") || "").trim();
+
+  try {
+    if (visitorId) {
+      await writeUsageLog({
+        userId: visitorId,
+        req,
+        featureType: "gold",
+        consumeType: "none",
+        beforeBalance: null,
+        afterBalance: null,
+        success: true,
+        note: "Gold calculator reference price requested; no quota consumed"
+      });
+    }
+
+    const realtimePrice = await fetchRealtimeGoldPrice();
+    res.json(realtimePrice || getUnavailableGoldPricePayload());
+  } catch (error) {
+    console.error("读取实时金价失败，返回不可用状态：", error.message || error);
+    res.json(getUnavailableGoldPricePayload());
+  }
+});
+
 async function checkSupabaseUsageAvailable(userId, type) {
   const user = await getOrCreateSupabaseUser(userId);
 
@@ -690,15 +790,36 @@ async function checkSupabaseUsageAvailable(userId, type) {
   };
 }
 
-async function consumeSupabaseUsage(userId, type) {
+async function consumeSupabaseUsage(userId, type, req = null) {
   const status = await checkSupabaseUsageAvailable(userId, type);
   const user = status.user;
+  const beforeBalance = extractUsageBalanceFields(user);
 
   if (!status.allowed) {
+    await writeUsageLog({
+      userId,
+      req,
+      featureType: type,
+      consumeType: status.source || "none",
+      beforeBalance,
+      afterBalance: beforeBalance,
+      success: false,
+      errorReason: status.reason || "not_allowed"
+    });
     return status;
   }
 
   if (status.source === "vip") {
+    await writeUsageLog({
+      userId,
+      req,
+      featureType: type,
+      consumeType: "vip",
+      beforeBalance,
+      afterBalance: beforeBalance,
+      success: true,
+      note: "VIP user, no quota consumed"
+    });
     return status;
   }
 
@@ -724,6 +845,16 @@ async function consumeSupabaseUsage(userId, type) {
     }
 
     if (data) {
+      await writeUsageLog({
+        userId,
+        req,
+        featureType: type,
+        consumeType: status.source,
+        beforeBalance,
+        afterBalance: extractUsageBalanceFields(data),
+        success: true
+      });
+
       return {
         success: true,
         reason: "ok",
@@ -737,10 +868,20 @@ async function consumeSupabaseUsage(userId, type) {
   const freshStatus = await checkSupabaseUsageAvailable(userId, type);
 
   if (freshStatus.allowed && freshStatus.source !== status.source) {
-    return consumeSupabaseUsage(userId, type);
+    return consumeSupabaseUsage(userId, type, req);
   }
 
   const freshUser = freshStatus.user || await getOrCreateSupabaseUser(userId);
+  await writeUsageLog({
+    userId,
+    req,
+    featureType: type,
+    consumeType: status.source || "none",
+    beforeBalance,
+    afterBalance: extractUsageBalanceFields(freshUser || user),
+    success: false,
+    errorReason: "limit_exceeded"
+  });
 
   return {
     success: false,
@@ -2937,7 +3078,7 @@ app.get("/api/admin/supabase-users", requireAdmin, async (req, res) => {
       .from("users")
       .select(supabaseUserFields)
       .order("updated_at", { ascending: false })
-      .limit(100);
+      .limit(500);
 
     if (userId) {
       query = query.ilike("user_id", `%${userId}%`);
@@ -3257,6 +3398,110 @@ app.get("/api/admin/supabase-users/:userId/logs", requireAdmin, async (req, res)
   }
 });
 
+app.get("/api/admin/usage-logs", requireAdmin, async (req, res) => {
+  try {
+    if (!requireSupabase(res)) {
+      return;
+    }
+
+    const limit = Math.min(toNonNegativeInteger(req.query.limit, 100) || 100, 500);
+    let query = supabase
+      .from("usage_logs")
+      .select("id,user_id,ip,region,user_agent,device_info,feature_type,consume_type,before_balance,after_balance,success,note,error_reason,created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    const userId = String(req.query.user_id || "").trim();
+    const featureType = String(req.query.feature_type || "").trim();
+    const success = String(req.query.success || "").trim();
+
+    if (userId) {
+      query = query.eq("user_id", userId);
+    }
+
+    if (featureType) {
+      query = query.eq("feature_type", featureType);
+    }
+
+    if (success === "true" || success === "false") {
+      query = query.eq("success", success === "true");
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      if (error.code === "42P01") {
+        return res.json({
+          success: true,
+          setupRequired: true,
+          logs: [],
+          error: "usage_logs table does not exist"
+        });
+      }
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      logs: data || []
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "读取消费记录失败。"
+    });
+  }
+});
+
+app.get("/api/admin/supabase-users/:userId/usage-logs", requireAdmin, async (req, res) => {
+  try {
+    if (!requireSupabase(res)) {
+      return;
+    }
+
+    const userId = String(req.params.userId || "").trim();
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "缺少 user_id。"
+      });
+    }
+
+    const limit = Math.min(toNonNegativeInteger(req.query.limit, 20) || 20, 20);
+    const { data, error } = await supabase
+      .from("usage_logs")
+      .select("id,user_id,ip,region,user_agent,device_info,feature_type,consume_type,before_balance,after_balance,success,note,error_reason,created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      if (error.code === "42P01") {
+        return res.json({
+          success: true,
+          setupRequired: true,
+          logs: [],
+          error: "usage_logs table does not exist"
+        });
+      }
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      logs: data || []
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "读取用户消费记录失败。"
+    });
+  }
+});
+
 app.patch("/api/admin/users/:visitorId", requireAdmin, async (req, res) => {
   try {
     const data = await readAdminData();
@@ -3437,7 +3682,7 @@ app.post("/api/usage/consume", async (req, res) => {
       });
     }
 
-    const result = await consumeSupabaseUsage(visitorId, type);
+    const result = await consumeSupabaseUsage(visitorId, type, req);
     await updateSupabaseUserVisitMeta(visitorId, req);
 
     if (result.reason === "limit_exceeded") {
@@ -3673,7 +3918,7 @@ B 可以观察
       data.records.push(record);
       data.usage[visitorId] = data.usage[visitorId] || {};
       data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
-      const usageResult = await consumeSupabaseUsage(visitorId, "judge");
+      const usageResult = await consumeSupabaseUsage(visitorId, "judge", req);
       await appendUsageLog(data, user, req, "judge", usageResult.source);
 
       if (user) {
@@ -3850,7 +4095,7 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
     data.records.push(record);
     data.usage[visitorId] = data.usage[visitorId] || {};
     data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
-    const usageResult = await consumeSupabaseUsage(visitorId, "judge");
+    const usageResult = await consumeSupabaseUsage(visitorId, "judge", req);
     await appendUsageLog(data, user, req, "judge", usageResult.source);
 
     if (user) {

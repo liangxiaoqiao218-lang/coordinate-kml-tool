@@ -216,12 +216,63 @@
 
     .table-tools {
       display: flex;
+      flex-wrap: wrap;
       gap: 10px;
       margin: 10px 0 12px;
     }
 
-    .table-tools input {
-      width: min(460px, 100%);
+    .table-tools input,
+    .table-tools select {
+      width: min(260px, 100%);
+    }
+
+    .quick-filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0 8px;
+    }
+
+    .quick-filter-bar button {
+      min-height: 32px;
+      padding: 6px 10px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: #334155;
+    }
+
+    .quick-filter-bar button.active {
+      border-color: #2563eb;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .detail-cell {
+      padding: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #f8fafc;
+      font-size: 13px;
+    }
+
+    .detail-cell span {
+      display: block;
+      margin-bottom: 4px;
+      color: #64748b;
+      font-size: 12px;
+    }
+
+    .detail-cell strong {
+      display: block;
+      color: #0f172a;
+      word-break: break-all;
     }
 
     .table-scroll {
@@ -373,6 +424,10 @@
       .table-tools {
         display: grid;
       }
+
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -475,9 +530,35 @@
     <section class="panel">
       <h2>用户与次数管理</h2>
       <p class="muted">该区域来自 Supabase users 表，用于正式管理用户次数、付费次数和 VIP 状态。</p>
+      <div class="quick-filter-bar" id="supabaseQuickFilters">
+        <button type="button" class="active" data-filter="all" onclick="setSupabaseQuickFilter('all')">全部用户</button>
+        <button type="button" data-filter="vip" onclick="setSupabaseQuickFilter('vip')">VIP用户</button>
+        <button type="button" data-filter="paid" onclick="setSupabaseQuickFilter('paid')">付费用户</button>
+        <button type="button" data-filter="activeToday" onclick="setSupabaseQuickFilter('activeToday')">今日活跃</button>
+        <button type="button" data-filter="hasBalance" onclick="setSupabaseQuickFilter('hasBalance')">有剩余次数</button>
+        <button type="button" data-filter="emptyBalance" onclick="setSupabaseQuickFilter('emptyBalance')">已用完次数</button>
+      </div>
       <div class="table-tools">
-        <input id="supabaseUserSearch" placeholder="输入用户ID搜索" onkeydown="handleSearchKey(event)" />
-        <button type="button" onclick="loadSupabaseUsers()">搜索/刷新</button>
+        <input id="supabaseUserSearch" placeholder="用户ID / IP / 地区 / 备注关键词" oninput="renderSupabaseUsers()" onkeydown="handleSearchKey(event)" />
+        <input id="supabaseIpFilter" placeholder="IP筛选" oninput="renderSupabaseUsers()" />
+        <input id="supabaseRegionFilter" placeholder="地区筛选" oninput="renderSupabaseUsers()" />
+        <input id="supabaseDeviceFilter" placeholder="设备筛选" oninput="renderSupabaseUsers()" />
+        <select id="supabaseUserFilter" onchange="setSupabaseQuickFilter(this.value)">
+          <option value="all">全部用户</option>
+          <option value="vip">VIP用户</option>
+          <option value="paid">付费用户</option>
+          <option value="activeToday">今日活跃用户</option>
+          <option value="hasBalance">有剩余次数</option>
+          <option value="emptyBalance">已用完次数</option>
+        </select>
+        <select id="supabaseUserSort" onchange="renderSupabaseUsers()">
+          <option value="last_seen_desc">最近访问时间</option>
+          <option value="created_desc">创建时间</option>
+          <option value="paid_balance_desc">剩余付费次数</option>
+          <option value="usage_total_desc">总使用次数</option>
+          <option value="vip_desc">VIP状态</option>
+        </select>
+        <button type="button" onclick="loadSupabaseUsers()">刷新</button>
       </div>
       <div class="table-scroll">
         <table>
@@ -505,9 +586,51 @@
       <div id="supabaseUserMessage" class="message"></div>
     </section>
 
+    <section class="panel">
+      <h2>消费记录 / 使用记录</h2>
+      <p class="muted">该区域来自 Supabase usage_logs 表，用于查看每次扣次数、VIP免扣和失败原因。</p>
+      <div class="table-tools">
+        <input id="usageLogUserFilter" placeholder="按用户ID筛选" onkeydown="handleUsageLogSearchKey(event)" />
+        <select id="usageLogFeatureFilter" onchange="loadUsageLogs()">
+          <option value="">全部功能</option>
+          <option value="convert">坐标转换</option>
+          <option value="judge">AI判读</option>
+          <option value="gold">黄金成色</option>
+        </select>
+        <select id="usageLogSuccessFilter" onchange="loadUsageLogs()">
+          <option value="">全部状态</option>
+          <option value="true">成功</option>
+          <option value="false">失败</option>
+        </select>
+        <button type="button" onclick="loadUsageLogs()">刷新记录</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>用户ID</th>
+              <th>IP</th>
+              <th>地区</th>
+              <th>设备</th>
+              <th>功能类型</th>
+              <th>消耗类型</th>
+              <th>消耗前</th>
+              <th>消耗后</th>
+              <th>状态</th>
+              <th>备注/错误</th>
+            </tr>
+          </thead>
+          <tbody id="usageLogsBody"></tbody>
+        </table>
+      </div>
+      <div id="usageLogMessage" class="message"></div>
+    </section>
+
     <div id="supabaseQuotaModal" class="modal" role="dialog" aria-modal="true">
       <div class="modal-card">
         <h2>编辑用户次数</h2>
+        <div id="userDetailSummary" class="detail-grid"></div>
         <div class="readonly-row">
           <strong>用户ID</strong>
           <span id="quotaEditUserId">-</span>
@@ -542,6 +665,7 @@
           <button type="button" onclick="quickAddSupabaseQuota('convert', 50)">坐标 +50（¥29）</button>
           <button type="button" onclick="quickAddSupabaseQuota('convert', 100)">坐标 +100（¥49）</button>
           <button type="button" onclick="quickAddSupabaseQuota('judge', 10)">判读 +10</button>
+          <button id="quotaVipToggle" type="button" class="button-secondary" onclick="toggleSelectedSupabaseVip()">设置/取消VIP</button>
         </div>
 
         <div class="note-editor">
@@ -549,6 +673,13 @@
           <textarea id="quotaAdminNote" placeholder="填写用户来源、付款记录、沟通备注等"></textarea>
           <div class="note-actions">
             <button type="button" class="button-secondary" onclick="saveSupabaseNote()">保存备注</button>
+          </div>
+        </div>
+
+        <div class="log-panel">
+          <h2>最近消费记录</h2>
+          <div id="userUsageLogsList" class="log-list">
+            <div class="muted">打开用户后加载消费记录。</div>
           </div>
         </div>
 
@@ -572,6 +703,9 @@
     let adminPassword = localStorage.getItem("coordinateToolAdminPassword") || "";
     let supabaseUsers = [];
     let selectedSupabaseUser = null;
+    let usageLogs = [];
+    let userUsageCounts = {};
+    let supabaseUserFilter = "all";
 
     document.getElementById("password").value = adminPassword;
 
@@ -638,6 +772,7 @@
         adminPassword = getPassword();
         localStorage.setItem("coordinateToolAdminPassword", adminPassword);
         await loadFeatureFlags();
+        await loadUsageLogs(false);
         await loadSupabaseUsers(false);
         setMessage(`后台数据已刷新：${new Date().toLocaleTimeString()}`);
       } catch (error) {
@@ -651,17 +786,14 @@
     }
 
     async function loadSupabaseUsers(showMessage = true) {
-      const search = document.getElementById("supabaseUserSearch").value.trim();
-      const query = search ? `?user_id=${encodeURIComponent(search)}` : "";
-
       try {
         if (showMessage) {
           setSupabaseUserMessage("正在读取用户...");
         }
 
-        const result = await adminFetch(`/api/admin/supabase-users${query}`);
+        const result = await adminFetch("/api/admin/supabase-users");
         supabaseUsers = result.users || [];
-        renderSupabaseUsers(supabaseUsers);
+        renderSupabaseUsers();
         renderOverview(supabaseUsers);
 
         if (showMessage) {
@@ -669,11 +801,114 @@
         }
       } catch (error) {
         supabaseUsers = [];
-        renderSupabaseUsers(supabaseUsers);
+        renderSupabaseUsers();
         renderOverview(supabaseUsers);
         setSupabaseUserMessage(error.message, true);
         throw error;
       }
+    }
+
+    async function loadUsageLogs(showMessage = true) {
+      const params = new URLSearchParams();
+      const userId = document.getElementById("usageLogUserFilter")?.value.trim();
+      const featureType = document.getElementById("usageLogFeatureFilter")?.value;
+      const success = document.getElementById("usageLogSuccessFilter")?.value;
+
+      params.set("limit", "200");
+      if (userId) params.set("user_id", userId);
+      if (featureType) params.set("feature_type", featureType);
+      if (success) params.set("success", success);
+
+      try {
+        const result = await adminFetch(`/api/admin/usage-logs?${params.toString()}`);
+        usageLogs = result.logs || [];
+        userUsageCounts = usageLogs.reduce((counts, log) => {
+          if (log.success && log.user_id) {
+            counts[log.user_id] = Number(counts[log.user_id] || 0) + 1;
+          }
+          return counts;
+        }, {});
+        renderUsageLogs(usageLogs, result.setupRequired);
+        renderSupabaseUsers();
+        if (showMessage) {
+          setUsageLogMessage(result.setupRequired ? "usage_logs 表还未创建，请先执行建表 SQL。" : `消费记录已刷新：${new Date().toLocaleTimeString()}`, Boolean(result.setupRequired));
+        }
+      } catch (error) {
+        usageLogs = [];
+        userUsageCounts = {};
+        renderUsageLogs([]);
+        setUsageLogMessage(error.message, true);
+      }
+    }
+
+    function handleUsageLogSearchKey(event) {
+      if (event.key === "Enter") {
+        loadUsageLogs();
+      }
+    }
+
+    function setUsageLogMessage(message, isError = false) {
+      const element = document.getElementById("usageLogMessage");
+      if (!element) return;
+      element.textContent = message || "";
+      element.classList.toggle("error", Boolean(isError));
+    }
+
+    function renderUsageLogs(logs, setupRequired = false) {
+      const body = document.getElementById("usageLogsBody");
+      if (!body) return;
+
+      if (setupRequired) {
+        body.innerHTML = `<tr><td colspan="11" class="muted">usage_logs 表未创建，先执行建表 SQL 后即可记录消费。</td></tr>`;
+        return;
+      }
+
+      if (!logs.length) {
+        body.innerHTML = `<tr><td colspan="11" class="muted">暂无消费记录。</td></tr>`;
+        return;
+      }
+
+      body.innerHTML = logs.map(log => `
+        <tr>
+          <td>${formatTime(log.created_at) || "-"}</td>
+          <td>${escapeHtml(log.user_id || "-")}</td>
+          <td>${escapeHtml(log.ip || "-")}</td>
+          <td>${escapeHtml(log.region || "-")}</td>
+          <td>${escapeHtml(log.device_info || log.user_agent || "-")}</td>
+          <td>${escapeHtml(getUsageFeatureLabel(log.feature_type))}</td>
+          <td>${escapeHtml(getConsumeTypeLabel(log.consume_type))}</td>
+          <td>${escapeHtml(formatUsageBalance(log.before_balance, log.feature_type))}</td>
+          <td>${escapeHtml(formatUsageBalance(log.after_balance, log.feature_type))}</td>
+          <td>${log.success ? "成功" : "失败"}</td>
+          <td>${escapeHtml(log.note || log.error_reason || "-")}</td>
+        </tr>
+      `).join("");
+    }
+
+    function getUsageFeatureLabel(type) {
+      if (type === "judge") return "AI判读";
+      if (type === "convert") return "坐标转换";
+      if (type === "gold") return "黄金成色";
+      return type || "-";
+    }
+
+    function getConsumeTypeLabel(type) {
+      const labels = {
+        free: "免费次数",
+        paid: "付费次数",
+        vip: "VIP免扣",
+        none: "未扣减"
+      };
+      return labels[type] || type || "-";
+    }
+
+    function formatUsageBalance(balance, featureType) {
+      const data = normalizeLogData(balance);
+      if (!data || !Object.keys(data).length) return "-";
+      if (featureType === "judge") {
+        return `免费${data.free_judge_count ?? 0} / 付费${data.paid_judge_count ?? 0}`;
+      }
+      return `免费${data.free_convert_count ?? 0} / 付费${data.paid_convert_count ?? 0}`;
     }
 
     function renderOverview(list) {
@@ -687,19 +922,107 @@
       document.getElementById("paidBalanceUsers").textContent = paidBalanceCount;
     }
 
-    function renderSupabaseUsers(list) {
-      const body = document.getElementById("supabaseUsersBody");
+    function getPaidBalance(user) {
+      return Number(user.paid_convert_count || 0) + Number(user.paid_judge_count || 0);
+    }
 
-      if (!list.length) {
+    function getFreeBalance(user) {
+      return Number(user.free_convert_count || 0) + Number(user.free_judge_count || 0);
+    }
+
+    function getTotalBalance(user) {
+      return getPaidBalance(user) + getFreeBalance(user);
+    }
+
+    function isToday(value) {
+      if (!value) return false;
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return false;
+      const now = new Date();
+      return date.getFullYear() === now.getFullYear()
+        && date.getMonth() === now.getMonth()
+        && date.getDate() === now.getDate();
+    }
+
+    function getUserRegion(user) {
+      return user.region || user["地区"] || user["鍦板尯"] || "-";
+    }
+
+    function setSupabaseQuickFilter(filter) {
+      supabaseUserFilter = filter || "all";
+      const select = document.getElementById("supabaseUserFilter");
+      if (select) {
+        select.value = supabaseUserFilter;
+      }
+      document.querySelectorAll("#supabaseQuickFilters button").forEach(button => {
+        button.classList.toggle("active", button.dataset.filter === supabaseUserFilter);
+      });
+      renderSupabaseUsers();
+    }
+
+    function filterSupabaseUsers(list) {
+      const keyword = document.getElementById("supabaseUserSearch")?.value.trim().toLowerCase() || "";
+      const ipKeyword = document.getElementById("supabaseIpFilter")?.value.trim().toLowerCase() || "";
+      const regionKeyword = document.getElementById("supabaseRegionFilter")?.value.trim().toLowerCase() || "";
+      const deviceKeyword = document.getElementById("supabaseDeviceFilter")?.value.trim().toLowerCase() || "";
+
+      return list.filter(user => {
+        const region = getUserRegion(user);
+        const device = user.device_info || user.user_agent || "";
+        const haystack = [
+          user.user_id,
+          user.last_ip,
+          region,
+          device,
+          user.admin_note
+        ].join(" ").toLowerCase();
+
+        if (keyword && !haystack.includes(keyword)) return false;
+        if (ipKeyword && !String(user.last_ip || "").toLowerCase().includes(ipKeyword)) return false;
+        if (regionKeyword && !String(region || "").toLowerCase().includes(regionKeyword)) return false;
+        if (deviceKeyword && !String(device || "").toLowerCase().includes(deviceKeyword)) return false;
+
+        if (supabaseUserFilter === "vip") return Boolean(user.is_vip);
+        if (supabaseUserFilter === "paid") return getPaidBalance(user) > 0;
+        if (supabaseUserFilter === "activeToday") return isToday(user.last_seen_at);
+        if (supabaseUserFilter === "hasBalance") return Boolean(user.is_vip) || getTotalBalance(user) > 0;
+        if (supabaseUserFilter === "emptyBalance") return !user.is_vip && getTotalBalance(user) <= 0;
+        return true;
+      });
+    }
+
+    function sortSupabaseUsers(list) {
+      const sort = document.getElementById("supabaseUserSort")?.value || "last_seen_desc";
+      const dateValue = value => {
+        const date = new Date(value || 0);
+        return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+      };
+
+      return [...list].sort((a, b) => {
+        if (sort === "created_desc") return dateValue(b.created_at) - dateValue(a.created_at);
+        if (sort === "paid_balance_desc") return getPaidBalance(b) - getPaidBalance(a);
+        if (sort === "usage_total_desc") {
+          return Number(userUsageCounts[b.user_id] || 0) - Number(userUsageCounts[a.user_id] || 0);
+        }
+        if (sort === "vip_desc") return Number(Boolean(b.is_vip)) - Number(Boolean(a.is_vip));
+        return dateValue(b.last_seen_at) - dateValue(a.last_seen_at);
+      });
+    }
+
+    function renderSupabaseUsers(list = supabaseUsers) {
+      const body = document.getElementById("supabaseUsersBody");
+      const filteredList = sortSupabaseUsers(filterSupabaseUsers(list));
+
+      if (!filteredList.length) {
         body.innerHTML = `<tr><td colspan="14" class="muted">暂无用户</td></tr>`;
         return;
       }
 
-      body.innerHTML = list
+      body.innerHTML = filteredList
         .map(user => {
           const userId = String(user.user_id || "");
           const encodedUserId = encodeURIComponent(userId);
-          const region = user.region || user["地区"] || "-";
+          const region = getUserRegion(user);
           const note = String(user.admin_note || "");
           const noteSummary = note.length > 24 ? `${note.slice(0, 24)}...` : note;
 
@@ -730,7 +1053,7 @@
 
     function handleSearchKey(event) {
       if (event.key === "Enter") {
-        loadSupabaseUsers();
+        renderSupabaseUsers();
       }
     }
 
@@ -814,10 +1137,14 @@
       document.getElementById("quotaFreeJudge").value = toQuotaInputValue(selectedSupabaseUser.free_judge_count);
       document.getElementById("quotaPaidJudge").value = toQuotaInputValue(selectedSupabaseUser.paid_judge_count);
       document.getElementById("quotaAdminNote").value = selectedSupabaseUser.admin_note || "";
+      renderUserDetailSummary(selectedSupabaseUser);
+      document.getElementById("quotaVipToggle").textContent = selectedSupabaseUser.is_vip ? "取消VIP" : "设为VIP";
       renderAdminLogs([]);
+      renderUserUsageLogs([]);
       setQuotaEditMessage("");
       document.getElementById("supabaseQuotaModal").classList.add("active");
       loadSupabaseLogs(selectedSupabaseUser.user_id);
+      loadUserUsageLogs(selectedSupabaseUser.user_id);
     }
 
     function closeSupabaseQuotaEditor() {
@@ -825,12 +1152,62 @@
       document.getElementById("supabaseQuotaModal").classList.remove("active");
       setQuotaEditMessage("");
       renderAdminLogs([]);
+      renderUserUsageLogs([]);
+    }
+
+    function renderUserDetailSummary(user) {
+      const summary = document.getElementById("userDetailSummary");
+      if (!summary || !user) return;
+      const cells = [
+        ["最近IP", user.last_ip || "-"],
+        ["地区", getUserRegion(user)],
+        ["设备", user.device_info || user.user_agent || "-"],
+        ["创建时间", formatTime(user.created_at) || "-"],
+        ["最近访问", formatTime(user.last_seen_at) || "-"],
+        ["AI判读次数", `免费 ${Number(user.free_judge_count || 0)} / 付费 ${Number(user.paid_judge_count || 0)}`],
+        ["坐标转换次数", `免费 ${Number(user.free_convert_count || 0)} / 付费 ${Number(user.paid_convert_count || 0)}`],
+        ["总使用次数", `${Number(userUsageCounts[user.user_id] || 0)} 次`],
+        ["备注摘要", user.admin_note || "-"]
+      ];
+      summary.innerHTML = cells.map(([label, value]) => `
+        <div class="detail-cell">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `).join("");
     }
 
     function quickAddSupabaseQuota(type, amount) {
       const inputId = type === "judge" ? "quotaPaidJudge" : "quotaPaidConvert";
       const input = document.getElementById(inputId);
       input.value = toQuotaInputValue(input.value) + toQuotaInputValue(amount);
+    }
+
+    async function toggleSelectedSupabaseVip() {
+      if (!selectedSupabaseUser?.user_id) {
+        setQuotaEditMessage("没有选中的用户，请重新打开编辑。", true);
+        return;
+      }
+
+      try {
+        const nextVip = !Boolean(selectedSupabaseUser.is_vip);
+        setQuotaEditMessage("正在更新 VIP 状态...");
+        const result = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/vip`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            is_vip: nextVip
+          })
+        });
+        selectedSupabaseUser = result.user || selectedSupabaseUser;
+        document.getElementById("quotaEditVip").textContent = selectedSupabaseUser.is_vip ? "是" : "否";
+        document.getElementById("quotaVipToggle").textContent = selectedSupabaseUser.is_vip ? "取消VIP" : "设为VIP";
+        renderUserDetailSummary(selectedSupabaseUser);
+        setQuotaEditMessage("VIP 状态已更新。");
+        await loadSupabaseUsers(false);
+        await loadSupabaseLogs(selectedSupabaseUser.user_id);
+      } catch (error) {
+        setQuotaEditMessage(`更新 VIP 失败：${error.message}`, true);
+      }
     }
 
     async function saveSupabaseQuota() {
@@ -841,7 +1218,7 @@
 
       try {
         setQuotaEditMessage("正在保存修改...");
-        await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/quota`, {
+        const result = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/quota`, {
           method: "PATCH",
           body: JSON.stringify({
             free_convert_count: document.getElementById("quotaFreeConvert").value,
@@ -851,9 +1228,12 @@
           })
         });
 
-        closeSupabaseQuotaEditor();
+        selectedSupabaseUser = result.user || selectedSupabaseUser;
+        renderUserDetailSummary(selectedSupabaseUser);
+        setQuotaEditMessage("操作成功。");
         setSupabaseUserMessage("操作成功。");
         await loadSupabaseUsers(false);
+        await loadSupabaseLogs(selectedSupabaseUser.user_id);
       } catch (error) {
         setQuotaEditMessage(`保存失败：${error.message}`, true);
       }
@@ -875,12 +1255,57 @@
         });
 
         selectedSupabaseUser = result.user || selectedSupabaseUser;
+        renderUserDetailSummary(selectedSupabaseUser);
         setQuotaEditMessage("备注已保存。");
         await loadSupabaseUsers(false);
         await loadSupabaseLogs(selectedSupabaseUser.user_id);
       } catch (error) {
         setQuotaEditMessage(`保存备注失败：${error.message}`, true);
       }
+    }
+
+    async function loadUserUsageLogs(userId) {
+      const targetUserId = String(userId || "").trim();
+
+      if (!targetUserId) {
+        renderUserUsageLogs([]);
+        return;
+      }
+
+      try {
+        const result = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(targetUserId)}/usage-logs`);
+        renderUserUsageLogs(result.logs || [], result.setupRequired);
+      } catch (error) {
+        document.getElementById("userUsageLogsList").innerHTML = `<div class="message error">读取消费记录失败：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function renderUserUsageLogs(logs, setupRequired = false) {
+      const list = document.getElementById("userUsageLogsList");
+
+      if (!list) {
+        return;
+      }
+
+      if (setupRequired) {
+        list.innerHTML = `<div class="muted">usage_logs 表未创建，先执行建表 SQL 后即可显示消费记录。</div>`;
+        return;
+      }
+
+      if (!logs.length) {
+        list.innerHTML = `<div class="muted">暂无消费记录。</div>`;
+        return;
+      }
+
+      list.innerHTML = logs.map(log => `
+        <div class="log-item">
+          <strong>${escapeHtml(formatLogTime(log.created_at) || "-")}｜${escapeHtml(getUsageFeatureLabel(log.feature_type))}｜${escapeHtml(getConsumeTypeLabel(log.consume_type))}</strong>
+          <div class="log-detail">消耗前：${escapeHtml(formatUsageBalance(log.before_balance, log.feature_type))}
+消耗后：${escapeHtml(formatUsageBalance(log.after_balance, log.feature_type))}
+状态：${log.success ? "成功" : "失败"}</div>
+          <div class="log-json">${escapeHtml(log.note || log.error_reason || "-")}</div>
+        </div>
+      `).join("");
     }
 
     async function loadSupabaseLogs(userId) {
