@@ -2910,7 +2910,7 @@ Au值 = 纯度 × 10 后取整数</div>
   </div>
 
   <script>
-    const APP_VERSION = "gold-ui-20260504-v3";
+    const APP_VERSION = "judge-mobile-state-20260506-v1";
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
@@ -2999,6 +2999,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let selectedImageFile = null;
     let selectedJudgeImageUrls = [];
     let selectedJudgeImageFiles = [];
+    let currentJudgeImageDataUrl = "";
     let recognitionStatusHideTimer = null;
     const JUDGE_HISTORY_KEY = "judgeHistory";
     const OLD_JUDGE_HISTORY_KEYS = [
@@ -3785,6 +3786,14 @@ Au值 = 纯度 × 10 后取整数</div>
         return outputFile;
       } catch (error) {
         console.warn("AI判读图片标准化失败", error);
+        if (/image\/(jpeg|jpg|png|webp)/i.test(file.type || "")) {
+          console.warn("AI判读图片压缩失败，改用原图兜底上传", {
+            name: file.name,
+            type: file.type,
+            size: file.size
+          });
+          return file;
+        }
         throw new Error(error.message || "图片处理失败，请重新选择截图或 JPG 图片。");
       }
     }
@@ -3860,6 +3869,11 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function showJudgeSelectedImage(files) {
+      console.log("AI判读移动端状态：上传开始", {
+        fileCount: files?.length || 0,
+        previousHistoryLength: getJudgeRecentItems().length,
+        hasCurrentResult: Boolean(String(judgeResult?.value || "").trim())
+      });
       selectedJudgeImageUrls.forEach(url => URL.revokeObjectURL(url));
 
       selectedJudgeImageFiles = Array.from(files).filter(isImageUpload).slice(0, 1);
@@ -3869,6 +3883,7 @@ Au值 = 纯度 × 10 后取整数</div>
       if (selectedJudgeImageFiles.length === 0) {
         judgeImagePreview.style.display = "none";
         judgeImagePreview.innerHTML = "";
+        currentJudgeImageDataUrl = "";
         updateJudgeUploadControls();
         clearJudgeDecisionCard();
         hideJudgeProgressVisual();
@@ -3877,7 +3892,14 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       judgeImagePreview.style.display = "block";
-      const imageDataUrls = await Promise.all(selectedJudgeImageFiles.map(fileToDataUrl));
+      let imageDataUrls = [];
+      try {
+        imageDataUrls = await Promise.all(selectedJudgeImageFiles.map(fileToDataUrl));
+      } catch (error) {
+        console.warn("AI判读移动端状态：预览读取失败，使用 objectURL 兜底", error);
+        imageDataUrls = [];
+      }
+      currentJudgeImageDataUrl = imageDataUrls[0] || selectedJudgeImageUrls[0] || "";
       judgeImagePreview.innerHTML = selectedJudgeImageFiles.map((file, index) => `
         <div class="image-preview-row">
           <button type="button" class="preview-button" onclick="openJudgeSelectedImage(${index})" title="点击查看上传图片">
@@ -3889,6 +3911,11 @@ Au值 = 纯度 × 10 后取整数</div>
           <button type="button" class="remove-image" onclick="event.stopPropagation(); clearJudgeSelectedImage(${index})" title="删除图片" aria-label="删除图片">×</button>
         </div>`).join("");
       updateJudgeUploadControls();
+      console.log("AI判读移动端状态：图片预览完成", {
+        hasPreviewDataUrl: Boolean(imageDataUrls[0]),
+        hasPreviewFallback: Boolean(selectedJudgeImageUrls[0]),
+        recentResultsLength: getJudgeRecentItems().length
+      });
     }
 
     async function handleJudgeImageChange() {
@@ -3957,6 +3984,7 @@ Au值 = 纯度 × 10 后取整数</div>
         judgeImagePreview.style.display = "none";
         judgeImagePreview.innerHTML = "";
         judgeImageInput.value = "";
+        currentJudgeImageDataUrl = "";
         updateJudgeUploadControls();
         const removedCurrent = removeJudgeRecentByCurrentImage(currentImageBeforeDelete);
         if (removedCurrent) {
@@ -4388,6 +4416,10 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function renderJudgeDecisionCard(text, comparison = null) {
+      console.log("AI判读移动端状态：renderResultCard 开始", {
+        hasText: Boolean(String(text || "").trim()),
+        recentResultsLength: getJudgeRecentItems().length
+      });
       if (!judgeDecisionCard || !String(text || "").trim()) {
         clearJudgeDecisionCard();
         return null;
@@ -4425,6 +4457,12 @@ Au值 = 纯度 × 10 后取整数</div>
           </div>
           <div class="judge-official-note">AI快判仅供初筛参考，需结合现场与检测结果确认。</div>
         </div>`;
+      console.log("AI判读移动端状态：renderResultCard 完成", {
+        grade,
+        score: official.score,
+        sceneType: official.sceneType,
+        recentResultsLength: getJudgeRecentItems().length
+      });
       return { grade, bestScore, ...meta };
     }
 
@@ -4501,7 +4539,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function getCurrentJudgeImageDataUrl() {
       const image = judgeImagePreview?.querySelector("img");
-      return image?.src || "";
+      return currentJudgeImageDataUrl || image?.src || "";
     }
 
     function saveJudgeResultToRecent(text, meta) {
@@ -4526,6 +4564,12 @@ Au值 = 纯度 × 10 后取整数</div>
       const isNewHigh = !previousBest || score > Number(previousBest.score || 0);
       setJudgeRecentItems([item, ...previousItems].slice(0, 3));
       renderJudgeRecent(isNewHigh ? item : null);
+      console.log("AI判读移动端状态：recentResults 已写入", {
+        recentResultsLength: getJudgeRecentItems().length,
+        currentGrade: grade,
+        currentScore: score,
+        hasImage: Boolean(item.image)
+      });
       return { saved: true, isNewHigh, previousBest, item };
     }
 
@@ -4661,7 +4705,27 @@ Au值 = 纯度 × 10 后取整数</div>
       const progressTimer = startJudgeProgress(files.length);
 
       try {
-        const compressedFiles = await Promise.all(files.slice(0, 1).map(compressJudgeImage));
+        const compressedFiles = await Promise.all(files.slice(0, 1).map(async (file) => {
+          try {
+            const compressed = await compressJudgeImage(file);
+            console.log("AI判读移动端状态：图片压缩完成", {
+              originalName: file.name,
+              originalSize: file.size,
+              outputName: compressed.name,
+              outputType: compressed.type,
+              outputSize: compressed.size
+            });
+            return compressed;
+          } catch (error) {
+            console.warn("AI判读移动端状态：图片压缩失败，使用原图兜底", {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              message: error.message
+            });
+            return file;
+          }
+        }));
         console.log("AI判读即将上传：", compressedFiles.map(file => ({
           name: file.name,
           type: file.type,
@@ -4776,6 +4840,10 @@ Au值 = 纯度 × 10 后取整数</div>
           });
         }
         judgeResult.value = judgeText || "未返回判读结果。";
+        console.log("AI判读移动端状态：currentResult 写入", {
+          resultLength: judgeResult.value.length,
+          recentResultsLength: getJudgeRecentItems().length
+        });
         try {
           const decisionMeta = renderJudgeDecisionCard(judgeResult.value);
           const recentSave = saveJudgeResultToRecent(judgeResult.value, decisionMeta);
