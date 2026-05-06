@@ -37,22 +37,22 @@ const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE
 const shareMetaMap = {
   "/": {
     title: "矿业空间工具 Geo Tool",
-    desc: "坐标处理、AI判读、黄金成色，一页搞定。",
+    desc: "坐标处理、AI矿地判读、黄金成色估算，一页进入。",
     image: "/share-home.png"
   },
   "/tool": {
     title: "坐标处理工具",
-    desc: "一键识别坐标、生成KML，支持图片识别。",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool.png"
   },
   "/convert": {
     title: "坐标处理工具",
-    desc: "一键识别坐标、生成KML，支持图片识别。",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool.png"
   },
   "/ocr": {
     title: "坐标处理工具",
-    desc: "一键识别坐标、生成KML，支持图片识别。",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool.png"
   },
   "/judge": {
@@ -62,10 +62,11 @@ const shareMetaMap = {
   },
   "/gold": {
     title: "黄金成色计算器",
-    desc: "快速计算成色、K值和预估价格。",
+    desc: "输入黄金重量和排水差重，快速估算成色、K值和参考总价。",
     image: "/share-gold.png"
   }
 };
+const shareImageVersion = "20260505";
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -104,7 +105,7 @@ function getShareMeta(req) {
   return {
     ...meta,
     url: `${origin}${normalizedPath === "/index.html" ? "/" : normalizedPath}`,
-    imageUrl: `${origin}${meta.image}`
+    imageUrl: `${origin}${meta.image}?v=${shareImageVersion}`
   };
 }
 
