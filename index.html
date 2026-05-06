@@ -1466,6 +1466,20 @@
       gap: 18px;
     }
 
+    .judge-export-image {
+      width: 132px;
+      height: 96px;
+      border-radius: 16px;
+      object-fit: cover;
+      border: 1px solid #dbeafe;
+      background: #f8fafc;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+    }
+
+    .judge-export-capture .judge-official-head {
+      align-items: center;
+    }
+
     .judge-export-capture .judge-official-title {
       font-size: 30px;
     }
@@ -1486,6 +1500,14 @@
 
     .judge-export-capture .judge-official-reason {
       font-size: 18px;
+    }
+
+    .judge-official-note {
+      padding-top: 4px;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.5;
     }
 
     .judge-decision-card[hidden] {
@@ -4083,7 +4105,6 @@ Au值 = 纯度 × 10 后取整数</div>
         </div>
         <p class="judge-decision-summary">${escapeHtml(meta.summary)}</p>
         <div class="judge-decision-actions">
-          <button type="button" class="secondary" onclick="downloadJudgeOriginalImage()">下载图片</button>
           <button type="button" class="secondary" onclick="saveJudgeResultCard()">一键保存结果卡片</button>
           <button type="button" class="secondary" onclick="startNewJudgeTest()">再测一张</button>
           <button type="button" class="secondary" onclick="startAngleRetest()">换角度重测</button>
@@ -4646,33 +4667,69 @@ Au值 = 纯度 × 10 后取整数</div>
       const grade = getJudgeGrade(resultText);
       const meta = getJudgeDecisionMeta(grade, resultText);
       const official = buildJudgeOfficialCardMeta(resultText, meta, grade);
+      const imageSrc = getCurrentJudgeImageDataUrl();
+      const timeText = new Date().toLocaleString("zh-CN");
+      const tags = official.tags.length ? official.tags : ["\u0041\u0049\u5feb\u5224\u7ed3\u679c"];
       const element = document.createElement("div");
-      element.className = `judge-export-capture grade-${grade.toLowerCase()}`;
-      element.innerHTML = `
-        <div class="judge-official-card">
-          <div class="judge-official-head">
-            <div>
-              <div class="judge-official-kicker">砂金快判</div>
-              <div class="judge-official-title">${escapeHtml(official.title)}</div>
-            </div>
-            <div class="judge-official-brand">${escapeHtml(official.brand)}</div>
-          </div>
-          <div class="judge-official-main">
-            <div class="judge-official-grade">${escapeHtml(grade)}</div>
-            <div class="judge-official-content">
-              <div class="judge-official-verdict">${escapeHtml(official.conclusion)}</div>
-              <div class="judge-official-reason">${escapeHtml(official.reason)}</div>
-              <div class="judge-official-tags">
-                ${(official.tags.length ? official.tags : ["快判结果"]).map(tag => `<span class="judge-official-tag">${escapeHtml(tag)}</span>`).join("")}
-              </div>
-            </div>
-          </div>
-          <div class="judge-official-foot">
-            <span>等级 ${escapeHtml(grade)} · ${escapeHtml(String(official.score))}分 · 可信度 ${escapeHtml(official.confidence)}</span>
-            <span>${escapeHtml(new Date().toLocaleString("zh-CN"))}</span>
-          </div>
-          <div class="judge-official-reason">结论偏保守：优先排除云母、黄铁矿、金属膜等常见误判。</div>
-        </div>`;
+      element.className = "judge-export-capture grade-" + grade.toLowerCase();
+
+      const makeDiv = (className, text) => {
+        const node = document.createElement("div");
+        node.className = className;
+        if (text !== undefined) {
+          node.textContent = text;
+        }
+        return node;
+      };
+
+      const card = makeDiv("judge-official-card");
+      const head = makeDiv("judge-official-head");
+      const titleBlock = document.createElement("div");
+      titleBlock.appendChild(makeDiv("judge-official-kicker", "\u7802\u91d1\u5feb\u5224\uff5cAI\u5feb\u5224\u7ed3\u679c"));
+      titleBlock.appendChild(makeDiv("judge-official-title", official.title));
+      titleBlock.appendChild(makeDiv("judge-official-brand", "\u7802\u91d1\u5feb\u5224 \u00b7 Geo Tool"));
+      head.appendChild(titleBlock);
+
+      if (imageSrc) {
+        const image = document.createElement("img");
+        image.className = "judge-export-image";
+        image.src = imageSrc;
+        image.alt = "\u88ab\u5224\u8bfb\u56fe\u7247\u7f29\u7565\u56fe";
+        head.appendChild(image);
+      } else {
+        const emptyImage = makeDiv("judge-export-image");
+        emptyImage.setAttribute("aria-label", "\u65e0\u7f29\u7565\u56fe");
+        head.appendChild(emptyImage);
+      }
+      card.appendChild(head);
+
+      const main = makeDiv("judge-official-main");
+      main.appendChild(makeDiv("judge-official-grade", grade));
+      const content = makeDiv("judge-official-content");
+      content.appendChild(makeDiv("judge-official-verdict", official.conclusion));
+      content.appendChild(makeDiv("judge-official-reason", official.reason));
+      const tagsBox = makeDiv("judge-official-tags");
+      tags.forEach(tag => {
+        const tagNode = document.createElement("span");
+        tagNode.className = "judge-official-tag";
+        tagNode.textContent = tag;
+        tagsBox.appendChild(tagNode);
+      });
+      content.appendChild(tagsBox);
+      main.appendChild(content);
+      card.appendChild(main);
+
+      const foot = makeDiv("judge-official-foot");
+      const summary = document.createElement("span");
+      summary.textContent = "\u7b49\u7ea7 " + grade + " \u00b7 \u5206\u6570 " + official.score + " \u00b7 \u53ef\u4fe1\u5ea6 " + official.confidence;
+      const time = document.createElement("span");
+      time.textContent = timeText;
+      foot.appendChild(summary);
+      foot.appendChild(time);
+      card.appendChild(foot);
+      card.appendChild(makeDiv("judge-official-note", "\u7ed3\u679c\u504f\u4fdd\u5b88\uff1a\u4f18\u5148\u6392\u9664\u4e91\u6bcd\u3001\u9ec4\u94c1\u77ff\u3001\u91d1\u5c5e\u819c\u3001\u6574\u9762\u7edf\u4e00\u53cd\u5149\u7b49\u5e38\u89c1\u8bef\u5224\u3002"));
+
+      element.appendChild(card);
       return element;
     }
 
@@ -4723,32 +4780,6 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       return buildJudgeResultCardCanvas();
-    }
-
-    function downloadJudgeOriginalImage() {
-      const file = selectedJudgeImageFiles[0];
-      if (file) {
-        const url = URL.createObjectURL(file);
-        const link = document.createElement("a");
-        link.download = file.name || `判读原图-${Date.now()}.jpg`;
-        link.href = url;
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(url), 500);
-        showJudgeMessage("已下载上传原图。");
-        return;
-      }
-
-      const image = judgeImagePreview?.querySelector("img");
-      if (image?.src) {
-        const link = document.createElement("a");
-        link.download = `判读原图-${Date.now()}.jpg`;
-        link.href = image.src;
-        link.click();
-        showJudgeMessage("已下载上传原图。");
-        return;
-      }
-
-      showJudgeMessage("暂无可下载的上传图片。", true);
     }
 
     async function downloadJudgeResultCard() {
