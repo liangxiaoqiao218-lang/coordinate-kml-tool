@@ -66,7 +66,7 @@ const shareMetaMap = {
     image: "/share-gold.png"
   }
 };
-const shareImageVersion = "20260505";
+const shareImageVersion = "20260506wx1";
 
 app.use(express.json({ limit: "1mb" }));
 
