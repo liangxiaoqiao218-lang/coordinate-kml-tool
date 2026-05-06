@@ -2280,6 +2280,100 @@ function extractCoordinateLines(text) {
   return projectedLines.length > 0 ? projectedLines.join("\n") : noCoordinatesText;
 }
 
+function repairOcrCoordinateText(text) {
+  return String(text || "")
+    .replace(/[，、；;]/g, ",")
+    .replace(/[º˚]/g, "°")
+    .replace(/[‘’´`′]/g, "'")
+    .replace(/[“”″]/g, '"')
+    .replace(/(\d)[oO](?=\d)/g, "$10")
+    .replace(/(\d)[lI](?=\d)/g, "$11")
+    .replace(/(\d)\s*,\s*(?=\d|[-+])/g, "$1,")
+    .replace(/[^\dNSEWO°'".,\-+\s]/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function decimalRepairCandidates(value, axis) {
+  const raw = String(value || "").trim();
+  if (!raw || raw.includes(".")) {
+    return [raw];
+  }
+  const sign = raw.startsWith("-") ? "-" : "";
+  const digits = raw.replace(/^[-+]/, "");
+  if (!/^\d{4,}$/.test(digits)) {
+    return [raw];
+  }
+  const limit = axis === "lat" ? 90 : 180;
+  const candidates = [];
+  for (let pos = 1; pos <= Math.min(3, digits.length - 1); pos += 1) {
+    const candidate = `${sign}${digits.slice(0, pos)}.${digits.slice(pos)}`;
+    const number = Number(candidate);
+    if (Number.isFinite(number) && Math.abs(number) <= limit) {
+      candidates.push(candidate);
+    }
+  }
+  const regional = candidates.find(candidate => Math.abs(Number(candidate)) <= 25);
+  return regional ? [regional, ...candidates.filter(candidate => candidate !== regional)] : (candidates.length ? candidates : [raw]);
+}
+
+function repairDecimalCoordinateLine(line) {
+  const text = repairOcrCoordinateText(line);
+  const match = text.match(/^([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)$/);
+  if (!match) {
+    return text;
+  }
+
+  for (const lon of decimalRepairCandidates(match[1], "lon")) {
+    for (const lat of decimalRepairCandidates(match[2], "lat")) {
+      const candidate = `${lon},${lat}`;
+      if (extractDecimalCoordinateLines(candidate).length > 0 || extractDmsCoordinateLines(candidate).length > 0 || extractProjectedCoordinateLines(candidate).length > 0) {
+        return candidate;
+      }
+    }
+  }
+
+  return text;
+}
+
+function validateCoordinateOutput(text) {
+  const validLines = [];
+  const abnormalLines = [];
+  const lines = String(text || "")
+    .replace(/[；;]/g, "\n")
+    .split(/\r?\n/);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === noCoordinatesText) {
+      if (validLines.length && validLines[validLines.length - 1] !== "") {
+        validLines.push("");
+      }
+      continue;
+    }
+
+    const repaired = repairDecimalCoordinateLine(trimmed);
+    const isValid = extractDecimalCoordinateLines(repaired).length > 0
+      || extractDmsCoordinateLines(repaired).length > 0
+      || extractProjectedCoordinateLines(repaired).length > 0;
+
+    if (isValid) {
+      validLines.push(repaired.replace(/\s*,\s*/g, ","));
+    } else {
+      abnormalLines.push(`${trimmed} 需人工核对`);
+    }
+  }
+
+  while (validLines[validLines.length - 1] === "") {
+    validLines.pop();
+  }
+
+  return {
+    coordinates: validLines.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+    abnormalLines
+  };
+}
+
 function countCoordinateRows(text) {
   return String(text || "")
     .split(/\r?\n/)
@@ -3324,7 +3418,7 @@ app.post("/api/analyze-mining-image", upload.fields([
       });
     }
 
-    const oversizedImageFile = uploadedFiles.find(file => Number(file.size || 0) > 3 * 1024 * 1024);
+    const oversizedImageFile = uploadedFiles.find(file => Number(file.size || 0) > 1024 * 1024);
     if (oversizedImageFile) {
       console.error("AI判读图片过大：", {
         originalname: oversizedImageFile.originalname,
@@ -3334,7 +3428,7 @@ app.post("/api/analyze-mining-image", upload.fields([
       return res.status(413).json({
         success: false,
         reason: "image_too_large",
-        detail: "图片超过 3MB，前端压缩可能失败，请截图后重新上传。",
+        detail: "图片超过 1MB，前端压缩可能失败，请截图后重新上传。",
         error: "图片过大。"
       });
     }
@@ -3476,8 +3570,11 @@ A / B / C / D，并解释一句。A=明显值得继续；B=有潜力但需要验
 【判读可信度】
 高 / 中 / 低。它表示“本次图片是否足够支撑判断”，不是好坏程度。清晰、主体明确、依据充分=高；可判断但缺少尺度/角度/环境=中；模糊、无关、信息不足=低。
 
+【图像信息质量】
+高 / 中 / 低。它只评价图片本身的信息量：主体清楚、细节和环境足够=高；能看但缺少尺度/角度/环境=中；模糊、过曝、无关或主体不清=低。
+
 【潜力评分】
-0-100分。它表示“是否值得继续投入时间”。A通常80-95，B通常60-79，C通常35-59，D通常0-34；同等级内部要根据图片内容给不同分数，不要固定模板分。
+0-100分。它表示“是否值得继续投入时间”，不要和可信度混淆。A=82-96；B+=72-81；B=62-71；C+=50-61；C=35-49；D=0-34。同等级内部必须根据矿化/沉积/结构线索、是否只是颜色像、环境信息、模糊程度、是否无关图片给不同分数，不要固定 68 或模板分。
 
 【关键依据】
 1.
@@ -3714,10 +3811,11 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
       });
     }
 
+    const coordinateRequestStartedAt = Date.now();
     console.log("图片文件名：", req.file.originalname);
     console.log("图片类型：", req.file.mimetype);
     console.log("图片大小：", `${req.file.size} bytes`);
-    console.log("使用阿里云视觉模型：", aliyunVisionModel);
+    console.log("使用阿里云OCR模型优先识别：", aliyunOcrModel);
 
     const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
     const prompt = `你是矿业坐标识别助手。请只识别图片中的真实坐标表区域，并只返回坐标行。图片可能是完整文件、手机截图、扫描件、带水印图片、长表、局部表格、同一页多块矿区坐标或带菜单按钮的截图。
@@ -3799,20 +3897,33 @@ The expected result for a BFTM table is a list of real row pairs such as X,Y onl
         }
       }
     ];
+    const fastCoordinatePrompt = `只提取图片中的坐标，不要解释。
+输出规则：
+1. 每行只输出一组坐标：经度,纬度；X/Y表输出：X,Y。
+2. 保留原始格式和小数位；DMS不要转十进制度。
+3. 忽略正文、标题、面积、电话、页眉页脚、水印、bbox、像素框。
+4. W/O/Ouest 为西经；Latitude nord 为北纬；Longitude ouest 为西经。
+5. X/Y、BFTM、SOMMETS 表必须按同一行配对，数字空格要合并。
+6. 多个矿区或多段手写编号之间保留一个空行。
+7. 无有效坐标只输出：${noCoordinatesText}`;
 
-    // Start table recognition with the visual model. OCR is only a retry/fallback because it can
-    // lose table row relationships or return bbox metadata instead of coordinate pairs.
+    // Start coordinate recognition with the faster OCR model; visual layout retries remain below
+    // for BFTM/table cases where OCR loses row relationships.
+    const aliyunStartedAt = Date.now();
     const response = await callAliyunVision({
-      modelName: aliyunVisionModel,
-      prompt,
+      modelName: aliyunOcrModel,
+      prompt: fastCoordinatePrompt,
       imageItems,
-      temperature: 0.1
+      temperature: 0,
+      maxTokens: 900,
+      timeoutMs: 26000
     });
+    console.log("坐标识别首轮阿里云耗时：", Date.now() - aliyunStartedAt, "ms");
 
     let rawText = response.choices?.[0]?.message?.content || "";
     let coordinates = extractCoordinateLines(rawText);
     let warning = extractRecognitionWarning(rawText);
-    let usedModel = aliyunVisionModel;
+    let usedModel = aliyunOcrModel;
 
     if (shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
@@ -3936,14 +4047,23 @@ The expected result for a BFTM table is a list of real row pairs such as X,Y onl
     console.log(rawText);
     console.log("坐标提取结果：");
     console.log(coordinates);
+    const quality = validateCoordinateOutput(coordinates);
+    if (quality.abnormalLines.length > 0) {
+      console.warn("坐标疑似异常行：", quality.abnormalLines);
+    }
 
     res.json({
       model: usedModel,
       rawText,
-      coordinates,
+      coordinates: quality.coordinates || coordinates,
+      abnormalLines: quality.abnormalLines,
       precisionMode: "preserve-original-decimals-and-parse-dms",
       warning,
-      quota: usageStatus.quota
+      quota: usageStatus.quota,
+      timing: {
+        totalMs: Date.now() - coordinateRequestStartedAt,
+        fileSize: req.file.size
+      }
     });
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
