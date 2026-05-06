@@ -1393,14 +1393,15 @@
     }
 
     .judge-decision-card {
+      position: relative;
       display: grid;
       gap: 10px;
       margin: 0 0 12px;
-      padding: 14px;
-      border: 1px solid #dbeafe;
-      border-radius: 14px;
+      padding: 14px 14px 16px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 16px;
       background: #f8fbff;
-      box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
+      box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
     }
 
     .judge-official-card {
@@ -1509,25 +1510,26 @@
       z-index: -1;
       width: 1080px;
       min-height: 1350px;
-      padding: 54px;
-      border: 1px solid #dbeafe;
-      border-radius: 38px;
-      background: #ffffff;
+      padding: 42px;
+      border: 0;
+      border-radius: 36px;
+      background: linear-gradient(180deg, #f8fff9 0%, #ffffff 34%, #f8fafc 100%);
       color: #0f172a;
-      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.14);
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
       font-family: Arial, "Microsoft YaHei", sans-serif;
     }
 
     .judge-export-capture .judge-official-card {
-      gap: 28px;
+      gap: 22px;
     }
 
     .judge-export-capture .judge-official-head {
       display: grid;
       grid-template-columns: 1fr;
       align-items: stretch;
-      gap: 24px;
-      padding-bottom: 24px;
+      gap: 18px;
+      padding-bottom: 18px;
+      border-bottom: 0;
     }
 
     .judge-export-image {
@@ -1543,29 +1545,30 @@
     .judge-export-capture .judge-export-image {
       order: -1;
       width: 100%;
-      height: 560px;
-      border-radius: 30px;
-      border-color: #dbeafe;
-      box-shadow: 0 24px 55px rgba(15, 23, 42, 0.14);
+      height: 620px;
+      border-radius: 28px;
+      border: 0;
+      object-fit: cover;
+      box-shadow: 0 20px 44px rgba(15, 23, 42, 0.13);
     }
 
     .judge-export-capture .judge-official-title {
-      font-size: 46px;
+      font-size: 38px;
       line-height: 1.18;
     }
 
     .judge-export-capture .judge-official-main {
-      grid-template-columns: 130px minmax(0, 1fr);
-      gap: 26px;
+      grid-template-columns: 112px minmax(0, 1fr);
+      gap: 22px;
     }
 
     .judge-export-capture .judge-official-grade {
-      min-height: 130px;
-      font-size: 72px;
+      min-height: 112px;
+      font-size: 58px;
     }
 
     .judge-export-capture .judge-official-verdict {
-      font-size: 34px;
+      font-size: 36px;
       line-height: 1.28;
     }
 
@@ -1650,18 +1653,64 @@
     }
 
     .judge-decision-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 3;
     }
 
-    .judge-decision-actions button {
-      width: auto;
+    .judge-action-menu-button {
+      width: 34px;
       min-height: 34px;
-      padding: 7px 11px;
+      padding: 0;
       border-radius: 999px;
-      font-size: 13px;
+      background: rgba(255, 255, 255, 0.92);
+      color: #334155;
       box-shadow: none;
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .judge-action-menu {
+      position: absolute;
+      top: 40px;
+      right: 0;
+      display: none;
+      min-width: 148px;
+      padding: 6px;
+      border: 1px solid #dbe4ef;
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 18px 38px rgba(15, 23, 42, 0.14);
+    }
+
+    .judge-action-menu.is-open {
+      display: grid;
+      gap: 4px;
+    }
+
+    .judge-action-menu button {
+      width: 100%;
+      min-height: 34px;
+      padding: 7px 10px;
+      border-radius: 9px;
+      background: transparent;
+      color: #334155;
+      box-shadow: none;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    .judge-reupload-button {
+      width: 100%;
+      margin-top: 2px;
+      min-height: 44px;
+      border-radius: 12px;
+      background: #15803d;
+      color: #ffffff;
+      box-shadow: 0 10px 22px rgba(21, 128, 61, 0.18);
+      font-size: 15px;
+      font-weight: 900;
     }
 
     .judge-decision-hint {
@@ -1846,6 +1895,12 @@
       display: flex;
     }
 
+    .judge-progress-visual.done {
+      border-color: #bbf7d0;
+      background: #f7fff9;
+      color: #15803d;
+    }
+
     .judge-progress-icon {
       width: 18px;
       height: 18px;
@@ -1854,6 +1909,25 @@
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
       flex: 0 0 auto;
+    }
+
+    .judge-progress-visual.done .judge-progress-icon {
+      position: relative;
+      animation: none;
+      border-color: #16a34a;
+      background: #16a34a;
+    }
+
+    .judge-progress-visual.done .judge-progress-icon::after {
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: 2px;
+      width: 5px;
+      height: 9px;
+      border: solid #ffffff;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
     }
 
     .judge-actions {
@@ -2450,8 +2524,7 @@
       }
 
       .judge-decision-actions button {
-        flex: 1 1 100%;
-        min-height: 44px;
+        min-height: 36px;
         font-size: 14px;
       }
 
@@ -2920,6 +2993,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
+    document.addEventListener("click", closeJudgeActionMenu);
     judgeImageInput.multiple = false;
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
@@ -3911,13 +3985,14 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeMessage.className = isLoading ? "message loading" : (isError ? "message error" : "message");
     }
 
-    function showJudgeProgressVisual(text) {
+    function showJudgeProgressVisual(text, state = "loading") {
       if (!judgeProgressVisual || !judgeProgressText) {
         return;
       }
 
       judgeProgressText.textContent = text || "正在分析图片信息...";
       judgeProgressVisual.classList.add("active");
+      judgeProgressVisual.classList.toggle("done", state === "done");
     }
 
     function hideJudgeProgressVisual() {
@@ -3926,6 +4001,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       judgeProgressVisual.classList.remove("active");
+      judgeProgressVisual.classList.remove("done");
     }
 
     function clearJudgeDecisionCard() {
@@ -4207,13 +4283,15 @@ Au值 = 纯度 × 10 后取整数</div>
         </div>
         <p class="judge-decision-summary">${escapeHtml(meta.summary)}</p>
         <div class="judge-decision-actions">
-          <button type="button" class="secondary" onclick="saveJudgeResultCard()">保存结果卡片</button>
-          <button type="button" class="secondary" onclick="shareJudgeResultCard()">转发给朋友</button>
-          <button type="button" class="secondary" onclick="promptJudgeMoments()">发朋友圈</button>
-          <button type="button" class="secondary" onclick="startNewJudgeTest()">再测一张</button>
-          <button type="button" class="secondary" onclick="startAngleRetest()">换角度重测</button>
+          <button type="button" class="judge-action-menu-button" onclick="toggleJudgeActionMenu(event)" title="分享/操作" aria-label="分享/操作">⋯</button>
+          <div class="judge-action-menu" onclick="event.stopPropagation()">
+            <button type="button" onclick="saveJudgeResultCard()">保存结果卡片</button>
+            <button type="button" onclick="shareJudgeResultCard()">转发给朋友</button>
+            <button type="button" onclick="promptJudgeMoments()">发朋友圈</button>
+          </div>
         </div>
-        <p class="judge-decision-hint">${escapeHtml(comparisonText)}</p>`;
+        <p class="judge-decision-hint">${escapeHtml(comparisonText)}</p>
+        <button type="button" class="judge-reupload-button" onclick="startNewJudgeTest()">重新上传图片</button>`;
       return { grade, bestScore, ...meta };
     }
 
@@ -4372,6 +4450,19 @@ Au值 = 纯度 × 10 后取整数</div>
       setTimeout(() => judgeImageInput.click(), 0);
     }
 
+    function closeJudgeActionMenu() {
+      judgeDecisionCard?.querySelector(".judge-action-menu")?.classList.remove("is-open");
+    }
+
+    function toggleJudgeActionMenu(event) {
+      event?.stopPropagation?.();
+      const menu = judgeDecisionCard?.querySelector(".judge-action-menu");
+      if (!menu) {
+        return;
+      }
+      menu.classList.toggle("is-open");
+    }
+
     function startJudgeProgress(fileCount) {
       const steps = [
         "正在分析结构...",
@@ -4521,10 +4612,9 @@ Au值 = 纯度 × 10 后取整数</div>
 
         clearInterval(progressTimer);
         console.log("AI判读进入成功展示分支");
-        showJudgeProgressVisual("判读完成");
-        showJudgeMessage("判读完成", false, true);
+        showJudgeProgressVisual("快判完成", "done");
+        showJudgeMessage("");
         await new Promise(resolve => setTimeout(resolve, 350));
-        hideJudgeProgressVisual();
         const judgeText = data.result || data.analysis || data.message || data.content || data.rawOutput || "";
         console.log("AI判读最终展示文本", judgeText);
         if (!judgeText) {
@@ -4600,6 +4690,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function clearJudgeResult() {
       judgeResult.value = "";
       clearJudgeDecisionCard();
+      hideJudgeProgressVisual();
       showJudgeMessage("判读结果已清除。");
     }
 
@@ -4953,13 +5044,29 @@ Au值 = 纯度 × 10 后取整数</div>
         }
       }
 
-      downloadCanvas(canvas, `砂金快判结果-${Date.now()}.png`);
-      showJudgeMessage("当前浏览器不支持直接转发，请长按图片保存或转发。", false, true);
+      const previewUrl = URL.createObjectURL(blob);
+      openImageModal(previewUrl);
+      setTimeout(() => URL.revokeObjectURL(previewUrl), 60000);
+      showJudgeMessage("当前浏览器不支持直接转发，请长按图片保存或转发。");
     }
 
     async function promptJudgeMoments() {
-      await downloadJudgeResultCard();
-      showJudgeMessage("已生成结果卡片。请长按图片保存后发朋友圈。", false, true);
+      const canvas = await captureJudgeResultCardCanvas();
+      if (!canvas) {
+        showJudgeMessage("暂无判读结果可生成朋友圈卡片。", true);
+        return;
+      }
+
+      const blob = await canvasToBlob(canvas);
+      if (!blob) {
+        showJudgeMessage("结果卡片生成失败，请重试。", true);
+        return;
+      }
+
+      const previewUrl = URL.createObjectURL(blob);
+      openImageModal(previewUrl);
+      setTimeout(() => URL.revokeObjectURL(previewUrl), 60000);
+      showJudgeMessage("请长按图片保存后发朋友圈。");
     }
 
     function copyJudgeResult() {
