@@ -136,6 +136,25 @@
       font-size: 25px;
     }
 
+    .dashboard-row {
+      margin-top: 12px;
+    }
+
+    .dashboard-row h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      color: #334155;
+    }
+
+    .dashboard-errors {
+      border-color: #fecaca;
+      background: #fff7f7;
+    }
+
+    .dashboard-errors .card {
+      background: #7f1d1d;
+    }
+
     .status-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -447,6 +466,85 @@
 
     <div id="message" class="message"></div>
 
+    <section class="panel" id="dashboardPanel">
+      <h2>运营总览</h2>
+      <p class="muted">来自 Supabase users 和 usage_logs，用于快速查看今日活跃、功能使用和异常情况。</p>
+
+      <div class="dashboard-row">
+        <h3>今日数据</h3>
+        <div class="cards">
+          <div class="card"><span>今日活跃用户</span><strong id="dashTodayActive">0</strong></div>
+          <div class="card"><span>今日 AI 判读</span><strong id="dashTodayJudge">0</strong></div>
+          <div class="card"><span>今日坐标转换</span><strong id="dashTodayConvert">0</strong></div>
+          <div class="card"><span>今日黄金成色</span><strong id="dashTodayGold">0</strong></div>
+          <div class="card"><span>今日总使用</span><strong id="dashTodayTotal">0</strong></div>
+          <div class="card"><span>今日失败</span><strong id="dashTodayFailed">0</strong></div>
+        </div>
+      </div>
+
+      <div class="dashboard-row">
+        <h3>最近 7 天</h3>
+        <div class="cards">
+          <div class="card"><span>7天活跃用户</span><strong id="dash7Active">0</strong></div>
+          <div class="card"><span>7天 AI 判读</span><strong id="dash7Judge">0</strong></div>
+          <div class="card"><span>7天坐标转换</span><strong id="dash7Convert">0</strong></div>
+          <div class="card"><span>7天黄金成色</span><strong id="dash7Gold">0</strong></div>
+          <div class="card"><span>7天失败</span><strong id="dash7Failed">0</strong></div>
+        </div>
+      </div>
+
+      <div class="dashboard-row">
+        <h3>用户数据</h3>
+        <div class="cards">
+          <div class="card"><span>总用户数</span><strong id="dashUsersTotal">0</strong></div>
+          <div class="card"><span>VIP 用户</span><strong id="dashUsersVip">0</strong></div>
+          <div class="card"><span>付费用户</span><strong id="dashUsersPaid">0</strong></div>
+          <div class="card"><span>今日新增</span><strong id="dashUsersNew">0</strong></div>
+          <div class="card"><span>今日回访</span><strong id="dashUsersReturning">0</strong></div>
+        </div>
+      </div>
+
+      <div class="dashboard-row">
+        <h3>消耗数据</h3>
+        <div class="cards">
+          <div class="card"><span>今日免费消耗</span><strong id="dashFreeCount">0</strong></div>
+          <div class="card"><span>今日付费消耗</span><strong id="dashPaidCount">0</strong></div>
+          <div class="card"><span>今日 VIP 免扣</span><strong id="dashVipCount">0</strong></div>
+          <div class="card"><span>次数不足失败</span><strong id="dashLimitCount">0</strong></div>
+        </div>
+      </div>
+
+      <div class="dashboard-row dashboard-errors">
+        <h3>异常数据</h3>
+        <div class="cards">
+          <div class="card"><span>AI 判读失败</span><strong id="dashJudgeFailed">0</strong></div>
+          <div class="card"><span>坐标识别失败</span><strong id="dashConvertFailed">0</strong></div>
+          <div class="card"><span>网络/超时失败</span><strong id="dashNetworkFailed">0</strong></div>
+        </div>
+      </div>
+
+      <div class="dashboard-row">
+        <h3>最近失败记录</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>用户ID</th>
+                <th>功能</th>
+                <th>错误原因</th>
+                <th>IP</th>
+                <th>设备</th>
+                <th>地区</th>
+              </tr>
+            </thead>
+            <tbody id="dashboardErrorsBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="dashboardMessage" class="message"></div>
+    </section>
+
     <section class="panel">
       <h2>系统状态</h2>
       <div class="status-grid">
@@ -706,6 +804,7 @@
     let usageLogs = [];
     let userUsageCounts = {};
     let supabaseUserFilter = "all";
+    let dashboardStats = null;
 
     document.getElementById("password").value = adminPassword;
 
@@ -728,6 +827,13 @@
     function setQuotaEditMessage(text, isError = false) {
       const el = document.getElementById("quotaEditMessage");
       el.textContent = text;
+      el.className = isError ? "message error" : "message";
+    }
+
+    function setDashboardMessage(text, isError = false) {
+      const el = document.getElementById("dashboardMessage");
+      if (!el) return;
+      el.textContent = text || "";
       el.className = isError ? "message error" : "message";
     }
 
@@ -772,6 +878,7 @@
         adminPassword = getPassword();
         localStorage.setItem("coordinateToolAdminPassword", adminPassword);
         await loadFeatureFlags();
+        await loadDashboardStats(false);
         await loadUsageLogs(false);
         await loadSupabaseUsers(false);
         setMessage(`后台数据已刷新：${new Date().toLocaleTimeString()}`);
@@ -783,6 +890,99 @@
           refreshButton.textContent = "刷新数据";
         }
       }
+    }
+
+    async function loadDashboardStats(showMessage = true) {
+      try {
+        if (showMessage) {
+          setDashboardMessage("正在读取运营总览...");
+        }
+
+        const result = await adminFetch("/api/admin/dashboard-stats");
+        dashboardStats = result;
+        renderDashboardStats(result);
+
+        if (showMessage) {
+          setDashboardMessage(result.setupRequired
+            ? "usage_logs 表未创建，运营总览暂显示 0。"
+            : `运营总览已刷新：${new Date().toLocaleTimeString()}`,
+            Boolean(result.setupRequired)
+          );
+        }
+      } catch (error) {
+        dashboardStats = null;
+        renderDashboardStats(null);
+        setDashboardMessage(error.message, true);
+      }
+    }
+
+    function setDashboardValue(id, value) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = Number(value || 0).toLocaleString("zh-CN");
+    }
+
+    function renderDashboardStats(stats) {
+      const data = stats || {};
+      const today = data.today || {};
+      const last7 = data.last7Days || {};
+      const users = data.users || {};
+      const consumption = data.consumption || {};
+      const errors = data.errors || {};
+
+      setDashboardValue("dashTodayActive", today.activeUsers);
+      setDashboardValue("dashTodayJudge", today.judgeCount);
+      setDashboardValue("dashTodayConvert", today.convertCount);
+      setDashboardValue("dashTodayGold", today.goldCount);
+      setDashboardValue("dashTodayTotal", today.totalCount);
+      setDashboardValue("dashTodayFailed", today.failedCount);
+
+      setDashboardValue("dash7Active", last7.activeUsers);
+      setDashboardValue("dash7Judge", last7.judgeCount);
+      setDashboardValue("dash7Convert", last7.convertCount);
+      setDashboardValue("dash7Gold", last7.goldCount);
+      setDashboardValue("dash7Failed", last7.failedCount);
+
+      setDashboardValue("dashUsersTotal", users.totalUsers);
+      setDashboardValue("dashUsersVip", users.vipUsers);
+      setDashboardValue("dashUsersPaid", users.paidUsers);
+      setDashboardValue("dashUsersNew", users.todayNewUsers);
+      setDashboardValue("dashUsersReturning", users.todayReturningUsers);
+
+      setDashboardValue("dashFreeCount", consumption.freeCount);
+      setDashboardValue("dashPaidCount", consumption.paidCount);
+      setDashboardValue("dashVipCount", consumption.vipCount);
+      setDashboardValue("dashLimitCount", consumption.limitExceededCount);
+
+      setDashboardValue("dashJudgeFailed", errors.judgeFailedCount);
+      setDashboardValue("dashConvertFailed", errors.convertFailedCount);
+      setDashboardValue("dashNetworkFailed", errors.networkTimeoutFailedCount);
+
+      const body = document.getElementById("dashboardErrorsBody");
+      if (!body) return;
+
+      if (data.setupRequired) {
+        body.innerHTML = `<tr><td colspan="7" class="muted">usage_logs 表未创建，暂无失败记录。</td></tr>`;
+        return;
+      }
+
+      const recentErrors = data.recentErrors || [];
+      if (!recentErrors.length) {
+        body.innerHTML = `<tr><td colspan="7" class="muted">暂无失败记录。</td></tr>`;
+        return;
+      }
+
+      body.innerHTML = recentErrors.map(log => `
+        <tr>
+          <td>${formatTime(log.created_at) || "-"}</td>
+          <td>${escapeHtml(log.user_id || "-")}</td>
+          <td>${escapeHtml(getUsageFeatureLabel(log.feature_type))}</td>
+          <td>${escapeHtml(log.error_reason || log.note || "-")}</td>
+          <td>${escapeHtml(log.ip || "-")}</td>
+          <td>${escapeHtml(log.device_info || "-")}</td>
+          <td>${escapeHtml(log.region || "-")}</td>
+        </tr>
+      `).join("");
     }
 
     async function loadSupabaseUsers(showMessage = true) {

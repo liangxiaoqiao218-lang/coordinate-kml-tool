@@ -3574,6 +3574,162 @@ app.get("/api/admin/usage-logs", requireAdmin, async (req, res) => {
   }
 });
 
+app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
+  try {
+    if (!requireSupabase(res)) {
+      return;
+    }
+
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const last7Start = new Date(now);
+    last7Start.setDate(last7Start.getDate() - 6);
+    last7Start.setHours(0, 0, 0, 0);
+    const last30Start = new Date(now);
+    last30Start.setDate(last30Start.getDate() - 29);
+    last30Start.setHours(0, 0, 0, 0);
+
+    const emptyStats = {
+      success: true,
+      today: {
+        activeUsers: 0,
+        judgeCount: 0,
+        convertCount: 0,
+        goldCount: 0,
+        totalCount: 0,
+        failedCount: 0
+      },
+      last7Days: {
+        activeUsers: 0,
+        judgeCount: 0,
+        convertCount: 0,
+        goldCount: 0,
+        failedCount: 0
+      },
+      users: {
+        totalUsers: 0,
+        vipUsers: 0,
+        paidUsers: 0,
+        todayNewUsers: 0,
+        todayReturningUsers: 0
+      },
+      consumption: {
+        freeCount: 0,
+        paidCount: 0,
+        vipCount: 0,
+        limitExceededCount: 0
+      },
+      errors: {
+        judgeFailedCount: 0,
+        convertFailedCount: 0,
+        networkTimeoutFailedCount: 0
+      },
+      recentErrors: []
+    };
+
+    const [{ data: usersData, error: usersError }, { data: logsData, error: logsError }] = await Promise.all([
+      supabase
+        .from("users")
+        .select("user_id,is_vip,paid_convert_count,paid_judge_count,created_at,last_seen_at"),
+      supabase
+        .from("usage_logs")
+        .select("id,user_id,ip,region,device_info,feature_type,consume_type,success,error_reason,note,created_at")
+        .gte("created_at", last30Start.toISOString())
+        .order("created_at", { ascending: false })
+        .limit(5000)
+    ]);
+
+    if (usersError) {
+      throw usersError;
+    }
+
+    if (logsError) {
+      if (logsError.code === "42P01") {
+        return res.json({
+          ...emptyStats,
+          setupRequired: true,
+          error: "usage_logs table does not exist"
+        });
+      }
+      throw logsError;
+    }
+
+    const users = usersData || [];
+    const logs = logsData || [];
+    const todayLogs = logs.filter(log => new Date(log.created_at) >= todayStart);
+    const last7Logs = logs.filter(log => new Date(log.created_at) >= last7Start);
+    const successfulTodayLogs = todayLogs.filter(log => log.success);
+    const successful7DayLogs = last7Logs.filter(log => log.success);
+    const todayFailures = todayLogs.filter(log => !log.success);
+    const last7Failures = last7Logs.filter(log => !log.success);
+    const uniqueCount = list => new Set(list.map(item => item.user_id).filter(Boolean)).size;
+    const countFeature = (list, feature) => list.filter(log => log.feature_type === feature).length;
+    const countConsume = (list, consumeType) => list.filter(log => log.consume_type === consumeType && log.success).length;
+    const isNetworkTimeout = log => /timeout|network|超时|网络/i.test(`${log.error_reason || ""} ${log.note || ""}`);
+    const paidUsers = users.filter(user =>
+      Number(user.paid_convert_count || 0) > 0 || Number(user.paid_judge_count || 0) > 0
+    ).length;
+    const todayActiveUsers = users.filter(user => user.last_seen_at && new Date(user.last_seen_at) >= todayStart);
+    const todayNewUsers = users.filter(user => user.created_at && new Date(user.created_at) >= todayStart);
+    const todayReturningUsers = todayActiveUsers.filter(user => {
+      if (!user.created_at) return true;
+      return new Date(user.created_at) < todayStart;
+    });
+
+    res.json({
+      success: true,
+      today: {
+        activeUsers: uniqueCount(todayLogs),
+        judgeCount: countFeature(successfulTodayLogs, "judge"),
+        convertCount: countFeature(successfulTodayLogs, "convert"),
+        goldCount: countFeature(successfulTodayLogs, "gold"),
+        totalCount: successfulTodayLogs.length,
+        failedCount: todayFailures.length
+      },
+      last7Days: {
+        activeUsers: uniqueCount(last7Logs),
+        judgeCount: countFeature(successful7DayLogs, "judge"),
+        convertCount: countFeature(successful7DayLogs, "convert"),
+        goldCount: countFeature(successful7DayLogs, "gold"),
+        failedCount: last7Failures.length
+      },
+      users: {
+        totalUsers: users.length,
+        vipUsers: users.filter(user => user.is_vip).length,
+        paidUsers,
+        todayNewUsers: todayNewUsers.length,
+        todayReturningUsers: todayReturningUsers.length
+      },
+      consumption: {
+        freeCount: countConsume(todayLogs, "free"),
+        paidCount: countConsume(todayLogs, "paid"),
+        vipCount: countConsume(todayLogs, "vip"),
+        limitExceededCount: todayFailures.filter(log => log.error_reason === "limit_exceeded").length
+      },
+      errors: {
+        judgeFailedCount: todayFailures.filter(log => log.feature_type === "judge").length,
+        convertFailedCount: todayFailures.filter(log => log.feature_type === "convert").length,
+        networkTimeoutFailedCount: todayFailures.filter(isNetworkTimeout).length
+      },
+      recentErrors: logs
+        .filter(log => !log.success)
+        .slice(0, 10)
+    });
+  } catch (error) {
+    console.error("Dashboard stats failed:", {
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint
+    });
+    res.status(500).json({
+      success: false,
+      error: error.message || "读取运营总览失败。"
+    });
+  }
+});
+
 app.get("/api/admin/supabase-users/:userId/usage-logs", requireAdmin, async (req, res) => {
   try {
     if (!requireSupabase(res)) {
