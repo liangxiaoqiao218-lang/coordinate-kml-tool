@@ -1447,6 +1447,47 @@
       font-weight: 700;
     }
 
+    .judge-export-capture {
+      position: fixed;
+      left: -99999px;
+      top: 0;
+      z-index: -1;
+      width: 760px;
+      padding: 34px;
+      border: 1px solid #dbeafe;
+      border-radius: 28px;
+      background: #ffffff;
+      color: #0f172a;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.14);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+    }
+
+    .judge-export-capture .judge-official-card {
+      gap: 18px;
+    }
+
+    .judge-export-capture .judge-official-title {
+      font-size: 30px;
+    }
+
+    .judge-export-capture .judge-official-main {
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 22px;
+    }
+
+    .judge-export-capture .judge-official-grade {
+      min-height: 150px;
+      font-size: 86px;
+    }
+
+    .judge-export-capture .judge-official-verdict {
+      font-size: 28px;
+    }
+
+    .judge-export-capture .judge-official-reason {
+      font-size: 18px;
+    }
+
     .judge-decision-card[hidden] {
       display: none;
     }
@@ -4042,7 +4083,7 @@ Au值 = 纯度 × 10 后取整数</div>
         </div>
         <p class="judge-decision-summary">${escapeHtml(meta.summary)}</p>
         <div class="judge-decision-actions">
-          <button type="button" class="secondary" onclick="downloadJudgeResultCard()">下载图片</button>
+          <button type="button" class="secondary" onclick="downloadJudgeOriginalImage()">下载图片</button>
           <button type="button" class="secondary" onclick="saveJudgeResultCard()">一键保存结果卡片</button>
           <button type="button" class="secondary" onclick="startNewJudgeTest()">再测一张</button>
           <button type="button" class="secondary" onclick="startAngleRetest()">换角度重测</button>
@@ -4585,21 +4626,143 @@ Au值 = 纯度 × 10 后取整数</div>
       return canvas;
     }
 
-    function downloadJudgeResultCard() {
-      const canvas = buildJudgeResultCardCanvas();
+    function downloadCanvas(canvas, filename) {
+      if (!canvas) {
+        return false;
+      }
+      const link = document.createElement("a");
+      link.download = filename;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      return true;
+    }
+
+    function createJudgeResultCardElement() {
+      const resultText = String(judgeResult?.value || "").trim();
+      if (!resultText) {
+        return null;
+      }
+
+      const grade = getJudgeGrade(resultText);
+      const meta = getJudgeDecisionMeta(grade, resultText);
+      const official = buildJudgeOfficialCardMeta(resultText, meta, grade);
+      const element = document.createElement("div");
+      element.className = `judge-export-capture grade-${grade.toLowerCase()}`;
+      element.innerHTML = `
+        <div class="judge-official-card">
+          <div class="judge-official-head">
+            <div>
+              <div class="judge-official-kicker">砂金快判</div>
+              <div class="judge-official-title">${escapeHtml(official.title)}</div>
+            </div>
+            <div class="judge-official-brand">${escapeHtml(official.brand)}</div>
+          </div>
+          <div class="judge-official-main">
+            <div class="judge-official-grade">${escapeHtml(grade)}</div>
+            <div class="judge-official-content">
+              <div class="judge-official-verdict">${escapeHtml(official.conclusion)}</div>
+              <div class="judge-official-reason">${escapeHtml(official.reason)}</div>
+              <div class="judge-official-tags">
+                ${(official.tags.length ? official.tags : ["快判结果"]).map(tag => `<span class="judge-official-tag">${escapeHtml(tag)}</span>`).join("")}
+              </div>
+            </div>
+          </div>
+          <div class="judge-official-foot">
+            <span>等级 ${escapeHtml(grade)} · ${escapeHtml(String(official.score))}分 · 可信度 ${escapeHtml(official.confidence)}</span>
+            <span>${escapeHtml(new Date().toLocaleString("zh-CN"))}</span>
+          </div>
+          <div class="judge-official-reason">结论偏保守：优先排除云母、黄铁矿、金属膜等常见误判。</div>
+        </div>`;
+      return element;
+    }
+
+    async function loadHtml2Canvas() {
+      if (window.html2canvas) {
+        return window.html2canvas;
+      }
+      return new Promise((resolve, reject) => {
+        const existing = document.querySelector("script[data-html2canvas]");
+        if (existing) {
+          existing.addEventListener("load", () => resolve(window.html2canvas));
+          existing.addEventListener("error", reject);
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js";
+        script.async = true;
+        script.dataset.html2canvas = "true";
+        script.onload = () => resolve(window.html2canvas);
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    }
+
+    async function captureJudgeResultCardCanvas() {
+      const element = createJudgeResultCardElement();
+      if (!element) {
+        return null;
+      }
+
+      document.body.appendChild(element);
+      await document.fonts?.ready?.catch?.(() => {});
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      try {
+        const html2canvas = await loadHtml2Canvas();
+        if (typeof html2canvas === "function") {
+          return await html2canvas(element, {
+            backgroundColor: null,
+            scale: 2,
+            useCORS: true
+          });
+        }
+      } catch (error) {
+        console.warn("结果卡片 DOM 截图失败，改用 Canvas 兜底：", error);
+      } finally {
+        element.remove();
+      }
+
+      return buildJudgeResultCardCanvas();
+    }
+
+    function downloadJudgeOriginalImage() {
+      const file = selectedJudgeImageFiles[0];
+      if (file) {
+        const url = URL.createObjectURL(file);
+        const link = document.createElement("a");
+        link.download = file.name || `判读原图-${Date.now()}.jpg`;
+        link.href = url;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 500);
+        showJudgeMessage("已下载上传原图。");
+        return;
+      }
+
+      const image = judgeImagePreview?.querySelector("img");
+      if (image?.src) {
+        const link = document.createElement("a");
+        link.download = `判读原图-${Date.now()}.jpg`;
+        link.href = image.src;
+        link.click();
+        showJudgeMessage("已下载上传原图。");
+        return;
+      }
+
+      showJudgeMessage("暂无可下载的上传图片。", true);
+    }
+
+    async function downloadJudgeResultCard() {
+      const canvas = await captureJudgeResultCardCanvas();
       if (!canvas) {
         showJudgeMessage("暂无判读结果可生成图片。", true);
         return;
       }
-      const link = document.createElement("a");
-      link.download = `砂金快判结果-${Date.now()}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
+      downloadCanvas(canvas, `砂金快判结果-${Date.now()}.png`);
       showJudgeMessage("结果卡片图片已生成。");
     }
 
-    function saveJudgeResultCard() {
-      downloadJudgeResultCard();
+    async function saveJudgeResultCard() {
+      await downloadJudgeResultCard();
     }
 
     function copyJudgeResult() {
