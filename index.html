@@ -3000,6 +3000,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let selectedJudgeImageUrls = [];
     let selectedJudgeImageFiles = [];
     let currentJudgeImageDataUrl = "";
+    let judgeRequestSeq = 0;
     let recognitionStatusHideTimer = null;
     const JUDGE_HISTORY_KEY = "judgeHistory";
     const OLD_JUDGE_HISTORY_KEYS = [
@@ -4542,7 +4543,7 @@ Au值 = 纯度 × 10 后取整数</div>
       return currentJudgeImageDataUrl || image?.src || "";
     }
 
-    function saveJudgeResultToRecent(text, meta) {
+    function addJudgeRecord(text, meta = {}, imageDataUrl = "") {
       const result = String(text || "").trim();
       if (!result) {
         return { saved: false };
@@ -4554,7 +4555,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const score = Number(meta?.score || getJudgeDecisionMeta(grade, result).score || 0);
       const item = {
         id: `judge-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        image: getCurrentJudgeImageDataUrl(),
+        image: imageDataUrl || getCurrentJudgeImageDataUrl(),
         result,
         grade,
         score,
@@ -4562,15 +4563,25 @@ Au值 = 纯度 × 10 后取整数</div>
         time: Date.now()
       };
       const isNewHigh = !previousBest || score > Number(previousBest.score || 0);
+      console.log("AI判读移动端状态：判读成功后准备新增记录", {
+        newRecordId: item.id,
+        beforeLength: previousItems.length,
+        hasImage: Boolean(item.image)
+      });
       setJudgeRecentItems([item, ...previousItems].slice(0, 3));
       renderJudgeRecent(isNewHigh ? item : null);
       console.log("AI判读移动端状态：recentResults 已写入", {
+        newRecordId: item.id,
         recentResultsLength: getJudgeRecentItems().length,
         currentGrade: grade,
         currentScore: score,
         hasImage: Boolean(item.image)
       });
       return { saved: true, isNewHigh, previousBest, item };
+    }
+
+    function saveJudgeResultToRecent(text, meta) {
+      return addJudgeRecord(text, meta, getCurrentJudgeImageDataUrl());
     }
 
     function restoreJudgeRecent(index) {
@@ -4702,6 +4713,14 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
+      const requestId = ++judgeRequestSeq;
+      const imageSnapshot = getCurrentJudgeImageDataUrl();
+      console.log("AI判读移动端状态：上传前 recentResults.length", {
+        requestId,
+        recentResultsLength: getJudgeRecentItems().length,
+        hasImageSnapshot: Boolean(imageSnapshot),
+        hasCurrentResult: Boolean(String(judgeResult?.value || "").trim())
+      });
       const progressTimer = startJudgeProgress(files.length);
 
       try {
@@ -4839,15 +4858,39 @@ Au值 = 纯度 × 10 后取整数</div>
             message: data.message || ""
           });
         }
-        judgeResult.value = judgeText || "未返回判读结果。";
+        const resultText = judgeText || "未返回判读结果。";
+        const isLatestRequestBeforeRender = requestId === judgeRequestSeq;
+        if (isLatestRequestBeforeRender) {
+          judgeResult.value = resultText;
+        }
         console.log("AI判读移动端状态：currentResult 写入", {
-          resultLength: judgeResult.value.length,
+          requestId,
+          isLatestRequest: isLatestRequestBeforeRender,
+          resultLength: resultText.length,
           recentResultsLength: getJudgeRecentItems().length
         });
         try {
-          const decisionMeta = renderJudgeDecisionCard(judgeResult.value);
-          const recentSave = saveJudgeResultToRecent(judgeResult.value, decisionMeta);
-          renderJudgeDecisionCard(judgeResult.value, recentSave);
+          const grade = getJudgeGrade(resultText);
+          const decisionMeta = {
+            grade,
+            ...getJudgeDecisionMeta(grade, resultText)
+          };
+          const recentSave = addJudgeRecord(resultText, decisionMeta, imageSnapshot);
+          const isLatestRequest = requestId === judgeRequestSeq;
+          console.log("AI判读移动端状态：currentResult.id", {
+            requestId,
+            isLatestRequest,
+            currentResultId: recentSave?.item?.id || "",
+            recentResultsLength: getJudgeRecentItems().length
+          });
+          if (isLatestRequest) {
+            renderJudgeDecisionCard(resultText, recentSave);
+          } else {
+            console.log("AI判读移动端状态：旧请求完成，仅写入历史，不覆盖当前主卡片", {
+              requestId,
+              latestRequestId: judgeRequestSeq
+            });
+          }
         } catch (renderError) {
           console.error("AI判读结果附加渲染失败，已保留文本结果：", renderError);
         }
