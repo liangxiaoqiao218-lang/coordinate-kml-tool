@@ -1348,6 +1348,105 @@
       box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
     }
 
+    .judge-official-card {
+      display: grid;
+      gap: 12px;
+    }
+
+    .judge-official-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    }
+
+    .judge-official-kicker {
+      color: #15803d;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    .judge-official-title {
+      margin-top: 3px;
+      color: #0f172a;
+      font-size: 19px;
+      font-weight: 950;
+    }
+
+    .judge-official-brand {
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .judge-official-main {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .judge-official-grade {
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.92);
+      color: #ffffff;
+      font-size: 44px;
+      font-weight: 950;
+      line-height: 1;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+
+    .judge-official-content {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .judge-official-verdict {
+      color: #0f172a;
+      font-size: 18px;
+      font-weight: 950;
+      line-height: 1.35;
+    }
+
+    .judge-official-reason {
+      color: #475569;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.55;
+    }
+
+    .judge-official-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .judge-official-tag {
+      padding: 4px 7px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.14);
+      color: #475569;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .judge-official-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
     .judge-decision-card[hidden] {
       display: none;
     }
@@ -1419,6 +1518,10 @@
       color: #64748b;
       font-size: 13px;
       font-weight: 700;
+    }
+
+    .judge-actions[hidden] {
+      display: none;
     }
 
     .judge-recent {
@@ -2424,10 +2527,6 @@
         <label for="judgeImageInput" style="margin-top: 12px;">上传图片</label>
         <input id="judgeImageInput" type="file" accept="image/*" />
         <div id="judgeImagePreview" class="image-preview"></div>
-
-        <div class="judge-actions">
-          <button type="button" class="support" onclick="analyzeMiningImage()">开始判读</button>
-        </div>
       </div>
     </section>
 
@@ -3545,7 +3644,8 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeResult.value = "";
       clearJudgeDecisionCard();
       hideJudgeProgressVisual();
-      showJudgeMessage("已选择图片，点击“开始判读”后进行分析。");
+      showJudgeMessage("已选择图片，正在自动开始快判...", false, true);
+      setTimeout(() => analyzeMiningImage(), 0);
     }
 
     function openJudgeSelectedImage(index = 0) {
@@ -3820,6 +3920,65 @@ Au值 = 纯度 × 10 后取整数</div>
       }, null);
     }
 
+    function getFirstMeaningfulLine(text, fallback = "") {
+      return String(text || "")
+        .split(/\r?\n/)
+        .map(line => line.replace(/^\d+[.、]\s*/, "").trim())
+        .filter(Boolean)[0] || fallback;
+    }
+
+    function getJudgeReasonLines(text) {
+      const sections = [
+        getJudgeSection(text, "关键依据"),
+        getJudgeSection(text, "主要风险"),
+        getJudgeSection(text, "结论")
+      ].filter(Boolean).join("\n");
+      const lines = sections
+        .split(/\r?\n/)
+        .map(line => line.replace(/^\d+[.、]\s*/, "").trim())
+        .filter(Boolean);
+      return lines.slice(0, 2);
+    }
+
+    function getJudgeMisjudgeTags(text) {
+      const source = String(text || "");
+      const tagRules = [
+        ["云母感", /云母|片状反光|片状/i],
+        ["黄铁矿感", /黄铁矿|硫化物|金属硫化/i],
+        ["金属膜感", /金属膜|薄膜|表面膜/i],
+        ["整面统一反光", /整体发亮|整面|大面积|统一反光|镜面反光/i],
+        ["缺少裂隙控制", /无裂隙|缺少裂隙|裂隙控制不明/i],
+        ["缺少石英脉", /无石英脉|缺少石英脉|石英脉不明/i],
+        ["缺少赋存关系", /无局部赋存|缺少赋存|赋存关系不明|矿化关系不明/i]
+      ];
+      const tags = tagRules
+        .filter(([, pattern]) => pattern.test(source))
+        .map(([tag]) => tag);
+      return [...new Set(tags)].slice(0, 4);
+    }
+
+    function buildJudgeOfficialCardMeta(text, meta, grade) {
+      const conclusion = getFirstMeaningfulLine(
+        getJudgeSection(text, "结论"),
+        meta?.summary?.replace(/^👉\s*/, "") || "当前证据不足，先按误判排除。"
+      );
+      const reasonLines = getJudgeReasonLines(text);
+      const reason = reasonLines.length > 0
+        ? reasonLines.join("；")
+        : "未看到足够清楚的结构、裂隙、石英脉或局部赋存关系。";
+      const tags = getJudgeMisjudgeTags(text);
+      return {
+        title: "砂金快判官方快判结果",
+        brand: "Geo Tool · 砂金快判",
+        grade,
+        conclusion,
+        reason,
+        tags,
+        confidence: meta?.confidence || "中",
+        score: Number(meta?.score || 0)
+      };
+    }
+
     function renderJudgeDecisionCard(text, comparison = null) {
       if (!judgeDecisionCard || !String(text || "").trim()) {
         clearJudgeDecisionCard();
@@ -3828,6 +3987,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
       const grade = getJudgeGrade(text);
       const meta = getJudgeDecisionMeta(grade, text);
+      const official = buildJudgeOfficialCardMeta(text, meta, grade);
       const bestScore = updateJudgeBestScore(meta.score);
       const comparisonText = comparison?.isNewHigh
         ? "新高！这张目前最值得继续看。"
@@ -3837,6 +3997,29 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeDecisionCard.hidden = false;
       judgeDecisionCard.className = `judge-decision-card grade-${grade.toLowerCase()}`;
       judgeDecisionCard.innerHTML = `
+        <div class="judge-official-card">
+          <div class="judge-official-head">
+            <div>
+              <div class="judge-official-kicker">砂金快判</div>
+              <div class="judge-official-title">${escapeHtml(official.title)}</div>
+            </div>
+            <div class="judge-official-brand">${escapeHtml(official.brand)}</div>
+          </div>
+          <div class="judge-official-main">
+            <div class="judge-official-grade">${escapeHtml(grade)}</div>
+            <div class="judge-official-content">
+              <div class="judge-official-verdict">${escapeHtml(official.conclusion)}</div>
+              <div class="judge-official-reason">${escapeHtml(official.reason)}</div>
+              <div class="judge-official-tags">
+                ${(official.tags.length ? official.tags : ["快判结果"]).map(tag => `<span class="judge-official-tag">${escapeHtml(tag)}</span>`).join("")}
+              </div>
+            </div>
+          </div>
+          <div class="judge-official-foot">
+            <span>等级 ${escapeHtml(grade)} · ${escapeHtml(String(official.score))}分 · 可信度 ${escapeHtml(official.confidence)}</span>
+            <span>${escapeHtml(new Date().toLocaleDateString("zh-CN"))}</span>
+          </div>
+        </div>
         <div class="judge-decision-top">
           <div class="judge-decision-item">
             <span class="judge-decision-label">是否值得继续</span>
@@ -3859,6 +4042,8 @@ Au值 = 纯度 × 10 后取整数</div>
         </div>
         <p class="judge-decision-summary">${escapeHtml(meta.summary)}</p>
         <div class="judge-decision-actions">
+          <button type="button" class="secondary" onclick="downloadJudgeResultCard()">下载图片</button>
+          <button type="button" class="secondary" onclick="saveJudgeResultCard()">一键保存结果卡片</button>
           <button type="button" class="secondary" onclick="startNewJudgeTest()">再测一张</button>
           <button type="button" class="secondary" onclick="startAngleRetest()">换角度重测</button>
         </div>
@@ -4024,10 +4209,10 @@ Au值 = 纯度 × 10 后取整数</div>
     function startJudgeProgress(fileCount) {
       const steps = [
         "正在上传图片...",
-        "正在识别图片...",
-        "正在分析图片信息...",
-        "正在分析矿地结构...",
-        "正在生成判读结论..."
+        "正在分析结构...",
+        "正在排除常见误判...",
+        "正在识别赋存关系...",
+        "正在生成快判结果卡..."
       ];
       let index = 0;
 
@@ -4286,6 +4471,135 @@ Au值 = 纯度 × 10 后取整数</div>
         .filter(line => !/::git-(stage|commit|push|create-branch|create-pr)\b/i.test(line))
         .join("\n")
         .trim();
+    }
+
+    function wrapCanvasText(context, text, x, y, maxWidth, lineHeight, maxLines = 3) {
+      const chars = String(text || "").split("");
+      const lines = [];
+      let current = "";
+      chars.forEach(char => {
+        const next = current + char;
+        if (context.measureText(next).width > maxWidth && current) {
+          lines.push(current);
+          current = char;
+        } else {
+          current = next;
+        }
+      });
+      if (current) {
+        lines.push(current);
+      }
+      lines.slice(0, maxLines).forEach((line, index) => {
+        const suffix = index === maxLines - 1 && lines.length > maxLines ? "…" : "";
+        context.fillText(line + suffix, x, y + index * lineHeight);
+      });
+      return Math.min(lines.length, maxLines) * lineHeight;
+    }
+
+    function buildJudgeResultCardCanvas() {
+      const resultText = String(judgeResult?.value || "").trim();
+      if (!resultText) {
+        return null;
+      }
+
+      const grade = getJudgeGrade(resultText);
+      const meta = getJudgeDecisionMeta(grade, resultText);
+      const official = buildJudgeOfficialCardMeta(resultText, meta, grade);
+      const gradeColors = {
+        A: ["#dcfce7", "#166534"],
+        B: ["#dbeafe", "#1d4ed8"],
+        C: ["#ffedd5", "#c2410c"],
+        D: ["#f1f5f9", "#334155"]
+      };
+      const [gradeBg, gradeColor] = gradeColors[grade] || gradeColors.C;
+      const canvas = document.createElement("canvas");
+      canvas.width = 1080;
+      canvas.height = 1350;
+      const context = canvas.getContext("2d");
+
+      context.fillStyle = "#f8fafc";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#ffffff";
+      context.roundRect(70, 70, 940, 1210, 34);
+      context.fill();
+      context.strokeStyle = "#dbeafe";
+      context.lineWidth = 3;
+      context.stroke();
+
+      context.fillStyle = "#15803d";
+      context.font = "700 34px Arial, sans-serif";
+      context.fillText("砂金快判", 110, 150);
+      context.fillStyle = "#0f172a";
+      context.font = "900 56px Arial, sans-serif";
+      context.fillText("官方快判结果", 110, 225);
+      context.fillStyle = "#64748b";
+      context.font = "700 26px Arial, sans-serif";
+      context.fillText("Geo Tool · 矿业空间工具", 110, 270);
+
+      context.fillStyle = gradeBg;
+      context.roundRect(110, 340, 220, 220, 28);
+      context.fill();
+      context.fillStyle = gradeColor;
+      context.font = "900 138px Arial, sans-serif";
+      context.textAlign = "center";
+      context.fillText(grade, 220, 500);
+      context.textAlign = "left";
+
+      context.fillStyle = "#0f172a";
+      context.font = "900 42px Arial, sans-serif";
+      wrapCanvasText(context, official.conclusion, 370, 385, 560, 56, 3);
+
+      context.fillStyle = "#475569";
+      context.font = "700 28px Arial, sans-serif";
+      wrapCanvasText(context, official.reason, 110, 650, 860, 42, 4);
+
+      const tags = official.tags.length ? official.tags : ["快判结果"];
+      let tagX = 110;
+      let tagY = 875;
+      context.font = "800 24px Arial, sans-serif";
+      tags.slice(0, 4).forEach(tag => {
+        const width = Math.min(280, context.measureText(tag).width + 42);
+        if (tagX + width > 970) {
+          tagX = 110;
+          tagY += 58;
+        }
+        context.fillStyle = "#eef2f7";
+        context.roundRect(tagX, tagY, width, 42, 21);
+        context.fill();
+        context.fillStyle = "#475569";
+        context.fillText(tag, tagX + 21, tagY + 29);
+        tagX += width + 14;
+      });
+
+      context.fillStyle = "#0f172a";
+      context.font = "900 30px Arial, sans-serif";
+      context.fillText(`等级 ${grade} · ${official.score}分 · 可信度 ${official.confidence}`, 110, 1080);
+      context.fillStyle = "#64748b";
+      context.font = "700 24px Arial, sans-serif";
+      context.fillText("结论偏保守：优先排除云母、黄铁矿、金属膜等常见误判。", 110, 1130);
+      context.fillText(new Date().toLocaleString("zh-CN"), 110, 1180);
+
+      context.fillStyle = "#15803d";
+      context.font = "900 30px Arial, sans-serif";
+      context.fillText("砂金快判 · Geo Tool", 110, 1235);
+      return canvas;
+    }
+
+    function downloadJudgeResultCard() {
+      const canvas = buildJudgeResultCardCanvas();
+      if (!canvas) {
+        showJudgeMessage("暂无判读结果可生成图片。", true);
+        return;
+      }
+      const link = document.createElement("a");
+      link.download = `砂金快判结果-${Date.now()}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      showJudgeMessage("结果卡片图片已生成。");
+    }
+
+    function saveJudgeResultCard() {
+      downloadJudgeResultCard();
     }
 
     function copyJudgeResult() {
