@@ -4175,7 +4175,16 @@ Au值 = 纯度 × 10 后取整数</div>
         showJudgeMessage("判读完成", false, true);
         await new Promise(resolve => setTimeout(resolve, 350));
         hideJudgeProgressVisual();
-        judgeResult.value = data.result || "未返回判读结果。";
+        const judgeText = data.result || data.analysis || data.message || data.content || data.rawOutput || "";
+        if (!judgeText) {
+          console.error("AI判读成功响应缺少展示字段：", {
+            success: data.success,
+            keys: Object.keys(data || {}),
+            reason: data.reason || "",
+            message: data.message || ""
+          });
+        }
+        judgeResult.value = judgeText || "未返回判读结果。";
         const decisionMeta = renderJudgeDecisionCard(judgeResult.value);
         const recentSave = saveJudgeResultToRecent(judgeResult.value, decisionMeta);
         renderJudgeDecisionCard(judgeResult.value, recentSave);

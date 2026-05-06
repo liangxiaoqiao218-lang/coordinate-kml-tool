@@ -3836,12 +3836,27 @@ A / B / C / D，并解释一句。A=明显值得继续；B=有潜力但需要验
 
     await writeAdminData(data);
 
-    res.json({
+    const responsePayload = {
+      success: true,
       result: normalizedOutput,
+      analysis: normalizedOutput,
+      message: normalizedOutput,
+      content: normalizedOutput,
       rawOutput,
       recordId: record.id,
       quota: usageResult.quota
+    };
+
+    console.log("AI判读最终返回前端：", {
+      success: responsePayload.success,
+      hasResult: Boolean(responsePayload.result),
+      resultLength: String(responsePayload.result || "").length,
+      hasAnalysis: Boolean(responsePayload.analysis),
+      hasMessage: Boolean(responsePayload.message),
+      reason: responsePayload.reason || null
     });
+
+    res.json(responsePayload);
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
     const aliyunStatus = error.response?.status || error.status || null;
