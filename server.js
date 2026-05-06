@@ -3480,6 +3480,13 @@ app.post("/api/analyze-mining-image", upload.fields([
   { name: "images", maxCount: 5 }
 ]), async (req, res) => {
   console.log("---- 收到AI判读请求 ----");
+  console.log("AI判读 multipart 入口：", {
+    contentType: req.headers["content-type"] || "",
+    bodyKeys: Object.keys(req.body || {}),
+    fileFieldKeys: Object.keys(req.files || {}),
+    hasReqFile: Boolean(req.file),
+    hasReqFiles: Boolean(req.files)
+  });
   const uploadedFiles = [
     ...(req.files?.images || []),
     ...(req.files?.image || [])
@@ -3488,6 +3495,7 @@ app.post("/api/analyze-mining-image", upload.fields([
   console.log("是否收到图片：", uploadedFiles.length > 0);
   console.log("收到图片数量：", uploadedFiles.length);
   console.log("AI判读收到文件详情：", uploadedFiles.map(file => ({
+    fieldname: file.fieldname || "",
     originalname: file.originalname || "image",
     mimetype: file.mimetype,
     size: file.size,
@@ -3522,9 +3530,14 @@ app.post("/api/analyze-mining-image", upload.fields([
     }
 
     if (uploadedFiles.length === 0) {
+      console.error("AI判读未收到图片文件：", {
+        contentType: req.headers["content-type"] || "",
+        bodyKeys: Object.keys(req.body || {}),
+        fileFieldKeys: Object.keys(req.files || {})
+      });
       return res.status(400).json({
         success: false,
-        reason: "image_invalid",
+        reason: "image_missing",
         detail: "后端没有收到图片文件，请重新选择图片上传。",
         error: "图片格式不支持或文件无效。"
       });
@@ -3680,6 +3693,13 @@ B 可以观察
     }
 
     const judgeImageFiles = imageFiles.slice(0, 1);
+    console.log("AI判读最终传给阿里云的图片：", judgeImageFiles.map(file => ({
+      originalname: file.originalname || "image",
+      mimetype: file.mimetype,
+      size: file.size,
+      bufferBytes: file.buffer?.length || 0,
+      dataUrlMime: file.mimetype
+    })));
     const imageItems = judgeImageFiles.map(file => ({
       type: "image_url",
       image_url: {
@@ -3747,6 +3767,19 @@ A / B / C / D，并解释一句。A=明显值得继续；B=有潜力但需要验
     });
 
     const rawOutput = response.choices?.[0]?.message?.content || "";
+    if (!String(rawOutput || "").trim()) {
+      console.error("AI判读阿里云返回空结果：", {
+        requestId: response?.request_id || response?.requestId || response?.RequestId,
+        responseKeys: Object.keys(response || {}),
+        choicesLength: Array.isArray(response?.choices) ? response.choices.length : 0
+      });
+      return res.status(502).json({
+        success: false,
+        reason: "aliyun_empty",
+        detail: "识别服务返回空结果，请更换图片或稍后重试。",
+        requestId: response?.request_id || response?.requestId || response?.RequestId
+      });
+    }
     const normalizedOutput = normalizeJudgeOutput(rawOutput);
     const record = {
       id: makeId("record"),
@@ -4249,6 +4282,35 @@ The expected result for a BFTM table is a list of real row pairs such as X,Y onl
       });
     }
   }
+});
+
+app.use((error, req, res, next) => {
+  if (!error) {
+    return next();
+  }
+
+  if (error instanceof multer.MulterError) {
+    console.error("Multer 上传解析失败：", {
+      code: error.code,
+      message: error.message,
+      path: req.path,
+      contentType: req.headers["content-type"] || ""
+    });
+
+    if (String(req.path || "").startsWith("/api/")) {
+      const isTooLarge = error.code === "LIMIT_FILE_SIZE";
+      return res.status(isTooLarge ? 413 : 400).json({
+        success: false,
+        reason: isTooLarge ? "image_too_large" : "image_invalid",
+        detail: isTooLarge
+          ? "图片过大，请压缩或截图后重新上传。"
+          : "后端解析上传图片失败，请重新选择 JPG/PNG 图片上传。",
+        code: error.code
+      });
+    }
+  }
+
+  return next(error);
 });
 
 app.get("/admin", (req, res) => {

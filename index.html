@@ -4073,6 +4073,11 @@ Au值 = 纯度 × 10 后取整数</div>
 
       try {
         const compressedFiles = await Promise.all(files.slice(0, 1).map(compressJudgeImage));
+        console.log("AI判读即将上传：", compressedFiles.map(file => ({
+          name: file.name,
+          type: file.type,
+          size: file.size
+        })));
         trackEvent("ai_judge_upload_select", {
           fileCount: compressedFiles.length,
           fileSize: compressedFiles.reduce((sum, file) => sum + file.size, 0),
@@ -4136,12 +4141,15 @@ Au值 = 纯度 × 10 后取整数</div>
         if (!response.ok) {
           const detail = sanitizeUserFacingTechMessage(data.detail || data.error || "AI判读失败");
           const reasonText = {
+            image_missing: "未收到图片，请重新选择图片后上传。",
             image_invalid: detail || "图片格式不支持，请重新选择 JPG 或 PNG 图片。",
             image_too_large: detail || "图片过大，请截图后重新上传。",
-            timeout: "本次图片处理失败，建议截图后重新上传。",
-            aliyun_failed: detail || "阿里云返回错误，请稍后重试。",
-            network_failed: "本次图片处理失败，建议截图后重新上传。",
-            config_missing: "识别服务暂未配置，请联系管理员。"
+            timeout: detail || "识别服务超时，请稍后重试，或截图后重新上传。",
+            aliyun_failed: detail || "识别服务返回错误，请稍后重试。",
+            aliyun_empty: detail || "识别服务返回空结果，请更换图片或稍后重试。",
+            network_failed: "网络请求失败，请检查网络后重试。",
+            config_missing: "识别服务暂未配置，请联系管理员。",
+            server_parse_failed: detail || "后端解析失败，请稍后重试。"
           };
           const error = new Error(reasonText[data.reason] || detail || "未知错误，请稍后重试。");
           error.reason = data.reason || "unknown";
