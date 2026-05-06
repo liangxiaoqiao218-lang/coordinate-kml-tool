@@ -1399,6 +1399,50 @@
       position: relative;
     }
 
+    .judge-detail-content {
+      min-height: 300px;
+      max-height: 62vh;
+      overflow-y: auto;
+      margin-top: 10px;
+      padding: 18px 48px 24px 16px;
+      background: #ffffff;
+      border: 1px solid #d7e4dc;
+      border-radius: 14px;
+      color: #0f172a;
+      font-size: 15px;
+      line-height: 1.75;
+      white-space: normal;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 10px 28px rgba(15, 23, 42, 0.06);
+    }
+
+    .judge-detail-content h3 {
+      margin: 0 0 8px;
+      color: #0f172a;
+      font-size: 15px;
+      font-weight: 900;
+    }
+
+    .judge-detail-content p {
+      margin: 0 0 14px;
+      color: #334155;
+      line-height: 1.75;
+    }
+
+    .judge-detail-content ul {
+      margin: 0 0 14px;
+      padding-left: 18px;
+      color: #334155;
+    }
+
+    .judge-detail-content li {
+      margin: 3px 0;
+      line-height: 1.7;
+    }
+
+    .judge-detail-placeholder {
+      color: #94a3b8;
+    }
+
     .judge-decision-card {
       position: relative;
       display: grid;
@@ -2498,7 +2542,8 @@
         font-size: 12px;
       }
 
-      .judge-panel textarea {
+      .judge-panel textarea,
+      .judge-detail-content {
         min-height: 340px;
         max-height: 54vh;
         font-size: 15px;
@@ -2763,7 +2808,9 @@
           <div id="judgeDecisionCard" class="judge-decision-card" hidden></div>
           <div class="judge-detail-wrap">
             <div class="judge-detail-title">快判详情</div>
-            <textarea id="judgeResult" readonly placeholder="判读结果会显示在这里。"></textarea>
+            <article id="judgeResult" class="judge-detail-content" aria-label="快判详情">
+              <p class="judge-detail-placeholder">判读结果会显示在这里。</p>
+            </article>
             <div class="judge-result-tools">
               <button type="button" class="icon-button" onclick="clearJudgeResult()" title="清除判读结果" aria-label="清除判读结果">&times;</button>
               <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">&#10697;</button>
@@ -2946,6 +2993,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const judgeQuickUpload = document.getElementById("judgeQuickUpload");
     const judgeMessage = document.getElementById("judgeMessage");
     const judgeResult = document.getElementById("judgeResult");
+    let judgeResultRawText = "";
     const judgeDecisionCard = document.getElementById("judgeDecisionCard");
     const judgeRecentPanel = document.getElementById("judgeRecentPanel");
     const judgeRecentBest = document.getElementById("judgeRecentBest");
@@ -4076,6 +4124,106 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeDecisionCard.hidden = true;
       judgeDecisionCard.className = "judge-decision-card";
       judgeDecisionCard.innerHTML = "";
+    }
+
+    function escapeJudgeDetailHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function cleanJudgeDetailLine(line) {
+      return String(line || "")
+        .replace(/^\s*[-*•]\s*/, "")
+        .replace(/^\s*\d+[.)、]\s*/, "")
+        .trim();
+    }
+
+    function parseJudgeDetailSections(text) {
+      const lines = String(text || "")
+        .replace(/\r/g, "")
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      const sections = [];
+      let current = null;
+
+      const ensureSection = title => {
+        current = { title, items: [] };
+        sections.push(current);
+      };
+
+      lines.forEach(line => {
+        const bracketTitle = line.match(/^【(.+?)】\s*$/);
+        const inlineTitle = line.match(/^(场景分类|图像类型|结论|等级|判断等级|判读可信度|置信度|图像信息质量|潜力评分|关键依据|主要依据|主要观察点|主要风险|风险|下一步|建议补拍|一句话总结|总结)[:：]\s*(.*)$/);
+
+        if (bracketTitle) {
+          ensureSection(bracketTitle[1]);
+          return;
+        }
+
+        if (inlineTitle) {
+          ensureSection(inlineTitle[1]);
+          if (inlineTitle[2]) {
+            current.items.push(cleanJudgeDetailLine(inlineTitle[2]));
+          }
+          return;
+        }
+
+        if (!current) {
+          ensureSection("快判内容");
+        }
+        current.items.push(cleanJudgeDetailLine(line));
+      });
+
+      return sections
+        .map(section => ({
+          title: section.title,
+          items: section.items.filter(Boolean)
+        }))
+        .filter(section => section.items.length);
+    }
+
+    function renderJudgeDetail(text) {
+      if (!judgeResult) {
+        return;
+      }
+
+      const rawText = String(text || "").trim();
+      if (!rawText) {
+        judgeResult.innerHTML = '<p class="judge-detail-placeholder">判读结果会显示在这里。</p>';
+        return;
+      }
+
+      const sections = parseJudgeDetailSections(rawText);
+      if (!sections.length) {
+        judgeResult.innerHTML = `<p>${escapeJudgeDetailHtml(rawText)}</p>`;
+        return;
+      }
+
+      judgeResult.innerHTML = sections.map(section => {
+        const title = `<h3>${escapeJudgeDetailHtml(section.title)}</h3>`;
+        const useList = section.items.length > 1 || /依据|风险|下一步|建议|观察/.test(section.title);
+        const body = useList
+          ? `<ul>${section.items.map(item => `<li>${escapeJudgeDetailHtml(item)}</li>`).join("")}</ul>`
+          : `<p>${escapeJudgeDetailHtml(section.items[0])}</p>`;
+        return `<section>${title}${body}</section>`;
+      }).join("");
+    }
+
+    if (judgeResult) {
+      Object.defineProperty(judgeResult, "value", {
+        get() {
+          return judgeResultRawText;
+        },
+        set(value) {
+          judgeResultRawText = String(value || "");
+          renderJudgeDetail(judgeResultRawText);
+        }
+      });
+      renderJudgeDetail("");
     }
 
     function getJudgeSection(text, sectionName) {
