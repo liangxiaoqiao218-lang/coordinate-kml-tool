@@ -3838,6 +3838,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const validFiles = files.filter(isImageUpload);
       await showJudgeSelectedImage(validFiles.slice(0, 1));
       judgeImageInput.value = "";
+      judgeResult.value = "";
+      clearJudgeDecisionCard();
       showJudgeMessage("");
       setTimeout(() => analyzeMiningImage(), 0);
     }
@@ -4154,18 +4156,70 @@ Au值 = 纯度 × 10 后取整数</div>
       return compactJudgeText(sectionConclusion || summary || fallback, 20);
     }
 
-    function getJudgeSampleType(text) {
+    const JUDGE_SCENE_ENUM = [
+      "河道沉积",
+      "原矿石",
+      "矿化岩石",
+      "卫星图",
+      "老鼠洞",
+      "金豆/熔炼物",
+      "其他"
+    ];
+
+    function normalizeJudgeSceneName(text) {
       const source = String(text || "");
-      const typeText = getJudgeSection(source, "图像类型");
-      const candidates = [
-        ["金豆/熔炼物", /金豆|熔炼|熔融|成品金|已提炼金属/i],
-        ["河道照片", /河道|溪流|砂滩|沉积|阶地/i],
-        ["卫星图", /卫星|地图|遥感|航拍/i],
-        ["矿化岩石", /矿化岩石|矿化|石英脉|氧化带/i],
-        ["原矿石", /原矿石|矿石|样本|岩石/i]
-      ];
-      const hit = candidates.find(([, pattern]) => pattern.test(typeText) || pattern.test(source));
-      return hit ? hit[0] : "快判对象";
+      if (!source.trim()) {
+        return "其他";
+      }
+
+      if (/河道沉积|河道|溪流|砂滩|沉积|阶地|老河道/i.test(source)) {
+        return "河道沉积";
+      }
+      if (/金豆\/熔炼物|金豆|熔炼|熔融|成品金|已提炼金属/i.test(source)) {
+        return "金豆/熔炼物";
+      }
+      if (/矿化岩石|矿化|石英脉|氧化带/i.test(source)) {
+        return "矿化岩石";
+      }
+      if (/卫星图|卫星|地图|遥感|航拍/i.test(source)) {
+        return "卫星图";
+      }
+      if (/老鼠洞|洞采|矿洞|盗洞/i.test(source)) {
+        return "老鼠洞";
+      }
+      if (/原矿石|矿石|样本|岩石/i.test(source)) {
+        return "原矿石";
+      }
+      return "其他";
+    }
+
+    function getJudgeSceneType(text) {
+      const source = String(text || "");
+      const explicitText = [
+        getJudgeSection(source, "场景分类"),
+        getJudgeSection(source, "图像类型"),
+        getJudgeSection(source, "图片类型")
+      ].filter(Boolean).join("\n");
+
+      if (explicitText.trim()) {
+        const exact = JUDGE_SCENE_ENUM.find(scene => explicitText.includes(scene));
+        return exact || normalizeJudgeSceneName(explicitText);
+      }
+
+      return normalizeJudgeSceneName(source);
+    }
+
+    function displaySceneName(scene) {
+      const displayMap = {
+        "河道沉积": "河道照片",
+        "原矿石": "原矿样本",
+        "矿化岩石": "矿化岩石",
+        "卫星图": "卫星图",
+        "老鼠洞": "老鼠洞",
+        "金豆/熔炼物": "熔炼金属",
+        "其他": "快判对象"
+      };
+      return displayMap[scene] || "快判对象";
     }
 
     function getJudgeMisjudgeTags(text) {
@@ -4191,6 +4245,7 @@ Au值 = 纯度 × 10 后取整数</div>
         ? reasonLines.map(line => compactJudgeText(line, 22)).slice(0, 2)
         : ["缺少清楚赋存关系", "未见强结构证据"];
       const tags = getJudgeMisjudgeTags(text);
+      const sceneType = getJudgeSceneType(text);
       return {
         title: "快判结果",
         brand: "Geo Tool",
@@ -4198,7 +4253,8 @@ Au值 = 纯度 × 10 后取整数</div>
         conclusion: getCompactJudgeConclusion(text, meta),
         reasons,
         tags,
-        sampleType: getJudgeSampleType(text),
+        sceneType,
+        sampleType: displaySceneName(sceneType),
         confidence: meta?.confidence || "中",
         score: Number(meta?.score || 0)
       };
