@@ -68,6 +68,17 @@ const shareMetaMap = {
 };
 const shareImageVersion = "20260505";
 
+app.use((req, res, next) => {
+  const forwardedHost = String(req.get("x-forwarded-host") || req.get("host") || "").toLowerCase();
+  const host = forwardedHost.split(",")[0].trim().replace(/:\d+$/, "");
+
+  if (host === "geokitlab.com") {
+    return res.redirect(301, `https://www.geokitlab.com${req.originalUrl || "/"}`);
+  }
+
+  next();
+});
+
 app.use(express.json({ limit: "1mb" }));
 
 const appVersion = "2026-05-01-quota-contact-v2";
