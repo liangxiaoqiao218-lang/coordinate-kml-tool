@@ -69,10 +69,7 @@ const shareMetaMap = {
 const shareImageVersion = "20260505";
 
 app.use((req, res, next) => {
-  const forwardedHost = String(req.get("x-forwarded-host") || req.get("host") || "").toLowerCase();
-  const host = forwardedHost.split(",")[0].trim().replace(/:\d+$/, "");
-
-  if (host === "geokitlab.com") {
+  if (req.hostname === "geokitlab.com") {
     return res.redirect(301, `https://www.geokitlab.com${req.originalUrl || "/"}`);
   }
 
