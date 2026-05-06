@@ -1378,7 +1378,7 @@
       max-height: 62vh;
       overflow-y: auto;
       margin-top: 10px;
-      padding: 52px 16px 24px 16px;
+      padding: 18px 16px 24px 16px;
       background: #ffffff;
       border: 1px solid #d7e4dc;
       border-radius: 14px;
@@ -1480,10 +1480,6 @@
       font-size: 13px;
       font-weight: 750;
       line-height: 1.45;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
     }
 
     .judge-official-reason-list {
@@ -1517,11 +1513,11 @@
     }
 
     .judge-official-note {
-      padding-top: 4px;
-      color: #64748b;
-      font-size: 13px;
-      font-weight: 700;
-      line-height: 1.5;
+      margin-top: -2px;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.35;
     }
 
     .judge-decision-card[hidden] {
@@ -1827,11 +1823,23 @@
 
     .judge-result-tools {
       position: absolute;
-      right: 10px;
-      top: 40px;
+      right: 8px;
+      top: 36px;
       display: flex;
-      gap: 8px;
+      gap: 6px;
       z-index: 2;
+    }
+
+    .judge-result-tools .icon-button {
+      width: 30px;
+      min-height: 30px;
+      padding: 0;
+      border-radius: 999px;
+      background: rgba(248, 250, 252, 0.82);
+      color: #334155;
+      backdrop-filter: blur(6px);
+      box-shadow: none;
+      font-size: 17px;
     }
 
     .judge-progress-visual {
@@ -2698,14 +2706,6 @@
             </div>
           </div>
         </div>
-        <div id="judgeRecentPanel" class="judge-recent" hidden>
-          <div class="judge-recent-head">
-            <div class="judge-recent-title">最近判读对比</div>
-            <div id="judgeRecentBest" class="judge-recent-best"></div>
-            <button type="button" class="judge-recent-clear" onclick="clearJudgeRecent(event)">清空</button>
-          </div>
-          <div id="judgeRecentList" class="judge-recent-list"></div>
-        </div>
         <label id="judgeQuickUpload" for="judgeImageInput" class="judge-quick-upload" hidden>上传图片</label>
         <label id="judgeUploadCard" for="judgeImageInput" class="judge-upload-card">
           <span class="judge-upload-icon" aria-hidden="true">+</span>
@@ -2714,6 +2714,14 @@
         </label>
         <input id="judgeImageInput" class="judge-file-input" type="file" accept="image/*" />
         <div id="judgeImagePreview" class="image-preview"></div>
+        <div id="judgeRecentPanel" class="judge-recent" hidden>
+          <div class="judge-recent-head">
+            <div class="judge-recent-title">最近判读对比</div>
+            <div id="judgeRecentBest" class="judge-recent-best"></div>
+            <button type="button" class="judge-recent-clear" onclick="clearJudgeRecent(event)">清空</button>
+          </div>
+          <div id="judgeRecentList" class="judge-recent-list"></div>
+        </div>
       </div>
     </section>
 
@@ -3838,8 +3846,6 @@ Au值 = 纯度 × 10 后取整数</div>
       const validFiles = files.filter(isImageUpload);
       await showJudgeSelectedImage(validFiles.slice(0, 1));
       judgeImageInput.value = "";
-      judgeResult.value = "";
-      clearJudgeDecisionCard();
       showJudgeMessage("");
       setTimeout(() => analyzeMiningImage(), 0);
     }
@@ -4146,14 +4152,36 @@ Au值 = 纯度 × 10 后取整数</div>
       if (value.length <= maxLength) {
         return value;
       }
-      return `${value.slice(0, maxLength)}…`;
+
+      const sentence = value
+        .split(/[。！？；;，,]/)
+        .map(part => part.trim())
+        .find(part => part && part.length <= maxLength);
+      if (sentence) {
+        return sentence;
+      }
+
+      const conciseRules = [
+        [/裂隙|构造控制|结构控制/, "缺少裂隙控制"],
+        [/石英脉/, "未见石英脉关系"],
+        [/赋存|局部集中/, "缺少赋存关系"],
+        [/金属光泽|反光|发亮/, "金属光泽不等于黄金"],
+        [/黄铁矿/, "黄铁矿感明显"],
+        [/云母/, "云母感明显"],
+        [/模糊|不清晰|清晰度/, "图片清晰度有限"],
+        [/尺度|比例/, "缺少比例参照"],
+        [/沉积|河道|阶地/, "需看沉积位置"],
+        [/信息不足|证据不足/, "证据不足，需补图"]
+      ];
+      const rule = conciseRules.find(([, pattern]) => pattern.test(value));
+      return rule ? rule[1] : "";
     }
 
     function getCompactJudgeConclusion(text, meta) {
       const sectionConclusion = getFirstMeaningfulLine(getJudgeSection(text, "结论"), "");
       const summary = getFirstMeaningfulLine(getJudgeSection(text, "一句话总结"), "");
       const fallback = meta?.summary?.replace(/^👉\s*/, "") || "证据不足，暂不建议投入。";
-      return compactJudgeText(sectionConclusion || summary || fallback, 20);
+      return compactJudgeText(sectionConclusion || summary || fallback, 20) || "证据不足，暂不建议投入";
     }
 
     const JUDGE_SCENE_ENUM = [
@@ -4241,8 +4269,9 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function buildJudgeOfficialCardMeta(text, meta, grade) {
       const reasonLines = getJudgeReasonLines(text);
-      const reasons = reasonLines.length > 0
-        ? reasonLines.map(line => compactJudgeText(line, 22)).slice(0, 2)
+      const compactReasons = reasonLines.map(line => compactJudgeText(line, 22)).filter(Boolean).slice(0, 2);
+      const reasons = compactReasons.length > 0
+        ? compactReasons
         : ["缺少清楚赋存关系", "未见强结构证据"];
       const tags = getJudgeMisjudgeTags(text);
       const sceneType = getJudgeSceneType(text);
@@ -4270,7 +4299,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const meta = getJudgeDecisionMeta(grade, text);
       const official = buildJudgeOfficialCardMeta(text, meta, grade);
       const bestScore = updateJudgeBestScore(meta.score);
-      const imageSrc = getCurrentJudgeImageDataUrl();
+      const imageSrc = comparison?.image || comparison?.item?.image || getCurrentJudgeImageDataUrl();
       judgeDecisionCard.hidden = false;
       judgeDecisionCard.className = `judge-decision-card grade-${grade.toLowerCase()}`;
       judgeDecisionCard.innerHTML = `
