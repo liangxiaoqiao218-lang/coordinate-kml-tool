@@ -147,12 +147,12 @@
     }
 
     .dashboard-errors {
-      border-color: #991b1b;
-      background: linear-gradient(135deg, #991b1b, #7f1d1d);
+      border-color: #fecaca;
+      background: #fff7f7;
     }
 
     .dashboard-errors .card {
-      background: #b91c1c;
+      background: #16a34a;
       border-color: rgba(255, 255, 255, 0.24);
       box-shadow: none;
     }
@@ -318,6 +318,47 @@
       z-index: 2;
       background: #f8fafc;
       box-shadow: 0 1px 0 #d8e0ec;
+    }
+
+    .user-table-scroll .sticky-action {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      min-width: 128px;
+      background: #ffffff;
+      box-shadow: 1px 0 0 #d8e0ec;
+    }
+
+    .user-table-scroll thead .sticky-action {
+      z-index: 4;
+      background: #f8fafc;
+    }
+
+    .user-table-scroll .col-user {
+      max-width: 180px;
+      min-width: 160px;
+    }
+
+    .user-table-scroll .col-ip {
+      max-width: 120px;
+      min-width: 110px;
+    }
+
+    .user-table-scroll .col-device {
+      max-width: 220px;
+      min-width: 180px;
+    }
+
+    .user-table-scroll .col-note {
+      max-width: 170px;
+      min-width: 140px;
+    }
+
+    .cell-ellipsis {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     table {
@@ -532,7 +573,8 @@
     .dashboard-errors h3,
     .dashboard-errors .card span,
     .dashboard-errors .card strong,
-    .dashboard-errors .card.metric-danger strong {
+    .dashboard-errors .card.metric-danger strong,
+    .dashboard-errors .card.metric-ok strong {
       color: #ffffff;
     }
 
@@ -541,12 +583,21 @@
     }
 
     .dashboard-errors .card span {
-      color: #fee2e2;
+      color: rgba(255, 255, 255, 0.86);
     }
 
     .dashboard-errors .card strong,
-    .dashboard-errors .card.metric-danger strong {
+    .dashboard-errors .card.metric-danger strong,
+    .dashboard-errors .card.metric-ok strong {
       font-weight: 900;
+    }
+
+    .dashboard-errors .card.metric-ok {
+      background: #16a34a;
+    }
+
+    .dashboard-errors .card.metric-danger {
+      background: #b91c1c;
     }
 
     .dashboard-alert {
@@ -964,13 +1015,14 @@
         <table>
           <thead>
             <tr>
-              <th>用户ID</th>
+              <th class="sticky-action">操作</th>
+              <th class="col-user">用户ID</th>
               <th>VIP</th>
-              <th>最近IP</th>
+              <th class="col-ip">最近IP</th>
               <th>地区</th>
-              <th>设备</th>
+              <th class="col-device">设备</th>
               <th>最后访问</th>
-              <th>备注</th>
+              <th class="col-note">备注</th>
               <th>用户标签</th>
               <th>免费坐标</th>
               <th>付费坐标</th>
@@ -978,7 +1030,6 @@
               <th>付费判读</th>
               <th>创建时间</th>
               <th>更新时间</th>
-              <th>操作</th>
             </tr>
           </thead>
           <tbody id="supabaseUsersBody"></tbody>
@@ -1112,6 +1163,7 @@
     let activeAdminModule = "dashboard";
     let quotaEditorDirty = false;
     let toastTimer = null;
+    const ADMIN_AI_BALANCE_ESTIMATE = 100;
 
     document.getElementById("password").value = adminPassword;
     setupAdminConsole();
@@ -1331,6 +1383,9 @@
       setDashboardValue("dashJudgeFailed", errors.judgeFailedCount);
       setDashboardValue("dashConvertFailed", errors.convertFailedCount);
       setDashboardValue("dashNetworkFailed", errors.networkTimeoutFailedCount);
+      updateErrorMetricCard("dashJudgeFailed", "AI 判读失败", errors.judgeFailedCount);
+      updateErrorMetricCard("dashConvertFailed", "坐标识别失败", errors.convertFailedCount);
+      updateErrorMetricCard("dashNetworkFailed", "网络/超时失败", errors.networkTimeoutFailedCount);
 
       setDashboardValue("dashAiTodayCalls", aiCost.todayCalls);
       setDashboardText("dashAiTodayCost", formatCurrencyCny(aiCost.todayCostCny));
@@ -1394,6 +1449,21 @@
           <td>${escapeHtml(log.region || "-")}</td>
         </tr>
       `).join("");
+    }
+
+    function updateErrorMetricCard(id, label, value) {
+      const el = document.getElementById(id);
+      const card = el?.closest(".card");
+      const span = card?.querySelector("span");
+      const count = Number(value || 0);
+
+      if (!card || !span) {
+        return;
+      }
+
+      card.classList.toggle("metric-danger", count > 0);
+      card.classList.toggle("metric-ok", count <= 0);
+      span.textContent = count > 0 ? `${label} · 需关注` : `${label} · 暂无异常`;
     }
 
     function renderGrowthDashboardExtras(data = {}) {
@@ -1541,10 +1611,31 @@
         const tools = usagePanel.querySelector(".table-tools");
         usagePanel.insertBefore(summary, tools || usagePanel.firstChild);
       }
+      let balance = document.getElementById("usageAiBalance");
+      if (!balance) {
+        balance = document.createElement("div");
+        balance.id = "usageAiBalance";
+        balance.className = "usage-summary";
+        usagePanel.insertBefore(balance, summary);
+      }
       const successful = usageLogs.filter(log => log.success);
       const count = feature => successful.filter(log => log.feature_type === feature).length;
       const failed = usageLogs.filter(log => !log.success).length;
       const aiCost = dashboardStats?.aiCost || {};
+      const todayAiCost = Number(aiCost.todayCostCny || 0);
+      const trendItems = aiCost.trend || [];
+      const sevenDayAiCost = trendItems.reduce((sum, item) => sum + Number(item.cost_cny || item.costCny || 0), 0);
+      const dailyCostBase = sevenDayAiCost > 0 ? sevenDayAiCost / Math.max(trendItems.length, 1) : todayAiCost;
+      const availableDays = dailyCostBase > 0 ? Math.floor(ADMIN_AI_BALANCE_ESTIMATE / dailyCostBase) : 0;
+      const shouldRecharge = ADMIN_AI_BALANCE_ESTIMATE < 20 || (availableDays > 0 && availableDays <= 7);
+
+      balance.innerHTML = `
+        <div class="card ${shouldRecharge ? "metric-warn" : "metric-ok"}"><span>预估余额</span><strong>${formatCurrencyCny(ADMIN_AI_BALANCE_ESTIMATE)}</strong></div>
+        <div class="card"><span>今日 AI 成本</span><strong>${formatCurrencyCny(todayAiCost)}</strong></div>
+        <div class="card"><span>近 7 日 AI 成本</span><strong>${formatCurrencyCny(sevenDayAiCost)}</strong></div>
+        <div class="card ${shouldRecharge ? "metric-warn" : "metric-ok"}"><span>预计可用天数</span><strong>${dailyCostBase > 0 ? `${availableDays.toLocaleString("zh-CN")} 天` : "充足"}</strong></div>
+        <div class="card ${shouldRecharge ? "metric-warn" : "metric-ok"}"><span>余额提醒</span><strong>${shouldRecharge ? "建议充值" : "余额正常"}</strong></div>
+      `;
       summary.innerHTML = `
         <div class="card"><span>矿地快判调用</span><strong>${count("judge").toLocaleString("zh-CN")}</strong></div>
         <div class="card"><span>坐标处理调用</span><strong>${count("convert").toLocaleString("zh-CN")}</strong></div>
@@ -1560,7 +1651,6 @@
         trend.className = "mini-trend";
         summary.insertAdjacentElement("afterend", trend);
       }
-      const trendItems = aiCost.trend || [];
       const maxCalls = Math.max(...trendItems.map(item => Number(item.calls || 0)), 1);
       trend.innerHTML = trendItems.length
         ? trendItems.map(item => `
@@ -1769,13 +1859,19 @@
           const noteSummary = note.length > 24 ? `${note.slice(0, 24)}...` : note;
 
           return `<tr>
-            <td>${escapeHtml(userId)}</td>
+            <td class="sticky-action">
+              <div class="actions">
+                <button type="button" onclick="openSupabaseQuotaEditor('${encodedUserId}')">编辑</button>
+                <button type="button" class="${user.is_vip ? "danger" : "success"}" onclick="setSupabaseVip('${encodedUserId}', ${user.is_vip ? "false" : "true"})">${user.is_vip ? "取消VIP" : "设为VIP"}</button>
+              </div>
+            </td>
+            <td class="col-user" title="${escapeHtml(userId)}"><span class="cell-ellipsis">${escapeHtml(userId)}</span></td>
             <td>${user.is_vip ? "是" : "否"}</td>
-            <td>${escapeHtml(user.last_ip || "-")}</td>
+            <td class="col-ip" title="${escapeHtml(user.last_ip || "-")}"><span class="cell-ellipsis">${escapeHtml(user.last_ip || "-")}</span></td>
             <td>${escapeHtml(region)}</td>
-            <td>${escapeHtml(user.device_info || user.user_agent || "-")}</td>
+            <td class="col-device" title="${escapeHtml(user.device_info || user.user_agent || "-")}"><span class="cell-ellipsis">${escapeHtml(user.device_info || user.user_agent || "-")}</span></td>
             <td>${formatTime(user.last_seen_at) || "-"}</td>
-            <td>${escapeHtml(noteSummary || "-")}</td>
+            <td class="col-note" title="${escapeHtml(note || "-")}"><span class="cell-ellipsis">${escapeHtml(noteSummary || "-")}</span></td>
             <td>${renderUserTags(user)}</td>
             <td>${Number(user.free_convert_count || 0)}</td>
             <td>${Number(user.paid_convert_count || 0)}</td>
@@ -1783,12 +1879,6 @@
             <td>${Number(user.paid_judge_count || 0)}</td>
             <td>${formatTime(user.created_at)}</td>
             <td>${formatTime(user.updated_at)}</td>
-            <td>
-              <div class="actions">
-                <button type="button" onclick="openSupabaseQuotaEditor('${encodedUserId}')">编辑</button>
-                <button type="button" class="${user.is_vip ? "danger" : "success"}" onclick="setSupabaseVip('${encodedUserId}', ${user.is_vip ? "false" : "true"})">${user.is_vip ? "取消VIP" : "设为VIP"}</button>
-              </div>
-            </td>
           </tr>`;
         })
         .join("");
