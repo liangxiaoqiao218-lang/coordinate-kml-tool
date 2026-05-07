@@ -58,7 +58,7 @@ const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE
 const shareMetaMap = {
   "/": {
     title: "矿业空间工具 Geo Tool",
-    desc: "坐标处理、AI矿地判读、黄金成色估算，一页进入。",
+    desc: "坐标处理、矿地快判、黄金成色计算。",
     image: "/share-home.png"
   },
   "/tool": {
@@ -77,8 +77,8 @@ const shareMetaMap = {
     image: "/share-tool.png"
   },
   "/judge": {
-    title: "AI矿地判读",
-    desc: "上传一张图，快速判断是否值得继续投入。",
+    title: "矿地快判",
+    desc: "上传矿石、河道或卫星图，快速进行结构初筛。",
     image: "/share-judge.png"
   },
   "/gold": {
