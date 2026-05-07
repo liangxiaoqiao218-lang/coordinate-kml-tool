@@ -434,6 +434,206 @@
       white-space: pre-line;
     }
 
+    .admin-tabs {
+      position: sticky;
+      top: 0;
+      z-index: 8;
+      display: flex;
+      gap: 8px;
+      margin: 14px 0;
+      padding: 8px;
+      border: 1px solid #d8e0ec;
+      border-radius: 12px;
+      background: rgba(244, 247, 251, 0.92);
+      backdrop-filter: blur(10px);
+      overflow-x: auto;
+    }
+
+    .admin-tabs button {
+      background: #eaf0f8;
+      color: #17345f;
+      border-radius: 10px;
+      flex: 0 0 auto;
+    }
+
+    .admin-tabs button.active {
+      background: #0f2f5f;
+      color: #ffffff;
+    }
+
+    .module-section {
+      display: none;
+    }
+
+    .module-section.active {
+      display: block;
+    }
+
+    .panel,
+    .modal-card,
+    .card,
+    .status-item,
+    .switch-item,
+    .detail-cell,
+    .log-item {
+      border-radius: 12px;
+    }
+
+    .panel,
+    .modal-card {
+      box-shadow: 0 14px 36px rgba(15, 47, 95, 0.08);
+    }
+
+    .card {
+      background: #ffffff;
+      color: #0f172a;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 8px 22px rgba(15, 47, 95, 0.08);
+    }
+
+    .card span {
+      color: #64748b;
+    }
+
+    .metric-ok strong {
+      color: #16a34a;
+    }
+
+    .metric-warn strong {
+      color: #f97316;
+    }
+
+    .metric-danger strong {
+      color: #dc2626;
+    }
+
+    .dashboard-alert {
+      display: none;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 1px solid #fecaca;
+      border-radius: 12px;
+      background: #fef2f2;
+      color: #991b1b;
+      font-weight: 700;
+    }
+
+    .dashboard-alert.active {
+      display: block;
+    }
+
+    .mini-trend {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .trend-line {
+      display: grid;
+      grid-template-columns: 90px 1fr 70px;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    .trend-bar {
+      height: 9px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e2e8f0;
+    }
+
+    .trend-bar span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: #0f2f5f;
+    }
+
+    .tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .user-tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 40;
+      display: none;
+      max-width: 320px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #0f2f5f;
+      color: #ffffff;
+      box-shadow: 0 18px 40px rgba(15, 47, 95, 0.24);
+      font-weight: 700;
+    }
+
+    .toast.active {
+      display: block;
+    }
+
+    .usage-summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin: 12px 0;
+    }
+
+    .switch-control {
+      position: relative;
+      width: 52px;
+      height: 28px;
+      padding: 0;
+      border-radius: 999px;
+      background: #cbd5e1;
+    }
+
+    .switch-control input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .switch-control::after {
+      content: "";
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: #ffffff;
+      transition: transform 0.2s ease;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.2);
+    }
+
+    .switch-item.active .switch-control {
+      background: #16a34a;
+    }
+
+    .switch-item.active .switch-control::after {
+      transform: translateX(24px);
+    }
+
+    .switch-state {
+      display: none;
+    }
+
     @media (max-width: 760px) {
       .login,
       .quota-grid {
@@ -452,8 +652,8 @@
 </head>
 <body>
   <main class="page">
-    <h1>矿业空间工具后台</h1>
-    <p class="muted">正式运营后台仅使用 Supabase users 表管理用户次数、付费余额和 VIP 状态。</p>
+    <h1>GeoKit Lab 增长控制台</h1>
+    <p class="muted">面向运营监控、用户管理、使用分析和系统开关的后台工作台。</p>
 
     <section class="panel login">
       <div>
@@ -465,6 +665,13 @@
     </section>
 
     <div id="message" class="message"></div>
+
+    <nav class="admin-tabs" aria-label="后台模块">
+      <button type="button" class="active" data-module-tab="dashboard" onclick="showAdminModule('dashboard')">Dashboard</button>
+      <button type="button" data-module-tab="user" onclick="showAdminModule('user')">User</button>
+      <button type="button" data-module-tab="usage" onclick="showAdminModule('usage')">Usage</button>
+      <button type="button" data-module-tab="system" onclick="showAdminModule('system')">System</button>
+    </nav>
 
     <section class="panel" id="dashboardPanel">
       <h2>运营总览</h2>
@@ -686,6 +893,14 @@
         <input id="supabaseIpFilter" placeholder="IP筛选" oninput="renderSupabaseUsers()" />
         <input id="supabaseRegionFilter" placeholder="地区筛选" oninput="renderSupabaseUsers()" />
         <input id="supabaseDeviceFilter" placeholder="设备筛选" oninput="renderSupabaseUsers()" />
+        <select id="supabaseTagFilter" onchange="renderSupabaseUsers()">
+          <option value="">全部标签</option>
+          <option value="AI">AI</option>
+          <option value="成色">成色</option>
+          <option value="坐标">坐标</option>
+          <option value="高活跃">高活跃</option>
+          <option value="潜在客户">潜在客户</option>
+        </select>
         <select id="supabaseUserFilter" onchange="setSupabaseQuickFilter(this.value)">
           <option value="all">全部用户</option>
           <option value="vip">VIP用户</option>
@@ -714,6 +929,7 @@
               <th>设备</th>
               <th>最后访问</th>
               <th>备注</th>
+              <th>用户标签</th>
               <th>免费坐标</th>
               <th>付费坐标</th>
               <th>免费判读</th>
@@ -834,12 +1050,13 @@
         </div>
 
         <div class="editor-actions">
-          <button type="button" onclick="saveSupabaseQuota()">保存修改</button>
-          <button type="button" class="button-secondary" onclick="closeSupabaseQuotaEditor()">取消</button>
+          <button type="button" onclick="saveSupabaseQuota()">保存并关闭</button>
+          <button type="button" class="button-secondary" onclick="closeSupabaseQuotaEditor()">关闭（不保存）</button>
         </div>
         <div id="quotaEditMessage" class="message"></div>
       </div>
     </div>
+    <div id="adminToast" class="toast" role="status" aria-live="polite"></div>
   </main>
 
   <script>
@@ -850,11 +1067,69 @@
     let userUsageCounts = {};
     let supabaseUserFilter = "all";
     let dashboardStats = null;
+    let activeAdminModule = "dashboard";
+    let quotaEditorDirty = false;
+    let toastTimer = null;
 
     document.getElementById("password").value = adminPassword;
+    setupAdminConsole();
 
     if (adminPassword) {
       refreshAll();
+    }
+
+    function setupAdminConsole() {
+      const panels = Array.from(document.querySelectorAll("main > section.panel"));
+      panels.forEach(panel => {
+        const title = panel.querySelector("h2")?.textContent || "";
+        if (panel.id === "dashboardPanel") {
+          panel.dataset.adminModule = "dashboard";
+        } else if (title.includes("用户与次数")) {
+          panel.dataset.adminModule = "user";
+        } else if (title.includes("消费记录")) {
+          panel.dataset.adminModule = "usage";
+        } else if (title.includes("系统状态") || title.includes("系统功能")) {
+          panel.dataset.adminModule = "system";
+        } else if (title.includes("运营概览")) {
+          panel.dataset.adminModule = "deprecated";
+        }
+
+        if (panel.dataset.adminModule) {
+          panel.classList.add("module-section");
+        }
+      });
+      showAdminModule(activeAdminModule);
+      renderGrowthDashboardExtras({});
+      ["quotaFreeConvert", "quotaPaidConvert", "quotaFreeJudge", "quotaPaidJudge", "quotaAdminNote"].forEach(id => {
+        document.getElementById(id)?.addEventListener("input", () => {
+          quotaEditorDirty = true;
+        });
+      });
+    }
+
+    function showAdminModule(moduleName) {
+      activeAdminModule = moduleName || "dashboard";
+      document.querySelectorAll("[data-module-tab]").forEach(button => {
+        button.classList.toggle("active", button.dataset.moduleTab === activeAdminModule);
+      });
+      document.querySelectorAll(".module-section").forEach(panel => {
+        const module = panel.dataset.adminModule;
+        const shouldShow = module === activeAdminModule;
+        panel.classList.toggle("active", shouldShow);
+        if (module === "deprecated") {
+          panel.classList.remove("active");
+        }
+      });
+    }
+
+    function showToast(message, isError = false) {
+      const toast = document.getElementById("adminToast");
+      if (!toast) return;
+      toast.textContent = message || "";
+      toast.style.background = isError ? "#b91c1c" : "#0f2f5f";
+      toast.classList.add("active");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("active"), 2200);
     }
 
     function setMessage(text, isError = false) {
@@ -946,6 +1221,7 @@
         const result = await adminFetch("/api/admin/dashboard-stats");
         dashboardStats = result;
         renderDashboardStats(result);
+        renderUsageSummary();
 
         if (showMessage) {
           setDashboardMessage(result.setupRequired
@@ -1020,6 +1296,7 @@
       setDashboardText("dashAiAverageCost", formatCurrencyCny(aiCost.averageCostCny));
       setDashboardText("dashAiRemainingCalls", `${Number(aiCost.remainingCallsFor100Cny || 0).toLocaleString("zh-CN")} 次`);
       setDashboardValue("dashAiTodayTokens", aiCost.todayTotalTokens);
+      renderGrowthDashboardExtras(data);
 
       const aiTrendBody = document.getElementById("dashboardAiTrendBody");
       if (aiTrendBody) {
@@ -1077,6 +1354,68 @@
       `).join("");
     }
 
+    function renderGrowthDashboardExtras(data = {}) {
+      const panel = document.getElementById("dashboardPanel");
+      if (!panel) return;
+
+      const rows = Array.from(panel.querySelectorAll(".dashboard-row"));
+      rows.forEach(row => {
+        row.style.display = "none";
+      });
+      rows[0]?.style.setProperty("display", "");
+
+      let alert = document.getElementById("dashboardAlert");
+      if (!alert) {
+        alert = document.createElement("div");
+        alert.id = "dashboardAlert";
+        alert.className = "dashboard-alert";
+        panel.insertBefore(alert, rows[1] || null);
+      }
+
+      const today = data.today || {};
+      const errors = data.errors || {};
+      const failed = Number(today.failedCount || 0);
+      const networkFailed = Number(errors.networkTimeoutFailedCount || 0);
+      alert.classList.toggle("active", failed > 0 || networkFailed > 0);
+      alert.textContent = failed > 0 || networkFailed > 0
+        ? `异常提醒：今日失败 ${failed} 次，其中网络/超时 ${networkFailed} 次。`
+        : "";
+
+      let trend = document.getElementById("dashboardMiniTrend");
+      if (!trend) {
+        trend = document.createElement("div");
+        trend.id = "dashboardMiniTrend";
+        trend.className = "mini-trend";
+        const wrap = document.createElement("div");
+        wrap.className = "dashboard-row growth-trend-row";
+        wrap.innerHTML = `<h3>简要趋势</h3>`;
+        wrap.appendChild(trend);
+        panel.insertBefore(wrap, rows[1] || null);
+      }
+      document.querySelector(".growth-trend-row")?.style.setProperty("display", "");
+      panel.querySelector(".dashboard-errors")?.style.setProperty("display", "");
+      panel.querySelector("#dashboardErrorsBody")?.closest(".dashboard-row")?.style.setProperty("display", "");
+
+      const metrics = [
+        ["矿地快判", Number(today.judgeCount || 0)],
+        ["坐标处理", Number(today.convertCount || 0)],
+        ["黄金成色", Number(today.goldCount || 0)]
+      ];
+      const max = Math.max(...metrics.map(item => item[1]), 1);
+      trend.innerHTML = metrics.map(([label, value]) => `
+        <div class="trend-line">
+          <strong>${escapeHtml(label)}</strong>
+          <div class="trend-bar"><span style="width:${Math.max(6, Math.round(value / max * 100))}%"></span></div>
+          <span>${value.toLocaleString("zh-CN")} 次</span>
+        </div>
+      `).join("");
+
+      ["dashTodayActive", "dashTodayJudge", "dashTodayConvert", "dashTodayGold", "dashTodayTotal", "dashTodayFailed"].forEach((id, index) => {
+        document.getElementById(id)?.closest(".card")?.classList.toggle("metric-danger", id === "dashTodayFailed" && failed > 0);
+        document.getElementById(id)?.closest(".card")?.classList.toggle("metric-ok", index < 5);
+      });
+    }
+
     async function loadSupabaseUsers(showMessage = true) {
       try {
         if (showMessage) {
@@ -1120,6 +1459,7 @@
           }
           return counts;
         }, {});
+        renderUsageSummary();
         renderUsageLogs(usageLogs, result.setupRequired);
         renderSupabaseUsers();
         if (showMessage) {
@@ -1128,6 +1468,7 @@
       } catch (error) {
         usageLogs = [];
         userUsageCounts = {};
+        renderUsageSummary();
         renderUsageLogs([]);
         setUsageLogMessage(error.message, true);
       }
@@ -1144,6 +1485,50 @@
       if (!element) return;
       element.textContent = message || "";
       element.classList.toggle("error", Boolean(isError));
+    }
+
+    function renderUsageSummary() {
+      const usagePanel = Array.from(document.querySelectorAll("main > section.panel"))
+        .find(panel => panel.dataset.adminModule === "usage");
+      if (!usagePanel) return;
+      let summary = document.getElementById("usageSummary");
+      if (!summary) {
+        summary = document.createElement("div");
+        summary.id = "usageSummary";
+        summary.className = "usage-summary";
+        const tools = usagePanel.querySelector(".table-tools");
+        usagePanel.insertBefore(summary, tools || usagePanel.firstChild);
+      }
+      const successful = usageLogs.filter(log => log.success);
+      const count = feature => successful.filter(log => log.feature_type === feature).length;
+      const failed = usageLogs.filter(log => !log.success).length;
+      const aiCost = dashboardStats?.aiCost || {};
+      summary.innerHTML = `
+        <div class="card"><span>矿地快判调用</span><strong>${count("judge").toLocaleString("zh-CN")}</strong></div>
+        <div class="card"><span>坐标处理调用</span><strong>${count("convert").toLocaleString("zh-CN")}</strong></div>
+        <div class="card"><span>黄金成色访问</span><strong>${count("gold").toLocaleString("zh-CN")}</strong></div>
+        <div class="card"><span>AI估算成本</span><strong>${formatCurrencyCny(aiCost.todayCostCny)}</strong></div>
+        <div class="card ${failed ? "metric-danger" : "metric-ok"}"><span>失败记录</span><strong>${failed.toLocaleString("zh-CN")}</strong></div>
+      `;
+
+      let trend = document.getElementById("usageCostTrend");
+      if (!trend) {
+        trend = document.createElement("div");
+        trend.id = "usageCostTrend";
+        trend.className = "mini-trend";
+        summary.insertAdjacentElement("afterend", trend);
+      }
+      const trendItems = aiCost.trend || [];
+      const maxCalls = Math.max(...trendItems.map(item => Number(item.calls || 0)), 1);
+      trend.innerHTML = trendItems.length
+        ? trendItems.map(item => `
+          <div class="trend-line">
+            <strong>${escapeHtml(item.date || "-")}</strong>
+            <div class="trend-bar"><span style="width:${Math.max(6, Math.round(Number(item.calls || 0) / maxCalls * 100))}%"></span></div>
+            <span>${Number(item.calls || 0).toLocaleString("zh-CN")} 次</span>
+          </div>
+        `).join("")
+        : `<div class="muted">暂无趋势数据。</div>`;
     }
 
     function renderUsageLogs(logs, setupRequired = false) {
@@ -1226,6 +1611,25 @@
       return getPaidBalance(user) + getFreeBalance(user);
     }
 
+    function getUserTags(user) {
+      const tags = [];
+      const userId = user?.user_id;
+      const note = String(user?.admin_note || "");
+      const userLogs = usageLogs.filter(log => log.user_id === userId && log.success);
+      if (userLogs.some(log => log.feature_type === "judge")) tags.push("AI");
+      if (userLogs.some(log => log.feature_type === "gold")) tags.push("成色");
+      if (userLogs.some(log => log.feature_type === "convert")) tags.push("坐标");
+      if (Number(userUsageCounts[userId] || 0) >= 5 || isToday(user?.last_seen_at)) tags.push("高活跃");
+      if (getPaidBalance(user) > 0 || /付款|付费|微信|客户|联系|潜在/.test(note)) tags.push("潜在客户");
+      return [...new Set(tags)];
+    }
+
+    function renderUserTags(user) {
+      const tags = getUserTags(user);
+      if (!tags.length) return "-";
+      return `<div class="tag-list">${tags.map(tag => `<span class="user-tag">${escapeHtml(tag)}</span>`).join("")}</div>`;
+    }
+
     function isToday(value) {
       if (!value) return false;
       const date = new Date(value);
@@ -1257,22 +1661,26 @@
       const ipKeyword = document.getElementById("supabaseIpFilter")?.value.trim().toLowerCase() || "";
       const regionKeyword = document.getElementById("supabaseRegionFilter")?.value.trim().toLowerCase() || "";
       const deviceKeyword = document.getElementById("supabaseDeviceFilter")?.value.trim().toLowerCase() || "";
+      const tagKeyword = document.getElementById("supabaseTagFilter")?.value || "";
 
       return list.filter(user => {
         const region = getUserRegion(user);
         const device = user.device_info || user.user_agent || "";
+        const tags = getUserTags(user);
         const haystack = [
           user.user_id,
           user.last_ip,
           region,
           device,
-          user.admin_note
+          user.admin_note,
+          tags.join(" ")
         ].join(" ").toLowerCase();
 
         if (keyword && !haystack.includes(keyword)) return false;
         if (ipKeyword && !String(user.last_ip || "").toLowerCase().includes(ipKeyword)) return false;
         if (regionKeyword && !String(region || "").toLowerCase().includes(regionKeyword)) return false;
         if (deviceKeyword && !String(device || "").toLowerCase().includes(deviceKeyword)) return false;
+        if (tagKeyword && !tags.includes(tagKeyword)) return false;
 
         if (supabaseUserFilter === "vip") return Boolean(user.is_vip);
         if (supabaseUserFilter === "paid") return getPaidBalance(user) > 0;
@@ -1306,7 +1714,7 @@
       const filteredList = sortSupabaseUsers(filterSupabaseUsers(list));
 
       if (!filteredList.length) {
-        body.innerHTML = `<tr><td colspan="14" class="muted">暂无用户</td></tr>`;
+        body.innerHTML = `<tr><td colspan="15" class="muted">暂无用户</td></tr>`;
         return;
       }
 
@@ -1326,6 +1734,7 @@
             <td>${escapeHtml(user.device_info || user.user_agent || "-")}</td>
             <td>${formatTime(user.last_seen_at) || "-"}</td>
             <td>${escapeHtml(noteSummary || "-")}</td>
+            <td>${renderUserTags(user)}</td>
             <td>${Number(user.free_convert_count || 0)}</td>
             <td>${Number(user.paid_convert_count || 0)}</td>
             <td>${Number(user.free_judge_count || 0)}</td>
@@ -1402,6 +1811,7 @@
         });
         renderFeatureFlags(result.featureFlags || {});
         setMessage("功能开关已保存。");
+        showToast("保存成功");
       } catch (error) {
         setMessage(`保存功能开关失败：${error.message}`, true);
         await loadFeatureFlags().catch(() => {});
@@ -1434,13 +1844,18 @@
       renderAdminLogs([]);
       renderUserUsageLogs([]);
       setQuotaEditMessage("");
+      quotaEditorDirty = false;
       document.getElementById("supabaseQuotaModal").classList.add("active");
       loadSupabaseLogs(selectedSupabaseUser.user_id);
       loadUserUsageLogs(selectedSupabaseUser.user_id);
     }
 
     function closeSupabaseQuotaEditor() {
+      if (quotaEditorDirty && !window.confirm("有未保存修改，确认关闭吗？")) {
+        return;
+      }
       selectedSupabaseUser = null;
+      quotaEditorDirty = false;
       document.getElementById("supabaseQuotaModal").classList.remove("active");
       setQuotaEditMessage("");
       renderAdminLogs([]);
@@ -1459,6 +1874,7 @@
         ["AI判读次数", `免费 ${Number(user.free_judge_count || 0)} / 付费 ${Number(user.paid_judge_count || 0)}`],
         ["坐标转换次数", `免费 ${Number(user.free_convert_count || 0)} / 付费 ${Number(user.paid_convert_count || 0)}`],
         ["总使用次数", `${Number(userUsageCounts[user.user_id] || 0)} 次`],
+        ["用户标签", getUserTags(user).join(" / ") || "-"],
         ["备注摘要", user.admin_note || "-"]
       ];
       summary.innerHTML = cells.map(([label, value]) => `
@@ -1495,6 +1911,7 @@
         document.getElementById("quotaVipToggle").textContent = selectedSupabaseUser.is_vip ? "取消VIP" : "设为VIP";
         renderUserDetailSummary(selectedSupabaseUser);
         setQuotaEditMessage("VIP 状态已更新。");
+        showToast("保存成功");
         await loadSupabaseUsers(false);
         await loadSupabaseLogs(selectedSupabaseUser.user_id);
       } catch (error) {
@@ -1521,11 +1938,22 @@
         });
 
         selectedSupabaseUser = result.user || selectedSupabaseUser;
+        const nextNote = document.getElementById("quotaAdminNote").value;
+        if (nextNote !== String(selectedSupabaseUser.admin_note || "")) {
+          const noteResult = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/note`, {
+            method: "PATCH",
+            body: JSON.stringify({ admin_note: nextNote })
+          });
+          selectedSupabaseUser = noteResult.user || selectedSupabaseUser;
+        }
         renderUserDetailSummary(selectedSupabaseUser);
         setQuotaEditMessage("操作成功。");
         setSupabaseUserMessage("操作成功。");
         await loadSupabaseUsers(false);
         await loadSupabaseLogs(selectedSupabaseUser.user_id);
+        quotaEditorDirty = false;
+        showToast("保存成功");
+        closeSupabaseQuotaEditor();
       } catch (error) {
         setQuotaEditMessage(`保存失败：${error.message}`, true);
       }
@@ -1549,6 +1977,8 @@
         selectedSupabaseUser = result.user || selectedSupabaseUser;
         renderUserDetailSummary(selectedSupabaseUser);
         setQuotaEditMessage("备注已保存。");
+        quotaEditorDirty = false;
+        showToast("保存成功");
         await loadSupabaseUsers(false);
         await loadSupabaseLogs(selectedSupabaseUser.user_id);
       } catch (error) {
