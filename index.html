@@ -4367,18 +4367,18 @@ Au值 = 纯度 × 10 后取整数</div>
 
     const FAST_JUDGE_COPY = {
       A: [
-        "这个值得认真看。",
+        "这个值得继续看。",
         "已经不像普通误判。",
-        "可以继续验证。"
+        "这张可以认真看。"
       ],
       B: [
         "开始有点意思了。",
         "至少不像典型误判。",
-        "可以继续补结构。"
+        "这张先留着看。"
       ],
       C: [
         "有点像，但还不够。",
-        "能继续观察，别太上头。",
+        "能看，但别上头。",
         "目前证据还偏弱。"
       ],
       D: [
@@ -4391,22 +4391,45 @@ Au值 = 纯度 × 10 后取整数</div>
 
     const FAST_JUDGE_REASON_COPY = {
       A: [
-        "结构线索比颜色更站得住。",
-        "可以补断面和现场图验证。"
+        "不像单纯靠颜色。",
+        "关键位置有看头。"
       ],
       B: [
-        "有线索，但还差关键证据。",
-        "先补角度，别直接下重注。"
+        "没那么像普通误判。",
+        "有点东西，但不够硬。"
       ],
       C: [
         "颜色不等于价值。",
-        "缺少能支撑判断的结构关系。",
-        "先当弱线索处理。"
+        "亮点有，但不够稳。",
+        "看着像，还差一口气。"
       ],
       D: [
         "反光太整，容易误判。",
         "没看到赋存关系。",
-        "缺少裂隙或石英脉控制。"
+        "只有颜色，没有说服力。"
+      ]
+    };
+
+    const FAST_JUDGE_ACTION_COPY = {
+      A: [
+        "建议继续验证。",
+        "补现场图再定。",
+        "可以往下追。"
+      ],
+      B: [
+        "继续补结构。",
+        "换角度再拍。",
+        "先小步验证。"
+      ],
+      C: [
+        "先别急着投入。",
+        "补图再说。",
+        "别重投入。"
+      ],
+      D: [
+        "先别浪费时间。",
+        "直接换下一张。",
+        "不用急着下场。"
       ]
     };
 
@@ -4429,6 +4452,10 @@ Au值 = 纯度 × 10 后取整数</div>
       const fastReason = pickFastJudgeCopy(FAST_JUDGE_REASON_COPY[grade] || FAST_JUDGE_REASON_COPY.C, `${grade}|${text || ""}`);
       const fallback = fallbackReasons.find(reason => String(reason || "").trim());
       return compactJudgeText(fastReason || fallback || "先补关键照片再判断。", 18);
+    }
+
+    function getFastJudgeAction(grade, text) {
+      return pickFastJudgeCopy(FAST_JUDGE_ACTION_COPY[grade] || FAST_JUDGE_ACTION_COPY.C, `${text || ""}|${grade}|action`);
     }
 
     function getJudgeHistoryBest(items = getJudgeRecentItems()) {
@@ -4621,6 +4648,7 @@ Au值 = 纯度 × 10 后取整数</div>
         grade,
         conclusion: getFastJudgeConclusion(grade, text, meta),
         reasons,
+        action: getFastJudgeAction(grade, text),
         tags: sceneTags.length ? sceneTags : tags,
         sceneType,
         sampleType: displaySceneName(sceneType, text),
@@ -4657,6 +4685,7 @@ Au值 = 纯度 × 10 后取整数</div>
               <div class="judge-official-verdict">${escapeHtml(official.conclusion)}</div>
               <div class="judge-official-reason-list">
                 ${official.reasons.map(reason => `<div class="judge-official-reason">· ${escapeHtml(reason)}</div>`).join("")}
+                <div class="judge-official-reason">· ${escapeHtml(official.action)}</div>
               </div>
               <div class="judge-official-tags">
                 ${(official.tags.length ? official.tags : [official.sampleType]).slice(0, 3).map(tag => `<span class="judge-official-tag">${escapeHtml(tag)}</span>`).join("")}
