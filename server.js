@@ -57,32 +57,32 @@ const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "https://www.go
 const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE_API_KEY || "").trim();
 const shareMetaMap = {
   "/": {
-    title: "矿业空间工具 Geo Tool",
+    title: "GeoKit Lab｜矿业空间实验室",
     desc: "坐标处理、矿地快判、黄金成色计算。",
     image: "/share-home.png"
   },
   "/tool": {
-    title: "坐标处理工具",
+    title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool.png"
   },
   "/convert": {
-    title: "坐标处理工具",
+    title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool.png"
   },
   "/ocr": {
-    title: "坐标处理工具",
+    title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool.png"
   },
   "/judge": {
-    title: "矿地快判",
+    title: "矿地快判｜GeoKit Lab",
     desc: "上传矿石、河道或卫星图，快速进行结构初筛。",
     image: "/share-judge.png"
   },
   "/gold": {
-    title: "黄金成色计算器",
+    title: "黄金成色计算器｜GeoKit Lab",
     desc: "输入黄金重量和排水差重，快速估算成色、K值和参考总价。",
     image: "/share-gold.png"
   }
