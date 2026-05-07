@@ -147,12 +147,14 @@
     }
 
     .dashboard-errors {
-      border-color: #fecaca;
-      background: #fff7f7;
+      border-color: #991b1b;
+      background: linear-gradient(135deg, #991b1b, #7f1d1d);
     }
 
     .dashboard-errors .card {
-      background: #7f1d1d;
+      background: #b91c1c;
+      border-color: rgba(255, 255, 255, 0.24);
+      box-shadow: none;
     }
 
     .status-grid {
@@ -296,6 +298,26 @@
 
     .table-scroll {
       overflow-x: auto;
+    }
+
+    .user-table-scroll {
+      max-height: min(68vh, 720px);
+      overflow: auto;
+      border: 1px solid #d8e0ec;
+      border-radius: 12px;
+      background: #ffffff;
+    }
+
+    .user-table-scroll table {
+      min-width: 1580px;
+    }
+
+    .user-table-scroll thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #f8fafc;
+      box-shadow: 0 1px 0 #d8e0ec;
     }
 
     table {
@@ -507,6 +529,26 @@
       color: #dc2626;
     }
 
+    .dashboard-errors h3,
+    .dashboard-errors .card span,
+    .dashboard-errors .card strong,
+    .dashboard-errors .card.metric-danger strong {
+      color: #ffffff;
+    }
+
+    .dashboard-errors h3 {
+      font-weight: 800;
+    }
+
+    .dashboard-errors .card span {
+      color: #fee2e2;
+    }
+
+    .dashboard-errors .card strong,
+    .dashboard-errors .card.metric-danger strong {
+      font-weight: 900;
+    }
+
     .dashboard-alert {
       display: none;
       margin-top: 12px;
@@ -667,10 +709,10 @@
     <div id="message" class="message"></div>
 
     <nav class="admin-tabs" aria-label="后台模块">
-      <button type="button" class="active" data-module-tab="dashboard" onclick="showAdminModule('dashboard')">Dashboard</button>
-      <button type="button" data-module-tab="user" onclick="showAdminModule('user')">User</button>
-      <button type="button" data-module-tab="usage" onclick="showAdminModule('usage')">Usage</button>
-      <button type="button" data-module-tab="system" onclick="showAdminModule('system')">System</button>
+      <button type="button" class="active" data-module-tab="dashboard" onclick="showAdminModule('dashboard')">总览</button>
+      <button type="button" data-module-tab="user" onclick="showAdminModule('user')">用户</button>
+      <button type="button" data-module-tab="usage" onclick="showAdminModule('usage')">使用分析</button>
+      <button type="button" data-module-tab="system" onclick="showAdminModule('system')">系统</button>
     </nav>
 
     <section class="panel" id="dashboardPanel">
@@ -918,7 +960,7 @@
         </select>
         <button type="button" onclick="loadSupabaseUsers()">刷新</button>
       </div>
-      <div class="table-scroll">
+      <div class="table-scroll user-table-scroll">
         <table>
           <thead>
             <tr>
