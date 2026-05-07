@@ -204,6 +204,19 @@
       font-size: 14px;
     }
 
+    .switch-copy {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .switch-copy small {
+      display: block;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
     .switch-state {
       display: inline-flex;
       align-items: center;
@@ -945,10 +958,23 @@
           </label>
         </div>
         <div class="switch-item active" data-feature="goldCalculatorEnabled">
-          <strong>黄金成色计算器</strong>
+          <div class="switch-copy">
+            <strong>黄金成色计算器</strong>
+            <small>用于黄金成色、含金量、公式查看相关功能；可查看“查看公式”相关功能是否启用。</small>
+          </div>
           <label class="switch-control">
             <input type="checkbox" checked onchange="saveFeatureFlags(this)" />
             <span class="switch-state">开启</span>
+          </label>
+        </div>
+        <div class="switch-item" data-feature="quoteComparisonEnabled">
+          <div class="switch-copy">
+            <strong>报价对比</strong>
+            <small>用于不同报价方案对比；当前未接入实时金价，默认关闭。</small>
+          </div>
+          <label class="switch-control">
+            <input type="checkbox" onchange="saveFeatureFlags(this)" />
+            <span class="switch-state">关闭</span>
           </label>
         </div>
         <div class="switch-item active" data-feature="manualSupportEnabled">
@@ -1912,6 +1938,16 @@
       return featureFlags;
     }
 
+    const defaultFeatureFlags = {
+      aiOcrEnabled: true,
+      xyConvertEnabled: true,
+      kmlExportEnabled: true,
+      aiJudgeEnabled: true,
+      goldCalculatorEnabled: true,
+      manualSupportEnabled: true,
+      quoteComparisonEnabled: false
+    };
+
     function renderFeatureFlags(featureFlags = {}) {
       document.querySelectorAll(".switch-item[data-feature]").forEach(item => {
         const key = item.dataset.feature;
@@ -1919,7 +1955,9 @@
         if (!input) {
           return;
         }
-        input.checked = featureFlags[key] !== false;
+        input.checked = Object.prototype.hasOwnProperty.call(featureFlags, key)
+          ? featureFlags[key] !== false
+          : defaultFeatureFlags[key] !== false;
         setFeatureSwitchState(input);
       });
     }
