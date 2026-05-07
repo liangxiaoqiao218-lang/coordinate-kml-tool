@@ -714,6 +714,94 @@ function normalizeUsageFeatureType(type) {
   return type === "judge" ? "judge" : "convert";
 }
 
+const AI_JUDGE_ESTIMATED_COST_PER_CALL_CNY = Number(process.env.AI_JUDGE_COST_PER_CALL_CNY || 0.03);
+const AI_INPUT_TOKEN_PRICE_PER_1K_CNY = Number(process.env.AI_INPUT_TOKEN_PRICE_PER_1K_CNY || 0);
+const AI_OUTPUT_TOKEN_PRICE_PER_1K_CNY = Number(process.env.AI_OUTPUT_TOKEN_PRICE_PER_1K_CNY || 0);
+const AI_COST_NOTE_PREFIX = "AI_COST_META:";
+
+function toFiniteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function pickTokenUsage(usage = {}) {
+  const promptTokens = toNonNegativeInteger(
+    usage.prompt_tokens ?? usage.input_tokens ?? usage.inputTokens ?? usage.promptTokens,
+    0
+  );
+  const completionTokens = toNonNegativeInteger(
+    usage.completion_tokens ?? usage.output_tokens ?? usage.outputTokens ?? usage.completionTokens,
+    0
+  );
+  const totalTokens = toNonNegativeInteger(
+    usage.total_tokens ?? usage.totalTokens,
+    promptTokens + completionTokens
+  );
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens
+  };
+}
+
+function estimateAiCostCnyFromUsage(usage = {}) {
+  const tokens = pickTokenUsage(usage);
+  const tokenCost = (
+    (tokens.prompt_tokens / 1000) * AI_INPUT_TOKEN_PRICE_PER_1K_CNY
+    + (tokens.completion_tokens / 1000) * AI_OUTPUT_TOKEN_PRICE_PER_1K_CNY
+  );
+
+  if (tokenCost > 0) {
+    return Number(tokenCost.toFixed(6));
+  }
+
+  return Number(Math.max(0, AI_JUDGE_ESTIMATED_COST_PER_CALL_CNY).toFixed(6));
+}
+
+function buildAiCostMetadata(usage = {}, extra = {}) {
+  const tokens = pickTokenUsage(usage);
+  return {
+    kind: "ai_cost",
+    provider: "aliyun",
+    model: extra.model || aliyunVisionModel || "",
+    estimated_cost_cny: estimateAiCostCnyFromUsage(usage),
+    prompt_tokens: tokens.prompt_tokens,
+    completion_tokens: tokens.completion_tokens,
+    total_tokens: tokens.total_tokens,
+    pricing: {
+      fallback_cost_per_call_cny: AI_JUDGE_ESTIMATED_COST_PER_CALL_CNY,
+      input_token_price_per_1k_cny: AI_INPUT_TOKEN_PRICE_PER_1K_CNY,
+      output_token_price_per_1k_cny: AI_OUTPUT_TOKEN_PRICE_PER_1K_CNY
+    }
+  };
+}
+
+function encodeUsageLogNote(note = "", metadata = null) {
+  const text = String(note || "").trim();
+  if (!metadata) {
+    return text;
+  }
+
+  const metaText = `${AI_COST_NOTE_PREFIX}${JSON.stringify(metadata)}`;
+  return [text, metaText].filter(Boolean).join("\n");
+}
+
+function parseUsageLogMetadata(note = "") {
+  const text = String(note || "");
+  const index = text.indexOf(AI_COST_NOTE_PREFIX);
+  if (index < 0) {
+    return null;
+  }
+
+  const raw = text.slice(index + AI_COST_NOTE_PREFIX.length).split(/\r?\n/)[0];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 async function writeUsageLog({
   userId,
   req,
@@ -723,7 +811,8 @@ async function writeUsageLog({
   afterBalance,
   success,
   note = "",
-  errorReason = ""
+  errorReason = "",
+  metadata = null
 }) {
   if (!supabase || !userId) {
     return;
@@ -763,7 +852,7 @@ async function writeUsageLog({
         before_balance: beforeBalance || null,
         after_balance: afterBalance || null,
         success: !!success,
-        note: String(note || "").slice(0, 1000) || null,
+        note: encodeUsageLogNote(note, metadata).slice(0, 1000) || null,
         error_reason: String(errorReason || "").slice(0, 1000) || null
       });
 
@@ -894,12 +983,14 @@ async function checkUsage(userId, type) {
   };
 }
 
-async function consumeUsage(userId, type, req = null) {
+async function consumeUsage(userId, type, req = null, options = {}) {
   const featureType = normalizeUsageFeatureType(type);
   const rule = getUsageRule(featureType);
   const status = await checkUsage(userId, featureType);
   const user = status.user;
   const beforeBalance = extractUsageBalanceFields(user);
+  const usageNote = options.note || "";
+  const usageMetadata = options.metadata || null;
 
   if (rule.unlimited) {
     await writeUsageLog({
@@ -910,7 +1001,8 @@ async function consumeUsage(userId, type, req = null) {
       beforeBalance,
       afterBalance: beforeBalance,
       success: true,
-      note: "Unlimited feature, no quota consumed"
+      note: usageNote || "Unlimited feature, no quota consumed",
+      metadata: usageMetadata
     });
     return status;
   }
@@ -938,7 +1030,8 @@ async function consumeUsage(userId, type, req = null) {
       beforeBalance,
       afterBalance: beforeBalance,
       success: true,
-      note: `VIP monthly quota used, no paid quota consumed`
+      note: usageNote || `VIP monthly quota used, no paid quota consumed`,
+      metadata: usageMetadata
     });
     return status;
   }
@@ -972,7 +1065,9 @@ async function consumeUsage(userId, type, req = null) {
         consumeType: status.source,
         beforeBalance,
         afterBalance: extractUsageBalanceFields(data),
-        success: true
+        success: true,
+        note: usageNote,
+        metadata: usageMetadata
       });
 
       return {
@@ -988,7 +1083,7 @@ async function consumeUsage(userId, type, req = null) {
   const freshStatus = await checkUsage(userId, featureType);
 
   if (freshStatus.allowed && freshStatus.source !== status.source) {
-    return consumeUsage(userId, featureType, req);
+    return consumeUsage(userId, featureType, req, options);
   }
 
   const freshUser = freshStatus.user || await getOrCreateSupabaseUser(userId);
@@ -3589,6 +3684,8 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
     const last30Start = new Date(now);
     last30Start.setDate(last30Start.getDate() - 29);
     last30Start.setHours(0, 0, 0, 0);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const queryStart = monthStart < last30Start ? monthStart : last30Start;
 
     const emptyStats = {
       success: true,
@@ -3625,6 +3722,22 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         convertFailedCount: 0,
         networkTimeoutFailedCount: 0
       },
+      aiCost: {
+        todayCalls: 0,
+        todayCostCny: 0,
+        monthCostCny: 0,
+        averageCostCny: 0,
+        remainingCallsFor100Cny: 0,
+        todayPromptTokens: 0,
+        todayCompletionTokens: 0,
+        todayTotalTokens: 0,
+        monthPromptTokens: 0,
+        monthCompletionTokens: 0,
+        monthTotalTokens: 0,
+        trend: [],
+        topUsers: [],
+        byFeature: {}
+      },
       recentErrors: []
     };
 
@@ -3635,7 +3748,7 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
       supabase
         .from("usage_logs")
         .select("id,user_id,ip,region,device_info,feature_type,consume_type,success,error_reason,note,created_at")
-        .gte("created_at", last30Start.toISOString())
+        .gte("created_at", queryStart.toISOString())
         .order("created_at", { ascending: false })
         .limit(5000)
     ]);
@@ -3667,6 +3780,67 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
     const countFeature = (list, feature) => list.filter(log => log.feature_type === feature).length;
     const countConsume = (list, consumeType) => list.filter(log => log.consume_type === consumeType && log.success).length;
     const isNetworkTimeout = log => /timeout|network|超时|网络/i.test(`${log.error_reason || ""} ${log.note || ""}`);
+    const getAiMeta = log => parseUsageLogMetadata(log.note);
+    const getAiCost = log => {
+      const meta = getAiMeta(log);
+      if (!meta || meta.kind !== "ai_cost") {
+        return log.feature_type === "judge" && log.success ? AI_JUDGE_ESTIMATED_COST_PER_CALL_CNY : 0;
+      }
+      return toFiniteNumber(meta.estimated_cost_cny, AI_JUDGE_ESTIMATED_COST_PER_CALL_CNY);
+    };
+    const getAiTokens = (log, key) => {
+      const meta = getAiMeta(log);
+      if (!meta || meta.kind !== "ai_cost") return 0;
+      return toNonNegativeInteger(meta[key], 0);
+    };
+    const sum = (list, pick) => list.reduce((total, item) => total + Number(pick(item) || 0), 0);
+    const roundCurrency = value => Number(toFiniteNumber(value, 0).toFixed(2));
+    const successfulMonthLogs = logs.filter(log => log.success && new Date(log.created_at) >= monthStart);
+    const successfulAiTodayLogs = successfulTodayLogs.filter(log => log.feature_type === "judge");
+    const successfulAiMonthLogs = successfulMonthLogs.filter(log => log.feature_type === "judge");
+    const aiTodayCost = sum(successfulAiTodayLogs, getAiCost);
+    const aiMonthCost = sum(successfulAiMonthLogs, getAiCost);
+    const aiAverageCost = successfulAiMonthLogs.length
+      ? aiMonthCost / successfulAiMonthLogs.length
+      : AI_JUDGE_ESTIMATED_COST_PER_CALL_CNY;
+    const aiTrendMap = new Map();
+    const topAiUsersMap = new Map();
+    for (let dayIndex = 6; dayIndex >= 0; dayIndex -= 1) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - dayIndex);
+      const key = date.toISOString().slice(0, 10);
+      aiTrendMap.set(key, { date: key, calls: 0, costCny: 0 });
+    }
+    for (const log of successful7DayLogs.filter(item => item.feature_type === "judge")) {
+      const key = new Date(log.created_at).toISOString().slice(0, 10);
+      const trendItem = aiTrendMap.get(key) || { date: key, calls: 0, costCny: 0 };
+      trendItem.calls += 1;
+      trendItem.costCny += getAiCost(log);
+      aiTrendMap.set(key, trendItem);
+
+      const userId = log.user_id || "unknown";
+      const userItem = topAiUsersMap.get(userId) || {
+        userId,
+        calls: 0,
+        costCny: 0,
+        lastSeenAt: log.created_at
+      };
+      userItem.calls += 1;
+      userItem.costCny += getAiCost(log);
+      if (new Date(log.created_at) > new Date(userItem.lastSeenAt || 0)) {
+        userItem.lastSeenAt = log.created_at;
+      }
+      topAiUsersMap.set(userId, userItem);
+    }
+    const byFeature = {};
+    for (const log of successfulTodayLogs) {
+      const feature = log.feature_type || "unknown";
+      byFeature[feature] = byFeature[feature] || { calls: 0, costCny: 0 };
+      byFeature[feature].calls += 1;
+      if (feature === "judge") {
+        byFeature[feature].costCny += getAiCost(log);
+      }
+    }
     const paidUsers = users.filter(user =>
       Number(user.paid_convert_count || 0) > 0 || Number(user.paid_judge_count || 0) > 0
     ).length;
@@ -3711,6 +3885,36 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         judgeFailedCount: todayFailures.filter(log => log.feature_type === "judge").length,
         convertFailedCount: todayFailures.filter(log => log.feature_type === "convert").length,
         networkTimeoutFailedCount: todayFailures.filter(isNetworkTimeout).length
+      },
+      aiCost: {
+        todayCalls: successfulAiTodayLogs.length,
+        todayCostCny: roundCurrency(aiTodayCost),
+        monthCostCny: roundCurrency(aiMonthCost),
+        averageCostCny: roundCurrency(aiAverageCost),
+        remainingCallsFor100Cny: aiAverageCost > 0 ? Math.floor(100 / aiAverageCost) : 0,
+        todayPromptTokens: sum(successfulAiTodayLogs, log => getAiTokens(log, "prompt_tokens")),
+        todayCompletionTokens: sum(successfulAiTodayLogs, log => getAiTokens(log, "completion_tokens")),
+        todayTotalTokens: sum(successfulAiTodayLogs, log => getAiTokens(log, "total_tokens")),
+        monthPromptTokens: sum(successfulAiMonthLogs, log => getAiTokens(log, "prompt_tokens")),
+        monthCompletionTokens: sum(successfulAiMonthLogs, log => getAiTokens(log, "completion_tokens")),
+        monthTotalTokens: sum(successfulAiMonthLogs, log => getAiTokens(log, "total_tokens")),
+        trend: Array.from(aiTrendMap.values()).map(item => ({
+          ...item,
+          costCny: roundCurrency(item.costCny)
+        })),
+        topUsers: Array.from(topAiUsersMap.values())
+          .sort((a, b) => b.calls - a.calls || b.costCny - a.costCny)
+          .slice(0, 10)
+          .map(item => ({
+            ...item,
+            costCny: roundCurrency(item.costCny)
+          })),
+        byFeature: Object.fromEntries(
+          Object.entries(byFeature).map(([key, value]) => [
+            key,
+            { calls: value.calls, costCny: roundCurrency(value.costCny) }
+          ])
+        )
       },
       recentErrors: logs
         .filter(log => !log.success)
@@ -4200,7 +4404,13 @@ B 可以观察
       data.records.push(record);
       data.usage[visitorId] = data.usage[visitorId] || {};
       data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
-      const usageResult = await consumeUsage(visitorId, "judge", req);
+      const aiCostMetadata = buildAiCostMetadata(response?.usage || {}, {
+        model: response?.model || aliyunVisionModel
+      });
+      const usageResult = await consumeUsage(visitorId, "judge", req, {
+        note: `AI judge cost estimate: ${aiCostMetadata.estimated_cost_cny} CNY`,
+        metadata: aiCostMetadata
+      });
       await appendUsageLog(data, user, req, "judge", usageResult.source);
 
       if (user) {
@@ -4384,7 +4594,13 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
     data.records.push(record);
     data.usage[visitorId] = data.usage[visitorId] || {};
     data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
-    const usageResult = await consumeUsage(visitorId, "judge", req);
+    const aiCostMetadata = buildAiCostMetadata(response?.usage || {}, {
+      model: response?.model || aliyunVisionModel
+    });
+    const usageResult = await consumeUsage(visitorId, "judge", req, {
+      note: `AI judge cost estimate: ${aiCostMetadata.estimated_cost_cny} CNY`,
+      metadata: aiCostMetadata
+    });
     await appendUsageLog(data, user, req, "judge", usageResult.source);
 
     if (user) {

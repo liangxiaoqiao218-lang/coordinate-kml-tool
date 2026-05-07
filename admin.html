@@ -514,6 +514,51 @@
         </div>
       </div>
 
+      <div class="dashboard-row">
+        <h3>AI 成本监控</h3>
+        <div class="cards">
+          <div class="card"><span>今日 AI 调用</span><strong id="dashAiTodayCalls">0</strong></div>
+          <div class="card"><span>今日估算成本</span><strong id="dashAiTodayCost">¥0.00</strong></div>
+          <div class="card"><span>本月 AI 成本</span><strong id="dashAiMonthCost">¥0.00</strong></div>
+          <div class="card"><span>单次平均成本</span><strong id="dashAiAverageCost">¥0.00</strong></div>
+          <div class="card"><span>100元约可判读</span><strong id="dashAiRemainingCalls">0 次</strong></div>
+          <div class="card"><span>今日 tokens</span><strong id="dashAiTodayTokens">0</strong></div>
+        </div>
+      </div>
+
+      <div class="dashboard-row">
+        <h3>AI 成本趋势</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>调用次数</th>
+                <th>估算成本</th>
+              </tr>
+            </thead>
+            <tbody id="dashboardAiTrendBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="dashboard-row">
+        <h3>高频消耗用户</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>用户ID</th>
+                <th>AI判读次数</th>
+                <th>估算成本</th>
+                <th>最近使用</th>
+              </tr>
+            </thead>
+            <tbody id="dashboardAiTopUsersBody"></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="dashboard-row dashboard-errors">
         <h3>异常数据</h3>
         <div class="cards">
@@ -922,6 +967,16 @@
       el.textContent = Number(value || 0).toLocaleString("zh-CN");
     }
 
+    function setDashboardText(id, value) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = value == null ? "-" : String(value);
+    }
+
+    function formatCurrencyCny(value) {
+      return `¥${Number(value || 0).toFixed(2)}`;
+    }
+
     function renderDashboardStats(stats) {
       const data = stats || {};
       const today = data.today || {};
@@ -929,6 +984,7 @@
       const users = data.users || {};
       const consumption = data.consumption || {};
       const errors = data.errors || {};
+      const aiCost = data.aiCost || {};
 
       setDashboardValue("dashTodayActive", today.activeUsers);
       setDashboardValue("dashTodayJudge", today.judgeCount);
@@ -957,6 +1013,42 @@
       setDashboardValue("dashJudgeFailed", errors.judgeFailedCount);
       setDashboardValue("dashConvertFailed", errors.convertFailedCount);
       setDashboardValue("dashNetworkFailed", errors.networkTimeoutFailedCount);
+
+      setDashboardValue("dashAiTodayCalls", aiCost.todayCalls);
+      setDashboardText("dashAiTodayCost", formatCurrencyCny(aiCost.todayCostCny));
+      setDashboardText("dashAiMonthCost", formatCurrencyCny(aiCost.monthCostCny));
+      setDashboardText("dashAiAverageCost", formatCurrencyCny(aiCost.averageCostCny));
+      setDashboardText("dashAiRemainingCalls", `${Number(aiCost.remainingCallsFor100Cny || 0).toLocaleString("zh-CN")} 次`);
+      setDashboardValue("dashAiTodayTokens", aiCost.todayTotalTokens);
+
+      const aiTrendBody = document.getElementById("dashboardAiTrendBody");
+      if (aiTrendBody) {
+        const trend = aiCost.trend || [];
+        aiTrendBody.innerHTML = trend.length
+          ? trend.map(item => `
+            <tr>
+              <td>${escapeHtml(item.date || "-")}</td>
+              <td>${Number(item.calls || 0).toLocaleString("zh-CN")}</td>
+              <td>${formatCurrencyCny(item.costCny)}</td>
+            </tr>
+          `).join("")
+          : `<tr><td colspan="3" class="muted">暂无 AI 成本趋势。</td></tr>`;
+      }
+
+      const aiTopUsersBody = document.getElementById("dashboardAiTopUsersBody");
+      if (aiTopUsersBody) {
+        const topUsers = aiCost.topUsers || [];
+        aiTopUsersBody.innerHTML = topUsers.length
+          ? topUsers.map(item => `
+            <tr>
+              <td>${escapeHtml(item.userId || "-")}</td>
+              <td>${Number(item.calls || 0).toLocaleString("zh-CN")}</td>
+              <td>${formatCurrencyCny(item.costCny)}</td>
+              <td>${formatTime(item.lastSeenAt) || "-"}</td>
+            </tr>
+          `).join("")
+          : `<tr><td colspan="4" class="muted">暂无高频 AI 消耗用户。</td></tr>`;
+      }
 
       const body = document.getElementById("dashboardErrorsBody");
       if (!body) return;
