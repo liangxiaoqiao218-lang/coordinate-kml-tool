@@ -4366,71 +4366,120 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     const FAST_JUDGE_COPY = {
-      A: [
-        "这个值得继续看。",
-        "已经不像普通误判。",
-        "这张可以认真看。"
-      ],
-      B: [
-        "开始有点意思了。",
-        "至少不像典型误判。",
-        "这张先留着看。"
-      ],
-      C: [
-        "有点像，但还不够。",
-        "能看，但别上头。",
-        "目前证据还偏弱。"
-      ],
-      D: [
-        "这种误判太常见。",
-        "先排除，别急着投入。",
-        "亮得太均匀，风险很高。",
-        "只有颜色，没有结构。"
-      ]
+      mineral: {
+        A: ["这个值得继续看。", "已经不像普通误判。", "这张可以认真看。"],
+        B: ["开始有点意思了。", "至少不像典型误判。", "这张先留着看。"],
+        C: ["有点像，但还不够。", "能看，但别上头。", "目前证据还偏弱。"],
+        D: ["这种误判太常见。", "先排除，别急着投入。", "亮得太均匀，风险很高。", "只有颜色，没有结构。"]
+      },
+      river: {
+        A: ["河道条件值得看。", "这个河段可以跟。", "先圈这段重点看。"],
+        B: ["河道成立，继续看。", "有沉积环境，先跟。", "这段可以补现场。"],
+        C: ["河道有，但还不够。", "能看，别急下结论。", "只看河道还不够。"],
+        D: ["河道线索不强。", "先别急着下场。", "这段暂时不优先。"]
+      },
+      satellite: {
+        A: ["结构值得圈出来。", "这段可以重点看。", "图上有可追线索。"],
+        B: ["地貌有点意思。", "先圈重点段。", "适合继续初筛。"],
+        C: ["图上只能看方向。", "还要落到现场。", "先别直接下场。"],
+        D: ["图上线索不强。", "不适合直接下场。", "先换区域再看。"]
+      },
+      environment: {
+        A: ["环境可以再补图。", "先补地貌关系。", "这张只能作参考。"],
+        B: ["环境有点信息。", "继续补现场图。", "还要看上下文。"],
+        C: ["这不是典型场景。", "环境照还不够。", "不能直接判断有金。"],
+        D: ["这张先不成立。", "环境信息不够。", "别凭这张下结论。"]
+      },
+      metal: {
+        A: ["像成品金，去测。", "外观看着有戏。", "先测成色再说。"],
+        B: ["外观看着像。", "可以先做成色测试。", "别只看颜色。"],
+        C: ["像，但不能替检测。", "先测成色，别猜。", "外观还不够硬。"],
+        D: ["别只看颜色。", "外观支撑不够。", "先检测再判断。"]
+      },
+      neutral: {
+        A: ["这张可以继续看。", "先补关键照片。", "可以再验证。"],
+        B: ["有点信息，继续补。", "先留着看。", "换角度再拍。"],
+        C: ["信息还不够。", "需要更多角度。", "暂不直接判断。"],
+        D: ["先别急着判断。", "这张信息不够。", "先补图再说。"]
+      }
     };
 
     const FAST_JUDGE_REASON_COPY = {
-      A: [
-        "不像单纯靠颜色。",
-        "关键位置有看头。"
-      ],
-      B: [
-        "没那么像普通误判。",
-        "有点东西，但不够硬。"
-      ],
-      C: [
-        "颜色不等于价值。",
-        "亮点有，但不够稳。",
-        "看着像，还差一口气。"
-      ],
-      D: [
-        "反光太整，容易误判。",
-        "没看到赋存关系。",
-        "只有颜色，没有说服力。"
-      ]
+      mineral: {
+        A: ["不像单纯靠颜色。", "关键位置有看头。"],
+        B: ["没那么像普通误判。", "有点东西，但不够硬。"],
+        C: ["颜色不等于价值。", "亮点有，但不够稳。", "看着像，还差一口气。"],
+        D: ["反光太整，容易误判。", "没看到赋存关系。", "只有颜色，没有说服力。"]
+      },
+      river: {
+        A: ["沉积位置有看头。", "上下游关系要跟。"],
+        B: ["有沉积环境。", "先看上下游。"],
+        C: ["缺少采挖痕迹。", "沉积位置还不明确。", "上下游还没对上。"],
+        D: ["河道条件不突出。", "没看到明显采挖痕迹。"]
+      },
+      satellite: {
+        A: ["地貌结构有看头。", "适合圈重点段。"],
+        B: ["河道形态能看。", "先做范围初筛。"],
+        C: ["图上只能看方向。", "还要现场验证。"],
+        D: ["地貌线索不够强。", "不适合直接圈区。"]
+      },
+      environment: {
+        A: ["还要补位置关系。", "先看周边地貌。"],
+        B: ["环境能参考。", "缺少关键位置。"],
+        C: ["不是典型砂金图。", "缺少地貌关系。"],
+        D: ["不能凭环境照判断。", "没有直接金线索。"]
+      },
+      metal: {
+        A: ["看熔融和密实感。", "下一步测成色。"],
+        B: ["外观可以看。", "还要测纯度。"],
+        C: ["外观不能替检测。", "先测成色。"],
+        D: ["颜色不能当结论。", "外观证据不够。"]
+      },
+      neutral: {
+        A: ["还要补关键照片。"],
+        B: ["信息还要补。"],
+        C: ["角度还不够。"],
+        D: ["信息不足。"]
+      }
     };
 
     const FAST_JUDGE_ACTION_COPY = {
-      A: [
-        "建议继续验证。",
-        "补现场图再定。",
-        "可以往下追。"
-      ],
-      B: [
-        "继续补结构。",
-        "换角度再拍。",
-        "先小步验证。"
-      ],
-      C: [
-        "先别急着投入。",
-        "补图再说。",
-        "别重投入。"
-      ],
-      D: [
-        "先别浪费时间。",
-        "直接换下一张。",
-        "不用急着下场。"
-      ]
+      mineral: {
+        A: ["建议继续验证。", "补现场图再定。", "可以往下追。"],
+        B: ["继续补结构。", "换角度再拍。", "先小步验证。"],
+        C: ["先别急着投入。", "补图再说。", "别重投入。"],
+        D: ["先别浪费时间。", "直接换下一张。", "不用急着下场。"]
+      },
+      river: {
+        A: ["继续看上下游。", "补采挖痕迹图。", "先圈重点河段。"],
+        B: ["补上下游对比。", "看沉积厚度。", "找采挖痕迹。"],
+        C: ["先补现场河床。", "别急着投入。", "再看上下游。"],
+        D: ["先换河段看。", "不急着下场。", "补图再判断。"]
+      },
+      satellite: {
+        A: ["圈重点段验证。", "落到现场看。", "补近景环境图。"],
+        B: ["先圈区初筛。", "补现场照片。", "沿河道再看。"],
+        C: ["落地验证再说。", "别只看地图。", "补现场图。"],
+        D: ["先换区域看。", "不建议直接下场。", "再找地貌线索。"]
+      },
+      environment: {
+        A: ["补地貌关系图。", "补现场近景。"],
+        B: ["继续补位置图。", "加上下游照片。"],
+        C: ["先补关键角度。", "别直接判断。"],
+        D: ["换图再判。", "先补有效照片。"]
+      },
+      metal: {
+        A: ["直接测成色。", "复称复检。", "别只看照片。"],
+        B: ["先测成色。", "看密度和重量。"],
+        C: ["检测后再说。", "别只凭外观。"],
+        D: ["先做检测。", "别按颜色判断。"]
+      },
+      neutral: {
+        A: ["继续补图验证。"],
+        B: ["换角度再拍。"],
+        C: ["先补图再说。"],
+        D: ["先别下结论。"]
+      }
     };
 
     function pickFastJudgeCopy(list, seedText = "") {
@@ -4443,19 +4492,34 @@ Au值 = 纯度 × 10 后取整数</div>
       return items[hash % items.length];
     }
 
-    function getFastJudgeConclusion(grade, text, meta) {
-      const source = `${grade}|${meta?.score || ""}|${text || ""}`;
-      return pickFastJudgeCopy(FAST_JUDGE_COPY[grade] || FAST_JUDGE_COPY.C, source);
+    function getFastJudgeSceneKey(sceneType, text = "") {
+      const source = String(text || "");
+      if (sceneType === "河道沉积") return "river";
+      if (sceneType === "卫星图") return "satellite";
+      if (sceneType === "金豆/熔炼物") return "metal";
+      if (sceneType === "原矿石" || sceneType === "矿化岩石") return "mineral";
+      if (/海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) return "environment";
+      return "neutral";
     }
 
-    function getFastJudgeReason(grade, text, fallbackReasons = []) {
-      const fastReason = pickFastJudgeCopy(FAST_JUDGE_REASON_COPY[grade] || FAST_JUDGE_REASON_COPY.C, `${grade}|${text || ""}`);
+    function getSceneCopyGroup(library, sceneKey, grade) {
+      const sceneGroup = library[sceneKey] || library.neutral || {};
+      return sceneGroup[grade] || sceneGroup.C || library.neutral?.[grade] || library.neutral?.C || [];
+    }
+
+    function getFastJudgeConclusion(grade, text, meta, sceneKey = "neutral") {
+      const source = `${sceneKey}|${grade}|${meta?.score || ""}|${text || ""}`;
+      return pickFastJudgeCopy(getSceneCopyGroup(FAST_JUDGE_COPY, sceneKey, grade), source);
+    }
+
+    function getFastJudgeReason(grade, text, fallbackReasons = [], sceneKey = "neutral") {
+      const fastReason = pickFastJudgeCopy(getSceneCopyGroup(FAST_JUDGE_REASON_COPY, sceneKey, grade), `${sceneKey}|${grade}|${text || ""}`);
       const fallback = fallbackReasons.find(reason => String(reason || "").trim());
       return compactJudgeText(fastReason || fallback || "先补关键照片再判断。", 18);
     }
 
-    function getFastJudgeAction(grade, text) {
-      return pickFastJudgeCopy(FAST_JUDGE_ACTION_COPY[grade] || FAST_JUDGE_ACTION_COPY.C, `${text || ""}|${grade}|action`);
+    function getFastJudgeAction(grade, text, sceneKey = "neutral") {
+      return pickFastJudgeCopy(getSceneCopyGroup(FAST_JUDGE_ACTION_COPY, sceneKey, grade), `${sceneKey}|${text || ""}|${grade}|action`);
     }
 
     function getJudgeHistoryBest(items = getJudgeRecentItems()) {
@@ -4617,8 +4681,25 @@ Au值 = 纯度 × 10 后取整数</div>
         ].filter(([, pattern]) => pattern.test(source)).map(([tag]) => tag);
         return [...new Set(remoteTags.length ? remoteTags : ["遥感图"])].slice(0, 3);
       }
+      if (sceneType === "河道沉积") {
+        const riverTags = [
+          ["河道环境", /河道|溪流|河床|河流|冲沟|水系/i],
+          ["沉积空间", /沉积|砂滩|砂洲|阶地|河漫滩|冲积/i],
+          ["上下游待看", /上下游|上游|下游|对比|关系/i],
+          ["采挖痕迹不足", /采挖|开挖|淘金|痕迹|不足|未见|缺少/i]
+        ].filter(([, pattern]) => pattern.test(source)).map(([tag]) => tag);
+        return [...new Set(riverTags.length ? riverTags : ["河道环境", "上下游待看"])].slice(0, 3);
+      }
       if (/海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) {
         return ["环境照片", "非矿石样本", "无直接金线索"];
+      }
+      if (sceneType === "金豆/熔炼物") {
+        const metalTags = [
+          ["熔炼外观", /熔炼|熔融|金豆|成品金|已提炼/i],
+          ["需测成色", /成色|纯度|检测|复检|密度/i],
+          ["外观参考", /外观|颜色|金属|密实|纹理/i]
+        ].filter(([, pattern]) => pattern.test(source)).map(([tag]) => tag);
+        return [...new Set(metalTags.length ? metalTags : ["需测成色", "外观参考"])].slice(0, 3);
       }
       const tagRules = [
         ["云母感", /云母|片状反光|片状/i],
@@ -4638,17 +4719,18 @@ Au值 = 纯度 × 10 后取整数</div>
     function buildJudgeOfficialCardMeta(text, meta, grade) {
       const reasonLines = getJudgeReasonLines(text);
       const compactReasons = reasonLines.map(line => compactJudgeText(line, 22)).filter(Boolean).slice(0, 2);
-      const reasons = [getFastJudgeReason(grade, text, compactReasons)].filter(Boolean);
-      const tags = getJudgeMisjudgeTags(text);
       const sceneType = getJudgeSceneType(text);
+      const sceneKey = getFastJudgeSceneKey(sceneType, text);
+      const reasons = [getFastJudgeReason(grade, text, compactReasons, sceneKey)].filter(Boolean);
+      const tags = getJudgeMisjudgeTags(text, sceneType);
       const sceneTags = getJudgeMisjudgeTags(text, sceneType);
       return {
         title: "快判结果",
         brand: "Geo Tool",
         grade,
-        conclusion: getFastJudgeConclusion(grade, text, meta),
+        conclusion: getFastJudgeConclusion(grade, text, meta, sceneKey),
         reasons,
-        action: getFastJudgeAction(grade, text),
+        action: getFastJudgeAction(grade, text, sceneKey),
         tags: sceneTags.length ? sceneTags : tags,
         sceneType,
         sampleType: displaySceneName(sceneType, text),
