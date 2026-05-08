@@ -255,7 +255,9 @@
     }
 
     .account-entry-button,
-    .home-quota-strip {
+    .home-quota-strip,
+    .account-action-button,
+    .inline-account-action {
       min-height: 40px;
       border-radius: 999px;
       font-size: 14px;
@@ -284,6 +286,23 @@
     .home-quota-strip strong {
       color: #0f172a;
       font-weight: 900;
+    }
+
+    .account-action-button,
+    .inline-account-action {
+      border: 0;
+      background: #f97316;
+      color: #ffffff;
+      padding: 9px 15px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .inline-account-action {
+      min-height: 30px;
+      padding: 5px 10px;
+      font-size: 12px;
+      box-shadow: none;
     }
 
     .module-card.primary-module {
@@ -956,6 +975,35 @@
       color: #64748b;
       font-size: 13px;
       line-height: 1.45;
+    }
+
+    .account-plan-price {
+      display: inline-block;
+      margin-right: 6px;
+      color: #0f172a;
+      font-weight: 900;
+    }
+
+    .quota-purchase-note {
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .quota-purchase-note strong,
+    .quota-purchase-note span,
+    .quota-purchase-note em {
+      display: block;
+    }
+
+    .quota-purchase-note em {
+      color: #7c2d12;
+      font-style: normal;
+      font-weight: 700;
     }
 
     .quota-mobile-guide {
@@ -2896,6 +2944,7 @@
           <span>｜</span>
           <strong id="homeConvertQuotaText">坐标/KML - 次</strong>
         </button>
+        <button type="button" class="account-action-button" onclick="openAccountModal()">充值 / 加次数</button>
       </div>
     </section>
 
@@ -2909,6 +2958,7 @@
       <div class="page-title-row coordinate-title-row">
         <h1>坐标处理工具</h1>
         <div id="convertQuotaStatus" class="quota-status" hidden></div>
+        <button type="button" class="inline-account-action" onclick="openAccountModal()">我的次数</button>
       </div>
       <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
 
@@ -3036,6 +3086,7 @@
       <div class="page-title-row judge-title-row">
         <h1>矿地快判</h1>
         <div id="judgeQuotaStatus" class="quota-status" hidden></div>
+        <button type="button" class="inline-account-action" onclick="openAccountModal()">充值 / 加次数</button>
       </div>
       <p class="intro">用于矿石、河道、卫星图的现场初筛，先判断是否值得继续看。</p>
 
@@ -3231,17 +3282,24 @@ Au值 = 纯度 × 10 后取整数</div>
           </li>
           <li>
             <strong>月度版</strong>
-            <span>矿地快判 50 次/月；坐标/KML 50 次/月。</span>
+            <span><span class="account-plan-price">¥99 / 月</span>包含：矿地快判 50 次/月；坐标/KML 50 次/月。</span>
           </li>
           <li>
             <strong>临时加次</strong>
-            <span>按需增加对应功能的使用次数。</span>
+            <span><span class="account-plan-price">¥19 / 10 次</span>可选择增加：矿地快判次数、坐标/KML次数。</span>
           </li>
         </ul>
+        <p class="quota-footnote">如需开通，把充值码发给管理员。</p>
       </section>
 
       <section class="account-section">
         <h4>添加管理员</h4>
+        <div class="quota-purchase-note">
+          <strong>开通时请发送：</strong>
+          <span>充值码 + 购买内容</span>
+          <em id="purchaseExampleMonthly">例如：GKT-5HS2AY，开通月度版</em>
+          <em id="purchaseExampleJudge">例如：GKT-5HS2AY，加矿地快判10次</em>
+        </div>
         <div class="quota-contact-grid">
           <div class="quota-contact-item">
             <img src="wechat-qr.jpg" alt="微信二维码" />
@@ -3286,6 +3344,8 @@ Au值 = 纯度 × 10 后取整数</div>
     const accountConvertRemaining = document.getElementById("accountConvertRemaining");
     const accountPlanStatus = document.getElementById("accountPlanStatus");
     const accountUserCode = document.getElementById("accountUserCode");
+    const purchaseExampleMonthly = document.getElementById("purchaseExampleMonthly");
+    const purchaseExampleJudge = document.getElementById("purchaseExampleJudge");
     const homeJudgeQuotaText = document.getElementById("homeJudgeQuotaText");
     const homeConvertQuotaText = document.getElementById("homeConvertQuotaText");
     const quotaPrimary = document.getElementById("quotaPrimary");
@@ -3483,12 +3543,24 @@ Au值 = 纯度 × 10 后取整数</div>
       const existing = normalizeUserCode(localStorage.getItem(key));
       if (existing) {
         localStorage.setItem(key, existing);
+        syncPurchaseExamples(existing);
         return existing;
       }
 
       const nextCode = generateUserCode();
       localStorage.setItem(key, nextCode);
+      syncPurchaseExamples(nextCode);
       return nextCode;
+    }
+
+    function syncPurchaseExamples(code) {
+      if (!code) return;
+      if (purchaseExampleMonthly) {
+        purchaseExampleMonthly.textContent = `例如：${code}，开通月度版`;
+      }
+      if (purchaseExampleJudge) {
+        purchaseExampleJudge.textContent = `例如：${code}，加矿地快判10次`;
+      }
     }
 
     function showUserCode() {
@@ -3500,6 +3572,7 @@ Au值 = 纯度 × 10 后取整数</div>
       if (accountUserCode) {
         accountUserCode.textContent = code;
       }
+      syncPurchaseExamples(code);
 
       try {
         if (navigator.clipboard?.writeText) {
@@ -3741,7 +3814,9 @@ Au值 = 纯度 × 10 后取整数</div>
         accountPlanStatus.textContent = isVip ? "月度版用户" : "普通用户";
       }
       if (accountUserCode) {
-        accountUserCode.textContent = getOrCreateUserCode();
+        const code = getOrCreateUserCode();
+        accountUserCode.textContent = code;
+        syncPurchaseExamples(code);
       }
       if (homeJudgeQuotaText) {
         homeJudgeQuotaText.textContent = isVip ? "矿地快判 月度版" : `矿地快判 ${judgeText}`;

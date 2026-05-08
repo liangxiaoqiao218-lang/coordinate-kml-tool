@@ -784,6 +784,12 @@
       box-shadow: 0 10px 24px rgba(15, 47, 95, 0.06);
     }
 
+    .user-code-lookup-panel.is-global {
+      margin: 14px 0;
+      border-color: #bfdbfe;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    }
+
     .channel-link-panel h3,
     .user-code-lookup-panel h3 {
       margin: 0 0 8px;
@@ -912,6 +918,13 @@
       color: #0f172a;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .user-code-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 0 12px;
     }
 
     @media (max-width: 720px) {
@@ -1990,6 +2003,11 @@
       showToast(ok ? "渠道链接已复制" : "复制失败，请手动复制", !ok);
     }
 
+    async function copyLookupUserId(userId) {
+      const ok = await copyTextValue(userId);
+      showToast(ok ? "user_id 已复制" : "复制失败，请手动复制", !ok);
+    }
+
     function copyChannelLinkFromButton(button) {
       copyChannelLink(button?.dataset?.source || "");
     }
@@ -2081,18 +2099,23 @@
         panel = document.createElement("div");
         panel.id = "userCodeLookupPanel";
         panel.className = "user-code-lookup-panel";
-        (afterElement || usagePanel.querySelector(".usage-analytics-grid") || usagePanel.firstChild)
-          .insertAdjacentElement("afterend", panel);
+      }
+      panel.classList.add("is-global");
+
+      const globalAnchor = document.getElementById("message");
+      const insertAnchor = globalAnchor || afterElement || usagePanel.querySelector(".usage-analytics-grid") || usagePanel.firstChild;
+      if (insertAnchor && panel.previousElementSibling !== insertAnchor) {
+        insertAnchor.insertAdjacentElement("afterend", panel);
       }
 
       panel.innerHTML = `
-        <h3>用户识别码查询</h3>
-        <div class="muted">输入用户发来的 GKT 短码，快速查看最近记录、来源和可用于充值的 user_id。</div>
+        <h3>快速查用户</h3>
+        <div class="muted">输入用户发来的充值码，快速查看来源、最近使用和可用于充值的 user_id。</div>
         <div class="user-code-query">
-          <input id="userCodeLookupInput" placeholder="例如 GKT-482913" onkeydown="if(event.key==='Enter'){lookupUserCode();}" />
-          <button type="button" onclick="lookupUserCode()">查询</button>
+          <input id="userCodeLookupInput" placeholder="输入充值码，如 GKT-5HS2AY" onkeydown="if(event.key==='Enter'){lookupUserCode();}" />
+          <button type="button" onclick="lookupUserCode()">查询用户</button>
         </div>
-        <div id="userCodeLookupResult" class="user-code-result muted">等待输入用户识别码。</div>
+        <div id="userCodeLookupResult" class="user-code-result muted">等待输入充值码。</div>
       `;
     }
 
@@ -2137,9 +2160,11 @@
       const region = primaryUser.region || logs.find(log => log.region)?.region || "-";
       const latestPage = summary.latestPage || "-";
       const latestUsedAt = summary.latestUsedAt ? formatTime(summary.latestUsedAt) : "-";
-      const quotaText = primaryUser.user_id
-        ? `坐标 ${Number(primaryUser.free_convert_count || 0) + Number(primaryUser.paid_convert_count || 0)} / 判读 ${Number(primaryUser.free_judge_count || 0) + Number(primaryUser.paid_judge_count || 0)}`
-        : "-";
+      const judgeRemaining = Number(primaryUser.free_judge_count || 0) + Number(primaryUser.paid_judge_count || 0);
+      const convertRemaining = Number(primaryUser.free_convert_count || 0) + Number(primaryUser.paid_convert_count || 0);
+      const accountStatus = primaryUser.is_vip ? "月度版" : "普通用户";
+      const encodedPrimaryUserId = primaryUser.user_id ? encodeURIComponent(primaryUser.user_id) : "";
+      const userIdForJs = escapeJsString(primaryUser.user_id || "");
 
       resultBox.className = "user-code-result";
       resultBox.innerHTML = `
@@ -2147,13 +2172,19 @@
           <div class="user-code-summary-cell"><span>用户识别码</span><strong>${escapeHtml(data?.code || summary.userCode || "-")}</strong></div>
           <div class="user-code-summary-cell"><span>可充值 user_id</span><strong title="${escapeHtml(userIdText)}">${escapeHtml(userIdText)}</strong></div>
           <div class="user-code-summary-cell"><span>最近 IP</span><strong>${escapeHtml(latestIp)}</strong></div>
+          <div class="user-code-summary-cell"><span>当前状态</span><strong>${accountStatus}</strong></div>
+          <div class="user-code-summary-cell"><span>矿地快判剩余</span><strong>${primaryUser.user_id ? `${judgeRemaining} 次` : "-"}</strong></div>
+          <div class="user-code-summary-cell"><span>坐标/KML剩余</span><strong>${primaryUser.user_id ? `${convertRemaining} 次` : "-"}</strong></div>
           <div class="user-code-summary-cell"><span>地区</span><strong>${escapeHtml(region)}</strong></div>
           <div class="user-code-summary-cell"><span>首次来源</span><strong>${escapeHtml(summary.firstSource || "-")}</strong></div>
           <div class="user-code-summary-cell"><span>最近页面</span><strong>${escapeHtml(latestPage)}</strong></div>
           <div class="user-code-summary-cell"><span>最近使用</span><strong>${escapeHtml(latestUsedAt)}</strong></div>
           <div class="user-code-summary-cell"><span>使用功能</span><strong>${escapeHtml(featureText)}</strong></div>
-          <div class="user-code-summary-cell"><span>当前次数</span><strong>${escapeHtml(quotaText)}</strong></div>
-          <div class="user-code-summary-cell"><span>VIP</span><strong>${primaryUser.is_vip ? "是" : "否"}</strong></div>
+        </div>
+        <div class="user-code-actions">
+          ${primaryUser.user_id ? `<button type="button" onclick="openSupabaseQuotaEditor('${encodedPrimaryUserId}')">打开加次数编辑</button>` : ""}
+          ${primaryUser.user_id ? `<button type="button" onclick="copyLookupUserId('${userIdForJs}')">复制 user_id</button>` : ""}
+          ${primaryUser.user_id ? `<span class="muted">可在编辑弹窗中增加矿地快判次数、坐标/KML次数或开通月度版。</span>` : `<span class="muted">未关联到 users 表用户，请先根据 IP 或最近记录确认用户。</span>`}
         </div>
         <div class="channel-link-table-wrap">
           <table class="channel-link-table">
@@ -2922,6 +2953,13 @@
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+    }
+
+    function escapeJsString(value) {
+      return String(value ?? "")
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\\'")
+        .replace(/\r?\n/g, " ");
     }
   </script>
 </body>
