@@ -27,18 +27,188 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
 const adminPassword = process.env.ADMIN_PASSWORD || "";
-const DAILY_FREE_CONVERT_LIMIT = 3;
-const DAILY_FREE_JUDGE_LIMIT = 3;
+const SYSTEM_CONFIG_PRICING_ID = "pricing";
+const DEFAULT_PRICING_CONFIG = {
+  monthly: {
+    name: "月度版",
+    price: 99,
+    judgeCount: 50,
+    convertCount: 50
+  },
+  addJudge: {
+    name: "矿地快判加次",
+    price: 19,
+    count: 10
+  },
+  addConvert: {
+    name: "坐标/KML加次",
+    price: 19,
+    count: 10
+  },
+  free: {
+    judgeCount: 3,
+    convertCount: 3
+  }
+};
+
+function toPricingInteger(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    return fallback;
+  }
+  return Math.floor(number);
+}
+
+function mergePricingConfig(source = {}) {
+  const addPrice = toPricingInteger(
+    source.addPrice ?? source.addJudge?.price ?? source.addConvert?.price,
+    DEFAULT_PRICING_CONFIG.addJudge.price
+  );
+  const addCount = toPricingInteger(
+    source.addCount ?? source.addJudge?.count ?? source.addConvert?.count,
+    DEFAULT_PRICING_CONFIG.addJudge.count
+  );
+
+  return {
+    monthly: {
+      name: DEFAULT_PRICING_CONFIG.monthly.name,
+      price: toPricingInteger(source.monthly?.price, DEFAULT_PRICING_CONFIG.monthly.price),
+      judgeCount: toPricingInteger(source.monthly?.judgeCount, DEFAULT_PRICING_CONFIG.monthly.judgeCount),
+      convertCount: toPricingInteger(source.monthly?.convertCount, DEFAULT_PRICING_CONFIG.monthly.convertCount)
+    },
+    addJudge: {
+      name: DEFAULT_PRICING_CONFIG.addJudge.name,
+      price: addPrice,
+      count: addCount
+    },
+    addConvert: {
+      name: DEFAULT_PRICING_CONFIG.addConvert.name,
+      price: addPrice,
+      count: addCount
+    },
+    free: {
+      judgeCount: toPricingInteger(source.free?.judgeCount, DEFAULT_PRICING_CONFIG.free.judgeCount),
+      convertCount: toPricingInteger(source.free?.convertCount, DEFAULT_PRICING_CONFIG.free.convertCount)
+    }
+  };
+}
+
+let runtimePricingConfig = mergePricingConfig(DEFAULT_PRICING_CONFIG);
+
+function pricingConfigFromSystemConfigRow(row = {}) {
+  return mergePricingConfig({
+    monthly: {
+      price: row.monthly_price,
+      judgeCount: row.monthly_judge_count,
+      convertCount: row.monthly_convert_count
+    },
+    addJudge: {
+      price: row.add_price,
+      count: row.add_count
+    },
+    addConvert: {
+      price: row.add_price,
+      count: row.add_count
+    },
+    free: {
+      judgeCount: row.free_judge_count,
+      convertCount: row.free_convert_count
+    }
+  });
+}
+
+function pricingConfigToSystemConfigRow(config) {
+  const merged = mergePricingConfig(config);
+  return {
+    id: SYSTEM_CONFIG_PRICING_ID,
+    monthly_price: merged.monthly.price,
+    monthly_judge_count: merged.monthly.judgeCount,
+    monthly_convert_count: merged.monthly.convertCount,
+    add_price: merged.addJudge.price,
+    add_count: merged.addJudge.count,
+    free_judge_count: merged.free.judgeCount,
+    free_convert_count: merged.free.convertCount,
+    updated_at: new Date().toISOString()
+  };
+}
+
+async function loadPricingConfigFromSupabase() {
+  if (!supabase) {
+    return {
+      config: getPricingConfig(),
+      source: "default",
+      warning: "Supabase not configured"
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("system_config")
+    .select("monthly_price,monthly_judge_count,monthly_convert_count,add_price,add_count,free_judge_count,free_convert_count,updated_at")
+    .eq("id", SYSTEM_CONFIG_PRICING_ID)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    return {
+      config: getPricingConfig(),
+      source: "default"
+    };
+  }
+
+  runtimePricingConfig = pricingConfigFromSystemConfigRow(data);
+  return {
+    config: runtimePricingConfig,
+    source: "supabase",
+    updated_at: data.updated_at
+  };
+}
+
+async function savePricingConfigToSupabase(nextConfig) {
+  const config = mergePricingConfig(nextConfig);
+  runtimePricingConfig = config;
+
+  if (!supabase) {
+    return {
+      config,
+      persisted: false,
+      warning: "Supabase not configured"
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("system_config")
+    .upsert(pricingConfigToSystemConfigRow(config), { onConflict: "id" })
+    .select("monthly_price,monthly_judge_count,monthly_convert_count,add_price,add_count,free_judge_count,free_convert_count,updated_at")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  runtimePricingConfig = pricingConfigFromSystemConfigRow(data);
+  return {
+    config: runtimePricingConfig,
+    persisted: true,
+    source: "supabase",
+    updated_at: data.updated_at
+  };
+}
+
+const DAILY_FREE_CONVERT_LIMIT = DEFAULT_PRICING_CONFIG.free.convertCount;
+const DAILY_FREE_JUDGE_LIMIT = DEFAULT_PRICING_CONFIG.free.judgeCount;
 const USAGE_RULES = {
   convert: {
     freeDailyLimit: DAILY_FREE_CONVERT_LIMIT,
-    vipMonthlyLimit: 100,
+    vipMonthlyLimit: DEFAULT_PRICING_CONFIG.monthly.convertCount,
     paidField: "paid_convert_count",
     freeField: "free_convert_count"
   },
   judge: {
     freeDailyLimit: DAILY_FREE_JUDGE_LIMIT,
-    vipMonthlyLimit: 50,
+    vipMonthlyLimit: DEFAULT_PRICING_CONFIG.monthly.judgeCount,
     paidField: "paid_judge_count",
     freeField: "free_judge_count"
   },
@@ -50,6 +220,20 @@ const USAGE_RULES = {
     freeField: ""
   }
 };
+
+function getPricingConfig() {
+  return runtimePricingConfig || mergePricingConfig(DEFAULT_PRICING_CONFIG);
+}
+
+function getPricingUsageLimits() {
+  const pricing = getPricingConfig();
+  return {
+    freeConvertLimit: toNonNegativeInteger(pricing.free?.convertCount, DAILY_FREE_CONVERT_LIMIT),
+    freeJudgeLimit: toNonNegativeInteger(pricing.free?.judgeCount, DAILY_FREE_JUDGE_LIMIT),
+    vipConvertLimit: toNonNegativeInteger(pricing.monthly?.convertCount, USAGE_RULES.convert.vipMonthlyLimit),
+    vipJudgeLimit: toNonNegativeInteger(pricing.monthly?.judgeCount, USAGE_RULES.judge.vipMonthlyLimit)
+  };
+}
 const USD_PER_TROY_OUNCE_GRAMS = 31.1035;
 const DEFAULT_USD_CNY_RATE = 7.2;
 const usdCnyRate = Number(process.env.USD_CNY_RATE || DEFAULT_USD_CNY_RATE);
@@ -160,6 +344,29 @@ app.get("/api/version", (req, res) => {
   res.json({
     version: appVersion
   });
+});
+
+app.get("/api/pricing-config", async (req, res) => {
+  try {
+    const result = await loadPricingConfigFromSupabase();
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error("Pricing config Supabase load failed:", {
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint
+    });
+    res.json({
+      success: true,
+      config: getPricingConfig(),
+      source: "default_fallback",
+      warning: error?.message || "Supabase config load failed"
+    });
+  }
 });
 
 function formatGoldPriceUpdatedAt(date = new Date()) {
@@ -287,15 +494,16 @@ function normalizeUsageCounters(user) {
     return null;
   }
 
+  const usageLimits = getPricingUsageLimits();
   const todayKey = getTodayKey();
 
   if (user.usageDate !== todayKey) {
     user.usageDate = todayKey;
-    user.freeConvertCount = DAILY_FREE_CONVERT_LIMIT;
-    user.freeJudgeCount = DAILY_FREE_JUDGE_LIMIT;
+    user.freeConvertCount = usageLimits.freeConvertLimit;
+    user.freeJudgeCount = usageLimits.freeJudgeLimit;
   } else {
-    user.freeConvertCount = toNonNegativeInteger(user.freeConvertCount, DAILY_FREE_CONVERT_LIMIT);
-    user.freeJudgeCount = toNonNegativeInteger(user.freeJudgeCount, DAILY_FREE_JUDGE_LIMIT);
+    user.freeConvertCount = toNonNegativeInteger(user.freeConvertCount, usageLimits.freeConvertLimit);
+    user.freeJudgeCount = toNonNegativeInteger(user.freeJudgeCount, usageLimits.freeJudgeLimit);
   }
 
   user.paidConvertCount = toNonNegativeInteger(user.paidConvertCount, 0);
@@ -417,6 +625,7 @@ async function getOrCreateSupabaseUser(userId) {
   if (!supabase || !userId) {
     return null;
   }
+  const usageLimits = getPricingUsageLimits();
 
   const { data: existingUser, error: selectError } = await supabase
     .from("users")
@@ -437,8 +646,8 @@ async function getOrCreateSupabaseUser(userId) {
     .insert({
       user_id: userId,
       is_vip: false,
-      free_convert_count: DAILY_FREE_CONVERT_LIMIT,
-      free_judge_count: DAILY_FREE_JUDGE_LIMIT,
+      free_convert_count: usageLimits.freeConvertLimit,
+      free_judge_count: usageLimits.freeJudgeLimit,
       paid_convert_count: 0,
       paid_judge_count: 0,
       updated_at: new Date().toISOString()
@@ -458,6 +667,7 @@ async function normalizeSupabaseDailyFreeQuota(userId, user) {
     return user;
   }
 
+  const usageLimits = getPricingUsageLimits();
   const todayKey = getTodayKey();
   const quotaDate = String(user.free_quota_date || "").slice(0, 10);
 
@@ -468,8 +678,8 @@ async function normalizeSupabaseDailyFreeQuota(userId, user) {
   const { data, error } = await supabase
     .from("users")
     .update({
-      free_convert_count: DAILY_FREE_CONVERT_LIMIT,
-      free_judge_count: DAILY_FREE_JUDGE_LIMIT,
+      free_convert_count: usageLimits.freeConvertLimit,
+      free_judge_count: usageLimits.freeJudgeLimit,
       free_quota_date: todayKey,
       updated_at: new Date().toISOString()
     })
@@ -503,7 +713,24 @@ function buildSupabaseQuotaPayload(user) {
 
 function getUsageRule(type) {
   const featureType = normalizeUsageFeatureType(type);
-  return USAGE_RULES[featureType] || USAGE_RULES.convert;
+  const baseRule = USAGE_RULES[featureType] || USAGE_RULES.convert;
+  const usageLimits = getPricingUsageLimits();
+
+  if (featureType === "judge") {
+    return {
+      ...baseRule,
+      vipMonthlyLimit: usageLimits.vipJudgeLimit
+    };
+  }
+
+  if (featureType === "convert") {
+    return {
+      ...baseRule,
+      vipMonthlyLimit: usageLimits.vipConvertLimit
+    };
+  }
+
+  return baseRule;
 }
 
 function getCurrentMonthStartISO() {
@@ -547,14 +774,15 @@ function buildUsageQuotaPayload(user, monthlyUsage = {}) {
   const quota = buildSupabaseQuotaPayload(user);
   const convertUsed = Number(monthlyUsage.convert || 0);
   const judgeUsed = Number(monthlyUsage.judge || 0);
+  const usageLimits = getPricingUsageLimits();
   return {
     ...quota,
-    vip_convert_limit: USAGE_RULES.convert.vipMonthlyLimit,
-    vip_judge_limit: USAGE_RULES.judge.vipMonthlyLimit,
+    vip_convert_limit: usageLimits.vipConvertLimit,
+    vip_judge_limit: usageLimits.vipJudgeLimit,
     vip_convert_used: convertUsed,
     vip_judge_used: judgeUsed,
-    vip_convert_remaining: Math.max(0, USAGE_RULES.convert.vipMonthlyLimit - convertUsed),
-    vip_judge_remaining: Math.max(0, USAGE_RULES.judge.vipMonthlyLimit - judgeUsed)
+    vip_convert_remaining: Math.max(0, usageLimits.vipConvertLimit - convertUsed),
+    vip_judge_remaining: Math.max(0, usageLimits.vipJudgeLimit - judgeUsed)
   };
 }
 
@@ -1813,6 +2041,39 @@ function requireAdmin(req, res, next) {
 
   next();
 }
+
+app.post("/api/admin/pricing-config", requireAdmin, async (req, res) => {
+  try {
+    const result = await savePricingConfigToSupabase(req.body?.config || req.body || {});
+
+    if (!result.persisted) {
+      return res.status(503).json({
+        success: false,
+        error: result.warning || "Supabase config unavailable",
+        ...result
+      });
+    }
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error("Pricing config Supabase save failed:", {
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint
+    });
+    res.status(500).json({
+      success: false,
+      error: error?.message || "Pricing config save failed",
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint
+    });
+  }
+});
 
 function normalizeText(text) {
   return String(text || "")
@@ -5822,6 +6083,15 @@ app.get("/admin", (req, res) => {
 });
 
 const port = process.env.PORT || 3000;
+
+await loadPricingConfigFromSupabase().catch(error => {
+  console.error("Pricing config initial load failed:", {
+    message: error?.message,
+    code: error?.code,
+    details: error?.details,
+    hint: error?.hint
+  });
+});
 
 app.listen(port, () => {
   console.log(`坐标工具已启动：http://localhost:${port}`);
