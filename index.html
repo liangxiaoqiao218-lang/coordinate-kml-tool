@@ -3414,6 +3414,13 @@ Au值 = 纯度 × 10 后取整数</div>
     const visitorId = getOrCreateVisitorId();
     const userCode = getOrCreateUserCode();
     renderPricingConfigText();
+    window.addEventListener("pricing-config-updated", () => {
+      renderPricingConfigText();
+      syncPurchaseExamples(getOrCreateUserCode());
+    });
+    if (window.loadPricingConfig) {
+      window.loadPricingConfig().catch(error => console.warn("pricing config load failed", error));
+    }
     const firstSourceInfo = captureFirstSourceInfo();
     let currentQuota = null;
     let appConfig = {

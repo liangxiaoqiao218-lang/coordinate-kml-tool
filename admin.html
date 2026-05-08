@@ -910,6 +910,50 @@
       padding-left: 18px;
     }
 
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .config-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px;
+      border: 1px solid #dbe3ef;
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .config-field span {
+      color: #475569;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .config-field input {
+      height: 40px;
+      padding: 0 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      font-size: 15px;
+    }
+
+    .config-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .config-message-error {
+      color: #b91c1c !important;
+      font-weight: 700;
+    }
+
     .user-code-summary-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -1038,6 +1082,7 @@
       <button type="button" data-module-tab="user" onclick="showAdminModule('user')">用户</button>
       <button type="button" data-module-tab="usage" onclick="showAdminModule('usage')">使用分析</button>
       <button type="button" data-module-tab="system" onclick="showAdminModule('system')">系统</button>
+      <button type="button" data-module-tab="config" onclick="showAdminModule('config')">系统配置</button>
     </nav>
 
     <section class="panel" id="dashboardPanel">
@@ -1251,6 +1296,46 @@
       </div>
     </section>
 
+    <section class="panel" id="pricingConfigPanel">
+      <h2>????</h2>
+      <p class="muted">?????????????????????????????</p>
+      <div class="config-grid">
+        <label class="config-field">
+          <span>???????/??</span>
+          <input id="pricingMonthlyPrice" type="number" min="0" step="1">
+        </label>
+        <label class="config-field">
+          <span>??????????</span>
+          <input id="pricingMonthlyJudgeCount" type="number" min="0" step="1">
+        </label>
+        <label class="config-field">
+          <span>??????/KML??</span>
+          <input id="pricingMonthlyConvertCount" type="number" min="0" step="1">
+        </label>
+        <label class="config-field">
+          <span>?????????</span>
+          <input id="pricingAddPrice" type="number" min="0" step="1">
+        </label>
+        <label class="config-field">
+          <span>??????</span>
+          <input id="pricingAddCount" type="number" min="0" step="1">
+        </label>
+        <label class="config-field">
+          <span>????????/?</span>
+          <input id="pricingFreeJudgeCount" type="number" min="0" step="1">
+        </label>
+        <label class="config-field">
+          <span>????/KML??/?</span>
+          <input id="pricingFreeConvertCount" type="number" min="0" step="1">
+        </label>
+      </div>
+      <div class="config-actions">
+        <button type="button" onclick="savePricingConfigForm()">????</button>
+        <button type="button" class="button-secondary" onclick="fillPricingConfigForm()">?????</button>
+        <span id="pricingConfigMessage" class="muted"></span>
+      </div>
+    </section>
+
     <section class="panel">
       <h2>运营概览</h2>
       <div class="cards">
@@ -1408,7 +1493,6 @@
           <button id="quickMonthlyPlanButton" type="button" onclick="quickAddMonthlyPlanQuota()">填充月度版</button>
           <button id="quickAddJudgeButton" type="button" onclick="quickAddConfiguredJudgeQuota()">矿地快判加次</button>
           <button id="quickAddConvertButton" type="button" onclick="quickAddConfiguredConvertQuota()">坐标/KML加次</button>
-          <button id="quotaVipToggle" type="button" class="button-secondary" onclick="toggleSelectedSupabaseVip()">设置/取消月度版</button>
         </div>
 
         <div class="note-editor">
@@ -1458,7 +1542,15 @@
 
     document.getElementById("password").value = adminPassword;
     renderAdminPricingConfig();
+    fillPricingConfigForm();
     setupAdminConsole();
+    window.addEventListener("pricing-config-updated", () => {
+      renderAdminPricingConfig();
+      fillPricingConfigForm();
+    });
+    if (window.loadPricingConfig) {
+      window.loadPricingConfig().catch(error => console.warn("pricing config load failed", error));
+    }
 
     if (adminPassword) {
       refreshAll();
@@ -1506,11 +1598,97 @@
       if (convertButton) convertButton.textContent = `坐标/KML加${pricingConfig.addConvert.count}次 ${formatPricingYuan(pricingConfig.addConvert.price)}`;
     }
 
+    function setPricingConfigMessage(message = "", isError = false) {
+      const target = document.getElementById("pricingConfigMessage");
+      if (!target) return;
+      target.textContent = message;
+      target.classList.toggle("config-message-error", Boolean(isError));
+    }
+
+    function setPricingInputValue(id, value) {
+      const input = document.getElementById(id);
+      if (!input) return;
+      input.value = Number.isFinite(Number(value)) ? Number(value) : 0;
+    }
+
+    function fillPricingConfigForm() {
+      if (!pricingConfig) return;
+      setPricingInputValue("pricingMonthlyPrice", pricingConfig.monthly?.price);
+      setPricingInputValue("pricingMonthlyJudgeCount", pricingConfig.monthly?.judgeCount);
+      setPricingInputValue("pricingMonthlyConvertCount", pricingConfig.monthly?.convertCount);
+      setPricingInputValue("pricingAddPrice", pricingConfig.addJudge?.price ?? pricingConfig.addConvert?.price);
+      setPricingInputValue("pricingAddCount", pricingConfig.addJudge?.count ?? pricingConfig.addConvert?.count);
+      setPricingInputValue("pricingFreeJudgeCount", pricingConfig.free?.judgeCount);
+      setPricingInputValue("pricingFreeConvertCount", pricingConfig.free?.convertCount);
+      setPricingConfigMessage("");
+    }
+
+    function readPricingNumber(id, fallback = 0) {
+      const input = document.getElementById(id);
+      const value = Number(input?.value);
+      if (!Number.isFinite(value) || value < 0) return fallback;
+      return Math.floor(value);
+    }
+
+    function readPricingConfigForm() {
+      const addPrice = readPricingNumber("pricingAddPrice", pricingConfig.addJudge?.price || 0);
+      const addCount = readPricingNumber("pricingAddCount", pricingConfig.addJudge?.count || 0);
+      return {
+        monthly: {
+          name: pricingConfig.monthly?.name || "???",
+          price: readPricingNumber("pricingMonthlyPrice", pricingConfig.monthly?.price || 0),
+          judgeCount: readPricingNumber("pricingMonthlyJudgeCount", pricingConfig.monthly?.judgeCount || 0),
+          convertCount: readPricingNumber("pricingMonthlyConvertCount", pricingConfig.monthly?.convertCount || 0)
+        },
+        addJudge: {
+          name: pricingConfig.addJudge?.name || "??????",
+          price: addPrice,
+          count: addCount
+        },
+        addConvert: {
+          name: pricingConfig.addConvert?.name || "??/KML??",
+          price: addPrice,
+          count: addCount
+        },
+        free: {
+          judgeCount: readPricingNumber("pricingFreeJudgeCount", pricingConfig.free?.judgeCount || 0),
+          convertCount: readPricingNumber("pricingFreeConvertCount", pricingConfig.free?.convertCount || 0)
+        }
+      };
+    }
+
+    async function savePricingConfigForm() {
+      try {
+        setPricingConfigMessage("????...");
+        const config = readPricingConfigForm();
+        const result = await adminFetch("/api/admin/pricing-config", {
+          method: "POST",
+          body: JSON.stringify({ config })
+        });
+        const nextConfig = result.config || config;
+        if (window.applyPricingConfig) {
+          window.applyPricingConfig(nextConfig);
+        } else {
+          pricingConfig = nextConfig;
+          window.PRICING_CONFIG = nextConfig;
+        }
+        renderAdminPricingConfig();
+        fillPricingConfigForm();
+        setPricingConfigMessage("??????????????");
+        showToast("????");
+      } catch (error) {
+        setPricingConfigMessage("?????" + error.message, true);
+        showToast("????", true);
+      }
+    }
+
     function setupAdminConsole() {
       const panels = Array.from(document.querySelectorAll("main > section.panel"));
       panels.forEach(panel => {
         const title = panel.querySelector("h2")?.textContent || "";
-        if (panel.id === "dashboardPanel") {
+        if (panel.id === "pricingConfigPanel") {
+          panel.dataset.adminModule = "config";
+        } else if (panel.id === "dashboardPanel") {
           panel.dataset.adminModule = "dashboard";
         } else if (title.includes("用户与次数")) {
           panel.dataset.adminModule = "user";
@@ -2668,7 +2846,6 @@
       document.getElementById("quotaPaidJudge").value = toQuotaInputValue(selectedSupabaseUser.paid_judge_count);
       document.getElementById("quotaAdminNote").value = selectedSupabaseUser.admin_note || "";
       renderUserDetailSummary(selectedSupabaseUser);
-      document.getElementById("quotaVipToggle").textContent = selectedSupabaseUser.is_vip ? "取消月度版" : "设为月度版";
       renderAdminLogs([]);
       renderUserUsageLogs([]);
       setQuotaEditMessage("");
@@ -2751,7 +2928,6 @@
         });
         selectedSupabaseUser = result.user || selectedSupabaseUser;
         document.getElementById("quotaEditVip").textContent = selectedSupabaseUser.is_vip ? "是" : "否";
-        document.getElementById("quotaVipToggle").textContent = selectedSupabaseUser.is_vip ? "取消月度版" : "设为月度版";
         renderUserDetailSummary(selectedSupabaseUser);
         setQuotaEditMessage("月度版状态已更新。");
         showToast("保存成功");
