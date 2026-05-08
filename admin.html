@@ -774,6 +774,100 @@
       font-size: 12px;
     }
 
+    .channel-link-panel {
+      margin: 12px 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 10px 24px rgba(15, 47, 95, 0.06);
+    }
+
+    .channel-link-panel h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    .channel-link-table-wrap {
+      margin-top: 12px;
+      overflow-x: auto;
+    }
+
+    .channel-link-table {
+      width: 100%;
+      min-width: 860px;
+      border-collapse: collapse;
+    }
+
+    .channel-link-table th,
+    .channel-link-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      white-space: nowrap;
+      font-size: 13px;
+      vertical-align: middle;
+    }
+
+    .channel-link-table th {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .channel-param {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #eef4ff;
+      color: #1d4ed8;
+      font-family: Consolas, "Courier New", monospace;
+      font-weight: 700;
+      font-size: 12px;
+    }
+
+    .channel-link-url {
+      max-width: 440px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #334155;
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    .custom-channel-box {
+      margin-top: 14px;
+      padding: 12px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .custom-channel-form {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+      margin-top: 8px;
+    }
+
+    .custom-channel-preview {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #475569;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 720px) {
+      .custom-channel-form {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .switch-control {
       position: relative;
       width: 52px;
@@ -1786,6 +1880,135 @@
         </div>
       `;
       renderSourceStats(usagePanel, analytics);
+      renderChannelLinkManager(usagePanel, document.getElementById("sourceStatsPanel") || analytics);
+    }
+
+    const channelLinkSources = [
+      { name: "抖音评论区", source: "dy-comment" },
+      { name: "抖音私信", source: "dy-private" },
+      { name: "微信私聊", source: "wx-private" },
+      { name: "视频号", source: "shipinhao" },
+      { name: "小红书", source: "xhs" },
+      { name: "直播", source: "live" },
+    ];
+
+    function sanitizeChannelSource(value) {
+      return String(value || "")
+        .trim()
+        .slice(0, 80)
+        .replace(/[^\w.-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "");
+    }
+
+    function buildChannelLink(source) {
+      const cleanSource = sanitizeChannelSource(source);
+      const origin = window.location.origin || "";
+      return cleanSource ? `${origin}/?from=${encodeURIComponent(cleanSource)}` : "";
+    }
+
+    async function copyTextValue(text) {
+      if (!text) return false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.setAttribute("readonly", "");
+          textarea.style.position = "fixed";
+          textarea.style.left = "-9999px";
+          textarea.style.top = "0";
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          textarea.remove();
+        }
+        return true;
+      } catch (error) {
+        console.error("复制渠道链接失败", error);
+        return false;
+      }
+    }
+
+    async function copyChannelLink(source) {
+      const link = buildChannelLink(source);
+      const ok = await copyTextValue(link);
+      showToast(ok ? "渠道链接已复制" : "复制失败，请手动复制", !ok);
+    }
+
+    function copyChannelLinkFromButton(button) {
+      copyChannelLink(button?.dataset?.source || "");
+    }
+
+    function renderCustomChannelLink() {
+      const input = document.getElementById("customChannelSourceInput");
+      const preview = document.getElementById("customChannelLinkPreview");
+      if (!input || !preview) return "";
+      const source = sanitizeChannelSource(input.value);
+      const link = buildChannelLink(source);
+      preview.textContent = link || "输入渠道参数后自动生成链接，例如 dy-video-12。";
+      return link;
+    }
+
+    async function copyCustomChannelLink() {
+      const link = renderCustomChannelLink();
+      if (!link) {
+        showToast("请先输入渠道参数", true);
+        return;
+      }
+      const ok = await copyTextValue(link);
+      showToast(ok ? "自定义渠道链接已复制" : "复制失败，请手动复制", !ok);
+    }
+
+    function renderChannelLinkManager(usagePanel, afterElement) {
+      if (!usagePanel) return;
+      let panel = document.getElementById("channelLinkPanel");
+      if (!panel) {
+        panel = document.createElement("div");
+        panel.id = "channelLinkPanel";
+        panel.className = "channel-link-panel";
+        (afterElement || usagePanel.querySelector(".usage-analytics-grid") || usagePanel.firstChild)
+          .insertAdjacentElement("afterend", panel);
+      }
+
+      panel.innerHTML = `
+        <h3>渠道链接管理</h3>
+        <div class="muted">复制带 from 参数的专属链接，用于抖音、微信、视频号、小红书等渠道投放。</div>
+        <div class="channel-link-table-wrap">
+          <table class="channel-link-table">
+            <thead>
+              <tr>
+                <th>渠道名称</th>
+                <th>来源参数</th>
+                <th>完整链接</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${channelLinkSources.map(item => {
+                const link = buildChannelLink(item.source);
+                return `
+                  <tr>
+                    <td>${escapeHtml(item.name)}</td>
+                    <td><span class="channel-param">${escapeHtml(item.source)}</span></td>
+                    <td class="channel-link-url" title="${escapeHtml(link)}">${escapeHtml(link)}</td>
+                    <td><button type="button" class="button-secondary" data-source="${escapeHtml(item.source)}" onclick="copyChannelLinkFromButton(this)">复制</button></td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+        <div class="custom-channel-box">
+          <label for="customChannelSourceInput">自定义渠道生成</label>
+          <div class="custom-channel-form">
+            <input id="customChannelSourceInput" placeholder="例如 dy-video-12" oninput="renderCustomChannelLink()" />
+            <button type="button" onclick="copyCustomChannelLink()">复制自定义链接</button>
+          </div>
+          <div id="customChannelLinkPreview" class="custom-channel-preview">输入渠道参数后自动生成链接，例如 dy-video-12。</div>
+        </div>
+      `;
     }
 
     function renderSourceStats(usagePanel, afterElement) {
