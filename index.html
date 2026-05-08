@@ -5951,6 +5951,31 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return `${cleanDmsTokenForDisplay(tokens[0])}W,${cleanDmsTokenForDisplay(tokens[1])}N`;
     }
 
+    function normalizeDmsDisplayOrder(line) {
+      const text = String(line || "").trim();
+
+      if (!text.includes(",")) {
+        return text;
+      }
+
+      const parts = text.split(",").map(part => part.trim());
+
+      if (parts.length !== 2) {
+        return text.replace(/\s*,\s*/g, ",");
+      }
+
+      const firstDirection = (parts[0].match(/[NSEWO]\s*$/i) || [""])[0].trim().toUpperCase();
+      const secondDirection = (parts[1].match(/[NSEWO]\s*$/i) || [""])[0].trim().toUpperCase();
+      const firstIsLon = ["E", "W", "O"].includes(firstDirection);
+      const secondIsLat = ["N", "S"].includes(secondDirection);
+
+      if (firstIsLon && secondIsLat) {
+        return `${parts[1]},${parts[0]}`;
+      }
+
+      return `${parts[0]},${parts[1]}`;
+    }
+
     function extractDmsCoordinates(text) {
       const lines = String(text || "")
         .replace(/[º˚]/g, "°")
@@ -6034,9 +6059,9 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         const inferredDms = addImpliedWestNorthDirections(trimmed);
 
         if (inferredDms) {
-          coordinateLines.push(inferredDms);
+          coordinateLines.push(normalizeDmsDisplayOrder(inferredDms));
         } else if (parseCoordinateLine(trimmed)) {
-          coordinateLines.push(trimmed.replace(/\s*,\s*/g, ","));
+          coordinateLines.push(normalizeDmsDisplayOrder(trimmed));
         }
       }
 
@@ -6072,7 +6097,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     function shouldKeepLongCommaDmsListUngrouped(coordinateLines, commaSeparatedDmsRows) {
       const lines = Array.isArray(coordinateLines) ? coordinateLines.filter(Boolean) : [];
 
-      if (lines.length < 12) {
+      if (lines.length < 8) {
         return false;
       }
 
