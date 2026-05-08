@@ -1014,7 +1014,7 @@
         <h3>今日数据</h3>
         <div class="cards">
           <div class="card"><span>今日活跃用户</span><strong id="dashTodayActive">0</strong></div>
-          <div class="card"><span>今日 AI 判读</span><strong id="dashTodayJudge">0</strong></div>
+          <div class="card"><span>今日 矿地快判</span><strong id="dashTodayJudge">0</strong></div>
           <div class="card"><span>今日坐标转换</span><strong id="dashTodayConvert">0</strong></div>
           <div class="card"><span>今日黄金成色</span><strong id="dashTodayGold">0</strong></div>
           <div class="card"><span>今日总使用</span><strong id="dashTodayTotal">0</strong></div>
@@ -1026,7 +1026,7 @@
         <h3>最近 7 天</h3>
         <div class="cards">
           <div class="card"><span>7天活跃用户</span><strong id="dash7Active">0</strong></div>
-          <div class="card"><span>7天 AI 判读</span><strong id="dash7Judge">0</strong></div>
+          <div class="card"><span>7天 矿地快判</span><strong id="dash7Judge">0</strong></div>
           <div class="card"><span>7天坐标转换</span><strong id="dash7Convert">0</strong></div>
           <div class="card"><span>7天黄金成色</span><strong id="dash7Gold">0</strong></div>
           <div class="card"><span>7天失败</span><strong id="dash7Failed">0</strong></div>
@@ -1055,19 +1055,19 @@
       </div>
 
       <div class="dashboard-row">
-        <h3>AI 成本监控</h3>
+        <h3>快判成本监控</h3>
         <div class="cards">
-          <div class="card"><span>今日 AI 调用</span><strong id="dashAiTodayCalls">0</strong></div>
+          <div class="card"><span>今日快判调用</span><strong id="dashAiTodayCalls">0</strong></div>
           <div class="card"><span>今日估算成本</span><strong id="dashAiTodayCost">¥0.00</strong></div>
-          <div class="card"><span>本月 AI 成本</span><strong id="dashAiMonthCost">¥0.00</strong></div>
+          <div class="card"><span>本月快判成本</span><strong id="dashAiMonthCost">¥0.00</strong></div>
           <div class="card"><span>单次平均成本</span><strong id="dashAiAverageCost">¥0.00</strong></div>
-          <div class="card"><span>100元约可判读</span><strong id="dashAiRemainingCalls">0 次</strong></div>
+          <div class="card"><span>100元约可快判</span><strong id="dashAiRemainingCalls">0 次</strong></div>
           <div class="card"><span>今日 tokens</span><strong id="dashAiTodayTokens">0</strong></div>
         </div>
       </div>
 
       <div class="dashboard-row">
-        <h3>AI 成本趋势</h3>
+        <h3>快判成本趋势</h3>
         <div class="table-scroll">
           <table>
             <thead>
@@ -1089,7 +1089,7 @@
             <thead>
               <tr>
                 <th>用户ID</th>
-                <th>AI判读次数</th>
+                <th>矿地快判次数</th>
                 <th>估算成本</th>
                 <th>最近使用</th>
               </tr>
@@ -1102,7 +1102,7 @@
       <div class="dashboard-row dashboard-errors">
         <h3>异常数据</h3>
         <div class="cards">
-          <div class="card"><span>AI 判读失败</span><strong id="dashJudgeFailed">0</strong></div>
+          <div class="card"><span>矿地快判失败</span><strong id="dashJudgeFailed">0</strong></div>
           <div class="card"><span>坐标识别失败</span><strong id="dashConvertFailed">0</strong></div>
           <div class="card"><span>网络/超时失败</span><strong id="dashNetworkFailed">0</strong></div>
         </div>
@@ -1142,7 +1142,7 @@
           <strong>阿里云视觉模型</strong>
         </div>
         <div class="status-item">
-          <span>AI判读</span>
+          <span>矿地快判</span>
           <strong>阿里云模型</strong>
         </div>
         <div class="status-item">
@@ -1178,7 +1178,7 @@
           </label>
         </div>
         <div class="switch-item active" data-feature="aiJudgeEnabled">
-          <strong>AI矿地判读</strong>
+          <strong>矿地快判</strong>
           <label class="switch-control">
             <input type="checkbox" checked onchange="saveFeatureFlags(this)" />
             <span class="switch-state">开启</span>
@@ -1244,7 +1244,7 @@
         <input id="supabaseDeviceFilter" placeholder="设备筛选" oninput="renderSupabaseUsers()" />
         <select id="supabaseTagFilter" onchange="renderSupabaseUsers()">
           <option value="">全部标签</option>
-          <option value="AI">AI</option>
+          <option value="AI">快判</option>
           <option value="成色">成色</option>
           <option value="坐标">坐标</option>
           <option value="高活跃">高活跃</option>
@@ -1282,8 +1282,8 @@
               <th>用户标签</th>
               <th>免费坐标</th>
               <th>付费坐标</th>
-              <th>免费判读</th>
-              <th>付费判读</th>
+              <th>免费快判</th>
+              <th>付费快判</th>
               <th>创建时间</th>
               <th>更新时间</th>
             </tr>
@@ -1302,7 +1302,7 @@
         <select id="usageLogFeatureFilter" onchange="loadUsageLogs()">
           <option value="">全部功能</option>
           <option value="convert">坐标转换</option>
-          <option value="judge">AI判读</option>
+          <option value="judge">矿地快判</option>
           <option value="gold">黄金成色</option>
         </select>
         <select id="usageLogSuccessFilter" onchange="loadUsageLogs()">
@@ -1358,11 +1358,11 @@
             <input id="quotaPaidConvert" type="number" min="0" />
           </div>
           <div>
-            <label for="quotaFreeJudge">免费判读</label>
+            <label for="quotaFreeJudge">免费快判</label>
             <input id="quotaFreeJudge" type="number" min="0" />
           </div>
           <div>
-            <label for="quotaPaidJudge">付费判读</label>
+            <label for="quotaPaidJudge">付费快判</label>
             <input id="quotaPaidJudge" type="number" min="0" />
           </div>
         </div>
@@ -1638,7 +1638,7 @@
       setDashboardValue("dashJudgeFailed", errors.judgeFailedCount);
       setDashboardValue("dashConvertFailed", errors.convertFailedCount);
       setDashboardValue("dashNetworkFailed", errors.networkTimeoutFailedCount);
-      updateErrorMetricCard("dashJudgeFailed", "AI 判读失败", errors.judgeFailedCount);
+      updateErrorMetricCard("dashJudgeFailed", "矿地快判失败", errors.judgeFailedCount);
       updateErrorMetricCard("dashConvertFailed", "坐标识别失败", errors.convertFailedCount);
       updateErrorMetricCard("dashNetworkFailed", "网络/超时失败", errors.networkTimeoutFailedCount);
 
@@ -1661,7 +1661,7 @@
               <td>${formatCurrencyCny(item.costCny)}</td>
             </tr>
           `).join("")
-          : `<tr><td colspan="3" class="muted">暂无 AI 成本趋势。</td></tr>`;
+          : `<tr><td colspan="3" class="muted">暂无快判成本趋势。</td></tr>`;
       }
 
       const aiTopUsersBody = document.getElementById("dashboardAiTopUsersBody");
@@ -1881,8 +1881,8 @@
       const sevenDayAiCost = trendItems.reduce((sum, item) => sum + Number(item.cost_cny || item.costCny || 0), 0);
 
       summary.innerHTML = `
-        <div class="card ${todayAiCost > 0 ? "" : "metric-ok"}"><span>今日 AI 成本</span><strong>${formatCurrencyCny(todayAiCost)}</strong></div>
-        <div class="card ${sevenDayAiCost > 0 ? "" : "metric-ok"}"><span>近 7 日 AI 成本</span><strong>${formatCurrencyCny(sevenDayAiCost)}</strong></div>
+        <div class="card ${todayAiCost > 0 ? "" : "metric-ok"}"><span>今日快判成本</span><strong>${formatCurrencyCny(todayAiCost)}</strong></div>
+        <div class="card ${sevenDayAiCost > 0 ? "" : "metric-ok"}"><span>近 7 日快判成本</span><strong>${formatCurrencyCny(sevenDayAiCost)}</strong></div>
         <div class="card ${todayCalls > 0 ? "" : "metric-ok"}"><span>今日调用次数</span><strong>${todayCalls.toLocaleString("zh-CN")}</strong></div>
         <div class="card ${todayFailed ? "metric-danger" : "metric-ok"}"><span>今日失败数</span><strong>${todayFailed.toLocaleString("zh-CN")}</strong></div>
       `;
@@ -2275,7 +2275,7 @@
     }
 
     function getUsageFeatureLabel(type) {
-      if (type === "judge") return "AI判读";
+      if (type === "judge") return "矿地快判";
       if (type === "convert") return "坐标转换";
       if (type === "gold") return "黄金成色";
       return type || "-";
@@ -2600,7 +2600,7 @@
         ["设备", user.device_info || user.user_agent || "-"],
         ["创建时间", formatTime(user.created_at) || "-"],
         ["最近访问", formatTime(user.last_seen_at) || "-"],
-        ["AI判读次数", `免费 ${Number(user.free_judge_count || 0)} / 付费 ${Number(user.paid_judge_count || 0)}`],
+        ["矿地快判次数", `免费 ${Number(user.free_judge_count || 0)} / 付费 ${Number(user.paid_judge_count || 0)}`],
         ["坐标转换次数", `免费 ${Number(user.free_convert_count || 0)} / 付费 ${Number(user.paid_convert_count || 0)}`],
         ["总使用次数", `${Number(userUsageCounts[user.user_id] || 0)} 次`],
         ["用户标签", getUserTags(user).join(" / ") || "-"],

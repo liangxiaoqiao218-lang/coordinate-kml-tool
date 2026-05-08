@@ -244,6 +244,48 @@
       letter-spacing: 1px;
     }
 
+    .home-account-panel {
+      width: min(680px, 100%);
+      margin: 16px auto 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .account-entry-button,
+    .home-quota-strip {
+      min-height: 40px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 800;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+    }
+
+    .account-entry-button {
+      border: 0;
+      background: #2563eb;
+      color: #ffffff;
+      padding: 9px 16px;
+    }
+
+    .home-quota-strip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid #dbe6f2;
+      background: #ffffff;
+      color: #64748b;
+      padding: 9px 14px;
+      cursor: pointer;
+    }
+
+    .home-quota-strip strong {
+      color: #0f172a;
+      font-weight: 900;
+    }
+
     .module-card.primary-module {
       border-color: #d6dfeb;
       background: #ffffff;
@@ -802,6 +844,139 @@
       display: grid;
       gap: 8px;
       margin: 14px 0;
+    }
+
+    .quota-alert {
+      display: none;
+      margin: 12px 0 0;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #fef2f2;
+      color: #b91c1c;
+      font-size: 14px;
+      font-weight: 900;
+      line-height: 1.45;
+    }
+
+    .quota-alert.is-visible {
+      display: block;
+    }
+
+    .account-section {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      background: #ffffff;
+    }
+
+    .account-section h4 {
+      margin: 0 0 10px;
+      color: #0f172a;
+      font-size: 16px;
+    }
+
+    .account-status-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .account-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .account-status-row span {
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    .account-status-row strong {
+      color: #0f172a;
+      font-size: 15px;
+      text-align: right;
+    }
+
+    .account-code-box {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+    }
+
+    .account-code-value {
+      color: #2563eb;
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: 1.4px;
+    }
+
+    .account-copy-button {
+      min-height: 36px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: #2563eb;
+      color: #ffffff;
+      font-size: 13px;
+      box-shadow: none;
+      white-space: nowrap;
+    }
+
+    .account-plan-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .account-plan-list li {
+      display: grid;
+      gap: 3px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .account-plan-list strong {
+      color: #0f172a;
+      font-size: 14px;
+    }
+
+    .account-plan-list span {
+      color: #64748b;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .quota-mobile-guide {
+      margin-top: 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      background: #f8fafc;
+      color: #475569;
+    }
+
+    .quota-mobile-guide summary {
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .quota-mobile-guide div {
+      padding: 0 12px 12px;
+      font-size: 13px;
+      line-height: 1.7;
     }
 
     .quota-option {
@@ -2713,12 +2888,14 @@
           <small class="module-action">进入</small>
         </button>
       </div>
-      <div class="user-code-card">
-        <button type="button" class="user-code-button" onclick="showUserCode()">获取我的充值码</button>
-        <div id="userCodeDisplay" class="user-code-display" hidden>
-          <strong>我的充值码：<span id="userCodeText"></span></strong>
-          <p>把这个码发给管理员，可以用于加次数或开通服务。</p>
-        </div>
+      <div class="home-account-panel">
+        <button type="button" class="account-entry-button" onclick="openAccountModal()">我的次数</button>
+        <button type="button" class="home-quota-strip" onclick="openAccountModal()" aria-label="查看今日剩余次数">
+          今日剩余：
+          <strong id="homeJudgeQuotaText">矿地快判 - 次</strong>
+          <span>｜</span>
+          <strong id="homeConvertQuotaText">坐标/KML - 次</strong>
+        </button>
       </div>
     </section>
 
@@ -3015,11 +3192,75 @@ Au值 = 纯度 × 10 后取整数</div>
   <div id="quotaModal" class="quota-modal" role="dialog" aria-modal="true">
     <div class="quota-card">
       <button class="quota-close" type="button" onclick="closeQuotaModal()" aria-label="关闭">×</button>
-      <h3 id="quotaTitle">今日免费次数已用完</h3>
-      <p id="quotaDescription"></p>
-      <div id="quotaOptions" class="quota-options"></div>
-      <p id="quotaHelper"></p>
-      <div id="quotaFootnote" class="quota-footnote"></div>
+      <h3 id="quotaTitle">我的次数</h3>
+      <div id="quotaAlert" class="quota-alert"></div>
+
+      <section class="account-section">
+        <h4>账户状态</h4>
+        <div class="account-status-grid">
+          <div class="account-status-row">
+            <span>矿地快判</span>
+            <strong id="accountJudgeRemaining">今日剩余 - 次</strong>
+          </div>
+          <div class="account-status-row">
+            <span>坐标/KML</span>
+            <strong id="accountConvertRemaining">今日剩余 - 次</strong>
+          </div>
+          <div class="account-status-row">
+            <span>当前状态</span>
+            <strong id="accountPlanStatus">普通用户</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="account-section">
+        <h4>我的充值码</h4>
+        <div class="account-code-box">
+          <span id="accountUserCode" class="account-code-value">GKT------</span>
+          <button type="button" class="account-copy-button" onclick="copyUserCode()">复制</button>
+        </div>
+        <p class="quota-footnote">把这个码发给管理员，可用于加次数或开通服务。</p>
+      </section>
+
+      <section class="account-section">
+        <h4>服务说明</h4>
+        <ul class="account-plan-list">
+          <li>
+            <strong>普通用户</strong>
+            <span>每日少量免费次数。</span>
+          </li>
+          <li>
+            <strong>月度版</strong>
+            <span>矿地快判 50 次/月；坐标/KML 50 次/月。</span>
+          </li>
+          <li>
+            <strong>临时加次</strong>
+            <span>按需增加对应功能的使用次数。</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="account-section">
+        <h4>添加管理员</h4>
+        <div class="quota-contact-grid">
+          <div class="quota-contact-item">
+            <img src="wechat-qr.jpg" alt="微信二维码" />
+            <div>微信：Mir-2188</div>
+          </div>
+          <div class="quota-contact-item">
+            <img src="whatsapp-qr.jpg" alt="WhatsApp二维码" />
+            <div>WhatsApp</div>
+          </div>
+        </div>
+        <details class="quota-mobile-guide">
+          <summary>微信添加说明</summary>
+          <div>
+            苹果手机：长按二维码 → 识别图中二维码 → 添加微信<br>
+            安卓手机：截图保存二维码 → 打开微信扫一扫 → 从相册选择二维码<br>
+            WhatsApp：长按或截图保存二维码，打开 WhatsApp 扫描添加。
+          </div>
+        </details>
+      </section>
     </div>
   </div>
 
@@ -3040,10 +3281,13 @@ Au值 = 纯度 × 10 后取整数</div>
     const imageModalImg = document.getElementById("imageModalImg");
     const quotaModal = document.getElementById("quotaModal");
     const quotaTitle = document.getElementById("quotaTitle");
-    const quotaDescription = document.getElementById("quotaDescription");
-    const quotaOptions = document.getElementById("quotaOptions");
-    const quotaHelper = document.getElementById("quotaHelper");
-    const quotaFootnote = document.getElementById("quotaFootnote");
+    const quotaAlert = document.getElementById("quotaAlert");
+    const accountJudgeRemaining = document.getElementById("accountJudgeRemaining");
+    const accountConvertRemaining = document.getElementById("accountConvertRemaining");
+    const accountPlanStatus = document.getElementById("accountPlanStatus");
+    const accountUserCode = document.getElementById("accountUserCode");
+    const homeJudgeQuotaText = document.getElementById("homeJudgeQuotaText");
+    const homeConvertQuotaText = document.getElementById("homeConvertQuotaText");
     const quotaPrimary = document.getElementById("quotaPrimary");
     const supportPanel = document.getElementById("supportPanel");
     const coordinateContactGrid = document.getElementById("coordinateContactGrid");
@@ -3098,7 +3342,6 @@ Au值 = 纯度 × 10 后取整数</div>
     const visitorId = getOrCreateVisitorId();
     const userCode = getOrCreateUserCode();
     const firstSourceInfo = captureFirstSourceInfo();
-    const dismissedQuotaTypes = new Set();
     let currentQuota = null;
     let appConfig = {
       permissions: {
@@ -3249,14 +3492,33 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function showUserCode() {
+      openAccountModal();
+    }
+
+    async function copyUserCode() {
       const code = getOrCreateUserCode();
-      const text = document.getElementById("userCodeText");
-      const display = document.getElementById("userCodeDisplay");
-      if (text) {
-        text.textContent = code;
+      if (accountUserCode) {
+        accountUserCode.textContent = code;
       }
-      if (display) {
-        display.hidden = false;
+
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          const input = document.createElement("textarea");
+          input.value = code;
+          input.setAttribute("readonly", "readonly");
+          input.style.position = "fixed";
+          input.style.left = "-9999px";
+          document.body.appendChild(input);
+          input.select();
+          document.execCommand("copy");
+          input.remove();
+        }
+        showMessage("充值码已复制。", false);
+      } catch (error) {
+        console.warn("复制充值码失败", error);
+        showMessage("复制失败，请手动复制充值码。", true);
       }
     }
 
@@ -3381,22 +3643,35 @@ Au值 = 纯度 × 10 后取整数</div>
       const convertRemaining = Math.max(0, Number(usage?.convert_remaining || 0));
       const judgeRemaining = Math.max(0, Number(usage?.judge_remaining || 0));
 
+      currentQuota = {
+        ...(currentQuota || {}),
+        convert_remaining: convertRemaining,
+        judge_remaining: judgeRemaining,
+        is_vip: Boolean(usage?.is_vip || usage?.isVip || currentQuota?.is_vip || currentQuota?.isVip)
+      };
+
+      const usageVip = isQuotaVip(currentQuota);
       setQuotaStatus(
         convertQuotaStatus,
-        `剩余 ${convertRemaining} 次${convertRemaining === 0 ? "（已用完）" : ""}`,
+        usageVip ? "VIP" : `剩余 ${convertRemaining} 次${convertRemaining === 0 ? "（已用完）" : ""}`,
         convertRemaining,
-        false
+        usageVip
       );
       setQuotaStatus(
         judgeQuotaStatus,
-        `剩余 ${judgeRemaining} 次${judgeRemaining === 0 ? "（已用完）" : ""}`,
+        usageVip ? "VIP" : `剩余 ${judgeRemaining} 次${judgeRemaining === 0 ? "（已用完）" : ""}`,
         judgeRemaining,
-        false
+        usageVip
       );
+      updateAccountQuotaUI();
     }
 
     function getQuotaNumber(quota, snakeKey, camelKey) {
       return Number(quota?.[snakeKey] ?? quota?.[camelKey] ?? 0);
+    }
+
+    function isQuotaVip(quota = currentQuota) {
+      return Boolean(quota?.is_vip || quota?.isVip || quota?.vip || quota?.status === "vip");
     }
 
     function getQuotaClass(total, isVip) {
@@ -3426,37 +3701,54 @@ Au值 = 纯度 × 10 后取整数</div>
       element.classList.add(getQuotaClass(total, isVip));
     }
 
-    function updateQuotaDisplay(quota) {
-      if (!quota) {
-        return;
+    function getAccountRemaining(type) {
+      const quota = currentQuota || {};
+      if (isQuotaVip(quota)) {
+        return { isVip: true, total: null };
       }
 
-      currentQuota = quota;
-      const isVip = Boolean(quota.is_vip || quota.isVip);
+      const directKey = type === "judge" ? "judge_remaining" : "convert_remaining";
+      const directValue = Number(quota[directKey]);
+      if (Number.isFinite(directValue)) {
+        return { isVip: false, total: Math.max(0, directValue) };
+      }
 
-      if (isVip) {
-        setQuotaStatus(convertQuotaStatus, "VIP", 0, true);
-        setQuotaStatus(judgeQuotaStatus, "VIP", 0, true);
-        return;
+      if (type === "judge") {
+        const freeJudge = getQuotaNumber(quota, "free_judge_count", "freeJudgeCount");
+        const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
+        return { isVip: false, total: Math.max(0, freeJudge + paidJudge) };
       }
 
       const freeConvert = getQuotaNumber(quota, "free_convert_count", "freeConvertCount");
       const paidConvert = getQuotaNumber(quota, "paid_convert_count", "paidConvertCount");
-      const freeJudge = getQuotaNumber(quota, "free_judge_count", "freeJudgeCount");
-      const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
+      return { isVip: false, total: Math.max(0, freeConvert + paidConvert) };
+    }
 
-      setQuotaStatus(
-        convertQuotaStatus,
-        `今日免费坐标：${freeConvert}次｜付费坐标：${paidConvert}次`,
-        freeConvert + paidConvert,
-        false
-      );
-      setQuotaStatus(
-        judgeQuotaStatus,
-        `今日免费判读：${freeJudge}次｜付费判读：${paidJudge}次`,
-        freeJudge + paidJudge,
-        false
-      );
+    function updateAccountQuotaUI() {
+      const judgeInfo = getAccountRemaining("judge");
+      const convertInfo = getAccountRemaining("convert");
+      const isVip = isQuotaVip();
+      const judgeText = isVip ? "月度版" : `${judgeInfo.total ?? "-"} 次`;
+      const convertText = isVip ? "月度版" : `${convertInfo.total ?? "-"} 次`;
+
+      if (accountJudgeRemaining) {
+        accountJudgeRemaining.textContent = isVip ? "月度版" : `今日剩余 ${judgeText}`;
+      }
+      if (accountConvertRemaining) {
+        accountConvertRemaining.textContent = isVip ? "月度版" : `今日剩余 ${convertText}`;
+      }
+      if (accountPlanStatus) {
+        accountPlanStatus.textContent = isVip ? "月度版用户" : "普通用户";
+      }
+      if (accountUserCode) {
+        accountUserCode.textContent = getOrCreateUserCode();
+      }
+      if (homeJudgeQuotaText) {
+        homeJudgeQuotaText.textContent = isVip ? "矿地快判 月度版" : `矿地快判 ${judgeText}`;
+      }
+      if (homeConvertQuotaText) {
+        homeConvertQuotaText.textContent = isVip ? "坐标/KML 月度版" : `坐标/KML ${convertText}`;
+      }
     }
 
     function updateQuotaDisplay(quota) {
@@ -3465,11 +3757,12 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       currentQuota = quota;
-      const isVip = Boolean(quota.is_vip || quota.isVip);
+      const isVip = isQuotaVip(quota);
 
       if (isVip) {
         setQuotaStatus(convertQuotaStatus, "VIP", 0, true);
         setQuotaStatus(judgeQuotaStatus, "VIP", 0, true);
+        updateAccountQuotaUI();
         return;
       }
 
@@ -3490,6 +3783,7 @@ Au值 = 纯度 × 10 后取整数</div>
         freeJudge + paidJudge,
         false
       );
+      updateAccountQuotaUI();
     }
 
     function canUse(featureName, errorMessage) {
@@ -3539,34 +3833,39 @@ Au值 = 纯度 × 10 后取整数</div>
       }
     }
 
-    function showQuotaModal(type) {
-      if (dismissedQuotaTypes.has(type) || quotaModal.style.display === "flex") {
+    function getQuotaAlertMessage(type, explicitMessage = "") {
+      if (explicitMessage) {
+        return explicitMessage;
+      }
+
+      if (type === "judge") {
+        return "矿地快判次数已用完。";
+      }
+
+      if (type === "convert") {
+        return "坐标/KML次数已用完。";
+      }
+
+      return "";
+    }
+
+    function openAccountModal() {
+      showQuotaModal("account", { alertMessage: "" });
+    }
+
+    function showQuotaModal(type = "account", options = {}) {
+      if (!quotaModal) {
         return;
       }
 
       quotaModal.dataset.type = type;
-      quotaModal.dataset.stage = "price";
+      quotaTitle.textContent = "我的次数";
+      updateAccountQuotaUI();
 
-      if (type === "judge") {
-        quotaTitle.textContent = "\u4eca\u65e5\u514d\u8d39 AI \u5224\u8bfb\u6b21\u6570\u5df2\u7528\u5b8c";
-        quotaDescription.innerHTML = "\u4eca\u65e5\u514d\u8d39\u6b21\u6570\u5df2\u7528\u5b8c\uff0c<br>\u53ef\u5347\u7ea7\u4e13\u4e1a\u7248\u6216\u589e\u52a0 AI \u5224\u8bfb\u6b21\u6570\u7ee7\u7eed\u4f7f\u7528\u3002";
-        quotaOptions.innerHTML = `
-          <div class="quota-option">\u4e13\u4e1a\u7248\uff1aAI \u5224\u8bfb\u6bcf\u6708 50 \u6b21\uff0c\u9002\u5408\u9ad8\u9891\u521d\u7b5b</div>
-          <div class="quota-option">\u5355\u72ec\u52a0\u6b21\uff1a\u6309\u9700\u589e\u52a0 AI \u5224\u8bfb\u6b21\u6570</div>
-          ${quotaContactHtml()}
-        `;
-        quotaHelper.textContent = "\u4eba\u5de5\u786e\u8ba4\u540e\uff0c\u6211\u4f1a\u5728\u540e\u53f0\u4e3a\u4f60\u589e\u52a0\u6b21\u6570\uff0c\u901a\u5e38\u51e0\u5206\u949f\u5185\u5b8c\u6210\u3002";
-        quotaFootnote.textContent = "\u9ec4\u91d1\u6210\u8272\u8ba1\u7b97\u5668\u4e0d\u9650\u5236\u6b21\u6570\uff0cAI \u5224\u8bfb\u548c\u5750\u6807\u5de5\u5177\u6309\u6b21\u6570\u7ba1\u7406\u3002";
-      } else {
-        quotaTitle.textContent = "\u4eca\u65e5\u514d\u8d39\u5750\u6807\u6b21\u6570\u5df2\u7528\u5b8c";
-        quotaDescription.innerHTML = "\u4eca\u65e5\u514d\u8d39\u6b21\u6570\u5df2\u7528\u5b8c\uff0c<br>\u53ef\u5347\u7ea7\u4e13\u4e1a\u7248\u6216\u589e\u52a0\u5750\u6807/KML \u6b21\u6570\u7ee7\u7eed\u4f7f\u7528\u3002";
-        quotaOptions.innerHTML = `
-          <div class="quota-option">\u4e13\u4e1a\u7248\uff1a\u5750\u6807/KML \u6bcf\u6708 100 \u6b21\uff0c\u9002\u5408\u6279\u91cf\u6574\u7406</div>
-          <div class="quota-option">\u5355\u72ec\u52a0\u6b21\uff1a\u6309\u9700\u589e\u52a0\u5750\u6807\u8bc6\u522b\u548c KML \u6b21\u6570</div>
-          ${quotaContactHtml()}
-        `;
-        quotaHelper.textContent = "\u9002\u7528\u4e8e\u77ff\u533a\u5750\u6807\u8bc6\u522b\u3001KML \u751f\u6210\u548c\u6279\u91cf\u6574\u7406\u5750\u6807\u3002";
-        quotaFootnote.textContent = "\u4eba\u5de5\u786e\u8ba4\u540e\uff0c\u6211\u4f1a\u5728\u540e\u53f0\u4e3a\u4f60\u589e\u52a0\u6b21\u6570\uff0c\u901a\u5e38\u51e0\u5206\u949f\u5185\u5b8c\u6210\u3002";
+      const alertMessage = getQuotaAlertMessage(type, options.alertMessage || "");
+      if (quotaAlert) {
+        quotaAlert.textContent = alertMessage;
+        quotaAlert.classList.toggle("is-visible", Boolean(alertMessage));
       }
 
       quotaModal.style.display = "flex";
@@ -3578,9 +3877,11 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function closeQuotaModal() {
-      const type = quotaModal.dataset.type || "convert";
-      dismissedQuotaTypes.add(type);
       quotaModal.style.display = "none";
+      if (quotaAlert) {
+        quotaAlert.textContent = "";
+        quotaAlert.classList.remove("is-visible");
+      }
     }
 
     function showConvertLimitMessage() {
@@ -5191,8 +5492,8 @@ Au值 = 纯度 × 10 后取整数</div>
 
       await loadUserConfig();
 
-      if (!canUse("aiJudgeEnabled", "当前用户暂未开通 AI 判读功能。")) {
-        showJudgeMessage("当前用户暂未开通 AI 判读功能，请联系管理员开通。", true);
+      if (!canUse("aiJudgeEnabled", "当前用户暂未开通矿地快判功能。")) {
+        showJudgeMessage("当前用户暂未开通矿地快判功能，请联系管理员开通。", true);
         return;
       }
 
@@ -5297,12 +5598,12 @@ Au值 = 纯度 × 10 后取整数</div>
         if (!response.ok && data.reason === "permission_denied") {
           clearInterval(progressTimer);
           hideJudgeProgressVisual();
-          showJudgeMessage(sanitizeUserFacingTechMessage(data.error || "当前用户暂未开通 AI 判读。"), true);
+          showJudgeMessage(sanitizeUserFacingTechMessage(data.error || "当前用户暂未开通矿地快判。"), true);
           return;
         }
 
         if (!response.ok) {
-          const detail = sanitizeUserFacingTechMessage(data.detail || data.error || "AI判读失败");
+          const detail = sanitizeUserFacingTechMessage(data.detail || data.error || "矿地快判失败");
           const reasonText = {
             image_missing: "未收到图片，请重新选择图片后上传。",
             image_invalid: detail || "图片格式不支持，请重新选择 JPG 或 PNG 图片。",
