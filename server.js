@@ -3032,6 +3032,118 @@ function cleanDmsDisplayPart(part) {
     .replace(/\s+/g, " ");
 }
 
+function getDmsDisplayComponents(part) {
+  const clean = cleanDmsDisplayPart(part);
+  const parsed = parseLooseDmsPart(clean, "");
+  const groups = clean
+    .replace(/[NSEWO]/gi, " ")
+    .match(/\d+(?:\.\d+)?/g) || [];
+
+  if (!parsed || groups.length < 3) {
+    return null;
+  }
+
+  return {
+    clean,
+    axis: parsed.axis,
+    direction: parsed.direction,
+    degree: Number(groups[0]),
+    minute: Number(groups[1]),
+    second: Number(groups[2])
+  };
+}
+
+function replaceDmsMinute(cleanPart, minute) {
+  const paddedMinute = String(minute).padStart(2, "0");
+  return String(cleanPart || "").replace(/^(\s*\d{1,3}\s*\u00B0\s*)\d{1,2}/, `$1${paddedMinute}`);
+}
+
+function smoothDmsMinuteIslandsForLongTable(text) {
+  const rows = getCoordinateRows(text);
+
+  if (rows.length < 20) {
+    return text;
+  }
+
+  const parsedRows = rows.map(row => {
+    const parts = getLooseDmsPartsFromLine(row);
+    const latPart = parts.find(part => getDmsPartAxis(part) === "lat");
+    const lonPart = parts.find(part => getDmsPartAxis(part) === "lon");
+    const lat = getDmsDisplayComponents(latPart);
+    const lon = getDmsDisplayComponents(lonPart);
+
+    return lat && lon ? { lat, lon } : null;
+  });
+
+  if (parsedRows.filter(Boolean).length < 20) {
+    return text;
+  }
+
+  const smoothAxis = axis => {
+    let changed = false;
+
+    for (let index = 1; index < parsedRows.length - 1; index += 1) {
+      const current = parsedRows[index]?.[axis];
+
+      if (!current) {
+        continue;
+      }
+
+      let end = index;
+      while (
+        end + 1 < parsedRows.length
+        && parsedRows[end + 1]?.[axis]
+        && parsedRows[end + 1][axis].degree === current.degree
+        && parsedRows[end + 1][axis].minute === current.minute
+      ) {
+        end += 1;
+      }
+
+      const prev = parsedRows[index - 1]?.[axis];
+      const next = parsedRows[end + 1]?.[axis];
+      const islandLength = end - index + 1;
+
+      if (
+        prev
+        && next
+        && islandLength <= 2
+        && prev.degree === current.degree
+        && next.degree === current.degree
+        && prev.minute === next.minute
+        && Math.abs(current.minute - prev.minute) === 1
+      ) {
+        const minSecond = Math.min(prev.second, next.second);
+        const maxSecond = Math.max(prev.second, next.second);
+        const islandSecondsFit = parsedRows
+          .slice(index, end + 1)
+          .every(row => row?.[axis] && row[axis].second >= minSecond && row[axis].second <= maxSecond);
+
+        if (islandSecondsFit) {
+          for (let fillIndex = index; fillIndex <= end; fillIndex += 1) {
+            parsedRows[fillIndex][axis].minute = prev.minute;
+            parsedRows[fillIndex][axis].clean = replaceDmsMinute(parsedRows[fillIndex][axis].clean, prev.minute);
+          }
+          changed = true;
+        }
+      }
+
+      index = end;
+    }
+
+    return changed;
+  };
+
+  const changed = smoothAxis("lon") || smoothAxis("lat");
+
+  if (!changed) {
+    return text;
+  }
+
+  return parsedRows
+    .map((row, index) => row ? `${row.lon.clean},${row.lat.clean}` : rows[index])
+    .join("\n");
+}
+
 function extractPointTableLabel(line) {
   const text = String(line || "").trim().replace(/^\|+\s*/, "");
 
@@ -5268,6 +5380,17 @@ Rules:
         }
       } catch (pointAzRetryError) {
         console.error("Point A-Z / long DMS visual retry failed:", pointAzRetryError.message || pointAzRetryError);
+      }
+    }
+
+    if (countCommaDmsLongTableRows(rawText) >= 20) {
+      const smoothedRawText = smoothDmsMinuteIslandsForLongTable(rawText);
+
+      if (smoothedRawText !== rawText) {
+        console.log("Point A-Z / long DMS minute island correction applied.");
+        rawText = smoothedRawText;
+        coordinates = extractCoordinateLines(rawText);
+        usedModel = `${usedModel}+dms-minute-island-fix`;
       }
     }
 
