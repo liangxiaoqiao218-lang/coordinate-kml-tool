@@ -2979,6 +2979,125 @@ function shouldAcceptPointAzDmsRetry(currentCoordinates, retryCoordinates) {
   return retryRows === currentRows && retryDuplicates < currentDuplicates;
 }
 
+function getLooseDmsPartsFromLine(line) {
+  const text = String(line || "");
+  const degreePattern = /[-+]?\d{1,3}\s*(?:\u00B0|\u00BA|\u02DA)\s*\d{1,2}\s*(?:'|\u2032|\u2019)?\s*\d{1,2}(?:\.\d+)?\s*(?:"|\u2033|\u201D)?\s*[NSEWO]/gi;
+  const symbolPattern = /[-+]?\d{1,3}\s*[^0-9A-Za-z\s]\s*\d{1,2}\s*(?:'|\u2032|\u2019)?\s*\d{1,2}(?:\.\d+)?\s*(?:"|\u2033|\u201D)?\s*[NSEWO]/gi;
+  const spacedPattern = /[-+]?\d{1,3}\s+\d{1,2}\s+\d{1,2}(?:\.\d+)?\s*(?:"|\u2033|\u201D)?\s*[NSEWO]/gi;
+  const dotPattern = /[-+]?\d{1,3}\.\d{1,2}\.\d{1,2}(?:\.\d+)?\s*[NSEWO]/gi;
+  const matches = [
+    ...(text.match(degreePattern) || []),
+    ...(text.match(symbolPattern) || []),
+    ...(text.match(spacedPattern) || []),
+    ...(text.match(dotPattern) || [])
+  ];
+
+  return Array.from(new Set(matches));
+}
+
+function getDmsPartAxis(part) {
+  const parsed = parseLooseDmsPart(part, "");
+  return parsed ? parsed.axis : "";
+}
+
+function cleanDmsDisplayPart(part) {
+  return String(part || "")
+    .trim()
+    .replace(/[潞藲]/g, "\u00B0")
+    .replace(/[鈥樷€櫬碻鈥瞉\u2018\u2019\u2032]/g, "'")
+    .replace(/[鈥溾€濃€砞\u201C\u201D\u2033]/g, "\"")
+    .replace(/\s+/g, " ");
+}
+
+function extractPointTableLabel(line) {
+  const text = String(line || "").trim().replace(/^\|+\s*/, "");
+
+  if (/^[|:\-\s]+$/.test(text) || /^nord\b|^est\b|^latitude\b|^longitude\b/i.test(text)) {
+    return "";
+  }
+
+  const match = text.match(/^(?:point\s*)?([A-Z]|\d{1,2})\b\s*(?:[|,;:.)-]|\s+)/i);
+
+  return match ? match[1].toUpperCase() : "";
+}
+
+function getPointTableLabelOrder(label) {
+  if (/^[A-Z]$/.test(label)) {
+    return label.charCodeAt(0) - 64;
+  }
+
+  const number = Number(label);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function extractPointDmsTableCoordinateRows(text) {
+  const byLabel = new Map();
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const label = extractPointTableLabel(line);
+
+    if (!label) {
+      continue;
+    }
+
+    const parts = getLooseDmsPartsFromLine(line);
+
+    if (parts.length < 2) {
+      continue;
+    }
+
+    const latitudePart = parts.find(part => getDmsPartAxis(part) === "lat");
+    const longitudePart = parts.find(part => getDmsPartAxis(part) === "lon");
+
+    if (!latitudePart || !longitudePart) {
+      continue;
+    }
+
+    const outputLine = `${cleanDmsDisplayPart(longitudePart)},${cleanDmsDisplayPart(latitudePart)}`;
+    const order = getPointTableLabelOrder(label);
+
+    if (!byLabel.has(label)) {
+      byLabel.set(label, { label, order, outputLine });
+    }
+  }
+
+  return Array.from(byLabel.values())
+    .sort((a, b) => a.order - b.order)
+    .map(row => row.outputLine);
+}
+
+function normalizeCommaDmsCoordinateDisplayOrder(text) {
+  const rows = getCoordinateRows(text);
+  const normalizedRows = [];
+  let validDmsRows = 0;
+
+  for (const row of rows) {
+    const parts = getLooseDmsPartsFromLine(row);
+
+    if (parts.length < 2) {
+      normalizedRows.push(row);
+      continue;
+    }
+
+    const latitudePart = parts.find(part => getDmsPartAxis(part) === "lat");
+    const longitudePart = parts.find(part => getDmsPartAxis(part) === "lon");
+
+    if (!latitudePart || !longitudePart) {
+      normalizedRows.push(row);
+      continue;
+    }
+
+    validDmsRows += 1;
+    normalizedRows.push(`${cleanDmsDisplayPart(longitudePart)},${cleanDmsDisplayPart(latitudePart)}`);
+  }
+
+  return validDmsRows >= 8 ? normalizedRows.join("\n") : text;
+}
+
 function extractRecognitionWarning(text) {
   const warningLine = String(text || "")
     .split(/\r?\n/)
@@ -4985,7 +5104,12 @@ If the table has numeric rows, output every visible row in numeric order.
 Do not stop at the first 20 rows.
 Do not omit rows because two neighboring values look similar.
 Do not duplicate a coordinate unless the table visibly repeats the same coordinate in two separate rows.
-Output only coordinate rows in the original DMS format as longitude,latitude.
+For this retry, transcribe the table columns instead of converting:
+POINT A | Nord value | Est value
+POINT B | Nord value | Est value
+Keep Nord and Est separate. Nord is latitude. Est is longitude.
+Do not swap Nord and Est. Do not output lat,long pairs.
+Do not output the map coordinates below the table.
 Do not insert blank lines for a single long table.
 If a row is unclear, still output the best visible coordinate for that row and keep the row order.`;
     const imageItems = [
@@ -5096,10 +5220,15 @@ If a row is unclear, still output the best visible coordinate for that row and k
           maxTokens: 1200
         });
         const pointAzRetryRawText = pointAzRetryResponse.choices?.[0]?.message?.content || "";
-        const pointAzRetryCoordinates = extractCoordinateLines(pointAzRetryRawText);
+        const pointAzTableRows = extractPointDmsTableCoordinateRows(pointAzRetryRawText);
+        const pointAzDisplayText = pointAzTableRows.length >= 8
+          ? pointAzTableRows.join("\n")
+          : normalizeCommaDmsCoordinateDisplayOrder(pointAzRetryRawText);
+        const pointAzRetryCoordinates = extractCoordinateLines(pointAzDisplayText);
+        console.log("Point A-Z / long DMS retry parsed table rows:", pointAzTableRows.length);
 
         if (shouldAcceptPointAzDmsRetry(coordinates, pointAzRetryCoordinates)) {
-          rawText = pointAzRetryRawText;
+          rawText = pointAzDisplayText;
           coordinates = pointAzRetryCoordinates;
           usedModel = `${aliyunVisionModel}+point-az-dms-retry`;
           warning = extractRecognitionWarning(pointAzRetryRawText) || warning;
