@@ -6045,6 +6045,9 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         const trimmed = line.trim();
 
         if (!trimmed) {
+          if (coordinateLines.length > 0 && coordinateLines[coordinateLines.length - 1] !== "") {
+            coordinateLines.push("");
+          }
           continue;
         }
 
@@ -6066,6 +6069,10 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       }
 
       const rawResult = coordinateLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+
+      if (/\n\s*\n/.test(rawResult)) {
+        return rawResult;
+      }
 
       if (shouldKeepLongCommaDmsListUngrouped(coordinateLines, commaSeparatedDmsRows)) {
         return rawResult;
