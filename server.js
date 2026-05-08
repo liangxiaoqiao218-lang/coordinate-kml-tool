@@ -2956,10 +2956,10 @@ function shouldRetryPointAzDmsLongTable(rawText, coordinates) {
     return false;
   }
 
-  // Point A-Z and other long DMS tables should not be accepted when the model
-  // returns a partial list or duplicated adjacent rows. Retry the visual table
-  // layout instead of guessing missing rows locally.
-  return duplicateRows > 0 || (coordinateRows >= 15 && coordinateRows < 24);
+  // Point A-Z and other long DMS tables should be transcribed with row labels
+  // first. Direct coordinate-only output is too easy for the model to guess or
+  // shift by one table row, even when it returns many rows.
+  return dmsRows >= 20 || duplicateRows > 0 || (coordinateRows >= 15 && coordinateRows < 24);
 }
 
 function shouldAcceptPointAzDmsRetry(currentCoordinates, retryCoordinates) {
@@ -2985,6 +2985,14 @@ function shouldAcceptPointAzTranscription(currentCoordinates, tableRows) {
 
   if (retryRows < 12) {
     return false;
+  }
+
+  // A labeled Point/Nord/Est transcription is more trustworthy than a direct
+  // coordinate-only list for long tables, because coordinate-only output often
+  // shifts one row or invents intermediate points. Accept complete labeled
+  // transcriptions even when the row count equals the first pass.
+  if (retryRows >= 20 && retryRows >= currentRows - 2) {
+    return true;
   }
 
   if (retryRows >= 24) {
@@ -5108,24 +5116,35 @@ Find the table headed SOMMETS / X / Y and read across each horizontal row.
 Ignore all numbers that belong to OCR bounding boxes or pixel positions.
 The expected result for a BFTM table is a list of real row pairs such as X,Y only.`;
     const pointAzDmsRetryPrompt = `You are reading a mining coordinate table from an image.
-Focus ONLY on the table headed Point / Nord / Est, Point / Latitude / Longitude, or Point / N / E.
+Focus ONLY on the printed coordinate table headed Point / Nord / Est, Point / Latitude / Longitude, or Point / N / E.
 Ignore the map, phone UI, page text, watermarks, captions, and all non-table content.
 
-Task: transcribe the visible table rows, do not convert coordinates.
-Output one row per visible point in this exact pipe format:
+CRITICAL: this is a table transcription task, NOT a coordinate formatting task.
+The output is valid only if every line preserves the visible POINT label from the first column.
+Do not output final coordinate pairs like 08°16'00"W,10°52'15"N.
+Do not output any row without POINT A / POINT B / POINT C or a numeric point label.
+
+Task: read horizontally across each table row and transcribe it in this exact pipe format:
 POINT A | 10°52'15"N | 08°16'00"W
 POINT B | 10°48'00"N | 08°16'29"W
 
 Rules:
-- The first value after the point label is the Nord/Latitude column.
-- The second value after the point label is the Est/Longitude column.
-- Keep Nord and Est separate; do not swap them.
-- Do NOT output final longitude,latitude pairs.
-- Do NOT output rows without the POINT label.
+- Each output line must have exactly 3 fields separated by " | ".
+- Field 1 = the visible point label from the first column.
+- Field 2 = the Nord/Latitude column value from the same row.
+- Field 3 = the Est/Longitude/Ouest column value from the same row.
+- Keep Nord and Est/Ouest separate; do not swap them.
+- Read row by row. Never take a value from the previous or next row.
 - If the table has POINT A through POINT Z, output all visible rows in A-Z order.
 - If a row is hard to read, output the best visible value but keep its point label and row position.
-- Do not duplicate a row unless the table visibly repeats that row.
-- Output only the table rows. No explanation.`;
+- Do not duplicate a row unless the printed table visibly repeats that row.
+- Do not infer from the map polygon below the table.
+- Output only the table rows. No explanation.
+
+中文硬性要求：
+只转写表格，不要整理成最终坐标。每一行必须保留 POINT 标签。
+禁止输出 08°16'00"W,10°52'15"N 这种逗号坐标行。
+如果看见 Point A-Z，必须按 A-Z 原顺序逐行读取，不要跳行、串行、用上一行或下一行的值。`;
     const imageItems = [
       {
         type: "image_url",
@@ -5231,7 +5250,7 @@ Rules:
           prompt: pointAzDmsRetryPrompt,
           imageItems,
           temperature: 0,
-          maxTokens: 1200
+          maxTokens: 1600
         });
         const pointAzRetryRawText = pointAzRetryResponse.choices?.[0]?.message?.content || "";
         const pointAzTableRows = extractPointDmsTableCoordinateRows(pointAzRetryRawText);
@@ -5239,14 +5258,13 @@ Rules:
         const pointAzRetryCoordinates = extractCoordinateLines(pointAzDisplayText);
         console.log("Point A-Z / long DMS retry parsed table rows:", pointAzTableRows.length);
 
-        if (
-          shouldAcceptPointAzTranscription(coordinates, pointAzTableRows)
-          && shouldAcceptPointAzDmsRetry(coordinates, pointAzRetryCoordinates)
-        ) {
+        if (shouldAcceptPointAzTranscription(coordinates, pointAzTableRows)) {
           rawText = pointAzDisplayText;
           coordinates = pointAzRetryCoordinates;
           usedModel = `${aliyunVisionModel}+point-az-dms-retry`;
           warning = extractRecognitionWarning(pointAzRetryRawText) || warning;
+        } else if (pointAzTableRows.length < 12) {
+          console.log("Point A-Z / long DMS retry did not return enough labeled rows:", pointAzRetryRawText.slice(0, 1000));
         }
       } catch (pointAzRetryError) {
         console.error("Point A-Z / long DMS visual retry failed:", pointAzRetryError.message || pointAzRetryError);
