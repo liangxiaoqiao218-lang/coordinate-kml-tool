@@ -2885,6 +2885,100 @@ function shouldRetryBftmRecognition(rawText, coordinates) {
   return (hasInvalidColumnOutput || hasBboxPollution) && !hasValidBftmRows;
 }
 
+function getCoordinateRows(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => line !== noCoordinatesText)
+    .filter(line => !/^#?\s*(识别提示|提示|璇嗗埆鎻愮ず|鎻愮ず)\s*[:：锛]/.test(line));
+}
+
+function normalizeCoordinateRowForCompare(line) {
+  return String(line || "")
+    .toUpperCase()
+    .replace(/[º˚]/g, "°")
+    .replace(/[‘’´`′]/g, "'")
+    .replace(/[“”″]/g, "\"")
+    .replace(/\s+/g, "")
+    .replace(/[，；;]/g, ",");
+}
+
+function countDuplicateCoordinateRows(text) {
+  const seen = new Set();
+  let duplicates = 0;
+
+  getCoordinateRows(text).forEach(line => {
+    const key = normalizeCoordinateRowForCompare(line);
+
+    if (!key) {
+      return;
+    }
+
+    if (seen.has(key)) {
+      duplicates += 1;
+    } else {
+      seen.add(key);
+    }
+  });
+
+  return duplicates;
+}
+
+function looksLikeCommaDmsLongTableRow(line) {
+  const value = String(line || "");
+  return value.includes(",")
+    && /(?:°|º|˚|\d+\s*')/.test(value)
+    && /[NS]/i.test(value)
+    && /[EWO]/i.test(value);
+}
+
+function countCommaDmsLongTableRows(text) {
+  return getCoordinateRows(text).filter(looksLikeCommaDmsLongTableRow).length;
+}
+
+function shouldRetryPointAzDmsLongTable(rawText, coordinates) {
+  if (shouldUseStrictBftmValidation(rawText) || shouldUseStrictBftmValidation(coordinates)) {
+    return false;
+  }
+
+  const dmsRows = Math.max(
+    countCommaDmsLongTableRows(rawText),
+    countCommaDmsLongTableRows(coordinates)
+  );
+  const coordinateRows = countCoordinateRows(coordinates);
+  const duplicateRows = Math.max(
+    countDuplicateCoordinateRows(rawText),
+    countDuplicateCoordinateRows(coordinates)
+  );
+
+  if (dmsRows < 12 || coordinateRows < 12) {
+    return false;
+  }
+
+  // Point A-Z and other long DMS tables should not be accepted when the model
+  // returns a partial list or duplicated adjacent rows. Retry the visual table
+  // layout instead of guessing missing rows locally.
+  return duplicateRows > 0 || (coordinateRows >= 15 && coordinateRows < 24);
+}
+
+function shouldAcceptPointAzDmsRetry(currentCoordinates, retryCoordinates) {
+  const currentRows = countCoordinateRows(currentCoordinates);
+  const retryRows = countCoordinateRows(retryCoordinates);
+  const currentDuplicates = countDuplicateCoordinateRows(currentCoordinates);
+  const retryDuplicates = countDuplicateCoordinateRows(retryCoordinates);
+
+  if (retryRows >= 24 && retryRows > currentRows) {
+    return true;
+  }
+
+  if (retryRows > currentRows && retryDuplicates <= currentDuplicates) {
+    return true;
+  }
+
+  return retryRows === currentRows && retryDuplicates < currentDuplicates;
+}
+
 function extractRecognitionWarning(text) {
   const warningLine = String(text || "")
     .split(/\r?\n/)
@@ -4879,6 +4973,21 @@ Use the visual table layout, not OCR detection boxes.
 Find the table headed SOMMETS / X / Y and read across each horizontal row.
 Ignore all numbers that belong to OCR bounding boxes or pixel positions.
 The expected result for a BFTM table is a list of real row pairs such as X,Y only.`;
+    const pointAzDmsRetryPrompt = `${prompt}
+
+Point A-Z / long DMS table retry:
+The previous output may have missed rows or duplicated neighboring rows.
+Focus only on the coordinate table headed Point / Nord / Est, Point / Latitude / Longitude, or Point / N / E.
+Ignore the map, phone UI, page text, watermarks, and captions below the table.
+Read the table by visual row layout, from top to bottom.
+If the table has POINT A through POINT Z, output exactly 26 rows in A-Z order.
+If the table has numeric rows, output every visible row in numeric order.
+Do not stop at the first 20 rows.
+Do not omit rows because two neighboring values look similar.
+Do not duplicate a coordinate unless the table visibly repeats the same coordinate in two separate rows.
+Output only coordinate rows in the original DMS format as longitude,latitude.
+Do not insert blank lines for a single long table.
+If a row is unclear, still output the best visible coordinate for that row and keep the row order.`;
     const imageItems = [
       {
         type: "image_url",
@@ -4973,6 +5082,30 @@ The expected result for a BFTM table is a list of real row pairs such as X,Y onl
         if (!warning) {
           warning = "BFTM / X-Y 坐标未能稳定识别，请人工核对原表。";
         }
+      }
+    }
+
+    if (shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+      try {
+        console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
+        const pointAzRetryResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: pointAzDmsRetryPrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 1200
+        });
+        const pointAzRetryRawText = pointAzRetryResponse.choices?.[0]?.message?.content || "";
+        const pointAzRetryCoordinates = extractCoordinateLines(pointAzRetryRawText);
+
+        if (shouldAcceptPointAzDmsRetry(coordinates, pointAzRetryCoordinates)) {
+          rawText = pointAzRetryRawText;
+          coordinates = pointAzRetryCoordinates;
+          usedModel = `${aliyunVisionModel}+point-az-dms-retry`;
+          warning = extractRecognitionWarning(pointAzRetryRawText) || warning;
+        }
+      } catch (pointAzRetryError) {
+        console.error("Point A-Z / long DMS visual retry failed:", pointAzRetryError.message || pointAzRetryError);
       }
     }
 
