@@ -723,6 +723,57 @@
       font-size: 15px;
     }
 
+    .source-stats-panel {
+      margin: 12px 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 10px 24px rgba(15, 47, 95, 0.06);
+    }
+
+    .source-stats-panel h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .source-stats-table-wrap {
+      overflow-x: auto;
+    }
+
+    .source-stats-table {
+      width: 100%;
+      min-width: 820px;
+      border-collapse: collapse;
+    }
+
+    .source-stats-table th,
+    .source-stats-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .source-stats-table th {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .source-badge {
+      display: inline-flex;
+      align-items: center;
+      max-width: 180px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #eef4ff;
+      color: #1d4ed8;
+      font-weight: 700;
+      font-size: 12px;
+    }
+
     .switch-control {
       position: relative;
       width: 52px;
@@ -1732,6 +1783,64 @@
               `).join("")
               : `<div class="muted">暂无趋势数据。</div>`}
           </div>
+        </div>
+      `;
+      renderSourceStats(usagePanel, analytics);
+    }
+
+    function renderSourceStats(usagePanel, afterElement) {
+      if (!usagePanel) return;
+      let panel = document.getElementById("sourceStatsPanel");
+      if (!panel) {
+        panel = document.createElement("div");
+        panel.id = "sourceStatsPanel";
+        panel.className = "source-stats-panel";
+        (afterElement || usagePanel.querySelector(".usage-analytics-grid") || usagePanel.firstChild)
+          .insertAdjacentElement("afterend", panel);
+      }
+
+      const sources = dashboardStats?.sourceStats?.sources || [];
+      if (!sources.length) {
+        panel.innerHTML = `
+          <h3>渠道来源统计</h3>
+          <div class="muted">暂无来源数据。用户通过带 from 参数的链接进入并使用功能后会显示在这里。</div>
+        `;
+        return;
+      }
+
+      panel.innerHTML = `
+        <h3>渠道来源统计</h3>
+        <div class="source-stats-table-wrap">
+          <table class="source-stats-table">
+            <thead>
+              <tr>
+                <th>来源</th>
+                <th>来源人数</th>
+                <th>访问</th>
+                <th>使用次数</th>
+                <th>矿地快判</th>
+                <th>坐标/KML</th>
+                <th>黄金成色</th>
+                <th>失败</th>
+                <th>最近页面</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sources.map(item => `
+                <tr>
+                  <td><span class="source-badge" title="${escapeHtml(item.fromSource || "-")}">${escapeHtml(item.fromSource || "-")}</span></td>
+                  <td>${Number(item.userCount || 0).toLocaleString("zh-CN")}</td>
+                  <td>${Number(item.visitCount || 0).toLocaleString("zh-CN")}</td>
+                  <td>${Number(item.usageCount || 0).toLocaleString("zh-CN")}</td>
+                  <td>${Number(item.judgeCount || 0).toLocaleString("zh-CN")}</td>
+                  <td>${Number(item.convertCount || 0).toLocaleString("zh-CN")}</td>
+                  <td>${Number(item.goldCount || 0).toLocaleString("zh-CN")}</td>
+                  <td>${Number(item.failedCount || 0).toLocaleString("zh-CN")}</td>
+                  <td title="${escapeHtml(item.latestPage || item.firstPage || "-")}">${escapeHtml(item.latestPage || item.firstPage || "-")}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
         </div>
       `;
     }

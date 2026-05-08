@@ -3038,6 +3038,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let currentGoldPriceSource = "unavailable";
     let currentGoldPriceUpdatedAt = "";
     const visitorId = getOrCreateVisitorId();
+    const firstSourceInfo = captureFirstSourceInfo();
     const dismissedQuotaTypes = new Set();
     let currentQuota = null;
     let appConfig = {
@@ -3151,9 +3152,56 @@ Au值 = 纯度 × 10 后取整数</div>
       return nextId;
     }
 
+    function normalizeSourceValue(value) {
+      return String(value || "")
+        .trim()
+        .slice(0, 80)
+        .replace(/[^\w\u4e00-\u9fa5.-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "");
+    }
+
+    function captureFirstSourceInfo() {
+      const sourceKey = "geoToolFirstSource";
+      const pageKey = "geoToolFirstSourcePage";
+      const timeKey = "geoToolFirstSourceAt";
+      const existingSource = normalizeSourceValue(localStorage.getItem(sourceKey));
+      const params = new URLSearchParams(window.location.search);
+      const currentSource = normalizeSourceValue(params.get("from"));
+
+      if (!existingSource && currentSource) {
+        localStorage.setItem(sourceKey, currentSource);
+        localStorage.setItem(pageKey, window.location.pathname || "/");
+        localStorage.setItem(timeKey, new Date().toISOString());
+      }
+
+      return {
+        fromSource: normalizeSourceValue(localStorage.getItem(sourceKey)),
+        firstPage: localStorage.getItem(pageKey) || "",
+        firstVisitAt: localStorage.getItem(timeKey) || ""
+      };
+    }
+
+    function getSourceHeaders(extra = {}) {
+      const headers = { ...extra };
+
+      if (firstSourceInfo.fromSource) {
+        headers["x-source"] = firstSourceInfo.fromSource;
+        headers["x-source-page"] = firstSourceInfo.firstPage || "/";
+        headers["x-source-at"] = firstSourceInfo.firstVisitAt || "";
+        headers["x-page"] = window.location.pathname || "/";
+      }
+
+      return headers;
+    }
+
     async function loadUserConfig() {
       try {
-        const response = await fetch(`/api/config?visitorId=${encodeURIComponent(visitorId)}`);
+        const response = await fetch(`/api/config?visitorId=${encodeURIComponent(visitorId)}`, {
+          headers: getSourceHeaders({
+            "x-visitor-id": visitorId
+          })
+        });
         appConfig = await response.json();
         applyFeatureAvailability();
       } catch (error) {
@@ -3189,9 +3237,9 @@ Au值 = 纯度 × 10 后取整数</div>
     async function loadUserQuota() {
       try {
         const usageResponse = await fetch(`/api/user-usage?visitorId=${encodeURIComponent(visitorId)}`, {
-          headers: {
+          headers: getSourceHeaders({
             "x-visitor-id": visitorId
-          }
+          })
         });
         const usageData = await usageResponse.json().catch(() => ({}));
 
@@ -3201,9 +3249,9 @@ Au值 = 纯度 × 10 后取整数</div>
         }
 
         const response = await fetch(`/api/usage/quota?visitorId=${encodeURIComponent(visitorId)}`, {
-          headers: {
+          headers: getSourceHeaders({
             "x-visitor-id": visitorId
-          }
+          })
         });
         const data = await response.json().catch(() => ({}));
 
@@ -3490,12 +3538,14 @@ Au值 = 纯度 × 10 后取整数</div>
         const response = await fetch("/api/usage/consume", {
           method: "POST",
           headers: {
+            ...getSourceHeaders(),
             "Content-Type": "application/json",
             "x-visitor-id": visitorId
           },
           body: JSON.stringify({
             visitorId,
-            type
+            type,
+            fromSource: firstSourceInfo.fromSource || ""
           })
         });
         const data = await response.json().catch(() => ({}));
@@ -3572,12 +3622,14 @@ Au值 = 纯度 × 10 后取整数</div>
       fetch("/api/track", {
         method: "POST",
         headers: {
+          ...getSourceHeaders(),
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
           visitorId,
           eventName,
           page: location.pathname,
+          fromSource: firstSourceInfo.fromSource || "",
           extra: {
             ...extra,
             deviceInfo
@@ -5077,9 +5129,9 @@ Au值 = 纯度 × 10 后取整数</div>
           try {
             const response = await fetch("/api/analyze-mining-image", {
               method: "POST",
-              headers: {
+              headers: getSourceHeaders({
                 "x-visitor-id": visitorId
-              },
+              }),
               body: formData
             });
             let data;
@@ -5431,9 +5483,9 @@ Au值 = 纯度 × 10 后取整数</div>
       try {
         const response = await fetch(`/api/gold-price?visitorId=${encodeURIComponent(visitorId)}`, {
           cache: "no-store",
-          headers: {
+          headers: getSourceHeaders({
             "x-visitor-id": visitorId
-          }
+          })
         });
 
         if (!response.ok) {
@@ -7238,9 +7290,9 @@ ${placemarks}
 
         const response = await fetch("/api/recognize-coordinates", {
           method: "POST",
-          headers: {
+          headers: getSourceHeaders({
             "x-visitor-id": visitorId
-          },
+          }),
           body: formData
         });
 

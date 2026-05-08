@@ -711,6 +711,7 @@ function extractUsageBalanceFields(user) {
 }
 
 function normalizeUsageFeatureType(type) {
+  if (type === "visit") return "visit";
   if (type === "gold") return "gold";
   return type === "judge" ? "judge" : "convert";
 }
@@ -719,6 +720,7 @@ const AI_JUDGE_ESTIMATED_COST_PER_CALL_CNY = Number(process.env.AI_JUDGE_COST_PE
 const AI_INPUT_TOKEN_PRICE_PER_1K_CNY = Number(process.env.AI_INPUT_TOKEN_PRICE_PER_1K_CNY || 0);
 const AI_OUTPUT_TOKEN_PRICE_PER_1K_CNY = Number(process.env.AI_OUTPUT_TOKEN_PRICE_PER_1K_CNY || 0);
 const AI_COST_NOTE_PREFIX = "AI_COST_META:";
+const SOURCE_META_NOTE_PREFIX = "SOURCE_META:";
 
 function toFiniteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -788,6 +790,62 @@ function encodeUsageLogNote(note = "", metadata = null) {
   return [text, metaText].filter(Boolean).join("\n");
 }
 
+function sanitizeSourceValue(value, maxLength = 100) {
+  return String(value || "")
+    .trim()
+    .slice(0, maxLength)
+    .replace(/[^\w\u4e00-\u9fa5./:-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function getSourceMetaFromReq(req) {
+  if (!req) return null;
+  const body = req.body || {};
+  const query = req.query || {};
+  const fromSource = sanitizeSourceValue(
+    req.get?.("x-source") || body.fromSource || body.source || query.from || query.source,
+    80
+  );
+
+  if (!fromSource) {
+    return null;
+  }
+
+  return {
+    from_source: fromSource,
+    first_page: sanitizeSourceValue(req.get?.("x-source-page") || body.firstSourcePage || query.firstPage || "", 200),
+    first_visit_at: sanitizeSourceValue(req.get?.("x-source-at") || body.firstVisitAt || query.firstVisitAt || "", 80),
+    page: sanitizeSourceValue(req.get?.("x-page") || body.page || query.page || req.originalUrl || "", 200),
+    visit_time: new Date().toISOString()
+  };
+}
+
+function appendSourceMetaToNote(note = "", sourceMeta = null) {
+  const text = String(note || "").trim();
+  if (!sourceMeta?.from_source) {
+    return text;
+  }
+
+  const metaText = `${SOURCE_META_NOTE_PREFIX}${JSON.stringify(sourceMeta)}`;
+  return [text, metaText].filter(Boolean).join("\n");
+}
+
+function parseUsageSourceMetadata(note = "") {
+  const text = String(note || "");
+  const index = text.indexOf(SOURCE_META_NOTE_PREFIX);
+  if (index < 0) {
+    return null;
+  }
+
+  const raw = text.slice(index + SOURCE_META_NOTE_PREFIX.length).split(/\r?\n/)[0];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 function parseUsageLogMetadata(note = "") {
   const text = String(note || "");
   const index = text.indexOf(AI_COST_NOTE_PREFIX);
@@ -840,6 +898,8 @@ async function writeUsageLog({
       }
     }
 
+    const sourceMeta = getSourceMetaFromReq(req);
+    const logNote = appendSourceMetaToNote(encodeUsageLogNote(note, metadata), sourceMeta);
     const { error } = await supabase
       .from("usage_logs")
       .insert({
@@ -853,7 +913,7 @@ async function writeUsageLog({
         before_balance: beforeBalance || null,
         after_balance: afterBalance || null,
         success: !!success,
-        note: encodeUsageLogNote(note, metadata).slice(0, 1000) || null,
+        note: logNote.slice(0, 1000) || null,
         error_reason: String(errorReason || "").slice(0, 1000) || null
       });
 
@@ -871,6 +931,24 @@ async function writeUsageLog({
   } catch (error) {
     console.error("Usage log write exception:", error?.message || error);
   }
+}
+
+async function writeSourceVisitLog(userId, req) {
+  const sourceMeta = getSourceMetaFromReq(req);
+  if (!sourceMeta?.from_source) {
+    return;
+  }
+
+  await writeUsageLog({
+    userId,
+    req,
+    featureType: "visit",
+    consumeType: "none",
+    beforeBalance: null,
+    afterBalance: null,
+    success: true,
+    note: "source_visit"
+  });
 }
 
 app.get("/api/gold-price", async (req, res) => {
@@ -3467,6 +3545,7 @@ app.get("/api/config", async (req, res) => {
     if (visitorId) {
       await getOrCreateSupabaseUser(visitorId);
       await updateSupabaseUserVisitMeta(visitorId, req);
+      await writeSourceVisitLog(visitorId, req);
     }
 
     res.json({
@@ -4087,6 +4166,9 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         topUsers: [],
         byFeature: {}
       },
+      sourceStats: {
+        sources: []
+      },
       recentErrors: []
     };
 
@@ -4123,6 +4205,8 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
     const last7Logs = logs.filter(log => new Date(log.created_at) >= last7Start);
     const successfulTodayLogs = todayLogs.filter(log => log.success);
     const successful7DayLogs = last7Logs.filter(log => log.success);
+    const usageSuccessfulTodayLogs = successfulTodayLogs.filter(log => log.feature_type !== "visit");
+    const usageSuccessful7DayLogs = successful7DayLogs.filter(log => log.feature_type !== "visit");
     const todayFailures = todayLogs.filter(log => !log.success);
     const last7Failures = last7Logs.filter(log => !log.success);
     const uniqueCount = list => new Set(list.map(item => item.user_id).filter(Boolean)).size;
@@ -4182,7 +4266,7 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
       topAiUsersMap.set(userId, userItem);
     }
     const byFeature = {};
-    for (const log of successfulTodayLogs) {
+    for (const log of usageSuccessfulTodayLogs) {
       const feature = log.feature_type || "unknown";
       byFeature[feature] = byFeature[feature] || { calls: 0, costCny: 0 };
       byFeature[feature].calls += 1;
@@ -4190,6 +4274,64 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         byFeature[feature].costCny += getAiCost(log);
       }
     }
+    const sourceMap = new Map();
+    for (const log of logs) {
+      const sourceMeta = parseUsageSourceMetadata(log.note);
+      const fromSource = sourceMeta?.from_source || "";
+      if (!fromSource) continue;
+
+      const item = sourceMap.get(fromSource) || {
+        fromSource,
+        users: new Set(),
+        visits: 0,
+        usageCount: 0,
+        judgeCount: 0,
+        convertCount: 0,
+        goldCount: 0,
+        successCount: 0,
+        failedCount: 0,
+        firstPage: sourceMeta.first_page || "",
+        latestPage: sourceMeta.page || "",
+        latestAt: log.created_at
+      };
+
+      if (log.user_id) item.users.add(log.user_id);
+      if (log.feature_type === "visit") {
+        item.visits += 1;
+      } else if (log.success) {
+        item.usageCount += 1;
+        item.successCount += 1;
+        if (log.feature_type === "judge") item.judgeCount += 1;
+        if (log.feature_type === "convert") item.convertCount += 1;
+        if (log.feature_type === "gold") item.goldCount += 1;
+      } else {
+        item.failedCount += 1;
+      }
+
+      if (new Date(log.created_at) > new Date(item.latestAt || 0)) {
+        item.latestAt = log.created_at;
+        item.latestPage = sourceMeta.page || item.latestPage;
+      }
+
+      sourceMap.set(fromSource, item);
+    }
+    const sourceStats = Array.from(sourceMap.values())
+      .map(item => ({
+        fromSource: item.fromSource,
+        userCount: item.users.size,
+        visitCount: item.visits,
+        usageCount: item.usageCount,
+        judgeCount: item.judgeCount,
+        convertCount: item.convertCount,
+        goldCount: item.goldCount,
+        successCount: item.successCount,
+        failedCount: item.failedCount,
+        firstPage: item.firstPage,
+        latestPage: item.latestPage,
+        latestAt: item.latestAt
+      }))
+      .sort((a, b) => b.userCount - a.userCount || b.usageCount - a.usageCount || new Date(b.latestAt || 0) - new Date(a.latestAt || 0))
+      .slice(0, 50);
     const paidUsers = users.filter(user =>
       Number(user.paid_convert_count || 0) > 0 || Number(user.paid_judge_count || 0) > 0
     ).length;
@@ -4204,17 +4346,17 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
       success: true,
       today: {
         activeUsers: uniqueCount(todayLogs),
-        judgeCount: countFeature(successfulTodayLogs, "judge"),
-        convertCount: countFeature(successfulTodayLogs, "convert"),
-        goldCount: countFeature(successfulTodayLogs, "gold"),
-        totalCount: successfulTodayLogs.length,
+        judgeCount: countFeature(usageSuccessfulTodayLogs, "judge"),
+        convertCount: countFeature(usageSuccessfulTodayLogs, "convert"),
+        goldCount: countFeature(usageSuccessfulTodayLogs, "gold"),
+        totalCount: usageSuccessfulTodayLogs.length,
         failedCount: todayFailures.length
       },
       last7Days: {
         activeUsers: uniqueCount(last7Logs),
-        judgeCount: countFeature(successful7DayLogs, "judge"),
-        convertCount: countFeature(successful7DayLogs, "convert"),
-        goldCount: countFeature(successful7DayLogs, "gold"),
+        judgeCount: countFeature(usageSuccessful7DayLogs, "judge"),
+        convertCount: countFeature(usageSuccessful7DayLogs, "convert"),
+        goldCount: countFeature(usageSuccessful7DayLogs, "gold"),
         failedCount: last7Failures.length
       },
       users: {
@@ -4264,6 +4406,9 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
             { calls: value.calls, costCny: roundCurrency(value.costCny) }
           ])
         )
+      },
+      sourceStats: {
+        sources: sourceStats
       },
       recentErrors: logs
         .filter(log => !log.success)
