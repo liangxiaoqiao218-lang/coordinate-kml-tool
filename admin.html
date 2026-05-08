@@ -1957,6 +1957,7 @@
       { name: "小红书", source: "xhs" },
       { name: "直播", source: "live" },
     ];
+    const officialChannelOrigin = "https://geokitlab.com";
 
     function sanitizeChannelSource(value) {
       return String(value || "")
@@ -1969,8 +1970,7 @@
 
     function buildChannelLink(source) {
       const cleanSource = sanitizeChannelSource(source);
-      const origin = window.location.origin || "";
-      return cleanSource ? `${origin}/?from=${encodeURIComponent(cleanSource)}` : "";
+      return cleanSource ? `${officialChannelOrigin}/?from=${encodeURIComponent(cleanSource)}` : "";
     }
 
     async function copyTextValue(text) {

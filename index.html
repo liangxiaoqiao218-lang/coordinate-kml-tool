@@ -288,8 +288,7 @@
       font-weight: 900;
     }
 
-    .account-action-button,
-    .inline-account-action {
+    .account-action-button {
       border: 0;
       background: #f97316;
       color: #ffffff;
@@ -299,10 +298,23 @@
     }
 
     .inline-account-action {
-      min-height: 30px;
-      padding: 5px 10px;
+      min-height: 24px;
+      padding: 2px 7px;
+      border: 1px solid #d8e0ea;
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #64748b;
       font-size: 12px;
+      font-weight: 700;
       box-shadow: none;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .inline-account-action:hover {
+      border-color: #cbd5e1;
+      color: #334155;
+      background: #ffffff;
     }
 
     .module-card.primary-module {
@@ -1314,6 +1326,7 @@
       color: #64748b;
       font-size: 13px;
       line-height: 1;
+      cursor: pointer;
     }
 
     .page-title-row .quota-status.quota-vip {
@@ -2936,16 +2949,6 @@
           <small class="module-action">进入</small>
         </button>
       </div>
-      <div class="home-account-panel">
-        <button type="button" class="account-entry-button" onclick="openAccountModal()">我的次数</button>
-        <button type="button" class="home-quota-strip" onclick="openAccountModal()" aria-label="查看今日剩余次数">
-          今日剩余：
-          <strong id="homeJudgeQuotaText">矿地快判 - 次</strong>
-          <span>｜</span>
-          <strong id="homeConvertQuotaText">坐标/KML - 次</strong>
-        </button>
-        <button type="button" class="account-action-button" onclick="openAccountModal()">充值 / 加次数</button>
-      </div>
     </section>
 
     <section id="coordinatePage" class="view">
@@ -2957,8 +2960,8 @@
       </div>
       <div class="page-title-row coordinate-title-row">
         <h1>坐标处理工具</h1>
-        <div id="convertQuotaStatus" class="quota-status" hidden></div>
-        <button type="button" class="inline-account-action" onclick="openAccountModal()">我的次数</button>
+        <div id="convertQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
+        <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">充值 / 加次数</button>
       </div>
       <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
 
@@ -3085,8 +3088,8 @@
       </div>
       <div class="page-title-row judge-title-row">
         <h1>矿地快判</h1>
-        <div id="judgeQuotaStatus" class="quota-status" hidden></div>
-        <button type="button" class="inline-account-action" onclick="openAccountModal()">充值 / 加次数</button>
+        <div id="judgeQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
+        <button id="judgeQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">充值 / 加次数</button>
       </div>
       <p class="intro">用于矿石、河道、卫星图的现场初筛，先判断是否值得继续看。</p>
 
@@ -3376,6 +3379,8 @@ Au值 = 纯度 × 10 后取整数</div>
     const judgeQrText = document.getElementById("judgeQrText");
     const convertQuotaStatus = document.getElementById("convertQuotaStatus");
     const judgeQuotaStatus = document.getElementById("judgeQuotaStatus");
+    const convertQuotaAction = document.getElementById("convertQuotaAction");
+    const judgeQuotaAction = document.getElementById("judgeQuotaAction");
     const homeGoldEntry = document.getElementById("homeGoldEntry");
     const goldCalculatorPanel = document.getElementById("goldCalculatorPanel");
     const goldUnavailableNotice = document.getElementById("goldUnavailableNotice");
@@ -3774,6 +3779,23 @@ Au值 = 纯度 × 10 后取整数</div>
       element.classList.add(getQuotaClass(total, isVip));
     }
 
+    function setQuotaAction(actionElement, total, isVip) {
+      if (!actionElement) {
+        return;
+      }
+
+      actionElement.hidden = Boolean(isVip) || Number(total) !== 0;
+    }
+
+    function handleQuotaStatusKey(event) {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+
+      event.preventDefault();
+      openAccountModal();
+    }
+
     function getAccountRemaining(type) {
       const quota = currentQuota || {};
       if (isQuotaVip(quota)) {
@@ -3837,6 +3859,8 @@ Au值 = 纯度 × 10 后取整数</div>
       if (isVip) {
         setQuotaStatus(convertQuotaStatus, "VIP", 0, true);
         setQuotaStatus(judgeQuotaStatus, "VIP", 0, true);
+        setQuotaAction(convertQuotaAction, null, true);
+        setQuotaAction(judgeQuotaAction, null, true);
         updateAccountQuotaUI();
         return;
       }
@@ -3852,12 +3876,14 @@ Au值 = 纯度 × 10 后取整数</div>
         freeConvert + paidConvert,
         false
       );
+      setQuotaAction(convertQuotaAction, freeConvert + paidConvert, false);
       setQuotaStatus(
         judgeQuotaStatus,
         `剩余 ${freeJudge + paidJudge} 次`,
         freeJudge + paidJudge,
         false
       );
+      setQuotaAction(judgeQuotaAction, freeJudge + paidJudge, false);
       updateAccountQuotaUI();
     }
 

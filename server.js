@@ -982,22 +982,7 @@ async function writeSourceVisitLog(userId, req) {
 }
 
 app.get("/api/gold-price", async (req, res) => {
-  const visitorId = String(req.query.visitorId || req.get("x-visitor-id") || "").trim();
-
   try {
-    if (visitorId) {
-      await writeUsageLog({
-        userId: visitorId,
-        req,
-        featureType: "gold",
-        consumeType: "none",
-        beforeBalance: null,
-        afterBalance: null,
-        success: true,
-        note: "Gold calculator reference price requested; no quota consumed"
-      });
-    }
-
     const realtimePrice = await fetchRealtimeGoldPrice();
     res.json(realtimePrice || getUnavailableGoldPricePayload());
   } catch (error) {
