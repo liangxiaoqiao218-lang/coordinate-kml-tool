@@ -703,6 +703,26 @@
       margin: 12px 0;
     }
 
+    .usage-analytics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }
+
+    .usage-analytics-panel {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 10px 24px rgba(15, 47, 95, 0.06);
+    }
+
+    .usage-analytics-panel h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
     .switch-control {
       position: relative;
       width: 52px;
@@ -1202,7 +1222,6 @@
     let activeAdminModule = "dashboard";
     let quotaEditorDirty = false;
     let toastTimer = null;
-    const ADMIN_AI_BALANCE_ESTIMATE = 100;
 
     document.getElementById("password").value = adminPassword;
     setupAdminConsole();
@@ -1650,56 +1669,71 @@
         const tools = usagePanel.querySelector(".table-tools");
         usagePanel.insertBefore(summary, tools || usagePanel.firstChild);
       }
-      let balance = document.getElementById("usageAiBalance");
-      if (!balance) {
-        balance = document.createElement("div");
-        balance.id = "usageAiBalance";
-        balance.className = "usage-summary";
-        usagePanel.insertBefore(balance, summary);
-      }
+
+      document.getElementById("usageAiBalance")?.remove();
+
       const successful = usageLogs.filter(log => log.success);
       const count = feature => successful.filter(log => log.feature_type === feature).length;
-      const failed = usageLogs.filter(log => !log.success).length;
+      const todayLogs = usageLogs.filter(log => isToday(log.created_at));
+      const todaySuccessful = todayLogs.filter(log => log.success);
+      const todayCalls = todaySuccessful.length;
+      const todayFailed = todayLogs.filter(log => !log.success).length;
       const aiCost = dashboardStats?.aiCost || {};
       const todayAiCost = Number(aiCost.todayCostCny || 0);
       const trendItems = aiCost.trend || [];
       const sevenDayAiCost = trendItems.reduce((sum, item) => sum + Number(item.cost_cny || item.costCny || 0), 0);
-      const dailyCostBase = sevenDayAiCost > 0 ? sevenDayAiCost / Math.max(trendItems.length, 1) : todayAiCost;
-      const availableDays = dailyCostBase > 0 ? Math.floor(ADMIN_AI_BALANCE_ESTIMATE / dailyCostBase) : 0;
-      const shouldRecharge = ADMIN_AI_BALANCE_ESTIMATE < 20 || (availableDays > 0 && availableDays <= 7);
 
-      balance.innerHTML = `
-        <div class="card ${shouldRecharge ? "metric-warn" : "metric-ok"}"><span>预估余额</span><strong>${formatCurrencyCny(ADMIN_AI_BALANCE_ESTIMATE)}</strong></div>
-        <div class="card"><span>今日 AI 成本</span><strong>${formatCurrencyCny(todayAiCost)}</strong></div>
-        <div class="card"><span>近 7 日 AI 成本</span><strong>${formatCurrencyCny(sevenDayAiCost)}</strong></div>
-        <div class="card ${shouldRecharge ? "metric-warn" : "metric-ok"}"><span>预计可用天数</span><strong>${dailyCostBase > 0 ? `${availableDays.toLocaleString("zh-CN")} 天` : "充足"}</strong></div>
-        <div class="card ${shouldRecharge ? "metric-warn" : "metric-ok"}"><span>余额提醒</span><strong>${shouldRecharge ? "建议充值" : "余额正常"}</strong></div>
-      `;
       summary.innerHTML = `
-        <div class="card"><span>矿地快判调用</span><strong>${count("judge").toLocaleString("zh-CN")}</strong></div>
-        <div class="card"><span>坐标处理调用</span><strong>${count("convert").toLocaleString("zh-CN")}</strong></div>
-        <div class="card"><span>黄金成色访问</span><strong>${count("gold").toLocaleString("zh-CN")}</strong></div>
-        <div class="card"><span>AI估算成本</span><strong>${formatCurrencyCny(aiCost.todayCostCny)}</strong></div>
-        <div class="card ${failed ? "metric-danger" : "metric-ok"}"><span>失败记录</span><strong>${failed.toLocaleString("zh-CN")}</strong></div>
+        <div class="card ${todayAiCost > 0 ? "" : "metric-ok"}"><span>今日 AI 成本</span><strong>${formatCurrencyCny(todayAiCost)}</strong></div>
+        <div class="card ${sevenDayAiCost > 0 ? "" : "metric-ok"}"><span>近 7 日 AI 成本</span><strong>${formatCurrencyCny(sevenDayAiCost)}</strong></div>
+        <div class="card ${todayCalls > 0 ? "" : "metric-ok"}"><span>今日调用次数</span><strong>${todayCalls.toLocaleString("zh-CN")}</strong></div>
+        <div class="card ${todayFailed ? "metric-danger" : "metric-ok"}"><span>今日失败数</span><strong>${todayFailed.toLocaleString("zh-CN")}</strong></div>
       `;
 
-      let trend = document.getElementById("usageCostTrend");
-      if (!trend) {
-        trend = document.createElement("div");
-        trend.id = "usageCostTrend";
-        trend.className = "mini-trend";
-        summary.insertAdjacentElement("afterend", trend);
+      let analytics = document.getElementById("usageAnalyticsGrid");
+      if (!analytics) {
+        analytics = document.createElement("div");
+        analytics.id = "usageAnalyticsGrid";
+        analytics.className = "usage-analytics-grid";
+        summary.insertAdjacentElement("afterend", analytics);
       }
+
+      const featureCounts = [
+        ["矿地快判调用", count("judge")],
+        ["坐标处理调用", count("convert")],
+        ["黄金成色访问", count("gold")]
+      ];
+      const maxFeature = Math.max(...featureCounts.map(([, value]) => Number(value || 0)), 1);
       const maxCalls = Math.max(...trendItems.map(item => Number(item.calls || 0)), 1);
-      trend.innerHTML = trendItems.length
-        ? trendItems.map(item => `
-          <div class="trend-line">
-            <strong>${escapeHtml(item.date || "-")}</strong>
-            <div class="trend-bar"><span style="width:${Math.max(6, Math.round(Number(item.calls || 0) / maxCalls * 100))}%"></span></div>
-            <span>${Number(item.calls || 0).toLocaleString("zh-CN")} 次</span>
+
+      analytics.innerHTML = `
+        <div class="usage-analytics-panel">
+          <h3>功能调用趋势</h3>
+          <div class="mini-trend">
+            ${featureCounts.map(([label, value]) => `
+              <div class="trend-line">
+                <strong>${escapeHtml(label)}</strong>
+                <div class="trend-bar"><span style="width:${Math.max(6, Math.round(Number(value || 0) / maxFeature * 100))}%"></span></div>
+                <span>${Number(value || 0).toLocaleString("zh-CN")} 次</span>
+              </div>
+            `).join("")}
           </div>
-        `).join("")
-        : `<div class="muted">暂无趋势数据。</div>`;
+        </div>
+        <div class="usage-analytics-panel">
+          <h3>每日调用趋势</h3>
+          <div id="usageCostTrend" class="mini-trend">
+            ${trendItems.length
+              ? trendItems.map(item => `
+                <div class="trend-line">
+                  <strong>${escapeHtml(item.date || "-")}</strong>
+                  <div class="trend-bar"><span style="width:${Math.max(6, Math.round(Number(item.calls || 0) / maxCalls * 100))}%"></span></div>
+                  <span>${Number(item.calls || 0).toLocaleString("zh-CN")} 次</span>
+                </div>
+              `).join("")
+              : `<div class="muted">暂无趋势数据。</div>`}
+          </div>
+        </div>
+      `;
     }
 
     function renderUsageLogs(logs, setupRequired = false) {
