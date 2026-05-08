@@ -193,6 +193,57 @@
       font-size: 14px;
     }
 
+    .user-code-card {
+      width: min(560px, 100%);
+      margin: 16px auto 0;
+      text-align: center;
+      color: #64748b;
+    }
+
+    .user-code-button {
+      border: 1px solid #d6dfeb;
+      background: #ffffff;
+      color: #2563eb;
+      border-radius: 999px;
+      padding: 9px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+    }
+
+    .user-code-button:hover {
+      border-color: #2563eb;
+    }
+
+    .user-code-display {
+      margin-top: 10px;
+      padding: 12px 14px;
+      background: #ffffff;
+      border: 1px solid #dbe6f2;
+      border-radius: 12px;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+    }
+
+    .user-code-display[hidden] {
+      display: none;
+    }
+
+    .user-code-display strong {
+      color: #0f172a;
+    }
+
+    .user-code-display p {
+      margin: 6px 0 0;
+      font-size: 13px;
+      color: #64748b;
+    }
+
+    #userCodeText {
+      color: #2563eb;
+      letter-spacing: 1px;
+    }
+
     .module-card.primary-module {
       border-color: #d6dfeb;
       background: #ffffff;
@@ -2662,6 +2713,13 @@
           <small class="module-action">进入</small>
         </button>
       </div>
+      <div class="user-code-card">
+        <button type="button" class="user-code-button" onclick="showUserCode()">获取我的充值码</button>
+        <div id="userCodeDisplay" class="user-code-display" hidden>
+          <strong>我的充值码：<span id="userCodeText"></span></strong>
+          <p>把这个码发给管理员，可以用于加次数或开通服务。</p>
+        </div>
+      </div>
     </section>
 
     <section id="coordinatePage" class="view">
@@ -3038,6 +3096,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let currentGoldPriceSource = "unavailable";
     let currentGoldPriceUpdatedAt = "";
     const visitorId = getOrCreateVisitorId();
+    const userCode = getOrCreateUserCode();
     const firstSourceInfo = captureFirstSourceInfo();
     const dismissedQuotaTypes = new Set();
     let currentQuota = null;
@@ -3152,6 +3211,55 @@ Au值 = 纯度 × 10 后取整数</div>
       return nextId;
     }
 
+    function normalizeUserCode(value) {
+      const raw = String(value || "")
+        .trim()
+        .toUpperCase()
+        .replace(/^GKT[\s_-]?/, "")
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 6);
+
+      return raw.length === 6 ? `GKT-${raw}` : "";
+    }
+
+    function generateUserCode() {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const bytes = new Uint8Array(6);
+      if (window.crypto && window.crypto.getRandomValues) {
+        window.crypto.getRandomValues(bytes);
+      } else {
+        for (let i = 0; i < bytes.length; i += 1) {
+          bytes[i] = Math.floor(Math.random() * 256);
+        }
+      }
+      return `GKT-${Array.from(bytes, value => chars[value % chars.length]).join("")}`;
+    }
+
+    function getOrCreateUserCode() {
+      const key = "geoToolUserCode";
+      const existing = normalizeUserCode(localStorage.getItem(key));
+      if (existing) {
+        localStorage.setItem(key, existing);
+        return existing;
+      }
+
+      const nextCode = generateUserCode();
+      localStorage.setItem(key, nextCode);
+      return nextCode;
+    }
+
+    function showUserCode() {
+      const code = getOrCreateUserCode();
+      const text = document.getElementById("userCodeText");
+      const display = document.getElementById("userCodeDisplay");
+      if (text) {
+        text.textContent = code;
+      }
+      if (display) {
+        display.hidden = false;
+      }
+    }
+
     function normalizeSourceValue(value) {
       return String(value || "")
         .trim()
@@ -3184,12 +3292,13 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function getSourceHeaders(extra = {}) {
       const headers = { ...extra };
+      headers["x-user-code"] = userCode || getOrCreateUserCode();
+      headers["x-page"] = window.location.pathname || "/";
 
       if (firstSourceInfo.fromSource) {
         headers["x-source"] = firstSourceInfo.fromSource;
         headers["x-source-page"] = firstSourceInfo.firstPage || "/";
         headers["x-source-at"] = firstSourceInfo.firstVisitAt || "";
-        headers["x-page"] = window.location.pathname || "/";
       }
 
       return headers;
@@ -3544,6 +3653,7 @@ Au值 = 纯度 × 10 后取整数</div>
           },
           body: JSON.stringify({
             visitorId,
+            userCode,
             type,
             fromSource: firstSourceInfo.fromSource || ""
           })
@@ -3627,6 +3737,7 @@ Au值 = 纯度 × 10 后取整数</div>
         },
         body: JSON.stringify({
           visitorId,
+          userCode,
           eventName,
           page: location.pathname,
           fromSource: firstSourceInfo.fromSource || "",
@@ -5126,6 +5237,8 @@ Au值 = 纯度 × 10 后取整数</div>
           const formData = new FormData();
           compressedFiles.forEach(file => formData.append("images", file, "judge-upload.jpg"));
           formData.append("judgeType", judgeType.value);
+          formData.append("visitorId", visitorId);
+          formData.append("userCode", userCode);
           try {
             const response = await fetch("/api/analyze-mining-image", {
               method: "POST",
@@ -7282,6 +7395,8 @@ ${placemarks}
       try {
         const formData = new FormData();
         formData.append("image", file);
+        formData.append("visitorId", visitorId);
+        formData.append("userCode", userCode);
 
         appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
         appendDebug("正在调用识别接口");

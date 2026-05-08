@@ -774,7 +774,8 @@
       font-size: 12px;
     }
 
-    .channel-link-panel {
+    .channel-link-panel,
+    .user-code-lookup-panel {
       margin: 12px 0;
       padding: 14px;
       border: 1px solid var(--line);
@@ -783,7 +784,8 @@
       box-shadow: 0 10px 24px rgba(15, 47, 95, 0.06);
     }
 
-    .channel-link-panel h3 {
+    .channel-link-panel h3,
+    .user-code-lookup-panel h3 {
       margin: 0 0 8px;
       font-size: 15px;
     }
@@ -860,6 +862,56 @@
       font-family: Consolas, "Courier New", monospace;
       font-size: 13px;
       overflow-wrap: anywhere;
+    }
+
+    .user-code-query {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .user-code-query input {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 14px;
+    }
+
+    .user-code-result {
+      margin-top: 12px;
+    }
+
+    .user-code-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 12px 0;
+    }
+
+    .user-code-summary-cell {
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .user-code-summary-cell span {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .user-code-summary-cell strong {
+      display: block;
+      overflow: hidden;
+      color: #0f172a;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     @media (max-width: 720px) {
@@ -1881,6 +1933,7 @@
       `;
       renderSourceStats(usagePanel, analytics);
       renderChannelLinkManager(usagePanel, document.getElementById("sourceStatsPanel") || analytics);
+      renderUserCodeLookupManager(usagePanel, document.getElementById("channelLinkPanel") || document.getElementById("sourceStatsPanel") || analytics);
     }
 
     const channelLinkSources = [
@@ -2007,6 +2060,128 @@
             <button type="button" onclick="copyCustomChannelLink()">复制自定义链接</button>
           </div>
           <div id="customChannelLinkPreview" class="custom-channel-preview">输入渠道参数后自动生成链接，例如 dy-video-12。</div>
+        </div>
+      `;
+    }
+
+    function normalizeUserCodeInput(value) {
+      const raw = String(value || "")
+        .trim()
+        .toUpperCase()
+        .replace(/^GKT[\s_-]?/, "")
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 6);
+      return raw.length === 6 ? `GKT-${raw}` : "";
+    }
+
+    function renderUserCodeLookupManager(usagePanel, afterElement) {
+      if (!usagePanel) return;
+      let panel = document.getElementById("userCodeLookupPanel");
+      if (!panel) {
+        panel = document.createElement("div");
+        panel.id = "userCodeLookupPanel";
+        panel.className = "user-code-lookup-panel";
+        (afterElement || usagePanel.querySelector(".usage-analytics-grid") || usagePanel.firstChild)
+          .insertAdjacentElement("afterend", panel);
+      }
+
+      panel.innerHTML = `
+        <h3>用户识别码查询</h3>
+        <div class="muted">输入用户发来的 GKT 短码，快速查看最近记录、来源和可用于充值的 user_id。</div>
+        <div class="user-code-query">
+          <input id="userCodeLookupInput" placeholder="例如 GKT-482913" onkeydown="if(event.key==='Enter'){lookupUserCode();}" />
+          <button type="button" onclick="lookupUserCode()">查询</button>
+        </div>
+        <div id="userCodeLookupResult" class="user-code-result muted">等待输入用户识别码。</div>
+      `;
+    }
+
+    async function lookupUserCode() {
+      const input = document.getElementById("userCodeLookupInput");
+      const resultBox = document.getElementById("userCodeLookupResult");
+      const code = normalizeUserCodeInput(input?.value || "");
+      if (!resultBox) return;
+      if (!code) {
+        resultBox.className = "user-code-result status error";
+        resultBox.textContent = "请输入有效的用户识别码，例如 GKT-482913。";
+        return;
+      }
+      resultBox.className = "user-code-result muted";
+      resultBox.textContent = "正在查询...";
+      try {
+        const data = await adminFetch(`/api/admin/user-code-lookup?code=${encodeURIComponent(code)}`);
+        renderUserCodeLookupResult(data);
+      } catch (error) {
+        resultBox.className = "user-code-result status error";
+        resultBox.textContent = error.message || "查询失败。";
+      }
+    }
+
+    function renderUserCodeLookupResult(data) {
+      const resultBox = document.getElementById("userCodeLookupResult");
+      if (!resultBox) return;
+      const logs = Array.isArray(data?.logs) ? data.logs : [];
+      const users = Array.isArray(data?.users) ? data.users : [];
+      const summary = data?.summary || {};
+
+      if (!logs.length && !users.length) {
+        resultBox.className = "user-code-result muted";
+        resultBox.innerHTML = `未找到 ${escapeHtml(data?.code || "")} 的使用记录。`;
+        return;
+      }
+
+      const primaryUser = users[0] || {};
+      const featureText = (summary.featureTypes || []).map(getUsageFeatureLabel).join("、") || "-";
+      const userIdText = (summary.userIds || []).join("、") || primaryUser.user_id || "-";
+      const latestIp = summary.latestIp || primaryUser.last_ip || "-";
+      const region = primaryUser.region || logs.find(log => log.region)?.region || "-";
+      const latestPage = summary.latestPage || "-";
+      const latestUsedAt = summary.latestUsedAt ? formatTime(summary.latestUsedAt) : "-";
+      const quotaText = primaryUser.user_id
+        ? `坐标 ${Number(primaryUser.free_convert_count || 0) + Number(primaryUser.paid_convert_count || 0)} / 判读 ${Number(primaryUser.free_judge_count || 0) + Number(primaryUser.paid_judge_count || 0)}`
+        : "-";
+
+      resultBox.className = "user-code-result";
+      resultBox.innerHTML = `
+        <div class="user-code-summary-grid">
+          <div class="user-code-summary-cell"><span>用户识别码</span><strong>${escapeHtml(data?.code || summary.userCode || "-")}</strong></div>
+          <div class="user-code-summary-cell"><span>可充值 user_id</span><strong title="${escapeHtml(userIdText)}">${escapeHtml(userIdText)}</strong></div>
+          <div class="user-code-summary-cell"><span>最近 IP</span><strong>${escapeHtml(latestIp)}</strong></div>
+          <div class="user-code-summary-cell"><span>地区</span><strong>${escapeHtml(region)}</strong></div>
+          <div class="user-code-summary-cell"><span>首次来源</span><strong>${escapeHtml(summary.firstSource || "-")}</strong></div>
+          <div class="user-code-summary-cell"><span>最近页面</span><strong>${escapeHtml(latestPage)}</strong></div>
+          <div class="user-code-summary-cell"><span>最近使用</span><strong>${escapeHtml(latestUsedAt)}</strong></div>
+          <div class="user-code-summary-cell"><span>使用功能</span><strong>${escapeHtml(featureText)}</strong></div>
+          <div class="user-code-summary-cell"><span>当前次数</span><strong>${escapeHtml(quotaText)}</strong></div>
+          <div class="user-code-summary-cell"><span>VIP</span><strong>${primaryUser.is_vip ? "是" : "否"}</strong></div>
+        </div>
+        <div class="channel-link-table-wrap">
+          <table class="channel-link-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>用户ID</th>
+                <th>功能</th>
+                <th>消耗类型</th>
+                <th>结果</th>
+                <th>IP</th>
+                <th>设备</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${logs.slice(0, 20).map(log => `
+                <tr>
+                  <td>${escapeHtml(formatTime(log.created_at))}</td>
+                  <td title="${escapeHtml(log.user_id || "")}">${escapeHtml(log.user_id || "-")}</td>
+                  <td>${escapeHtml(getUsageFeatureLabel(log.feature_type))}</td>
+                  <td>${escapeHtml(getConsumeTypeLabel(log.consume_type))}</td>
+                  <td>${log.success ? "成功" : `失败：${escapeHtml(log.error_reason || "-")}`}</td>
+                  <td>${escapeHtml(log.ip || "-")}</td>
+                  <td title="${escapeHtml(log.device_info || log.user_agent || "")}">${escapeHtml(log.device_info || "-")}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
         </div>
       `;
     }

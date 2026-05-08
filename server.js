@@ -799,6 +799,17 @@ function sanitizeSourceValue(value, maxLength = 100) {
     .replace(/^-|-$/g, "");
 }
 
+function sanitizeUserCode(value) {
+  const raw = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^GKT[\s_-]?/, "")
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+
+  return raw.length === 6 ? `GKT-${raw}` : "";
+}
+
 function getSourceMetaFromReq(req) {
   if (!req) return null;
   const body = req.body || {};
@@ -808,22 +819,41 @@ function getSourceMetaFromReq(req) {
     80
   );
 
-  if (!fromSource) {
+  const userCode = sanitizeUserCode(
+    req.get?.("x-user-code") ||
+    body.userCode ||
+    body.user_code ||
+    query.userCode ||
+    query.user_code
+  );
+  const visitorId = sanitizeSourceValue(
+    req.get?.("x-visitor-id") || body.visitorId || body.visitor_id || query.visitorId || query.visitor_id,
+    120
+  );
+  const page = sanitizeSourceValue(req.get?.("x-page") || body.page || query.page || req.originalUrl || "", 200);
+
+  if (!fromSource && !userCode && !page) {
     return null;
   }
 
   return {
     from_source: fromSource,
+    user_code: userCode,
+    visitor_id: visitorId,
+    ip: getClientIp(req),
+    user_agent: sanitizeSourceValue(req.headers?.["user-agent"] || "", 240),
     first_page: sanitizeSourceValue(req.get?.("x-source-page") || body.firstSourcePage || query.firstPage || "", 200),
     first_visit_at: sanitizeSourceValue(req.get?.("x-source-at") || body.firstVisitAt || query.firstVisitAt || "", 80),
-    page: sanitizeSourceValue(req.get?.("x-page") || body.page || query.page || req.originalUrl || "", 200),
+    page,
+    current_page: page,
+    created_at: new Date().toISOString(),
     visit_time: new Date().toISOString()
   };
 }
 
 function appendSourceMetaToNote(note = "", sourceMeta = null) {
   const text = String(note || "").trim();
-  if (!sourceMeta?.from_source) {
+  if (!sourceMeta?.from_source && !sourceMeta?.user_code && !sourceMeta?.page) {
     return text;
   }
 
@@ -935,7 +965,7 @@ async function writeUsageLog({
 
 async function writeSourceVisitLog(userId, req) {
   const sourceMeta = getSourceMetaFromReq(req);
-  if (!sourceMeta?.from_source) {
+  if (!sourceMeta?.from_source && !sourceMeta?.user_code) {
     return;
   }
 
@@ -4093,6 +4123,102 @@ app.get("/api/admin/usage-logs", requireAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || "读取消费记录失败。"
+    });
+  }
+});
+
+app.get("/api/admin/user-code-lookup", requireAdmin, async (req, res) => {
+  try {
+    if (!requireSupabase(res)) {
+      return;
+    }
+
+    const code = sanitizeUserCode(req.query.code || req.query.user_code || "");
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: "请输入有效的用户识别码，例如 GKT-482913。"
+      });
+    }
+
+    const { data: rawLogs, error: logError } = await supabase
+      .from("usage_logs")
+      .select("id,user_id,ip,region,user_agent,device_info,feature_type,consume_type,before_balance,after_balance,success,note,error_reason,created_at")
+      .ilike("note", `%${code}%`)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (logError) {
+      if (logError.code === "42P01") {
+        return res.json({
+          success: true,
+          setupRequired: true,
+          code,
+          logs: [],
+          users: [],
+          summary: {
+            userCode: code,
+            userIds: [],
+            featureTypes: [],
+            ips: []
+          },
+          error: "usage_logs table does not exist"
+        });
+      }
+      throw logError;
+    }
+
+    const logs = (rawLogs || []).filter(log => {
+      const sourceMeta = parseUsageSourceMetadata(log.note || "");
+      return sourceMeta?.user_code === code || String(log.note || "").includes(code);
+    });
+
+    const userIds = Array.from(new Set(logs.map(log => String(log.user_id || "").trim()).filter(Boolean)));
+    let users = [];
+
+    if (userIds.length) {
+      const { data: userRows, error: userError } = await supabase
+        .from("users")
+        .select("user_id,is_vip,free_convert_count,free_judge_count,paid_convert_count,paid_judge_count,last_ip,region,user_agent,device_info,admin_note,last_seen_at,created_at,updated_at")
+        .in("user_id", userIds);
+
+      if (userError) {
+        console.error("用户识别码查询用户失败:", userError);
+      } else {
+        users = userRows || [];
+      }
+    }
+
+    const featureTypes = Array.from(new Set(logs.map(log => log.feature_type).filter(Boolean)));
+    const ips = Array.from(new Set(logs.map(log => log.ip).filter(Boolean)));
+    const latestLog = logs[0] || null;
+    const latestSourceMeta = latestLog ? parseUsageSourceMetadata(latestLog.note || "") : null;
+    const firstSourceMeta = [...logs]
+      .reverse()
+      .map(log => parseUsageSourceMetadata(log.note || ""))
+      .find(meta => meta?.from_source);
+
+    res.json({
+      success: true,
+      code,
+      summary: {
+        userCode: code,
+        userIds,
+        latestIp: latestLog?.ip || "",
+        firstSource: firstSourceMeta?.from_source || "",
+        latestPage: latestSourceMeta?.current_page || latestSourceMeta?.page || "",
+        latestUsedAt: latestLog?.created_at || "",
+        featureTypes,
+        ips
+      },
+      users,
+      logs
+    });
+  } catch (error) {
+    console.error("用户识别码查询失败:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "用户识别码查询失败。"
     });
   }
 });
