@@ -240,7 +240,8 @@ function createDefaultAdminData() {
       kmlExportEnabled: true,
       manualSupportEnabled: true,
       aiJudgeEnabled: true,
-      goldCalculatorEnabled: true
+      goldCalculatorEnabled: true,
+      quoteComparisonEnabled: false
     }
   };
 }
@@ -4084,7 +4085,8 @@ app.patch("/api/admin/feature-flags", requireAdmin, async (req, res) => {
       kmlExportEnabled: Boolean(nextFlags.kmlExportEnabled),
       manualSupportEnabled: Boolean(nextFlags.manualSupportEnabled),
       aiJudgeEnabled: Boolean(nextFlags.aiJudgeEnabled),
-      goldCalculatorEnabled: nextFlags.goldCalculatorEnabled !== false
+      goldCalculatorEnabled: nextFlags.goldCalculatorEnabled !== false,
+      quoteComparisonEnabled: Boolean(nextFlags.quoteComparisonEnabled)
     };
 
     await writeAdminData(data);
