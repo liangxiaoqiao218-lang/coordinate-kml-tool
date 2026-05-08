@@ -2979,6 +2979,21 @@ function shouldAcceptPointAzDmsRetry(currentCoordinates, retryCoordinates) {
   return retryRows === currentRows && retryDuplicates < currentDuplicates;
 }
 
+function shouldAcceptPointAzTranscription(currentCoordinates, tableRows) {
+  const currentRows = countCoordinateRows(currentCoordinates);
+  const retryRows = Array.isArray(tableRows) ? tableRows.length : 0;
+
+  if (retryRows < 12) {
+    return false;
+  }
+
+  if (retryRows >= 24) {
+    return true;
+  }
+
+  return retryRows > currentRows;
+}
+
 function getLooseDmsPartsFromLine(line) {
   const text = String(line || "");
   const degreePattern = /[-+]?\d{1,3}\s*(?:\u00B0|\u00BA|\u02DA)\s*\d{1,2}\s*(?:'|\u2032|\u2019)?\s*\d{1,2}(?:\.\d+)?\s*(?:"|\u2033|\u201D)?\s*[NSEWO]/gi;
@@ -3012,7 +3027,7 @@ function cleanDmsDisplayPart(part) {
 function extractPointTableLabel(line) {
   const text = String(line || "").trim().replace(/^\|+\s*/, "");
 
-  if (/^[|:\-\s]+$/.test(text) || /^nord\b|^est\b|^latitude\b|^longitude\b/i.test(text)) {
+  if (/^[|:\-\s]+$/.test(text) || /^nord\b|^est\b|^latitude\b|^longitude\b|^point\s*(?:$|[|,;:.)-])/i.test(text)) {
     return "";
   }
 
@@ -5092,26 +5107,25 @@ Use the visual table layout, not OCR detection boxes.
 Find the table headed SOMMETS / X / Y and read across each horizontal row.
 Ignore all numbers that belong to OCR bounding boxes or pixel positions.
 The expected result for a BFTM table is a list of real row pairs such as X,Y only.`;
-    const pointAzDmsRetryPrompt = `${prompt}
+    const pointAzDmsRetryPrompt = `You are reading a mining coordinate table from an image.
+Focus ONLY on the table headed Point / Nord / Est, Point / Latitude / Longitude, or Point / N / E.
+Ignore the map, phone UI, page text, watermarks, captions, and all non-table content.
 
-Point A-Z / long DMS table retry:
-The previous output may have missed rows or duplicated neighboring rows.
-Focus only on the coordinate table headed Point / Nord / Est, Point / Latitude / Longitude, or Point / N / E.
-Ignore the map, phone UI, page text, watermarks, and captions below the table.
-Read the table by visual row layout, from top to bottom.
-If the table has POINT A through POINT Z, output exactly 26 rows in A-Z order.
-If the table has numeric rows, output every visible row in numeric order.
-Do not stop at the first 20 rows.
-Do not omit rows because two neighboring values look similar.
-Do not duplicate a coordinate unless the table visibly repeats the same coordinate in two separate rows.
-For this retry, transcribe the table columns instead of converting:
-POINT A | Nord value | Est value
-POINT B | Nord value | Est value
-Keep Nord and Est separate. Nord is latitude. Est is longitude.
-Do not swap Nord and Est. Do not output lat,long pairs.
-Do not output the map coordinates below the table.
-Do not insert blank lines for a single long table.
-If a row is unclear, still output the best visible coordinate for that row and keep the row order.`;
+Task: transcribe the visible table rows, do not convert coordinates.
+Output one row per visible point in this exact pipe format:
+POINT A | 10°52'15"N | 08°16'00"W
+POINT B | 10°48'00"N | 08°16'29"W
+
+Rules:
+- The first value after the point label is the Nord/Latitude column.
+- The second value after the point label is the Est/Longitude column.
+- Keep Nord and Est separate; do not swap them.
+- Do NOT output final longitude,latitude pairs.
+- Do NOT output rows without the POINT label.
+- If the table has POINT A through POINT Z, output all visible rows in A-Z order.
+- If a row is hard to read, output the best visible value but keep its point label and row position.
+- Do not duplicate a row unless the table visibly repeats that row.
+- Output only the table rows. No explanation.`;
     const imageItems = [
       {
         type: "image_url",
@@ -5221,13 +5235,14 @@ If a row is unclear, still output the best visible coordinate for that row and k
         });
         const pointAzRetryRawText = pointAzRetryResponse.choices?.[0]?.message?.content || "";
         const pointAzTableRows = extractPointDmsTableCoordinateRows(pointAzRetryRawText);
-        const pointAzDisplayText = pointAzTableRows.length >= 8
-          ? pointAzTableRows.join("\n")
-          : normalizeCommaDmsCoordinateDisplayOrder(pointAzRetryRawText);
+        const pointAzDisplayText = pointAzTableRows.join("\n");
         const pointAzRetryCoordinates = extractCoordinateLines(pointAzDisplayText);
         console.log("Point A-Z / long DMS retry parsed table rows:", pointAzTableRows.length);
 
-        if (shouldAcceptPointAzDmsRetry(coordinates, pointAzRetryCoordinates)) {
+        if (
+          shouldAcceptPointAzTranscription(coordinates, pointAzTableRows)
+          && shouldAcceptPointAzDmsRetry(coordinates, pointAzRetryCoordinates)
+        ) {
           rawText = pointAzDisplayText;
           coordinates = pointAzRetryCoordinates;
           usedModel = `${aliyunVisionModel}+point-az-dms-retry`;
