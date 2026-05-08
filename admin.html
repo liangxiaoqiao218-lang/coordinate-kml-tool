@@ -1015,6 +1015,7 @@
       }
     }
   </style>
+  <script src="pricing-config.js"></script>
 </head>
 <body>
   <main class="page">
@@ -1400,20 +1401,13 @@
           </div>
         </div>
 
-        <div class="pricing-note">
-          <strong>后台收费标准</strong>
-          <ul>
-            <li>开通月度版 ¥99：矿地快判 +50 次，坐标/KML +50 次，并设置为月度版。</li>
-            <li>矿地快判加10次 ¥19：矿地快判付费次数 +10。</li>
-            <li>坐标/KML加10次 ¥19：坐标/KML付费次数 +10。</li>
-          </ul>
-        </div>
+        <div id="quotaPricingNote" class="pricing-note"></div>
 
         <div class="quick-add">
           <strong>快捷填充</strong>
-          <button type="button" onclick="quickAddMonthlyPlanQuota()">填充月度版 ¥99</button>
-          <button type="button" onclick="quickAddSupabaseQuota('judge', 10)">矿地快判加10次 ¥19</button>
-          <button type="button" onclick="quickAddSupabaseQuota('convert', 10)">坐标/KML加10次 ¥19</button>
+          <button id="quickMonthlyPlanButton" type="button" onclick="quickAddMonthlyPlanQuota()">填充月度版</button>
+          <button id="quickAddJudgeButton" type="button" onclick="quickAddConfiguredJudgeQuota()">矿地快判加次</button>
+          <button id="quickAddConvertButton" type="button" onclick="quickAddConfiguredConvertQuota()">坐标/KML加次</button>
           <button id="quotaVipToggle" type="button" class="button-secondary" onclick="toggleSelectedSupabaseVip()">设置/取消月度版</button>
         </div>
 
@@ -1460,12 +1454,56 @@
     let activeAdminModule = "dashboard";
     let quotaEditorDirty = false;
     let toastTimer = null;
+    const pricingConfig = window.PRICING_CONFIG;
 
     document.getElementById("password").value = adminPassword;
+    renderAdminPricingConfig();
     setupAdminConsole();
 
     if (adminPassword) {
       refreshAll();
+    }
+
+    function formatPricingYuan(value) {
+      return `¥${Number(value || 0)}`;
+    }
+
+    function getPricingActionSummary() {
+      return `固定动作：开通${pricingConfig.monthly.name} ${formatPricingYuan(pricingConfig.monthly.price)}；矿地快判加${pricingConfig.addJudge.count}次 ${formatPricingYuan(pricingConfig.addJudge.price)}；坐标/KML加${pricingConfig.addConvert.count}次 ${formatPricingYuan(pricingConfig.addConvert.price)}。`;
+    }
+
+    function renderAdminPricingConfig() {
+      if (!pricingConfig) return;
+      const quotaPricingNote = document.getElementById("quotaPricingNote");
+      const lookupPricingNote = document.getElementById("lookupPricingNote");
+      const monthlyLine = `开通${pricingConfig.monthly.name} ${formatPricingYuan(pricingConfig.monthly.price)}：矿地快判 +${pricingConfig.monthly.judgeCount} 次，坐标/KML +${pricingConfig.monthly.convertCount} 次，并设置为${pricingConfig.monthly.name}。`;
+      const judgeLine = `${pricingConfig.addJudge.name} ${formatPricingYuan(pricingConfig.addJudge.price)}：矿地快判付费次数 +${pricingConfig.addJudge.count}。`;
+      const convertLine = `${pricingConfig.addConvert.name} ${formatPricingYuan(pricingConfig.addConvert.price)}：坐标/KML付费次数 +${pricingConfig.addConvert.count}。`;
+      if (quotaPricingNote) {
+        quotaPricingNote.innerHTML = `
+          <strong>后台收费标准</strong>
+          <ul>
+            <li>${monthlyLine}</li>
+            <li>${judgeLine}</li>
+            <li>${convertLine}</li>
+          </ul>
+        `;
+      }
+      if (lookupPricingNote) {
+        lookupPricingNote.innerHTML = `
+          <strong>收费标准</strong>
+          <ul>
+            <li>${pricingConfig.monthly.name}：${formatPricingYuan(pricingConfig.monthly.price)}/月，矿地快判${pricingConfig.monthly.judgeCount}次 + 坐标/KML${pricingConfig.monthly.convertCount}次</li>
+            <li>单独加次：${formatPricingYuan(pricingConfig.addJudge.price)}/${pricingConfig.addJudge.count}次，可加矿地快判或坐标/KML</li>
+          </ul>
+        `;
+      }
+      const monthlyButton = document.getElementById("quickMonthlyPlanButton");
+      const judgeButton = document.getElementById("quickAddJudgeButton");
+      const convertButton = document.getElementById("quickAddConvertButton");
+      if (monthlyButton) monthlyButton.textContent = `填充${pricingConfig.monthly.name} ${formatPricingYuan(pricingConfig.monthly.price)}`;
+      if (judgeButton) judgeButton.textContent = `矿地快判加${pricingConfig.addJudge.count}次 ${formatPricingYuan(pricingConfig.addJudge.price)}`;
+      if (convertButton) convertButton.textContent = `坐标/KML加${pricingConfig.addConvert.count}次 ${formatPricingYuan(pricingConfig.addConvert.price)}`;
     }
 
     function setupAdminConsole() {
@@ -2139,19 +2177,14 @@
       panel.innerHTML = `
         <h3>快速查用户</h3>
         <div class="muted">输入用户发来的充值码，快速查看来源、最近使用和可用于充值的 user_id。</div>
-        <div class="pricing-note">
-          <strong>收费标准</strong>
-          <ul>
-            <li>月度版：¥99/月，矿地快判50次 + 坐标/KML50次</li>
-            <li>单独加次：¥19/10次，可加矿地快判或坐标/KML</li>
-          </ul>
-        </div>
+        <div id="lookupPricingNote" class="pricing-note"></div>
         <div class="user-code-query">
           <input id="userCodeLookupInput" placeholder="输入充值码，如 GKT-5HS2AY" onkeydown="if(event.key==='Enter'){lookupUserCode();}" />
           <button type="button" onclick="lookupUserCode()">查询用户</button>
         </div>
         <div id="userCodeLookupResult" class="user-code-result muted">等待输入充值码。</div>
       `;
+      renderAdminPricingConfig();
     }
 
     async function lookupUserCode() {
@@ -2219,7 +2252,7 @@
         <div class="user-code-actions">
           ${primaryUser.user_id ? `<button type="button" onclick="openSupabaseQuotaEditor('${encodedPrimaryUserId}')">打开加次数编辑</button>` : ""}
           ${primaryUser.user_id ? `<button type="button" onclick="copyLookupUserId('${userIdForJs}')">复制 user_id</button>` : ""}
-          ${primaryUser.user_id ? `<span class="muted">固定动作：开通月度版 ¥99；矿地快判加10次 ¥19；坐标/KML加10次 ¥19。</span>` : `<span class="muted">未关联到 users 表用户，请先根据 IP 或最近记录确认用户。</span>`}
+          ${primaryUser.user_id ? `<span class="muted">${escapeHtml(getPricingActionSummary())}</span>` : `<span class="muted">未关联到 users 表用户，请先根据 IP 或最近记录确认用户。</span>`}
         </div>
         <div class="channel-link-table-wrap">
           <table class="channel-link-table">
@@ -2687,10 +2720,18 @@
       quotaEditorDirty = true;
     }
 
+    function quickAddConfiguredJudgeQuota() {
+      quickAddSupabaseQuota("judge", pricingConfig.addJudge.count);
+    }
+
+    function quickAddConfiguredConvertQuota() {
+      quickAddSupabaseQuota("convert", pricingConfig.addConvert.count);
+    }
+
     function quickAddMonthlyPlanQuota() {
-      quickAddSupabaseQuota("judge", 50);
-      quickAddSupabaseQuota("convert", 50);
-      setQuotaEditMessage("已填充月度版次数：矿地快判 +50，坐标/KML +50。保存次数后，请按需设置为月度版。");
+      quickAddSupabaseQuota("judge", pricingConfig.monthly.judgeCount);
+      quickAddSupabaseQuota("convert", pricingConfig.monthly.convertCount);
+      setQuotaEditMessage(`已填充${pricingConfig.monthly.name}次数：矿地快判 +${pricingConfig.monthly.judgeCount}，坐标/KML +${pricingConfig.monthly.convertCount}。保存次数后，请按需设置为${pricingConfig.monthly.name}。`);
     }
 
     async function toggleSelectedSupabaseVip() {

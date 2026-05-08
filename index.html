@@ -2919,6 +2919,7 @@
       user-select: text;
     }
   </style>
+  <script src="pricing-config.js"></script>
 </head>
 <body>
   <main class="page">
@@ -3284,12 +3285,12 @@ Au值 = 纯度 × 10 后取整数</div>
             <span>每日少量免费次数。</span>
           </li>
           <li>
-            <strong>月度版</strong>
-            <span><span class="account-plan-price">¥99 / 月</span>包含：矿地快判 50 次/月；坐标/KML 50 次/月。</span>
+            <strong id="accountMonthlyName">月度版</strong>
+            <span><span id="accountMonthlyPrice" class="account-plan-price"></span><span id="accountMonthlySummary"></span></span>
           </li>
           <li>
             <strong>临时加次</strong>
-            <span><span class="account-plan-price">¥19 / 10 次</span>可选择增加：矿地快判次数、坐标/KML次数。</span>
+            <span><span id="accountAddPrice" class="account-plan-price"></span><span id="accountAddSummary"></span></span>
           </li>
         </ul>
         <p class="quota-footnote">如需开通，把充值码发给管理员。</p>
@@ -3301,7 +3302,7 @@ Au值 = 纯度 × 10 后取整数</div>
           <strong>开通时请发送：</strong>
           <span>充值码 + 购买内容</span>
           <em id="purchaseExampleMonthly">例如：GKT-5HS2AY，开通月度版</em>
-          <em id="purchaseExampleJudge">例如：GKT-5HS2AY，加矿地快判10次</em>
+          <em id="purchaseExampleJudge">例如：GKT-5HS2AY，加矿地快判次数</em>
         </div>
         <div class="quota-contact-grid">
           <div class="quota-contact-item">
@@ -3347,6 +3348,11 @@ Au值 = 纯度 × 10 后取整数</div>
     const accountConvertRemaining = document.getElementById("accountConvertRemaining");
     const accountPlanStatus = document.getElementById("accountPlanStatus");
     const accountUserCode = document.getElementById("accountUserCode");
+    const accountMonthlyName = document.getElementById("accountMonthlyName");
+    const accountMonthlyPrice = document.getElementById("accountMonthlyPrice");
+    const accountMonthlySummary = document.getElementById("accountMonthlySummary");
+    const accountAddPrice = document.getElementById("accountAddPrice");
+    const accountAddSummary = document.getElementById("accountAddSummary");
     const purchaseExampleMonthly = document.getElementById("purchaseExampleMonthly");
     const purchaseExampleJudge = document.getElementById("purchaseExampleJudge");
     const homeJudgeQuotaText = document.getElementById("homeJudgeQuotaText");
@@ -3358,6 +3364,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const debugPanel = document.getElementById("debugPanel");
     const debugText = document.getElementById("debugText");
     const judgeType = { value: "mine-land" };
+    const pricingConfig = window.PRICING_CONFIG;
     const judgeImageInput = document.getElementById("judgeImageInput");
     const judgeImagePreview = document.getElementById("judgeImagePreview");
     const judgeUploadCard = document.getElementById("judgeUploadCard");
@@ -3406,6 +3413,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let currentGoldPriceUpdatedAt = "";
     const visitorId = getOrCreateVisitorId();
     const userCode = getOrCreateUserCode();
+    renderPricingConfigText();
     const firstSourceInfo = captureFirstSourceInfo();
     let currentQuota = null;
     let appConfig = {
@@ -3558,13 +3566,36 @@ Au值 = 纯度 × 10 后取整数</div>
       return nextCode;
     }
 
+    function formatPricingYuan(value) {
+      return `¥${Number(value || 0)}`;
+    }
+
+    function renderPricingConfigText() {
+      if (!pricingConfig) return;
+      if (accountMonthlyName) {
+        accountMonthlyName.textContent = pricingConfig.monthly.name;
+      }
+      if (accountMonthlyPrice) {
+        accountMonthlyPrice.textContent = `${formatPricingYuan(pricingConfig.monthly.price)} / 月`;
+      }
+      if (accountMonthlySummary) {
+        accountMonthlySummary.textContent = `包含：矿地快判 ${pricingConfig.monthly.judgeCount} 次/月；坐标/KML ${pricingConfig.monthly.convertCount} 次/月。`;
+      }
+      if (accountAddPrice) {
+        accountAddPrice.textContent = `${formatPricingYuan(pricingConfig.addJudge.price)} / ${pricingConfig.addJudge.count} 次`;
+      }
+      if (accountAddSummary) {
+        accountAddSummary.textContent = "可选择增加：矿地快判次数、坐标/KML次数。";
+      }
+    }
+
     function syncPurchaseExamples(code) {
       if (!code) return;
       if (purchaseExampleMonthly) {
-        purchaseExampleMonthly.textContent = `例如：${code}，开通月度版`;
+        purchaseExampleMonthly.textContent = `例如：${code}，开通${pricingConfig.monthly.name}`;
       }
       if (purchaseExampleJudge) {
-        purchaseExampleJudge.textContent = `例如：${code}，加矿地快判10次`;
+        purchaseExampleJudge.textContent = `例如：${code}，加矿地快判${pricingConfig.addJudge.count}次`;
       }
     }
 
