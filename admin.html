@@ -1307,6 +1307,24 @@
           </table>
         </div>
       </div>
+      <div class="dashboard-row">
+        <h3>安全访问记录</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>类型</th>
+                <th>接口</th>
+                <th>IP</th>
+                <th>来源</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody id="dashboardSecurityEventsBody"></tbody>
+          </table>
+        </div>
+      </div>
       <div id="dashboardMessage" class="message"></div>
     </section>
 
@@ -2068,6 +2086,7 @@
       setDashboardText("dashAiAverageCost", formatCurrencyCny(aiCost.averageCostCny));
       setDashboardText("dashAiRemainingCalls", `${Number(aiCost.remainingCallsFor100Cny || 0).toLocaleString("zh-CN")} 次`);
       setDashboardValue("dashAiTodayTokens", aiCost.todayTotalTokens);
+      renderDashboardSecurityEvents(data.securityEvents || []);
       renderGrowthDashboardExtras(data);
 
       const aiTrendBody = document.getElementById("dashboardAiTrendBody");
@@ -2126,6 +2145,40 @@
       `).join("");
     }
 
+    function renderDashboardSecurityEvents(events = []) {
+      const body = document.getElementById("dashboardSecurityEventsBody");
+      if (!body) return;
+
+      if (!events.length) {
+        body.innerHTML = `<tr><td colspan="6" class="muted">暂无异常访问记录。</td></tr>`;
+        return;
+      }
+
+      const typeLabelMap = {
+        invalid_origin: "非法来源",
+        missing_origin: "缺少来源",
+        rate_limited: "频率限制"
+      };
+
+      body.innerHTML = events.map(event => {
+        const detail = event.detail && typeof event.detail === "object"
+          ? Object.entries(event.detail)
+              .map(([key, value]) => `${key}: ${String(value)}`)
+              .join("；")
+          : "";
+        return `
+          <tr>
+            <td>${formatTime(event.created_at) || "-"}</td>
+            <td>${escapeHtml(typeLabelMap[event.type] || event.type || "-")}</td>
+            <td>${escapeHtml(event.path || "-")}</td>
+            <td>${escapeHtml(event.ip || "-")}</td>
+            <td>${escapeHtml(event.origin || event.referer || "-")}</td>
+            <td>${escapeHtml(detail || event.method || "-")}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
     function updateErrorMetricCard(id, label, value) {
       const el = document.getElementById(id);
       const card = el?.closest(".card");
@@ -2182,6 +2235,7 @@
       document.querySelector(".growth-trend-row")?.style.setProperty("display", "");
       panel.querySelector(".dashboard-errors")?.style.setProperty("display", "");
       panel.querySelector("#dashboardErrorsBody")?.closest(".dashboard-row")?.style.setProperty("display", "");
+      panel.querySelector("#dashboardSecurityEventsBody")?.closest(".dashboard-row")?.style.setProperty("display", "");
 
       const metrics = [
         ["矿地快判", Number(today.judgeCount || 0)],

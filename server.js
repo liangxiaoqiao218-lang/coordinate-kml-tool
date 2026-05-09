@@ -289,6 +289,136 @@ app.use((req, res, next) => {
   next();
 });
 
+const SECURITY_EVENT_LIMIT = 200;
+const securityEvents = [];
+const rateLimitBuckets = new Map();
+const rateLimitRules = {
+  admin: { windowMs: 60 * 1000, max: 240 },
+  usage: { windowMs: 60 * 1000, max: 120 },
+  recognize: { windowMs: 5 * 60 * 1000, max: 20 },
+  judge: { windowMs: 5 * 60 * 1000, max: 20 }
+};
+
+function getRequestIpForSecurity(req) {
+  try {
+    if (typeof getClientIp === "function") {
+      return getClientIp(req);
+    }
+  } catch (_) {}
+
+  return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || req.ip || "")
+    .split(",")[0]
+    .trim() || "unknown";
+}
+
+function recordSecurityEvent(req, type, detail = {}) {
+  securityEvents.unshift({
+    created_at: new Date().toISOString(),
+    type,
+    path: req.originalUrl || req.url || req.path,
+    method: req.method,
+    ip: getRequestIpForSecurity(req),
+    origin: req.get("origin") || "",
+    referer: req.get("referer") || "",
+    user_agent: req.get("user-agent") || "",
+    detail
+  });
+
+  if (securityEvents.length > SECURITY_EVENT_LIMIT) {
+    securityEvents.length = SECURITY_EVENT_LIMIT;
+  }
+}
+
+function getSecurityEvents(limit = 20) {
+  return securityEvents.slice(0, Math.max(0, Math.min(Number(limit) || 20, SECURITY_EVENT_LIMIT)));
+}
+
+function getProtectedEndpointType(pathname = "") {
+  if (pathname === "/api/admin" || pathname.startsWith("/api/admin/")) return "admin";
+  if (pathname === "/api/usage/quota" || pathname === "/api/usage/consume") return "usage";
+  if (pathname === "/api/recognize-coordinates") return "recognize";
+  if (pathname === "/api/analyze-mining-image") return "judge";
+  return "";
+}
+
+function isAllowedRequestOrigin(value) {
+  if (!value) return true;
+
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    const protocol = url.protocol.toLowerCase();
+
+    if ((hostname === "geokitlab.com" || hostname === "www.geokitlab.com") && protocol === "https:") {
+      return true;
+    }
+
+    if (["localhost", "127.0.0.1", "::1", "[::1]"].includes(hostname) && (protocol === "http:" || protocol === "https:")) {
+      return true;
+    }
+  } catch (_) {
+    return false;
+  }
+
+  return false;
+}
+
+function originGuard(req, res, next) {
+  const endpoint = getProtectedEndpointType(req.path);
+  if (!endpoint) return next();
+
+  const origin = req.get("origin") || "";
+  const referer = req.get("referer") || "";
+
+  if (!origin && !referer) {
+    recordSecurityEvent(req, "missing_origin", { endpoint });
+    return next();
+  }
+
+  if (!isAllowedRequestOrigin(origin) || !isAllowedRequestOrigin(referer)) {
+    recordSecurityEvent(req, "invalid_origin", { endpoint, origin, referer });
+    return res.status(403).json({
+      success: false,
+      error: "来源不允许",
+      reason: "invalid_origin"
+    });
+  }
+
+  return next();
+}
+
+function rateLimitGuard(req, res, next) {
+  const endpoint = getProtectedEndpointType(req.path);
+  if (!endpoint) return next();
+
+  const rule = rateLimitRules[endpoint];
+  if (!rule) return next();
+
+  const now = Date.now();
+  const key = `${endpoint}:${getRequestIpForSecurity(req)}`;
+  const bucket = rateLimitBuckets.get(key);
+
+  if (!bucket || now > bucket.resetAt) {
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + rule.windowMs });
+    return next();
+  }
+
+  bucket.count += 1;
+  if (bucket.count > rule.max) {
+    recordSecurityEvent(req, "rate_limited", { endpoint, count: bucket.count, windowMs: rule.windowMs });
+    return res.status(429).json({
+      success: false,
+      error: "请求过于频繁，请稍后再试",
+      reason: "rate_limited"
+    });
+  }
+
+  return next();
+}
+
+app.use(originGuard);
+app.use(rateLimitGuard);
+
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -4541,7 +4671,8 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
       sourceStats: {
         sources: []
       },
-      recentErrors: []
+      recentErrors: [],
+      securityEvents: getSecurityEvents(20)
     };
 
     const [{ data: usersData, error: usersError }, { data: logsData, error: logsError }] = await Promise.all([
@@ -4784,7 +4915,8 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
       },
       recentErrors: logs
         .filter(log => !log.success)
-        .slice(0, 10)
+        .slice(0, 10),
+      securityEvents: getSecurityEvents(20)
     });
   } catch (error) {
     console.error("Dashboard stats failed:", {
