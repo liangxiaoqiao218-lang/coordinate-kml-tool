@@ -1,7 +1,7 @@
 (function () {
   const DEFAULT_PRICING_CONFIG = {
     monthly: {
-      name: "\u6708\u5ea6\u7248",
+      name: "VIP\u6708\u5ea6\u7248",
       price: 99,
       judgeCount: 50,
       convertCount: 50

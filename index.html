@@ -3285,7 +3285,7 @@ Au值 = 纯度 × 10 后取整数</div>
             <span>每日少量免费次数。</span>
           </li>
           <li>
-            <strong id="accountMonthlyName">月度版</strong>
+                  <strong id="accountMonthlyName">VIP月度版</strong>
             <span><span id="accountMonthlyPrice" class="account-plan-price"></span><span id="accountMonthlySummary"></span></span>
           </li>
           <li>
@@ -3301,7 +3301,7 @@ Au值 = 纯度 × 10 后取整数</div>
         <div class="quota-purchase-note">
           <strong>开通时请发送：</strong>
           <span>充值码 + 购买内容</span>
-          <em id="purchaseExampleMonthly">例如：GKT-5HS2AY，开通月度版</em>
+                  <em id="purchaseExampleMonthly">例如：GKT-5HS2AY，开通VIP月度版</em>
           <em id="purchaseExampleJudge">例如：GKT-5HS2AY，加矿地快判次数</em>
         </div>
         <div class="quota-contact-grid">
@@ -3769,13 +3769,13 @@ Au值 = 纯度 × 10 后取整数</div>
       const usageVip = isQuotaVip(currentQuota);
       setQuotaStatus(
         convertQuotaStatus,
-        usageVip ? "VIP" : `剩余 ${convertRemaining} 次${convertRemaining === 0 ? "（已用完）" : ""}`,
+        usageVip ? VIP_PLAN_LABEL : `剩余 ${convertRemaining} 次${convertRemaining === 0 ? "（已用完）" : ""}`,
         convertRemaining,
         usageVip
       );
       setQuotaStatus(
         judgeQuotaStatus,
-        usageVip ? "VIP" : `剩余 ${judgeRemaining} 次${judgeRemaining === 0 ? "（已用完）" : ""}`,
+        usageVip ? VIP_PLAN_LABEL : `剩余 ${judgeRemaining} 次${judgeRemaining === 0 ? "（已用完）" : ""}`,
         judgeRemaining,
         usageVip
       );
@@ -3834,44 +3834,44 @@ Au值 = 纯度 × 10 后取整数</div>
       openAccountModal();
     }
 
+    const VIP_PLAN_LABEL = "VIP月度版";
+
     function getAccountRemaining(type) {
       const quota = currentQuota || {};
-      if (isQuotaVip(quota)) {
-        return { isVip: true, total: null };
-      }
+      const isVip = isQuotaVip(quota);
 
       const directKey = type === "judge" ? "judge_remaining" : "convert_remaining";
       const directValue = Number(quota[directKey]);
       if (Number.isFinite(directValue)) {
-        return { isVip: false, total: Math.max(0, directValue) };
+        return { isVip, total: Math.max(0, directValue) };
       }
 
       if (type === "judge") {
         const freeJudge = getQuotaNumber(quota, "free_judge_count", "freeJudgeCount");
         const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
-        return { isVip: false, total: Math.max(0, freeJudge + paidJudge) };
+        return { isVip, total: Math.max(0, freeJudge + paidJudge) };
       }
 
       const freeConvert = getQuotaNumber(quota, "free_convert_count", "freeConvertCount");
       const paidConvert = getQuotaNumber(quota, "paid_convert_count", "paidConvertCount");
-      return { isVip: false, total: Math.max(0, freeConvert + paidConvert) };
+      return { isVip, total: Math.max(0, freeConvert + paidConvert) };
     }
 
     function updateAccountQuotaUI() {
       const judgeInfo = getAccountRemaining("judge");
       const convertInfo = getAccountRemaining("convert");
       const isVip = isQuotaVip();
-      const judgeText = isVip ? "月度版" : `${judgeInfo.total ?? "-"} 次`;
-      const convertText = isVip ? "月度版" : `${convertInfo.total ?? "-"} 次`;
+      const judgeText = `${judgeInfo.total ?? "-"} 次`;
+      const convertText = `${convertInfo.total ?? "-"} 次`;
 
       if (accountJudgeRemaining) {
-        accountJudgeRemaining.textContent = isVip ? "月度版" : `今日剩余 ${judgeText}`;
+        accountJudgeRemaining.textContent = isVip ? `本月剩余 ${judgeText}` : `今日剩余 ${judgeText}`;
       }
       if (accountConvertRemaining) {
-        accountConvertRemaining.textContent = isVip ? "月度版" : `今日剩余 ${convertText}`;
+        accountConvertRemaining.textContent = isVip ? `本月剩余 ${convertText}` : `今日剩余 ${convertText}`;
       }
       if (accountPlanStatus) {
-        accountPlanStatus.textContent = isVip ? "月度版用户" : "普通用户";
+        accountPlanStatus.textContent = isVip ? VIP_PLAN_LABEL : "普通用户";
       }
       if (accountUserCode) {
         const code = getOrCreateUserCode();
@@ -3879,10 +3879,10 @@ Au值 = 纯度 × 10 后取整数</div>
         syncPurchaseExamples(code);
       }
       if (homeJudgeQuotaText) {
-        homeJudgeQuotaText.textContent = isVip ? "矿地快判 月度版" : `矿地快判 ${judgeText}`;
+        homeJudgeQuotaText.textContent = isVip ? `矿地快判 本月剩余 ${judgeText}` : `矿地快判 ${judgeText}`;
       }
       if (homeConvertQuotaText) {
-        homeConvertQuotaText.textContent = isVip ? "坐标/KML 月度版" : `坐标/KML ${convertText}`;
+        homeConvertQuotaText.textContent = isVip ? `坐标/KML 本月剩余 ${convertText}` : `坐标/KML ${convertText}`;
       }
     }
 
@@ -3895,8 +3895,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const isVip = isQuotaVip(quota);
 
       if (isVip) {
-        setQuotaStatus(convertQuotaStatus, "VIP", 0, true);
-        setQuotaStatus(judgeQuotaStatus, "VIP", 0, true);
+        setQuotaStatus(convertQuotaStatus, VIP_PLAN_LABEL, 0, true);
+        setQuotaStatus(judgeQuotaStatus, VIP_PLAN_LABEL, 0, true);
         setQuotaAction(convertQuotaAction, null, true);
         setQuotaAction(judgeQuotaAction, null, true);
         updateAccountQuotaUI();

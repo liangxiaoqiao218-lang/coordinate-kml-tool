@@ -1217,7 +1217,7 @@
         <h3>用户数据</h3>
         <div class="cards">
           <div class="card"><span>总用户数</span><strong id="dashUsersTotal">0</strong></div>
-          <div class="card"><span>月度版用户</span><strong id="dashUsersVip">0</strong></div>
+          <div class="card"><span>VIP月度版用户</span><strong id="dashUsersVip">0</strong></div>
           <div class="card"><span>付费用户</span><strong id="dashUsersPaid">0</strong></div>
           <div class="card"><span>今日新增</span><strong id="dashUsersNew">0</strong></div>
           <div class="card"><span>今日回访</span><strong id="dashUsersReturning">0</strong></div>
@@ -1229,7 +1229,7 @@
         <div class="cards">
           <div class="card"><span>今日免费消耗</span><strong id="dashFreeCount">0</strong></div>
           <div class="card"><span>今日付费消耗</span><strong id="dashPaidCount">0</strong></div>
-          <div class="card"><span>今日月度版免扣</span><strong id="dashVipCount">0</strong></div>
+          <div class="card"><span>今日VIP月度版免扣</span><strong id="dashVipCount">0</strong></div>
           <div class="card"><span>次数不足失败</span><strong id="dashLimitCount">0</strong></div>
         </div>
       </div>
@@ -1402,15 +1402,15 @@
       <p class="muted">修改后保存配置，前后台会通过 /api/pricing-config 同步生效。</p>
       <div class="config-grid">
         <label class="config-field">
-          <span>月度版价格（元/月）</span>
+          <span>VIP月度版价格（元/月）</span>
           <input id="pricingMonthlyPrice" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>月度版矿地快判次数</span>
+          <span>VIP月度版矿地快判次数</span>
           <input id="pricingMonthlyJudgeCount" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>月度版坐标/KML次数</span>
+          <span>VIP月度版坐标/KML次数</span>
           <input id="pricingMonthlyConvertCount" type="number" min="0" step="1">
         </label>
         <label class="config-field">
@@ -1441,17 +1441,17 @@
       <h2>运营概览</h2>
       <div class="cards">
         <div class="card"><span>总用户数</span><strong id="totalUsers">0</strong></div>
-        <div class="card"><span>月度版用户数</span><strong id="vipUsers">0</strong></div>
+        <div class="card"><span>VIP月度版用户数</span><strong id="vipUsers">0</strong></div>
         <div class="card"><span>有付费余额用户数</span><strong id="paidBalanceUsers">0</strong></div>
       </div>
     </section>
 
     <section class="panel">
       <h2>用户与次数管理</h2>
-      <p class="muted">该区域来自 Supabase users 表，用于正式管理用户次数、付费次数和月度版状态。</p>
+      <p class="muted">该区域来自 Supabase users 表，用于正式管理用户次数、付费次数和VIP月度版状态。</p>
       <div class="quick-filter-bar" id="supabaseQuickFilters">
         <button type="button" class="active" data-filter="all" onclick="setSupabaseQuickFilter('all')">全部用户</button>
-        <button type="button" data-filter="vip" onclick="setSupabaseQuickFilter('vip')">月度版用户</button>
+        <button type="button" data-filter="vip" onclick="setSupabaseQuickFilter('vip')">VIP月度版用户</button>
         <button type="button" data-filter="paid" onclick="setSupabaseQuickFilter('paid')">付费用户</button>
         <button type="button" data-filter="activeToday" onclick="setSupabaseQuickFilter('activeToday')">今日活跃</button>
         <button type="button" data-filter="hasBalance" onclick="setSupabaseQuickFilter('hasBalance')">有剩余次数</button>
@@ -1472,7 +1472,7 @@
         </select>
         <select id="supabaseUserFilter" onchange="setSupabaseQuickFilter(this.value)">
           <option value="all">全部用户</option>
-          <option value="vip">月度版用户</option>
+          <option value="vip">VIP月度版用户</option>
           <option value="paid">付费用户</option>
           <option value="activeToday">今日活跃用户</option>
           <option value="hasBalance">有剩余次数</option>
@@ -1483,7 +1483,7 @@
           <option value="created_desc">创建时间</option>
           <option value="paid_balance_desc">剩余付费次数</option>
           <option value="usage_total_desc">总使用次数</option>
-          <option value="vip_desc">月度版状态</option>
+          <option value="vip_desc">VIP月度版状态</option>
         </select>
         <button type="button" onclick="loadSupabaseUsers()">刷新</button>
       </div>
@@ -1493,7 +1493,7 @@
             <tr>
               <th class="sticky-action">操作</th>
               <th class="col-user">用户ID</th>
-              <th>月度版</th>
+              <th>VIP月度版</th>
               <th class="col-ip">最近IP</th>
               <th>地区</th>
               <th class="col-device">设备</th>
@@ -1516,7 +1516,7 @@
 
     <section class="panel">
       <h2>消费记录 / 使用记录</h2>
-      <p class="muted">该区域来自 Supabase usage_logs 表，用于查看每次扣次数、月度版免扣和失败原因。</p>
+      <p class="muted">该区域来自 Supabase usage_logs 表，用于查看每次扣次数、VIP月度版免扣和失败原因。</p>
       <div class="table-tools">
         <input id="usageLogUserFilter" placeholder="按用户ID筛选" onkeydown="handleUsageLogSearchKey(event)" />
         <select id="usageLogFeatureFilter" onchange="loadUsageLogs()">
@@ -1564,7 +1564,7 @@
           <span id="quotaEditUserId">-</span>
         </div>
         <div class="readonly-row">
-          <strong>月度版状态</strong>
+          <strong>VIP月度版状态</strong>
           <span id="quotaEditVip">-</span>
         </div>
 
@@ -1591,7 +1591,7 @@
 
         <div class="quick-add">
           <strong>快捷填充</strong>
-          <button id="quickMonthlyPlanButton" type="button" onclick="quickAddMonthlyPlanQuota()">填充月度版</button>
+          <button id="quickMonthlyPlanButton" type="button" onclick="quickAddMonthlyPlanQuota()">填充VIP月度版</button>
           <button id="quickAddJudgeButton" type="button" onclick="quickAddConfiguredJudgeQuota()">矿地快判加次</button>
           <button id="quickAddConvertButton" type="button" onclick="quickAddConfiguredConvertQuota()">坐标/KML加次</button>
         </div>
@@ -1747,7 +1747,7 @@
       const addCount = readPricingNumber("pricingAddCount", pricingConfig.addJudge?.count || 0);
       return {
         monthly: {
-          name: pricingConfig.monthly?.name || "月度版",
+          name: pricingConfig.monthly?.name || "VIP月度版",
           price: readPricingNumber("pricingMonthlyPrice", pricingConfig.monthly?.price || 0),
           judgeCount: readPricingNumber("pricingMonthlyJudgeCount", pricingConfig.monthly?.judgeCount || 0),
           convertCount: readPricingNumber("pricingMonthlyConvertCount", pricingConfig.monthly?.convertCount || 0)
@@ -2556,7 +2556,7 @@
       const latestUsedAt = summary.latestUsedAt ? formatTime(summary.latestUsedAt) : "-";
       const judgeRemaining = Number(primaryUser.free_judge_count || 0) + Number(primaryUser.paid_judge_count || 0);
       const convertRemaining = Number(primaryUser.free_convert_count || 0) + Number(primaryUser.paid_convert_count || 0);
-      const accountStatus = primaryUser.is_vip ? "月度版" : "普通用户";
+      const accountStatus = primaryUser.is_vip ? "VIP月度版" : "普通用户";
       const encodedPrimaryUserId = primaryUser.user_id ? encodeURIComponent(primaryUser.user_id) : "";
       const userIdForJs = escapeJsString(primaryUser.user_id || "");
 
@@ -2712,7 +2712,7 @@
       const labels = {
         free: "免费次数",
         paid: "付费次数",
-        vip: "月度版免扣",
+        vip: "VIP月度版免扣",
         none: "未扣减"
       };
       return labels[type] || type || "-";
@@ -2869,7 +2869,7 @@
             <td class="sticky-action">
               <div class="actions">
                 <button type="button" onclick="openSupabaseQuotaEditor('${encodedUserId}')">编辑</button>
-                <button type="button" class="${user.is_vip ? "danger" : "success"}" onclick="setSupabaseVip('${encodedUserId}', ${user.is_vip ? "false" : "true"})">${user.is_vip ? "取消月度版" : "设为月度版"}</button>
+                <button type="button" class="${user.is_vip ? "danger" : "success"}" onclick="setSupabaseVip('${encodedUserId}', ${user.is_vip ? "false" : "true"})">${user.is_vip ? "取消VIP月度版" : "设为VIP月度版"}</button>
               </div>
             </td>
             <td class="col-user" title="${escapeHtml(userId)}"><span class="cell-ellipsis">${escapeHtml(userId)}</span></td>
@@ -3073,7 +3073,7 @@
 
       try {
         const nextVip = !Boolean(selectedSupabaseUser.is_vip);
-        setQuotaEditMessage("正在更新月度版状态...");
+        setQuotaEditMessage("正在更新VIP月度版状态...");
         const result = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/vip`, {
           method: "PATCH",
           body: JSON.stringify({
@@ -3083,12 +3083,12 @@
         selectedSupabaseUser = result.user || selectedSupabaseUser;
         document.getElementById("quotaEditVip").textContent = selectedSupabaseUser.is_vip ? "是" : "否";
         renderUserDetailSummary(selectedSupabaseUser);
-        setQuotaEditMessage("月度版状态已更新。");
+        setQuotaEditMessage("VIP月度版状态已更新。");
         showToast("保存成功");
         await loadSupabaseUsers(false);
         await loadSupabaseLogs(selectedSupabaseUser.user_id);
       } catch (error) {
-        setQuotaEditMessage(`更新月度版失败：${error.message}`, true);
+        setQuotaEditMessage(`更新VIP月度版失败：${error.message}`, true);
       }
     }
 
@@ -3247,8 +3247,8 @@
     function getAdminLogActionLabel(action) {
       const labels = {
         update_quota: "修改次数",
-        set_vip: "设为月度版",
-        unset_vip: "取消月度版",
+        set_vip: "设为VIP月度版",
+        unset_vip: "取消VIP月度版",
         update_note: "修改备注"
       };
 
@@ -3288,7 +3288,7 @@
       }
 
       if (log.action === "set_vip" || log.action === "unset_vip") {
-        return `月度版：${formatVipValue(beforeData.is_vip)} → ${formatVipValue(afterData.is_vip)}`;
+        return `VIP月度版：${formatVipValue(beforeData.is_vip)} → ${formatVipValue(afterData.is_vip)}`;
       }
 
       if (log.action === "update_note") {
@@ -3336,14 +3336,14 @@
       const decodedUserId = decodeURIComponent(userId);
 
       try {
-        setSupabaseUserMessage("正在更新月度版状态...");
+        setSupabaseUserMessage("正在更新VIP月度版状态...");
         await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(decodedUserId)}/vip`, {
           method: "PATCH",
           body: JSON.stringify({
             is_vip: Boolean(isVip)
           })
         });
-        setSupabaseUserMessage("月度版状态已更新。");
+        setSupabaseUserMessage("VIP月度版状态已更新。");
         await loadSupabaseUsers(false);
       } catch (error) {
         setSupabaseUserMessage(error.message, true);
