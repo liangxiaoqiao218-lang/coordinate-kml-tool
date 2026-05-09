@@ -824,8 +824,20 @@
       padding: 7px 12px;
     }
 
+    .lookup-pricing-toggle {
+      min-height: 36px;
+      padding: 7px 10px;
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+
     .compact-pricing-note {
       margin-top: 10px;
+    }
+
+    .compact-pricing-note[hidden],
+    .user-code-result[hidden] {
+      display: none;
     }
 
     .channel-link-panel h3,
@@ -928,6 +940,25 @@
       margin-top: 12px;
     }
 
+    .lookup-result-card {
+      padding: 12px;
+      border: 1px solid #93c5fd;
+      border-radius: 12px;
+      background: #f8fbff;
+      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.08);
+    }
+
+    .lookup-result-card.status.error {
+      border-color: #fecaca;
+      background: #fff1f2;
+    }
+
+    .user-code-result-title {
+      margin: 0 0 10px;
+      color: #0f172a;
+      font-size: 15px;
+    }
+
     .pricing-note {
       margin-top: 12px;
       padding: 12px;
@@ -1027,6 +1058,11 @@
       flex-wrap: wrap;
       gap: 8px;
       margin: 10px 0 12px;
+    }
+
+    .user-code-actions .primary-action {
+      background: #2563eb;
+      color: #ffffff;
     }
 
     @media (max-width: 720px) {
@@ -1135,10 +1171,11 @@
         <div class="user-code-query compact">
           <input id="userCodeLookupInput" placeholder="输入充值码，如 GKT-5HS2AY" onkeydown="if(event.key==='Enter'){lookupUserCode();}" />
           <button type="button" onclick="lookupUserCode()">查询用户</button>
+          <button id="lookupPricingToggle" type="button" class="button-secondary lookup-pricing-toggle" onclick="toggleLookupPricingNote()">查看收费标准</button>
         </div>
       </div>
-      <div id="lookupPricingNote" class="pricing-note compact-pricing-note"></div>
-      <div id="userCodeLookupResult" class="user-code-result muted">等待输入充值码。</div>
+      <div id="lookupPricingNote" class="pricing-note compact-pricing-note" hidden></div>
+      <div id="userCodeLookupResult" class="user-code-result muted" hidden></div>
     </section>
 
     <nav class="admin-tabs" aria-label="后台模块">
@@ -1660,6 +1697,15 @@
       if (monthlyButton) monthlyButton.textContent = `填充${pricingConfig.monthly.name} ${formatPricingYuan(pricingConfig.monthly.price)}`;
       if (judgeButton) judgeButton.textContent = `矿地快判加${pricingConfig.addJudge.count}次 ${formatPricingYuan(pricingConfig.addJudge.price)}`;
       if (convertButton) convertButton.textContent = `坐标/KML加${pricingConfig.addConvert.count}次 ${formatPricingYuan(pricingConfig.addConvert.price)}`;
+    }
+
+    function toggleLookupPricingNote() {
+      const note = document.getElementById("lookupPricingNote");
+      const button = document.getElementById("lookupPricingToggle");
+      if (!note) return;
+      const shouldShow = note.hidden;
+      note.hidden = !shouldShow;
+      if (button) button.textContent = shouldShow ? "收起收费标准" : "查看收费标准";
     }
 
     function setPricingConfigMessage(message = "", isError = false) {
@@ -2413,18 +2459,20 @@
       const resultBox = document.getElementById("userCodeLookupResult");
       const code = normalizeUserCodeInput(input?.value || "");
       if (!resultBox) return;
+      resultBox.hidden = false;
       if (!code) {
-        resultBox.className = "user-code-result status error";
+        resultBox.className = "user-code-result lookup-result-card status error";
         resultBox.textContent = "请输入有效的用户识别码，例如 GKT-482913。";
         return;
       }
-      resultBox.className = "user-code-result muted";
+      resultBox.className = "user-code-result lookup-result-card muted";
       resultBox.textContent = "正在查询...";
       try {
         const data = await adminFetch(`/api/admin/user-code-lookup?code=${encodeURIComponent(code)}`);
         renderUserCodeLookupResult(data);
       } catch (error) {
-        resultBox.className = "user-code-result status error";
+        resultBox.hidden = false;
+        resultBox.className = "user-code-result lookup-result-card status error";
         resultBox.textContent = error.message || "查询失败。";
       }
     }
@@ -2437,8 +2485,12 @@
       const summary = data?.summary || {};
 
       if (!logs.length && !users.length) {
-        resultBox.className = "user-code-result muted";
-        resultBox.innerHTML = `未找到 ${escapeHtml(data?.code || "")} 的使用记录。`;
+        resultBox.hidden = false;
+        resultBox.className = "user-code-result lookup-result-card muted";
+        resultBox.innerHTML = `
+          <h3 class="user-code-result-title">用户查询结果</h3>
+          <div>未找到 ${escapeHtml(data?.code || "")} 的使用记录。</div>
+        `;
         return;
       }
 
@@ -2455,8 +2507,10 @@
       const encodedPrimaryUserId = primaryUser.user_id ? encodeURIComponent(primaryUser.user_id) : "";
       const userIdForJs = escapeJsString(primaryUser.user_id || "");
 
-      resultBox.className = "user-code-result";
+      resultBox.hidden = false;
+      resultBox.className = "user-code-result lookup-result-card";
       resultBox.innerHTML = `
+        <h3 class="user-code-result-title">用户查询结果</h3>
         <div class="user-code-summary-grid">
           <div class="user-code-summary-cell"><span>用户识别码</span><strong>${escapeHtml(data?.code || summary.userCode || "-")}</strong></div>
           <div class="user-code-summary-cell"><span>可充值 user_id</span><strong title="${escapeHtml(userIdText)}">${escapeHtml(userIdText)}</strong></div>
@@ -2471,7 +2525,7 @@
           <div class="user-code-summary-cell"><span>使用功能</span><strong>${escapeHtml(featureText)}</strong></div>
         </div>
         <div class="user-code-actions">
-          ${primaryUser.user_id ? `<button type="button" onclick="openSupabaseQuotaEditor('${encodedPrimaryUserId}')">打开加次数编辑</button>` : ""}
+          ${primaryUser.user_id ? `<button type="button" class="primary-action" onclick="openSupabaseQuotaEditor('${encodedPrimaryUserId}')">编辑用户 / 加次数</button>` : ""}
           ${primaryUser.user_id ? `<button type="button" onclick="copyLookupUserId('${userIdForJs}')">复制 user_id</button>` : ""}
           ${primaryUser.user_id ? `<span class="muted">${escapeHtml(getPricingActionSummary())}</span>` : `<span class="muted">未关联到 users 表用户，请先根据 IP 或最近记录确认用户。</span>`}
         </div>
