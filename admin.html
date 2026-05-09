@@ -1297,41 +1297,41 @@
     </section>
 
     <section class="panel" id="pricingConfigPanel">
-      <h2>????</h2>
-      <p class="muted">?????????????????????????????</p>
+      <h2>系统配置</h2>
+      <p class="muted">修改后保存配置，前后台会通过 /api/pricing-config 同步生效。</p>
       <div class="config-grid">
         <label class="config-field">
-          <span>???????/??</span>
+          <span>月度版价格（元/月）</span>
           <input id="pricingMonthlyPrice" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>??????????</span>
+          <span>月度版矿地快判次数</span>
           <input id="pricingMonthlyJudgeCount" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>??????/KML??</span>
+          <span>月度版坐标/KML次数</span>
           <input id="pricingMonthlyConvertCount" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>?????????</span>
+          <span>单独加次价格（元）</span>
           <input id="pricingAddPrice" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>??????</span>
+          <span>单独加次数量</span>
           <input id="pricingAddCount" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>????????/?</span>
+          <span>免费矿地快判次数/天</span>
           <input id="pricingFreeJudgeCount" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>????/KML??/?</span>
+          <span>免费坐标/KML次数/天</span>
           <input id="pricingFreeConvertCount" type="number" min="0" step="1">
         </label>
       </div>
       <div class="config-actions">
-        <button type="button" onclick="savePricingConfigForm()">????</button>
-        <button type="button" class="button-secondary" onclick="fillPricingConfigForm()">?????</button>
+        <button type="button" onclick="savePricingConfigForm()">保存配置</button>
+        <button type="button" class="button-secondary" onclick="fillPricingConfigForm()">重填当前值</button>
         <span id="pricingConfigMessage" class="muted"></span>
       </div>
     </section>
@@ -1635,18 +1635,18 @@
       const addCount = readPricingNumber("pricingAddCount", pricingConfig.addJudge?.count || 0);
       return {
         monthly: {
-          name: pricingConfig.monthly?.name || "???",
+          name: pricingConfig.monthly?.name || "月度版",
           price: readPricingNumber("pricingMonthlyPrice", pricingConfig.monthly?.price || 0),
           judgeCount: readPricingNumber("pricingMonthlyJudgeCount", pricingConfig.monthly?.judgeCount || 0),
           convertCount: readPricingNumber("pricingMonthlyConvertCount", pricingConfig.monthly?.convertCount || 0)
         },
         addJudge: {
-          name: pricingConfig.addJudge?.name || "??????",
+          name: pricingConfig.addJudge?.name || "矿地快判加次",
           price: addPrice,
           count: addCount
         },
         addConvert: {
-          name: pricingConfig.addConvert?.name || "??/KML??",
+          name: pricingConfig.addConvert?.name || "坐标/KML加次",
           price: addPrice,
           count: addCount
         },
@@ -1659,7 +1659,7 @@
 
     async function savePricingConfigForm() {
       try {
-        setPricingConfigMessage("????...");
+        setPricingConfigMessage("保存中...");
         const config = readPricingConfigForm();
         const result = await adminFetch("/api/admin/pricing-config", {
           method: "POST",
@@ -1674,11 +1674,11 @@
         }
         renderAdminPricingConfig();
         fillPricingConfigForm();
-        setPricingConfigMessage("??????????????");
-        showToast("????");
+        setPricingConfigMessage("配置已保存，前后台已同步。");
+        showToast("保存成功");
       } catch (error) {
-        setPricingConfigMessage("?????" + error.message, true);
-        showToast("????", true);
+        setPricingConfigMessage("保存失败：" + error.message, true);
+        showToast("保存失败", true);
       }
     }
 
