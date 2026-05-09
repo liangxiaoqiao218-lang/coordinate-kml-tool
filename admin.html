@@ -1629,7 +1629,9 @@
   </main>
 
   <script>
-    let adminPassword = localStorage.getItem("coordinateToolAdminPassword") || "";
+    const ADMIN_PASSWORD_STORAGE_KEY = "coordinateToolAdminPassword";
+    const ADMIN_PASSWORD_LEGACY_KEYS = ["ADMIN_PASSWORD", "admin_password", "adminPassword"];
+    let adminPassword = readStoredAdminPassword();
     let supabaseUsers = [];
     let selectedSupabaseUser = null;
     let usageLogs = [];
@@ -1877,18 +1879,60 @@
       return document.getElementById("password").value.trim();
     }
 
+    function readStoredAdminPassword() {
+      const current = localStorage.getItem(ADMIN_PASSWORD_STORAGE_KEY);
+      if (current) return current;
+      for (const key of ADMIN_PASSWORD_LEGACY_KEYS) {
+        const legacyValue = localStorage.getItem(key);
+        if (legacyValue) {
+          localStorage.setItem(ADMIN_PASSWORD_STORAGE_KEY, legacyValue);
+          return legacyValue;
+        }
+      }
+      return "";
+    }
+
+    function saveAdminPassword(value) {
+      if (!value) return;
+      localStorage.setItem(ADMIN_PASSWORD_STORAGE_KEY, value);
+      ADMIN_PASSWORD_LEGACY_KEYS.forEach(key => localStorage.removeItem(key));
+    }
+
+    function clearAdminPassword() {
+      localStorage.removeItem(ADMIN_PASSWORD_STORAGE_KEY);
+      ADMIN_PASSWORD_LEGACY_KEYS.forEach(key => localStorage.removeItem(key));
+    }
+
+    function resolveAdminPassword() {
+      return adminPassword || getPassword() || readStoredAdminPassword();
+    }
+
+    function isAdminPasswordError(error) {
+      return /密码|password|admin|401|403|unauthorized/i.test(error?.message || "");
+    }
+
     function login() {
-      adminPassword = getPassword();
-      localStorage.setItem("coordinateToolAdminPassword", adminPassword);
+      const nextPassword = getPassword();
+      if (!nextPassword) {
+        setMessage("请输入管理员密码。", true);
+        return;
+      }
+      adminPassword = nextPassword;
+      saveAdminPassword(adminPassword);
       refreshAll(true);
     }
 
     async function adminFetch(url, options = {}) {
+      const password = resolveAdminPassword();
+      if (!password) {
+        throw new Error("请输入管理员密码。");
+      }
+      adminPassword = password;
       const response = await fetch(url, {
         ...options,
         headers: {
           "Content-Type": "application/json",
-          "x-admin-password": adminPassword,
+          "x-admin-password": password,
           ...(options.headers || {})
         }
       });
@@ -1911,14 +1955,23 @@
           setMessage("正在读取 Supabase 用户...");
         }
 
-        adminPassword = getPassword();
-        localStorage.setItem("coordinateToolAdminPassword", adminPassword);
+        const nextPassword = getPassword() || adminPassword || readStoredAdminPassword();
+        if (!nextPassword) {
+          setMessage("请输入管理员密码后进入后台。", true);
+          return;
+        }
+        adminPassword = nextPassword;
+        saveAdminPassword(adminPassword);
         await loadFeatureFlags();
         await loadDashboardStats(false);
         await loadUsageLogs(false);
         await loadSupabaseUsers(false);
         setMessage(`后台数据已刷新：${new Date().toLocaleTimeString()}`);
       } catch (error) {
+        if (isAdminPasswordError(error)) {
+          clearAdminPassword();
+          adminPassword = "";
+        }
         setMessage(`刷新失败：${error.message}`, true);
       } finally {
         if (isManual) {
@@ -2916,6 +2969,10 @@
         setMessage("功能开关已保存。");
         showToast("保存成功");
       } catch (error) {
+        if (isAdminPasswordError(error)) {
+          clearAdminPassword();
+          adminPassword = "";
+        }
         setMessage(`保存功能开关失败：${error.message}`, true);
         await loadFeatureFlags().catch(() => {});
       }
