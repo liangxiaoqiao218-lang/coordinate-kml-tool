@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import Tesseract from "tesseract.js";
 
 const app = express();
@@ -1337,6 +1338,145 @@ async function writeSourceVisitLog(userId, req) {
     success: true,
     note: "source_visit"
   });
+}
+
+function extractJudgeCaseGrade(text = "") {
+  const source = String(text || "");
+  const gradeLine = source.match(/(?:銆愮瓑绾с€?|【等级】|等级|判读等级)[^\nA-D]*([ABCD])/i);
+  if (gradeLine) {
+    return gradeLine[1].toUpperCase();
+  }
+
+  const loose = source.match(/\b([ABCD])\s*(?:级|級|建议|可以|谨慎|排除)/i);
+  return loose ? loose[1].toUpperCase() : null;
+}
+
+function extractJudgeCaseImageType(text = "") {
+  const source = String(text || "");
+  if (/卫星|衛星|地图|地圖|遥感|遙感|Google\s*Earth|奥维|奧維|俯视|俯視|航拍/i.test(source)) {
+    return "卫星图";
+  }
+  if (/河道|河床|溪流|沟谷|溝谷|坡脚|坡腳|沉积|沉積|采坑|采挖|採挖|矿洞|礦洞|扰动|擾動|老鼠洞|地貌|现场|現場/i.test(source)) {
+    return "矿地照片";
+  }
+  if (/矿石|礦石|原矿|原礦|矿化|礦化|岩石|黄铁矿|黃鐵礦|云母|雲母|金豆|熔炼|熔煉|成品金|样本|樣本/i.test(source)) {
+    return "矿石";
+  }
+  return "未确定";
+}
+
+function extractJudgeCaseKeywords(text = "") {
+  const source = String(text || "");
+  const dictionary = [
+    "黄铁矿感",
+    "云母感",
+    "整面反光",
+    "金属膜感",
+    "石英脉",
+    "裂隙控制",
+    "氧化带",
+    "赋存关系",
+    "河道结构",
+    "沉积空间",
+    "采坑",
+    "老矿洞",
+    "人工扰动",
+    "卫星图",
+    "地貌线索",
+    "老鼠洞",
+    "金豆",
+    "熔炼物",
+    "成色检测",
+    "补拍断面",
+    "上下游",
+    "现场验证"
+  ];
+
+  const aliases = {
+    "黄铁矿感": /黄铁矿|黃鐵礦|硫化物/i,
+    "云母感": /云母|雲母|片状反光|片狀反光/i,
+    "整面反光": /整面反光|整体反光|整體反光|镜面|鏡面|大面积.*亮/i,
+    "金属膜感": /金属膜|金屬膜|膜感/i,
+    "石英脉": /石英脉|石英脈|白色脉|白色脈/i,
+    "裂隙控制": /裂隙|裂缝|裂縫|结构控制|構造控制/i,
+    "氧化带": /氧化带|氧化帶|铁染|鐵染/i,
+    "赋存关系": /赋存|賦存|局部集中/i,
+    "河道结构": /河道|河床|溪流|沟谷|溝谷/i,
+    "沉积空间": /沉积|沉積|阶地|階地|弯道|彎道/i,
+    "采坑": /采坑|採坑|试挖|試挖|小坑/i,
+    "老矿洞": /老矿洞|老礦洞|矿洞|礦洞/i,
+    "人工扰动": /人工扰动|人工擾動|扰动|擾動|裸土|便道/i,
+    "卫星图": /卫星|衛星|遥感|遙感|地图|地圖|Google\s*Earth|奥维|奧維/i,
+    "地貌线索": /地貌|坡脚|坡腳|线性|線性|山脊/i,
+    "老鼠洞": /老鼠洞/i,
+    "金豆": /金豆|金粒/i,
+    "熔炼物": /熔炼|熔煉|成品金|熔融/i,
+    "成色检测": /成色|纯度|純度|检测|檢測/i,
+    "补拍断面": /补拍|補拍|断面|斷面|敲开|敲開/i,
+    "上下游": /上游|下游|上下游/i,
+    "现场验证": /现场|現場|验证|驗證|复核|複核/i
+  };
+
+  const keywords = dictionary.filter(keyword => aliases[keyword]?.test(source));
+  return [...new Set(keywords)].slice(0, 8);
+}
+
+function extractJudgeCaseSuggestedNextImage(text = "") {
+  const source = String(text || "");
+  const section = source.match(/(?:銆愪笅涓€姝ャ€?|【下一步】|下一步)([\s\S]*?)(?:\n\s*(?:銆愬|【)|$)/);
+  const block = section ? section[1] : source;
+  const line = block
+    .split(/\r?\n/)
+    .map(item => item.replace(/^\s*[-*0-9.、)）]+\s*/, "").trim())
+    .find(item => /补拍|補拍|上传|上傳|敲开|敲開|比例|断面|斷面|环境|環境|上下游|卫星|衛星|现场|現場/.test(item));
+
+  return line ? line.slice(0, 300) : "";
+}
+
+function hashJudgeCaseImage(file) {
+  if (!file?.buffer?.length) {
+    return "";
+  }
+  return crypto.createHash("sha256").update(file.buffer).digest("hex");
+}
+
+async function writeJudgeCase({ req, userId, file, resultText = "", rawText = "" }) {
+  if (!supabase || !file?.buffer?.length || !String(resultText || rawText || "").trim()) {
+    return;
+  }
+
+  try {
+    const sourceMeta = getSourceMetaFromReq(req) || {};
+    const text = String(resultText || rawText || "");
+    const payload = {
+      user_code: sourceMeta.user_code || null,
+      user_id: userId ? String(userId) : null,
+      source_from: sourceMeta.from_source || null,
+      source_page: sourceMeta.current_page || sourceMeta.page || null,
+      image_type: extractJudgeCaseImageType(text),
+      ai_result: text.slice(0, 12000),
+      grade: extractJudgeCaseGrade(text),
+      keywords: extractJudgeCaseKeywords(text),
+      suggested_next_image: extractJudgeCaseSuggestedNextImage(text) || null,
+      image_hash: hashJudgeCaseImage(file) || null,
+      image_url: null,
+      image_path: null,
+      review_status: "pending",
+      reviewer_note: null
+    };
+
+    const { error } = await supabase.from("judge_cases").insert(payload);
+    if (error) {
+      console.error("Judge case write failed:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+    }
+  } catch (error) {
+    console.error("Judge case write exception:", error?.message || error);
+  }
 }
 
 app.get("/api/gold-price", async (req, res) => {
@@ -4447,6 +4587,128 @@ app.get("/api/admin/supabase-users/:userId/logs", requireAdmin, async (req, res)
   }
 });
 
+app.get("/api/admin/judge-cases", requireAdmin, async (req, res) => {
+  try {
+    if (!requireSupabase(res)) {
+      return;
+    }
+
+    const limit = Math.min(toNonNegativeInteger(req.query.limit, 100) || 100, 500);
+    let query = supabase
+      .from("judge_cases")
+      .select("case_id,user_code,user_id,source_from,source_page,image_type,ai_result,grade,keywords,suggested_next_image,image_hash,image_url,image_path,review_status,reviewer_note,created_at,updated_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    const imageType = String(req.query.image_type || "").trim();
+    const grade = String(req.query.grade || "").trim().toUpperCase();
+    const reviewStatus = String(req.query.review_status || "").trim();
+    const sourceFrom = String(req.query.source_from || "").trim();
+    const userCode = sanitizeUserCode(req.query.user_code || "");
+
+    if (imageType) {
+      query = query.eq("image_type", imageType);
+    }
+    if (grade) {
+      query = query.eq("grade", grade);
+    }
+    if (reviewStatus) {
+      query = query.eq("review_status", reviewStatus);
+    }
+    if (sourceFrom) {
+      query = query.ilike("source_from", `%${sourceFrom}%`);
+    }
+    if (userCode) {
+      query = query.eq("user_code", userCode);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      if (error.code === "42P01") {
+        return res.json({
+          success: true,
+          setupRequired: true,
+          cases: [],
+          error: "judge_cases table does not exist"
+        });
+      }
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      cases: data || []
+    });
+  } catch (error) {
+    console.error("Read judge cases failed:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "读取快判案例失败"
+    });
+  }
+});
+
+app.patch("/api/admin/judge-cases/:caseId/review", requireAdmin, async (req, res) => {
+  try {
+    if (!requireSupabase(res)) {
+      return;
+    }
+
+    const caseId = String(req.params.caseId || "").trim();
+    const reviewStatus = String(req.body?.review_status || "").trim();
+    const reviewerNote = String(req.body?.reviewer_note ?? "").slice(0, 1000);
+    const allowedStatuses = new Set(["pending", "useful", "invalid", "wrong", "knowledge_ready"]);
+
+    if (!caseId) {
+      return res.status(400).json({
+        success: false,
+        error: "缺少 case_id"
+      });
+    }
+
+    if (!allowedStatuses.has(reviewStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: "复核状态不正确"
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("judge_cases")
+      .update({
+        review_status: reviewStatus,
+        reviewer_note: reviewerNote || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("case_id", caseId)
+      .select("case_id,user_code,user_id,source_from,source_page,image_type,ai_result,grade,keywords,suggested_next_image,image_hash,image_url,image_path,review_status,reviewer_note,created_at,updated_at")
+      .single();
+
+    if (error) {
+      if (error.code === "42P01") {
+        return res.json({
+          success: false,
+          setupRequired: true,
+          error: "judge_cases table does not exist"
+        });
+      }
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      case: data
+    });
+  } catch (error) {
+    console.error("Update judge case review failed:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "更新快判案例复核状态失败"
+    });
+  }
+});
+
 app.get("/api/admin/usage-logs", requireAdmin, async (req, res) => {
   try {
     if (!requireSupabase(res)) {
@@ -5610,6 +5872,13 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       metadata: aiCostMetadata
     });
     await appendUsageLog(data, user, req, "judge", usageResult.source);
+    await writeJudgeCase({
+      req,
+      userId: visitorId,
+      file: judgeImageFiles[0],
+      resultText: normalizedOutput,
+      rawText: rawOutput
+    });
 
     if (user) {
       user.eventCount = Number(user.eventCount || 0) + 1;
