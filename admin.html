@@ -790,6 +790,44 @@
       background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
     }
 
+    .top-user-code-lookup {
+      margin: 10px 0 12px;
+      padding: 10px 12px;
+    }
+
+    .top-user-code-row {
+      display: grid;
+      grid-template-columns: auto minmax(260px, 1fr);
+      gap: 12px;
+      align-items: center;
+    }
+
+    .top-user-code-row strong {
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    .user-code-query.compact {
+      margin-top: 0;
+      justify-content: flex-end;
+      flex-wrap: nowrap;
+    }
+
+    .user-code-query.compact input {
+      flex: 1 1 320px;
+      max-width: 420px;
+      min-height: 36px;
+    }
+
+    .user-code-query.compact button {
+      min-height: 36px;
+      padding: 7px 12px;
+    }
+
+    .compact-pricing-note {
+      margin-top: 10px;
+    }
+
     .channel-link-panel h3,
     .user-code-lookup-panel h3 {
       margin: 0 0 8px;
@@ -1057,6 +1095,20 @@
       .detail-grid {
         grid-template-columns: 1fr;
       }
+
+      .top-user-code-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .user-code-query.compact {
+        flex-wrap: wrap;
+        justify-content: stretch;
+      }
+
+      .user-code-query.compact input {
+        max-width: none;
+      }
     }
   </style>
   <script src="pricing-config.js"></script>
@@ -1076,6 +1128,18 @@
     </section>
 
     <div id="message" class="message"></div>
+
+    <section id="userCodeLookupPanel" class="user-code-lookup-panel is-global top-user-code-lookup" aria-label="快速查用户">
+      <div class="top-user-code-row">
+        <strong>快速查用户</strong>
+        <div class="user-code-query compact">
+          <input id="userCodeLookupInput" placeholder="输入充值码，如 GKT-5HS2AY" onkeydown="if(event.key==='Enter'){lookupUserCode();}" />
+          <button type="button" onclick="lookupUserCode()">查询用户</button>
+        </div>
+      </div>
+      <div id="lookupPricingNote" class="pricing-note compact-pricing-note"></div>
+      <div id="userCodeLookupResult" class="user-code-result muted">等待输入充值码。</div>
+    </section>
 
     <nav class="admin-tabs" aria-label="后台模块">
       <button type="button" class="active" data-module-tab="dashboard" onclick="showAdminModule('dashboard')">总览</button>
@@ -2190,7 +2254,6 @@
       `;
       renderSourceStats(usagePanel, analytics);
       renderChannelLinkManager(usagePanel, document.getElementById("sourceStatsPanel") || analytics);
-      renderUserCodeLookupManager(usagePanel, document.getElementById("channelLinkPanel") || document.getElementById("sourceStatsPanel") || analytics);
     }
 
     const channelLinkSources = [
@@ -2201,7 +2264,7 @@
       { name: "小红书", source: "xhs" },
       { name: "直播", source: "live" },
     ];
-    const officialChannelOrigin = "https://geokitlab.com";
+    const PUBLIC_SITE_ORIGIN = "https://geokitlab.com";
 
     function sanitizeChannelSource(value) {
       return String(value || "")
@@ -2214,7 +2277,7 @@
 
     function buildChannelLink(source) {
       const cleanSource = sanitizeChannelSource(source);
-      return cleanSource ? `${officialChannelOrigin}/?from=${encodeURIComponent(cleanSource)}` : "";
+      return cleanSource ? `${PUBLIC_SITE_ORIGIN}/?from=${encodeURIComponent(cleanSource)}` : "";
     }
 
     async function copyTextValue(text) {
@@ -2336,32 +2399,12 @@
       return raw.length === 6 ? `GKT-${raw}` : "";
     }
 
-    function renderUserCodeLookupManager(usagePanel, afterElement) {
-      if (!usagePanel) return;
+    function renderUserCodeLookupManager() {
       let panel = document.getElementById("userCodeLookupPanel");
       if (!panel) {
-        panel = document.createElement("div");
-        panel.id = "userCodeLookupPanel";
-        panel.className = "user-code-lookup-panel";
+        return;
       }
-      panel.classList.add("is-global");
-
-      const globalAnchor = document.getElementById("message");
-      const insertAnchor = globalAnchor || afterElement || usagePanel.querySelector(".usage-analytics-grid") || usagePanel.firstChild;
-      if (insertAnchor && panel.previousElementSibling !== insertAnchor) {
-        insertAnchor.insertAdjacentElement("afterend", panel);
-      }
-
-      panel.innerHTML = `
-        <h3>快速查用户</h3>
-        <div class="muted">输入用户发来的充值码，快速查看来源、最近使用和可用于充值的 user_id。</div>
-        <div id="lookupPricingNote" class="pricing-note"></div>
-        <div class="user-code-query">
-          <input id="userCodeLookupInput" placeholder="输入充值码，如 GKT-5HS2AY" onkeydown="if(event.key==='Enter'){lookupUserCode();}" />
-          <button type="button" onclick="lookupUserCode()">查询用户</button>
-        </div>
-        <div id="userCodeLookupResult" class="user-code-result muted">等待输入充值码。</div>
-      `;
+      panel.classList.add("is-global", "top-user-code-lookup");
       renderAdminPricingConfig();
     }
 
