@@ -682,16 +682,24 @@ function checkLocalUsageAvailable(user, type) {
     };
   }
 
+  const paidKey = type === "judge" ? "paidJudgeCount" : "paidConvertCount";
+  const freeKey = type === "judge" ? "freeJudgeCount" : "freeConvertCount";
+
   if (user.isVip) {
+    if (Number(user[paidKey] || 0) > 0) {
+      return {
+        allowed: true,
+        source: "paid",
+        quota: buildQuotaPayload(user)
+      };
+    }
+
     return {
-      allowed: true,
-      source: "vip",
+      allowed: false,
+      source: "none",
       quota: buildQuotaPayload(user)
     };
   }
-
-  const paidKey = type === "judge" ? "paidJudgeCount" : "paidConvertCount";
-  const freeKey = type === "judge" ? "freeJudgeCount" : "freeConvertCount";
 
   if (Number(user[freeKey] || 0) > 0) {
     return {
@@ -864,57 +872,38 @@ function getUsageRule(type) {
   return baseRule;
 }
 
-function getCurrentMonthStartISO() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0)).toISOString();
-}
-
-async function getVipMonthlyUsage(userId, type) {
-  if (!supabase || !userId) {
-    return 0;
-  }
-
-  try {
-    const { count, error } = await supabase
-      .from("usage_logs")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", String(userId))
-      .eq("feature_type", normalizeUsageFeatureType(type))
-      .eq("consume_type", "vip")
-      .eq("success", true)
-      .gte("created_at", getCurrentMonthStartISO());
-
-    if (error) {
-      throw error;
-    }
-
-    return Number(count || 0);
-  } catch (error) {
-    console.error("VIP monthly usage count failed:", {
-      userId,
-      type,
-      message: error?.message,
-      code: error?.code,
-      details: error?.details
-    });
-    return 0;
-  }
-}
-
 function buildUsageQuotaPayload(user, monthlyUsage = {}) {
   const quota = buildSupabaseQuotaPayload(user);
+  const usageLimits = getPricingUsageLimits();
+  const isVip = Boolean(quota.is_vip);
+  const freeConvert = Number(quota.free_convert_count || 0);
+  const freeJudge = Number(quota.free_judge_count || 0);
+  const paidConvert = Number(quota.paid_convert_count || 0);
+  const paidJudge = Number(quota.paid_judge_count || 0);
   const convertUsed = Number(monthlyUsage.convert || 0);
   const judgeUsed = Number(monthlyUsage.judge || 0);
-  const usageLimits = getPricingUsageLimits();
+  const convertRemaining = isVip ? paidConvert : freeConvert + paidConvert;
+  const judgeRemaining = isVip ? paidJudge : freeJudge + paidJudge;
+
   return {
     ...quota,
+    convert_remaining: convertRemaining,
+    judge_remaining: judgeRemaining,
+    convertRemaining,
+    judgeRemaining,
     vip_convert_limit: usageLimits.vipConvertLimit,
     vip_judge_limit: usageLimits.vipJudgeLimit,
-    vip_convert_used: convertUsed,
-    vip_judge_used: judgeUsed,
-    vip_convert_remaining: Math.max(0, usageLimits.vipConvertLimit - convertUsed),
-    vip_judge_remaining: Math.max(0, usageLimits.vipJudgeLimit - judgeUsed)
+    vip_convert_used: isVip ? Math.max(0, usageLimits.vipConvertLimit - paidConvert) : convertUsed,
+    vip_judge_used: isVip ? Math.max(0, usageLimits.vipJudgeLimit - paidJudge) : judgeUsed,
+    vip_convert_remaining: isVip ? paidConvert : Math.max(0, usageLimits.vipConvertLimit - convertUsed),
+    vip_judge_remaining: isVip ? paidJudge : Math.max(0, usageLimits.vipJudgeLimit - judgeUsed)
   };
+}
+
+function getQuotaExhaustedCode(type) {
+  return normalizeUsageFeatureType(type) === "judge"
+    ? "JUDGE_QUOTA_EXHAUSTED"
+    : "CONVERT_QUOTA_EXHAUSTED";
 }
 
 function buildSupabaseDeviceSummary(deviceInfo, userAgent = "") {
@@ -1516,29 +1505,34 @@ async function checkUsage(userId, type) {
     };
   }
 
-  const monthlyUsage = {};
-
-  if (user.is_vip) {
-    monthlyUsage[featureType] = await getVipMonthlyUsage(userId, featureType);
-    const vipUsed = Number(monthlyUsage[featureType] || 0);
-
-    if (vipUsed < rule.vipMonthlyLimit) {
-      return {
-        allowed: true,
-        success: true,
-        reason: "ok",
-        source: "vip",
-        featureType,
-        user,
-        quota: buildUsageQuotaPayload(user, monthlyUsage)
-      };
-    }
-  }
-
   const paidKey = rule.paidField;
   const freeKey = rule.freeField;
   const paidCount = Number(user[paidKey] || 0);
   const freeCount = Number(user[freeKey] || 0);
+
+  if (user.is_vip) {
+    if (paidCount > 0) {
+      return {
+        allowed: true,
+        success: true,
+        reason: "ok",
+        source: "paid",
+        featureType,
+        user,
+        quota: buildUsageQuotaPayload(user)
+      };
+    }
+
+    return {
+      allowed: false,
+      success: false,
+      reason: "limit_exceeded",
+      source: "none",
+      featureType,
+      user,
+      quota: buildUsageQuotaPayload(user)
+    };
+  }
 
   if (freeCount > 0) {
     return {
@@ -1548,7 +1542,7 @@ async function checkUsage(userId, type) {
       source: "free",
       featureType,
       user,
-      quota: buildUsageQuotaPayload(user, monthlyUsage)
+      quota: buildUsageQuotaPayload(user)
     };
   }
 
@@ -1560,7 +1554,7 @@ async function checkUsage(userId, type) {
       source: "paid",
       featureType,
       user,
-      quota: buildUsageQuotaPayload(user, monthlyUsage)
+      quota: buildUsageQuotaPayload(user)
     };
   }
 
@@ -1571,7 +1565,7 @@ async function checkUsage(userId, type) {
     source: "none",
     featureType,
     user,
-    quota: buildUsageQuotaPayload(user, monthlyUsage)
+    quota: buildUsageQuotaPayload(user)
   };
 }
 
@@ -1609,21 +1603,6 @@ async function consumeUsage(userId, type, req = null, options = {}) {
       afterBalance: beforeBalance,
       success: false,
       errorReason: status.reason || "not_allowed"
-    });
-    return status;
-  }
-
-  if (status.source === "vip") {
-    await writeUsageLog({
-      userId,
-      req,
-      featureType,
-      consumeType: "vip",
-      beforeBalance,
-      afterBalance: beforeBalance,
-      success: true,
-      note: usageNote || `VIP monthly quota used, no paid quota consumed`,
-      metadata: usageMetadata
     });
     return status;
   }
@@ -1667,7 +1646,7 @@ async function consumeUsage(userId, type, req = null, options = {}) {
         reason: "ok",
         source: status.source,
         user: data,
-        quota: buildSupabaseQuotaPayload(data)
+        quota: buildUsageQuotaPayload(data)
       };
     }
   }
@@ -1694,7 +1673,7 @@ async function consumeUsage(userId, type, req = null, options = {}) {
     success: false,
     reason: "limit_exceeded",
     user: freshUser || user,
-    quota: freshStatus.quota || buildSupabaseQuotaPayload(freshUser || user)
+    quota: freshStatus.quota || buildUsageQuotaPayload(freshUser || user)
   };
 }
 
@@ -5383,16 +5362,10 @@ app.get("/api/usage/quota", async (req, res) => {
     }
 
     await updateSupabaseUserVisitMeta(visitorId, req);
-    const monthlyUsage = user.is_vip
-      ? {
-          convert: await getVipMonthlyUsage(visitorId, "convert"),
-          judge: await getVipMonthlyUsage(visitorId, "judge")
-        }
-      : {};
 
     res.json({
       success: true,
-      quota: buildUsageQuotaPayload(user, monthlyUsage)
+      quota: buildUsageQuotaPayload(user)
     });
   } catch (error) {
     console.error("Supabase usage quota failed:", {
@@ -5433,9 +5406,12 @@ app.post("/api/usage/consume", async (req, res) => {
     await updateSupabaseUserVisitMeta(visitorId, req);
 
     if (result.reason === "limit_exceeded") {
+      const code = getQuotaExhaustedCode(type);
       return res.status(403).json({
         success: false,
         reason: "limit_exceeded",
+        code,
+        error: code,
         type,
         quota: result.quota
       });
@@ -5621,6 +5597,7 @@ app.post("/api/analyze-mining-image", upload.fields([
       return res.status(403).json({
         success: false,
         reason: "limit_exceeded",
+        code: getQuotaExhaustedCode("judge"),
         type: "judge",
         quota: usageStatus.quota,
         error: "AI判读次数已用完，请购买次数或联系人工开通。"
@@ -5672,6 +5649,23 @@ B 可以观察
         note: `AI judge cost estimate: ${aiCostMetadata.estimated_cost_cny} CNY`,
         metadata: aiCostMetadata
       });
+      if (usageResult.reason === "limit_exceeded") {
+        return res.status(403).json({
+          success: false,
+          reason: "limit_exceeded",
+          code: getQuotaExhaustedCode("judge"),
+          type: "judge",
+          quota: usageResult.quota,
+          error: "JUDGE_QUOTA_EXHAUSTED"
+        });
+      }
+      if (!usageResult.success) {
+        return res.status(500).json({
+          success: false,
+          reason: usageResult.reason || "db_error",
+          error: "JUDGE_QUOTA_CONSUME_FAILED"
+        });
+      }
       await appendUsageLog(data, user, req, "judge", usageResult.source);
 
       if (user) {
@@ -5871,6 +5865,23 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       note: `AI judge cost estimate: ${aiCostMetadata.estimated_cost_cny} CNY`,
       metadata: aiCostMetadata
     });
+    if (usageResult.reason === "limit_exceeded") {
+      return res.status(403).json({
+        success: false,
+        reason: "limit_exceeded",
+        code: getQuotaExhaustedCode("judge"),
+        type: "judge",
+        quota: usageResult.quota,
+        error: "JUDGE_QUOTA_EXHAUSTED"
+      });
+    }
+    if (!usageResult.success) {
+      return res.status(500).json({
+        success: false,
+        reason: usageResult.reason || "db_error",
+        error: "JUDGE_QUOTA_CONSUME_FAILED"
+      });
+    }
     await appendUsageLog(data, user, req, "judge", usageResult.source);
     await writeJudgeCase({
       req,
@@ -6040,6 +6051,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
       return res.status(403).json({
         success: false,
         reason: "limit_exceeded",
+        code: getQuotaExhaustedCode("convert"),
         type: "convert",
         quota: usageStatus.quota,
         error: "今日免费坐标次数已用完，请购买次数或联系人工开通。",
@@ -6368,6 +6380,31 @@ Rules:
       warning = warning ? `${warning} ${bftmIncompleteWarning}` : bftmIncompleteWarning;
     }
 
+    const consumeResult = await consumeUsage(visitorId, "convert", req, {
+      note: "Coordinate recognition consumed"
+    });
+    if (consumeResult.reason === "limit_exceeded") {
+      return res.status(403).json({
+        success: false,
+        reason: "limit_exceeded",
+        code: getQuotaExhaustedCode("convert"),
+        type: "convert",
+        quota: consumeResult.quota,
+        error: "CONVERT_QUOTA_EXHAUSTED",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+    if (!consumeResult.success) {
+      return res.status(500).json({
+        success: false,
+        reason: consumeResult.reason || "db_error",
+        error: "CONVERT_QUOTA_CONSUME_FAILED",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+
     res.json({
       model: usedModel,
       rawText,
@@ -6375,7 +6412,7 @@ Rules:
       precisionMode: "preserve-original-decimals-and-parse-dms",
       warning,
       bftmLongTable,
-      quota: usageStatus.quota
+      quota: consumeResult.quota
     });
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
@@ -6437,6 +6474,32 @@ Rules:
         fallback.warning = fallback.warning ? `${fallback.warning} ${bftmIncompleteWarning}` : bftmIncompleteWarning;
         fallback.bftmLongTable = bftmLongTable;
       }
+
+      const consumeResult = await consumeUsage(visitorId, "convert", req, {
+        note: "Coordinate recognition consumed after fallback"
+      });
+      if (consumeResult.reason === "limit_exceeded") {
+        return res.status(403).json({
+          success: false,
+          reason: "limit_exceeded",
+          code: getQuotaExhaustedCode("convert"),
+          type: "convert",
+          quota: consumeResult.quota,
+          error: "CONVERT_QUOTA_EXHAUSTED",
+          rawText: "",
+          coordinates: ""
+        });
+      }
+      if (!consumeResult.success) {
+        return res.status(500).json({
+          success: false,
+          reason: consumeResult.reason || "db_error",
+          error: "CONVERT_QUOTA_CONSUME_FAILED",
+          rawText: "",
+          coordinates: ""
+        });
+      }
+      fallback.quota = consumeResult.quota;
 
       res.json(fallback);
     } catch (fallbackError) {
