@@ -298,6 +298,13 @@
       white-space: nowrap;
     }
 
+    .account-action-button.is-muted {
+      border: 1px solid #bfdbfe;
+      background: #ffffff;
+      color: #2563eb;
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
+    }
+
     .inline-account-action {
       min-height: 24px;
       padding: 2px 7px;
@@ -2951,6 +2958,16 @@
           <small class="module-action">进入</small>
         </button>
       </div>
+
+      <div id="homeAccountPanel" class="home-account-panel" aria-label="&#25105;&#30340;&#27425;&#25968;">
+        <button type="button" class="home-quota-strip" onclick="openAccountModal()" aria-label="&#26597;&#30475;&#25105;&#30340;&#27425;&#25968;">
+          <strong>&#20170;&#26085;&#21097;&#20313;</strong>
+          <span id="homeJudgeQuotaText">&#30719;&#22320;&#24555;&#21028; --</span>
+          <span>&#65372;</span>
+          <span id="homeConvertQuotaText">&#22352;&#26631;/KML --</span>
+        </button>
+        <button id="quotaPrimary" type="button" class="account-action-button is-muted" onclick="openAccountModal()">&#25105;&#30340;&#27425;&#25968;</button>
+      </div>
     </section>
 
     <section id="coordinatePage" class="view">
@@ -3768,18 +3785,17 @@ Au值 = 纯度 × 10 后取整数</div>
       };
 
       const usageVip = isQuotaVip(currentQuota);
-      setQuotaStatus(
-        convertQuotaStatus,
-        usageVip ? VIP_PLAN_LABEL : `剩余 ${convertRemaining} 次${convertRemaining === 0 ? "（已用完）" : ""}`,
-        convertRemaining,
-        usageVip
-      );
-      setQuotaStatus(
-        judgeQuotaStatus,
-        usageVip ? VIP_PLAN_LABEL : `剩余 ${judgeRemaining} 次${judgeRemaining === 0 ? "（已用完）" : ""}`,
-        judgeRemaining,
-        usageVip
-      );
+      const convertLabel = usageVip
+        ? `${VIP_PLAN_LABEL} ? \u5269\u4f59 ${convertRemaining} \u6b21`
+        : `\u5269\u4f59 ${convertRemaining} \u6b21${convertRemaining === 0 ? "\uff08\u5df2\u7528\u5b8c\uff09" : ""}`;
+      const judgeLabel = usageVip
+        ? `${VIP_PLAN_LABEL} ? \u5269\u4f59 ${judgeRemaining} \u6b21`
+        : `\u5269\u4f59 ${judgeRemaining} \u6b21${judgeRemaining === 0 ? "\uff08\u5df2\u7528\u5b8c\uff09" : ""}`;
+
+      setQuotaStatus(convertQuotaStatus, convertLabel, convertRemaining, usageVip);
+      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeRemaining, usageVip);
+      setQuotaAction(convertQuotaAction, convertRemaining, usageVip);
+      setQuotaAction(judgeQuotaAction, judgeRemaining, usageVip);
       updateAccountQuotaUI();
     }
 
@@ -3823,7 +3839,8 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      actionElement.hidden = Boolean(isVip) || Number(total) !== 0;
+      const remaining = Number(total);
+      actionElement.hidden = !Number.isFinite(remaining) || remaining !== 0;
     }
 
     function handleQuotaStatusKey(event) {
@@ -3841,38 +3858,52 @@ Au值 = 纯度 × 10 后取整数</div>
       const quota = currentQuota || {};
       const isVip = isQuotaVip(quota);
 
-      const directKey = type === "judge" ? "judge_remaining" : "convert_remaining";
-      const directValue = Number(quota[directKey]);
-      if (Number.isFinite(directValue)) {
-        return { isVip, total: Math.max(0, directValue) };
-      }
-
       if (type === "judge") {
         const freeJudge = getQuotaNumber(quota, "free_judge_count", "freeJudgeCount");
         const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
-        return { isVip, total: Math.max(0, freeJudge + paidJudge) };
+        return {
+          isVip,
+          free: Math.max(0, freeJudge),
+          paid: Math.max(0, paidJudge),
+          total: Math.max(0, freeJudge + paidJudge)
+        };
       }
 
       const freeConvert = getQuotaNumber(quota, "free_convert_count", "freeConvertCount");
       const paidConvert = getQuotaNumber(quota, "paid_convert_count", "paidConvertCount");
-      return { isVip, total: Math.max(0, freeConvert + paidConvert) };
+      return {
+        isVip,
+        free: Math.max(0, freeConvert),
+        paid: Math.max(0, paidConvert),
+        total: Math.max(0, freeConvert + paidConvert)
+      };
+    }
+
+    function formatAccountRemainingText(info) {
+      const freeText = `\u4eca\u65e5\u514d\u8d39\u5269\u4f59 ${info.free ?? 0} \u6b21`;
+      const balanceLabel = info.isVip ? "\u672c\u6708\u5269\u4f59" : "\u4ed8\u8d39\u5269\u4f59";
+      return `${freeText}\uff0c${balanceLabel} ${info.paid ?? 0} \u6b21`;
+    }
+
+    function formatCompactQuotaLabel(type, info) {
+      const prefix = type === "judge" ? "\u77ff\u5730\u5feb\u5224" : "\u5750\u6807/KML";
+      const balanceLabel = info.isVip ? "\u672c\u6708" : "\u4ed8\u8d39";
+      return `${prefix} \u514d\u8d39 ${info.free ?? 0} / ${balanceLabel} ${info.paid ?? 0} \u6b21`;
     }
 
     function updateAccountQuotaUI() {
       const judgeInfo = getAccountRemaining("judge");
       const convertInfo = getAccountRemaining("convert");
       const isVip = isQuotaVip();
-      const judgeText = `${judgeInfo.total ?? "-"} 次`;
-      const convertText = `${convertInfo.total ?? "-"} 次`;
 
       if (accountJudgeRemaining) {
-        accountJudgeRemaining.textContent = isVip ? `本月剩余 ${judgeText}` : `今日剩余 ${judgeText}`;
+        accountJudgeRemaining.textContent = formatAccountRemainingText(judgeInfo);
       }
       if (accountConvertRemaining) {
-        accountConvertRemaining.textContent = isVip ? `本月剩余 ${convertText}` : `今日剩余 ${convertText}`;
+        accountConvertRemaining.textContent = formatAccountRemainingText(convertInfo);
       }
       if (accountPlanStatus) {
-        accountPlanStatus.textContent = isVip ? VIP_PLAN_LABEL : "普通用户";
+        accountPlanStatus.textContent = isVip ? VIP_PLAN_LABEL : "\u666e\u901a\u7528\u6237";
       }
       if (accountUserCode) {
         const code = getOrCreateUserCode();
@@ -3880,10 +3911,16 @@ Au值 = 纯度 × 10 后取整数</div>
         syncPurchaseExamples(code);
       }
       if (homeJudgeQuotaText) {
-        homeJudgeQuotaText.textContent = isVip ? `矿地快判 本月剩余 ${judgeText}` : `矿地快判 ${judgeText}`;
+        homeJudgeQuotaText.textContent = formatCompactQuotaLabel("judge", judgeInfo);
       }
       if (homeConvertQuotaText) {
-        homeConvertQuotaText.textContent = isVip ? `坐标/KML 本月剩余 ${convertText}` : `坐标/KML ${convertText}`;
+        homeConvertQuotaText.textContent = formatCompactQuotaLabel("convert", convertInfo);
+      }
+      if (quotaPrimary) {
+        const hasEmptyQuota = Number(judgeInfo.total) <= 0 || Number(convertInfo.total) <= 0;
+        quotaPrimary.hidden = false;
+        quotaPrimary.textContent = hasEmptyQuota ? "\u5145\u503c / \u52a0\u6b21\u6570" : "\u6211\u7684\u6b21\u6570";
+        quotaPrimary.classList.toggle("is-muted", !hasEmptyQuota);
       }
     }
 
@@ -3894,35 +3931,29 @@ Au值 = 纯度 × 10 后取整数</div>
 
       currentQuota = quota;
       const isVip = isQuotaVip(quota);
-
-      if (isVip) {
-        setQuotaStatus(convertQuotaStatus, VIP_PLAN_LABEL, 0, true);
-        setQuotaStatus(judgeQuotaStatus, VIP_PLAN_LABEL, 0, true);
-        setQuotaAction(convertQuotaAction, null, true);
-        setQuotaAction(judgeQuotaAction, null, true);
-        updateAccountQuotaUI();
-        return;
-      }
-
+      const directConvert = Number(quota.convert_remaining);
+      const directJudge = Number(quota.judge_remaining);
       const freeConvert = getQuotaNumber(quota, "free_convert_count", "freeConvertCount");
       const paidConvert = getQuotaNumber(quota, "paid_convert_count", "paidConvertCount");
       const freeJudge = getQuotaNumber(quota, "free_judge_count", "freeJudgeCount");
       const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
+      const convertTotal = Number.isFinite(directConvert) ? Math.max(0, directConvert) : Math.max(0, freeConvert + paidConvert);
+      const judgeTotal = Number.isFinite(directJudge) ? Math.max(0, directJudge) : Math.max(0, freeJudge + paidJudge);
+      const convertLabel = formatCompactQuotaLabel("convert", {
+        isVip,
+        free: freeConvert,
+        paid: paidConvert
+      });
+      const judgeLabel = formatCompactQuotaLabel("judge", {
+        isVip,
+        free: freeJudge,
+        paid: paidJudge
+      });
 
-      setQuotaStatus(
-        convertQuotaStatus,
-        `剩余 ${freeConvert + paidConvert} 次`,
-        freeConvert + paidConvert,
-        false
-      );
-      setQuotaAction(convertQuotaAction, freeConvert + paidConvert, false);
-      setQuotaStatus(
-        judgeQuotaStatus,
-        `剩余 ${freeJudge + paidJudge} 次`,
-        freeJudge + paidJudge,
-        false
-      );
-      setQuotaAction(judgeQuotaAction, freeJudge + paidJudge, false);
+      setQuotaStatus(convertQuotaStatus, convertLabel, convertTotal, isVip);
+      setQuotaAction(convertQuotaAction, convertTotal, isVip);
+      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeTotal, isVip);
+      setQuotaAction(judgeQuotaAction, judgeTotal, isVip);
       updateAccountQuotaUI();
     }
 

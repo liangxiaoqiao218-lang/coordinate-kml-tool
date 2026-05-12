@@ -1296,7 +1296,7 @@
         <div class="cards">
           <div class="card"><span>今日免费消耗</span><strong id="dashFreeCount">0</strong></div>
           <div class="card"><span>今日付费消耗</span><strong id="dashPaidCount">0</strong></div>
-          <div class="card"><span>今日VIP月度版免扣</span><strong id="dashVipCount">0</strong></div>
+          <div class="card"><span>今日VIP月度版消耗</span><strong id="dashVipCount">0</strong></div>
           <div class="card"><span>次数不足失败</span><strong id="dashLimitCount">0</strong></div>
         </div>
       </div>
@@ -1601,7 +1601,7 @@
 
     <section class="panel">
       <h2>消费记录 / 使用记录</h2>
-      <p class="muted">该区域来自 Supabase usage_logs 表，用于查看每次扣次数、VIP月度版免扣和失败原因。</p>
+      <p class="muted">该区域来自 Supabase usage_logs 表，用于查看每次扣次数、VIP月度版消耗和失败原因。</p>
       <div class="table-tools">
         <input id="usageLogUserFilter" placeholder="按用户ID筛选" onkeydown="handleUsageLogSearchKey(event)" />
         <select id="usageLogFeatureFilter" onchange="loadUsageLogs()">
@@ -2730,9 +2730,14 @@
       const region = primaryUser.region || logs.find(log => log.region)?.region || "-";
       const latestPage = summary.latestPage || "-";
       const latestUsedAt = summary.latestUsedAt ? formatTime(summary.latestUsedAt) : "-";
-      const judgeRemaining = Number(primaryUser.free_judge_count || 0) + Number(primaryUser.paid_judge_count || 0);
-      const convertRemaining = Number(primaryUser.free_convert_count || 0) + Number(primaryUser.paid_convert_count || 0);
       const accountStatus = primaryUser.is_vip ? "VIP月度版" : "普通用户";
+      const balanceLabel = primaryUser.is_vip ? "本月" : "付费";
+      const judgeBalanceText = primaryUser.user_id
+        ? `免费 ${Number(primaryUser.free_judge_count || 0)} / ${balanceLabel} ${Number(primaryUser.paid_judge_count || 0)} 次`
+        : "-";
+      const convertBalanceText = primaryUser.user_id
+        ? `免费 ${Number(primaryUser.free_convert_count || 0)} / ${balanceLabel} ${Number(primaryUser.paid_convert_count || 0)} 次`
+        : "-";
       const encodedPrimaryUserId = primaryUser.user_id ? encodeURIComponent(primaryUser.user_id) : "";
       const userIdForJs = escapeJsString(primaryUser.user_id || "");
 
@@ -2745,8 +2750,8 @@
           <div class="user-code-summary-cell"><span>可充值 user_id</span><strong title="${escapeHtml(userIdText)}">${escapeHtml(userIdText)}</strong></div>
           <div class="user-code-summary-cell"><span>最近 IP</span><strong>${escapeHtml(latestIp)}</strong></div>
           <div class="user-code-summary-cell"><span>当前状态</span><strong>${accountStatus}</strong></div>
-          <div class="user-code-summary-cell"><span>矿地快判剩余</span><strong>${primaryUser.user_id ? `${judgeRemaining} 次` : "-"}</strong></div>
-          <div class="user-code-summary-cell"><span>坐标/KML剩余</span><strong>${primaryUser.user_id ? `${convertRemaining} 次` : "-"}</strong></div>
+          <div class="user-code-summary-cell"><span>矿地快判次数</span><strong>${judgeBalanceText}</strong></div>
+          <div class="user-code-summary-cell"><span>坐标/KML次数</span><strong>${convertBalanceText}</strong></div>
           <div class="user-code-summary-cell"><span>地区</span><strong>${escapeHtml(region)}</strong></div>
           <div class="user-code-summary-cell"><span>首次来源</span><strong>${escapeHtml(summary.firstSource || "-")}</strong></div>
           <div class="user-code-summary-cell"><span>最近页面</span><strong>${escapeHtml(latestPage)}</strong></div>
@@ -3051,7 +3056,7 @@
           <td>${escapeHtml(getConsumeTypeLabel(log.consume_type))}</td>
           <td>${escapeHtml(formatUsageBalance(log.before_balance, log.feature_type))}</td>
           <td>${escapeHtml(formatUsageBalance(log.after_balance, log.feature_type))}</td>
-          <td>${log.success ? "成功" : "失败"}</td>
+          <td>${getUsageStatusLabel(log)}</td>
           <td>${escapeHtml(log.note || log.error_reason || "-")}</td>
         </tr>
       `).join("");
@@ -3068,10 +3073,18 @@
       const labels = {
         free: "免费次数",
         paid: "付费次数",
-        vip: "VIP月度版免扣",
+        vip: "VIP月度版消耗",
         none: "未扣减"
       };
       return labels[type] || type || "-";
+    }
+
+    function getUsageStatusLabel(log) {
+      if (log?.success) return "成功";
+      if (log?.error_reason === "quota_blocked" || log?.error_reason === "limit_exceeded") {
+        return "次数不足";
+      }
+      return "失败";
     }
 
     function formatUsageBalance(balance, featureType) {
@@ -3553,7 +3566,7 @@
           <strong>${escapeHtml(formatLogTime(log.created_at) || "-")}｜${escapeHtml(getUsageFeatureLabel(log.feature_type))}｜${escapeHtml(getConsumeTypeLabel(log.consume_type))}</strong>
           <div class="log-detail">消耗前：${escapeHtml(formatUsageBalance(log.before_balance, log.feature_type))}
 消耗后：${escapeHtml(formatUsageBalance(log.after_balance, log.feature_type))}
-状态：${log.success ? "成功" : "失败"}</div>
+状态：${getUsageStatusLabel(log)}</div>
           <div class="log-json">${escapeHtml(log.note || log.error_reason || "-")}</div>
         </div>
       `).join("");

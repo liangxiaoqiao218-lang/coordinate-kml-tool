@@ -685,22 +685,6 @@ function checkLocalUsageAvailable(user, type) {
   const paidKey = type === "judge" ? "paidJudgeCount" : "paidConvertCount";
   const freeKey = type === "judge" ? "freeJudgeCount" : "freeConvertCount";
 
-  if (user.isVip) {
-    if (Number(user[paidKey] || 0) > 0) {
-      return {
-        allowed: true,
-        source: "paid",
-        quota: buildQuotaPayload(user)
-      };
-    }
-
-    return {
-      allowed: false,
-      source: "none",
-      quota: buildQuotaPayload(user)
-    };
-  }
-
   if (Number(user[freeKey] || 0) > 0) {
     return {
       allowed: true,
@@ -801,14 +785,32 @@ async function getOrCreateSupabaseUser(userId) {
   return normalizeSupabaseDailyFreeQuota(userId, newUser);
 }
 
+function getSupabaseFreeResetField(user) {
+  if (!user || typeof user !== "object") {
+    return "";
+  }
+
+  if (Object.prototype.hasOwnProperty.call(user, "last_free_reset_date")) {
+    return "last_free_reset_date";
+  }
+
+  if (Object.prototype.hasOwnProperty.call(user, "free_quota_date")) {
+    return "free_quota_date";
+  }
+
+  return "";
+}
+
 async function normalizeSupabaseDailyFreeQuota(userId, user) {
-  if (!supabase || !user || !Object.prototype.hasOwnProperty.call(user, "free_quota_date")) {
+  const resetField = getSupabaseFreeResetField(user);
+
+  if (!supabase || !user || !resetField) {
     return user;
   }
 
   const usageLimits = getPricingUsageLimits();
   const todayKey = getTodayKey();
-  const quotaDate = String(user.free_quota_date || "").slice(0, 10);
+  const quotaDate = String(user[resetField] || "").slice(0, 10);
 
   if (quotaDate === todayKey) {
     return user;
@@ -819,7 +821,7 @@ async function normalizeSupabaseDailyFreeQuota(userId, user) {
     .update({
       free_convert_count: usageLimits.freeConvertLimit,
       free_judge_count: usageLimits.freeJudgeLimit,
-      free_quota_date: todayKey,
+      [resetField]: todayKey,
       updated_at: new Date().toISOString()
     })
     .eq("user_id", userId)
@@ -834,18 +836,22 @@ async function normalizeSupabaseDailyFreeQuota(userId, user) {
 }
 
 function buildSupabaseQuotaPayload(user) {
+  const resetDate = user?.last_free_reset_date || user?.free_quota_date || "";
+
   return {
     free_convert_count: Number(user?.free_convert_count || 0),
     free_judge_count: Number(user?.free_judge_count || 0),
     paid_convert_count: Number(user?.paid_convert_count || 0),
     paid_judge_count: Number(user?.paid_judge_count || 0),
-    free_quota_date: user?.free_quota_date || "",
+    last_free_reset_date: resetDate,
+    free_quota_date: resetDate,
     is_vip: Boolean(user?.is_vip),
     freeConvertCount: Number(user?.free_convert_count || 0),
     freeJudgeCount: Number(user?.free_judge_count || 0),
     paidConvertCount: Number(user?.paid_convert_count || 0),
     paidJudgeCount: Number(user?.paid_judge_count || 0),
-    freeQuotaDate: user?.free_quota_date || "",
+    lastFreeResetDate: resetDate,
+    freeQuotaDate: resetDate,
     isVip: Boolean(user?.is_vip)
   };
 }
@@ -882,8 +888,8 @@ function buildUsageQuotaPayload(user, monthlyUsage = {}) {
   const paidJudge = Number(quota.paid_judge_count || 0);
   const convertUsed = Number(monthlyUsage.convert || 0);
   const judgeUsed = Number(monthlyUsage.judge || 0);
-  const convertRemaining = isVip ? paidConvert : freeConvert + paidConvert;
-  const judgeRemaining = isVip ? paidJudge : freeJudge + paidJudge;
+  const convertRemaining = freeConvert + paidConvert;
+  const judgeRemaining = freeJudge + paidJudge;
 
   return {
     ...quota,
@@ -1510,30 +1516,6 @@ async function checkUsage(userId, type) {
   const paidCount = Number(user[paidKey] || 0);
   const freeCount = Number(user[freeKey] || 0);
 
-  if (user.is_vip) {
-    if (paidCount > 0) {
-      return {
-        allowed: true,
-        success: true,
-        reason: "ok",
-        source: "paid",
-        featureType,
-        user,
-        quota: buildUsageQuotaPayload(user)
-      };
-    }
-
-    return {
-      allowed: false,
-      success: false,
-      reason: "limit_exceeded",
-      source: "none",
-      featureType,
-      user,
-      quota: buildUsageQuotaPayload(user)
-    };
-  }
-
   if (freeCount > 0) {
     return {
       allowed: true,
@@ -1594,6 +1576,7 @@ async function consumeUsage(userId, type, req = null, options = {}) {
   }
 
   if (!status.allowed) {
+    const blockedReason = status.reason === "limit_exceeded" ? "quota_blocked" : (status.reason || "not_allowed");
     await writeUsageLog({
       userId,
       req,
@@ -1602,7 +1585,7 @@ async function consumeUsage(userId, type, req = null, options = {}) {
       beforeBalance,
       afterBalance: beforeBalance,
       success: false,
-      errorReason: status.reason || "not_allowed"
+      errorReason: blockedReason
     });
     return status;
   }
@@ -1625,6 +1608,18 @@ async function consumeUsage(userId, type, req = null, options = {}) {
       .maybeSingle();
 
     if (error) {
+      await writeUsageLog({
+        userId,
+        req,
+        featureType,
+        consumeType: status.source,
+        beforeBalance,
+        afterBalance: beforeBalance,
+        success: false,
+        errorReason: "failed",
+        note: usageNote,
+        metadata: usageMetadata
+      });
       throw error;
     }
 
@@ -1666,7 +1661,7 @@ async function consumeUsage(userId, type, req = null, options = {}) {
     beforeBalance,
     afterBalance: extractUsageBalanceFields(freshUser || user),
     success: false,
-    errorReason: "limit_exceeded"
+    errorReason: "quota_blocked"
   });
 
   return {
@@ -4442,13 +4437,26 @@ app.patch("/api/admin/supabase-users/:userId/vip", requireAdmin, async (req, res
 
     const beforeUser = await getOrCreateSupabaseUser(userId);
     const nextVip = Boolean(req.body?.is_vip);
+    const usageLimits = getPricingUsageLimits();
+    const updates = {
+      is_vip: nextVip,
+      updated_at: new Date().toISOString()
+    };
+
+    if (nextVip) {
+      updates.paid_convert_count = Math.max(
+        toNonNegativeInteger(beforeUser?.paid_convert_count, 0),
+        usageLimits.vipConvertLimit
+      );
+      updates.paid_judge_count = Math.max(
+        toNonNegativeInteger(beforeUser?.paid_judge_count, 0),
+        usageLimits.vipJudgeLimit
+      );
+    }
 
     const { data, error } = await supabase
       .from("users")
-      .update({
-        is_vip: nextVip,
-        updated_at: new Date().toISOString()
-      })
+      .update(updates)
       .eq("user_id", userId)
       .select(supabaseUserFields)
       .single();
@@ -4956,6 +4964,19 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
     const uniqueCount = list => new Set(list.map(item => item.user_id).filter(Boolean)).size;
     const countFeature = (list, feature) => list.filter(log => log.feature_type === feature).length;
     const countConsume = (list, consumeType) => list.filter(log => log.consume_type === consumeType && log.success).length;
+    const parseLogBalance = value => {
+      if (!value) return {};
+      if (typeof value === "object") return value;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return {};
+      }
+    };
+    const isVipMonthlyConsume = log => {
+      const beforeBalance = parseLogBalance(log.before_balance);
+      return Boolean(log.success && log.consume_type === "paid" && beforeBalance.is_vip);
+    };
     const isNetworkTimeout = log => /timeout|network|超时|网络/i.test(`${log.error_reason || ""} ${log.note || ""}`);
     const getAiMeta = log => parseUsageLogMetadata(log.note);
     const getAiCost = log => {
@@ -5113,8 +5134,10 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
       consumption: {
         freeCount: countConsume(todayLogs, "free"),
         paidCount: countConsume(todayLogs, "paid"),
-        vipCount: countConsume(todayLogs, "vip"),
-        limitExceededCount: todayFailures.filter(log => log.error_reason === "limit_exceeded").length
+        vipCount: todayLogs.filter(isVipMonthlyConsume).length,
+        limitExceededCount: todayFailures.filter(log =>
+          log.error_reason === "quota_blocked" || log.error_reason === "limit_exceeded"
+        ).length
       },
       errors: {
         judgeFailedCount: todayFailures.filter(log => log.feature_type === "judge").length,
