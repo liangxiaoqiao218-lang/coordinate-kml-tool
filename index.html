@@ -466,6 +466,21 @@
       position: relative;
     }
 
+    .coordinate-workspace {
+      border-color: #bfdbfe;
+      background: #f8fbff;
+      box-shadow: 0 12px 28px rgba(37, 99, 235, 0.08);
+    }
+
+    .coordinate-workspace .workspace-head label {
+      color: #1d4ed8;
+      font-size: 18px;
+    }
+
+    .coordinate-workspace .textarea-wrap {
+      margin-top: 8px;
+    }
+
     .icon-button {
       width: 40px;
       min-height: 40px;
@@ -514,6 +529,8 @@
 
     #coordinateInput {
       min-height: 280px;
+      border-color: #bfdbfe;
+      background: #ffffff;
     }
 
     textarea:focus,
@@ -559,10 +576,30 @@
       padding: 12px 14px;
     }
 
+    .coordinate-upload-card {
+      display: grid;
+      justify-items: center;
+      gap: 10px;
+      border-color: #93c5fd;
+      border-width: 2px;
+      border-radius: 14px;
+      background: #eff6ff;
+      padding: 22px 18px;
+      text-align: center;
+      transition: padding 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+    }
+
     .upload-box label {
       margin-bottom: 6px;
       font-size: 20px;
       line-height: 1.2;
+    }
+
+    .coordinate-upload-card label {
+      margin: 0;
+      color: #1d4ed8;
+      font-size: 18px;
+      font-weight: 900;
     }
 
     .upload-box input {
@@ -570,15 +607,68 @@
       min-height: 34px;
     }
 
+    .coordinate-upload-card input {
+      max-width: 360px;
+    }
+
     .compact-upload-box {
       max-height: 220px;
       overflow-y: auto;
     }
 
+    .coordinate-upload-card.is-complete {
+      align-items: center;
+      grid-template-columns: 1fr;
+      padding: 12px 14px;
+      background: #f8fbff;
+      border-color: #bfdbfe;
+    }
+
+    .coordinate-upload-card.is-complete label {
+      font-size: 15px;
+    }
+
+    .coordinate-upload-card.is-complete .privacy-note {
+      margin: 0;
+      font-size: 12px;
+    }
+
+    .coordinate-upload-card.is-complete .image-preview {
+      max-height: 74px;
+      margin-top: 0;
+      padding: 6px;
+    }
+
+    .coordinate-upload-card.is-complete .image-preview-row {
+      grid-template-columns: 56px minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+
+    .coordinate-upload-card.is-complete .image-preview img {
+      width: 56px;
+      height: 42px;
+    }
+
     .kml-download-action {
       position: relative;
       z-index: 2;
-      margin: 10px 0;
+      display: block;
+      width: min(100%, 420px);
+      margin: 12px auto 0;
+      padding: 13px 18px;
+      background: #2563eb;
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .kml-download-action:hover {
+      background: #1d4ed8;
+    }
+
+    .coordinate-upload-card.is-complete + .kml-download-action {
+      margin-top: 10px;
+      box-shadow: 0 16px 30px rgba(37, 99, 235, 0.24);
     }
 
     .image-preview {
@@ -2800,12 +2890,20 @@
         padding: 9px 12px;
       }
 
+      .coordinate-upload-card {
+        padding: 16px 12px;
+      }
+
       .compact-upload-box .image-preview {
         max-height: 96px;
       }
 
       .upload-box label {
         font-size: 19px;
+      }
+
+      .kml-download-action {
+        width: 100%;
       }
 
       .privacy-note {
@@ -3022,25 +3120,25 @@
       </div>
       <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
 
-      <div class="workspace-head">
-      <label for="coordinateInput">坐标工作区</label>
-      </div>
-      <div class="textarea-wrap">
-      <textarea id="coordinateInput" placeholder="示例：
+      <div class="panel coordinate-workspace">
+        <div class="workspace-head">
+        <label for="coordinateInput">坐标工作区</label>
+        </div>
+        <div class="textarea-wrap">
+        <textarea id="coordinateInput" placeholder="示例：
 -6.74805556,10.79444444
 -6°55'10.1944'',10°30'43.0143''
 -6°55.169907',10°30.716905'"></textarea>
-      <div class="workspace-tools">
-        <button type="button" class="icon-button" onclick="undoLastChange()" title="撤销上一步" aria-label="撤销上一步">↶</button>
-        <button type="button" class="icon-button" onclick="confirmClearContent()" title="清空内容" aria-label="清空内容">×</button>
-        <button type="button" class="icon-button" onclick="swapLongitudeLatitude()" title="交换经纬度" aria-label="交换经纬度">⇄</button>
-        <button type="button" class="icon-button" onclick="copyContent()" title="复制内容" aria-label="复制内容">⧉</button>
+        <div class="workspace-tools">
+          <button type="button" class="icon-button" onclick="undoLastChange()" title="撤销上一步" aria-label="撤销上一步">↶</button>
+          <button type="button" class="icon-button" onclick="confirmClearContent()" title="清空内容" aria-label="清空内容">×</button>
+          <button type="button" class="icon-button" onclick="swapLongitudeLatitude()" title="交换经纬度" aria-label="交换经纬度">⇄</button>
+          <button type="button" class="icon-button" onclick="copyContent()" title="复制内容" aria-label="复制内容">⧉</button>
+        </div>
       </div>
     </div>
 
-    <button type="button" class="primary-action kml-download-action" onclick="downloadKml()">生成KML文件并下载</button>
-
-    <div id="coordinateUploadPanel" class="panel upload-box compact-upload-box">
+    <div id="coordinateUploadPanel" class="panel upload-box compact-upload-box coordinate-upload-card">
       <label for="imageInput">第一步：上传坐标图片</label>
       <div id="recognitionStatus" class="recognition-status"></div>
       <input id="imageInput" type="file" accept="image/*" />
@@ -3048,6 +3146,8 @@
       <div id="uploadMessage" class="upload-message"></div>
       <p class="privacy-note">只截坐标表，识别更稳定。</p>
     </div>
+
+    <button type="button" class="primary-action kml-download-action" onclick="downloadKml()">生成KML文件并下载</button>
 
     <div id="debugPanel" class="panel debug-panel">
       <div class="panel-title-row">
@@ -3486,6 +3586,7 @@ Au值 = 纯度 × 10 后取整数</div>
     };
     const coordinateUploadPanel = document.getElementById("coordinateUploadPanel");
     const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
+    const COORDINATE_RECOGNITION_MESSAGE_MS = 3000;
     const MANUAL_CONTACT_TEXT = "微信 Mir-2188 / WhatsApp 扫码添加 Miro";
     let currentGoldReferencePrice = null;
     let currentGoldPriceSource = "unavailable";
@@ -4272,7 +4373,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }).catch(error => console.warn("记录事件失败", error));
     }
 
-    function showMessage(text, isError = false) {
+    function showMessage(text, isError = false, durationMs = 2000) {
       if (!text) {
         toast.style.display = "none";
         toast.textContent = "";
@@ -4286,7 +4387,7 @@ Au值 = 纯度 × 10 后取整数</div>
       clearTimeout(showMessage.timer);
       showMessage.timer = setTimeout(() => {
         toast.style.display = "none";
-      }, 2000);
+      }, durationMs);
     }
 
     function rememberState() {
@@ -4399,6 +4500,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
       selectedImageFile = file;
       selectedImageUrl = URL.createObjectURL(file);
+      coordinateUploadPanel?.classList.remove("is-complete");
       imagePreview.style.display = "block";
       imagePreview.innerHTML = `
         <div class="image-preview-row">
@@ -4605,6 +4707,7 @@ Au值 = 纯度 × 10 后取整数</div>
       imagePreview.style.display = "none";
       imagePreview.innerHTML = "";
       imageInput.value = "";
+      coordinateUploadPanel?.classList.remove("is-complete");
       clearUploadMessage();
       setRecognitionStatus();
       showMessage("已删除上传图片，可以重新选择。");
@@ -8032,7 +8135,7 @@ ${placemarks}
         fileType: file.type
       });
       setDebug(`正在上传图片\n文件名：${file.name}\n大小：${Math.round(file.size / 1024)} KB`);
-      showMessage("正在上传图片……");
+      showMessage("正在上传图片……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
 
       try {
         const formData = new FormData();
@@ -8042,7 +8145,7 @@ ${placemarks}
 
         appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
         appendDebug("正在调用识别接口");
-        showMessage("正在调用识别接口……");
+        showMessage("正在调用识别接口……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
         showRecognitionProgress("正在识别坐标...", "loading");
 
         const response = await fetch("/api/recognize-coordinates", {
@@ -8132,20 +8235,21 @@ ${placemarks}
         input.value = finalCoordinates;
         coordinateOrder.value = "auto";
         input.focus();
+        coordinateUploadPanel?.classList.add("is-complete");
         trackEvent("image_recognize_success", {
           rows: countCoordinateRows(finalCoordinates),
           projected: hasProjectedCoordinateRows(finalCoordinates)
         });
         if (data.bftmLongTable?.incomplete) {
-          showMessage(`该图为 BFTM 坐标长表，建议只截取坐标表区域后重试，识别会更稳定。已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行，缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}。`, true);
+          showMessage(`该图为 BFTM 坐标长表，建议只截取坐标表区域后重试，识别会更稳定。已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行，缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (hasProjectedCoordinateRows(finalCoordinates)) {
-          showMessage("已识别到 X/Y 平面坐标，请先确认坐标系后再转换成经纬度。", true);
+          showMessage("已识别到 X/Y 平面坐标，请先确认坐标系后再转换成经纬度。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (data.warning) {
-          showMessage(`${data.warning} 坐标已填入工作区，请核对后再生成 KML。`, true);
+          showMessage(`${data.warning} 坐标已填入工作区，请核对后再生成 KML。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else {
-          showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。");
+          showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。", false, COORDINATE_RECOGNITION_MESSAGE_MS);
         }
-        showRecognitionProgress("识别完成", "success", 1500);
+        showRecognitionProgress("识别完成", "success", COORDINATE_RECOGNITION_MESSAGE_MS);
       } catch (error) {
         const publicErrorMessage = sanitizeUserFacingTechMessage(error.message);
         appendDebug(`错误信息：${publicErrorMessage}`);
@@ -8153,7 +8257,7 @@ ${placemarks}
           message: error.message
         });
         setRecognitionStatus("", "");
-        showMessage("识别失败，请检查图片或稍后重试。", true);
+        showMessage("识别失败，请检查图片或稍后重试。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
         showUploadSupportMessage(getRecognitionFailureMessage(error.message));
         openManualSupport();
       } finally {
