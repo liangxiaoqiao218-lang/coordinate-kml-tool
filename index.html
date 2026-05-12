@@ -1294,11 +1294,11 @@
     }
 
     .quota-status.quota-low {
-      color: #c2410c;
+      color: #64748b;
     }
 
     .quota-status.quota-empty {
-      color: #b91c1c;
+      color: #64748b;
     }
 
     .quota-status.quota-vip {
@@ -1345,22 +1345,6 @@
       -webkit-background-clip: text;
       background-clip: text;
       color: transparent;
-    }
-
-    .coordinate-title-row .quota-status {
-      color: #2563eb;
-    }
-
-    .coordinate-title-row .quota-status.quota-vip {
-      background-image: linear-gradient(90deg, #1d4ed8, #60a5fa, #1d4ed8);
-    }
-
-    .judge-title-row .quota-status {
-      color: #15803d;
-    }
-
-    .judge-title-row .quota-status.quota-vip {
-      background-image: linear-gradient(90deg, #166534, #4ade80, #166534);
     }
 
     .quota-status[hidden] {
@@ -2958,16 +2942,6 @@
           <small class="module-action">进入</small>
         </button>
       </div>
-
-      <div id="homeAccountPanel" class="home-account-panel" aria-label="&#25105;&#30340;&#27425;&#25968;">
-        <button type="button" class="home-quota-strip" onclick="openAccountModal()" aria-label="&#26597;&#30475;&#25105;&#30340;&#27425;&#25968;">
-          <strong>&#20170;&#26085;&#21097;&#20313;</strong>
-          <span id="homeJudgeQuotaText">&#30719;&#22320;&#24555;&#21028; --</span>
-          <span>&#65372;</span>
-          <span id="homeConvertQuotaText">&#22352;&#26631;/KML --</span>
-        </button>
-        <button id="quotaPrimary" type="button" class="account-action-button is-muted" onclick="openAccountModal()">&#25105;&#30340;&#27425;&#25968;</button>
-      </div>
     </section>
 
     <section id="coordinatePage" class="view">
@@ -2980,7 +2954,7 @@
       <div class="page-title-row coordinate-title-row">
         <h1>坐标处理工具</h1>
         <div id="convertQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
-        <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">充值 / 加次数</button>
+        <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
       </div>
       <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
 
@@ -3025,6 +2999,7 @@
     </select>
     <select id="projectionType" hidden>
       <option value="auto" selected>自动判断平面坐标</option>
+      <option value="utm30n">UTM 30N 转经纬度</option>
       <option value="utm29n">UTM 29N 转经纬度</option>
       <option value="utm28n">UTM 28N 转经纬度</option>
       <option value="bftm">BFTM 布基纳法索转经纬度</option>
@@ -3108,7 +3083,7 @@
       <div class="page-title-row judge-title-row">
         <h1>矿地快判</h1>
         <div id="judgeQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
-        <button id="judgeQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">充值 / 加次数</button>
+        <button id="judgeQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
       </div>
       <p class="intro">用于矿石、河道、卫星图的现场初筛，先判断是否值得继续看。</p>
 
@@ -3784,18 +3759,13 @@ Au值 = 纯度 × 10 后取整数</div>
         is_vip: Boolean(usage?.is_vip || usage?.isVip || currentQuota?.is_vip || currentQuota?.isVip)
       };
 
-      const usageVip = isQuotaVip(currentQuota);
-      const convertLabel = usageVip
-        ? `${VIP_PLAN_LABEL} ? \u5269\u4f59 ${convertRemaining} \u6b21`
-        : `\u5269\u4f59 ${convertRemaining} \u6b21${convertRemaining === 0 ? "\uff08\u5df2\u7528\u5b8c\uff09" : ""}`;
-      const judgeLabel = usageVip
-        ? `${VIP_PLAN_LABEL} ? \u5269\u4f59 ${judgeRemaining} \u6b21`
-        : `\u5269\u4f59 ${judgeRemaining} \u6b21${judgeRemaining === 0 ? "\uff08\u5df2\u7528\u5b8c\uff09" : ""}`;
+      const convertLabel = `\u5269\u4f59 ${convertRemaining} \u6b21`;
+      const judgeLabel = `\u5269\u4f59 ${judgeRemaining} \u6b21`;
 
-      setQuotaStatus(convertQuotaStatus, convertLabel, convertRemaining, usageVip);
-      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeRemaining, usageVip);
-      setQuotaAction(convertQuotaAction, convertRemaining, usageVip);
-      setQuotaAction(judgeQuotaAction, judgeRemaining, usageVip);
+      setQuotaStatus(convertQuotaStatus, convertLabel, convertRemaining, false);
+      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeRemaining, false);
+      setQuotaAction(convertQuotaAction, convertRemaining, false);
+      setQuotaAction(judgeQuotaAction, judgeRemaining, false);
       updateAccountQuotaUI();
     }
 
@@ -3808,10 +3778,6 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function getQuotaClass(total, isVip) {
-      if (isVip) {
-        return "quota-vip";
-      }
-
       if (total <= 0) {
         return "quota-empty";
       }
@@ -3886,9 +3852,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function formatCompactQuotaLabel(type, info) {
-      const prefix = type === "judge" ? "\u77ff\u5730\u5feb\u5224" : "\u5750\u6807/KML";
-      const balanceLabel = info.isVip ? "\u672c\u6708" : "\u4ed8\u8d39";
-      return `${prefix} \u514d\u8d39 ${info.free ?? 0} / ${balanceLabel} ${info.paid ?? 0} \u6b21`;
+      return `\u5269\u4f59 ${info.total ?? 0} \u6b21`;
     }
 
     function updateAccountQuotaUI() {
@@ -3930,7 +3894,6 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       currentQuota = quota;
-      const isVip = isQuotaVip(quota);
       const directConvert = Number(quota.convert_remaining);
       const directJudge = Number(quota.judge_remaining);
       const freeConvert = getQuotaNumber(quota, "free_convert_count", "freeConvertCount");
@@ -3939,21 +3902,13 @@ Au值 = 纯度 × 10 后取整数</div>
       const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
       const convertTotal = Number.isFinite(directConvert) ? Math.max(0, directConvert) : Math.max(0, freeConvert + paidConvert);
       const judgeTotal = Number.isFinite(directJudge) ? Math.max(0, directJudge) : Math.max(0, freeJudge + paidJudge);
-      const convertLabel = formatCompactQuotaLabel("convert", {
-        isVip,
-        free: freeConvert,
-        paid: paidConvert
-      });
-      const judgeLabel = formatCompactQuotaLabel("judge", {
-        isVip,
-        free: freeJudge,
-        paid: paidJudge
-      });
+      const convertLabel = `\u5269\u4f59 ${convertTotal} \u6b21`;
+      const judgeLabel = `\u5269\u4f59 ${judgeTotal} \u6b21`;
 
-      setQuotaStatus(convertQuotaStatus, convertLabel, convertTotal, isVip);
-      setQuotaAction(convertQuotaAction, convertTotal, isVip);
-      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeTotal, isVip);
-      setQuotaAction(judgeQuotaAction, judgeTotal, isVip);
+      setQuotaStatus(convertQuotaStatus, convertLabel, convertTotal, false);
+      setQuotaAction(convertQuotaAction, convertTotal, false);
+      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeTotal, false);
+      setQuotaAction(judgeQuotaAction, judgeTotal, false);
       updateAccountQuotaUI();
     }
 
@@ -6929,7 +6884,19 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     function detectProjectionFromText(text) {
       const value = String(text || "").toLowerCase();
 
-      if (/bftm|burkina|burkina faso|itrf\s*2008/.test(value)) {
+      if (/\butm\b|coordonn[eé]es?\s+g[eé]ographiques?\s+en\s+utm|coordonn[eé]es?\s+en\s+utm/.test(value)) {
+        if (/zone\s*28|utm\s*28/.test(value)) {
+          return "utm28n";
+        }
+
+        if (/zone\s*29|utm\s*29|guin[eé]e|guinea|kankan|siguiri/.test(value)) {
+          return "utm29n";
+        }
+
+        return "utm30n";
+      }
+
+      if (/bftm|itrf\s*2008|projection\s+bftm|coordonn[eé]es?\s*(?:en\s*)?bftm/.test(value)) {
         return "bftm";
       }
 
@@ -6940,6 +6907,10 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return easting >= 500000 && easting <= 760000 && northing >= 1200000 && northing <= 1600000;
     }
 
+    function looksLikeLikelyUtm30Coordinate(easting, northing) {
+      return easting >= 700000 && easting <= 850000 && northing >= 1000000 && northing <= 1400000;
+    }
+
     function resolveProjectedCoordinateSystem(easting, northing, sourceText = "") {
       const textProjection = detectProjectionFromText(sourceText);
 
@@ -6947,12 +6918,16 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return textProjection;
       }
 
-      if (looksLikeBftmCoordinate(easting, northing)) {
-        return "bftm";
-      }
-
       if (projectionType.value && projectionType.value !== "auto") {
         return projectionType.value;
+      }
+
+      if (looksLikeLikelyUtm30Coordinate(easting, northing)) {
+        return "utm30n";
+      }
+
+      if (looksLikeBftmCoordinate(easting, northing)) {
+        return "bftm";
       }
 
       if (easting >= 100000 && easting <= 900000 && northing >= 0 && northing <= 2000000) {
@@ -6960,6 +6935,18 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       }
 
       return "none";
+    }
+
+    function getUtmZoneFromProjection(projectedSystem) {
+      if (projectedSystem === "utm28n") {
+        return 28;
+      }
+
+      if (projectedSystem === "utm30n") {
+        return 30;
+      }
+
+      return 29;
     }
 
     function parseProjectedCoordinateLine(line) {
@@ -6990,7 +6977,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
       const converted = projectedSystem === "bftm"
         ? bftmToWgs84(easting, northing)
-        : utmToWgs84(easting, northing, projectedSystem === "utm28n" ? 28 : 29, true);
+        : utmToWgs84(easting, northing, getUtmZoneFromProjection(projectedSystem), true);
 
       if (!converted) {
         return null;
@@ -7912,7 +7899,9 @@ ${placemarks}
         if (detectedProjection || hasProjectedCoordinateRows(projectedLines)) {
           const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
 
-          if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeBftmCoordinate(firstProjectedPair[0], firstProjectedPair[1])) {
+          if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeLikelyUtm30Coordinate(firstProjectedPair[0], firstProjectedPair[1])) {
+            projectionType.value = "utm30n";
+          } else if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeBftmCoordinate(firstProjectedPair[0], firstProjectedPair[1])) {
             projectionType.value = "bftm";
           } else if (detectedProjection) {
             projectionType.value = detectedProjection;
