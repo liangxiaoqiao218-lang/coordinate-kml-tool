@@ -1598,6 +1598,8 @@
             <tr>
               <th class="sticky-action">操作</th>
               <th class="col-user">用户ID</th>
+              <th>来源</th>
+              <th>首次进入</th>
               <th>VIP月度版</th>
               <th class="col-ip">最近IP</th>
               <th>地区</th>
@@ -1700,6 +1702,8 @@
               <th>关键词</th>
               <th>用户识别码</th>
               <th>来源</th>
+              <th>进入页面</th>
+              <th>用户反馈</th>
               <th>AI结论摘要</th>
               <th>复核状态</th>
               <th>操作</th>
@@ -2776,7 +2780,7 @@
       const userIdText = (summary.userIds || []).join("、") || primaryUser.user_id || "-";
       const latestIp = summary.latestIp || primaryUser.last_ip || "-";
       const region = primaryUser.region || logs.find(log => log.region)?.region || "-";
-      const latestPage = summary.latestPage || "-";
+      const latestPage = summary.landingUrl || summary.firstSourcePage || summary.latestPage || "-";
       const latestUsedAt = summary.latestUsedAt ? formatTime(summary.latestUsedAt) : "-";
       const accountStatus = primaryUser.is_vip ? "VIP月度版" : "普通用户";
       const balanceLabel = primaryUser.is_vip ? "本月" : "付费";
@@ -2944,8 +2948,10 @@
           setJudgeCaseMessage(
             result.setupRequired
               ? "judge_cases 表还未创建，请先执行建表 SQL。"
+              : result.feedbackSetupRequired
+                ? "快判案例已刷新；judge_feedback 表还未创建，执行 SQL 后可显示用户反馈。"
               : `快判案例已刷新：${new Date().toLocaleTimeString()}`,
-            Boolean(result.setupRequired)
+            Boolean(result.setupRequired || result.feedbackSetupRequired)
           );
         }
       } catch (error) {
@@ -2987,6 +2993,37 @@
       return list.map(item => `<span class="case-keyword">${escapeHtml(item)}</span>`).join("");
     }
 
+    function getJudgeFeedbackTypeLabel(type = "") {
+      const labels = {
+        helpful: "有帮助",
+        wrong: "不准确",
+        need_more_image: "我补图",
+        field_verified: "已现场验证"
+      };
+      return labels[type] || type || "-";
+    }
+
+    function getJudgeFieldResultLabel(result = "") {
+      const labels = {
+        valuable: "有价值",
+        not_valuable: "没价值",
+        uncertain: "不确定"
+      };
+      return labels[result] || result || "";
+    }
+
+    function formatJudgeFeedback(feedback = []) {
+      const list = Array.isArray(feedback) ? feedback.slice(0, 4) : [];
+      if (!list.length) {
+        return `<span class="muted">-</span>`;
+      }
+
+      return list.map(item => {
+        const fieldText = item.field_result ? ` / 现场结果：${getJudgeFieldResultLabel(item.field_result)}` : "";
+        return `<div>${escapeHtml(getJudgeFeedbackTypeLabel(item.feedback_type))}${escapeHtml(fieldText)}</div>`;
+      }).join("");
+    }
+
     function judgeCaseStatusLabel(status = "pending") {
       const labels = {
         pending: "待复核",
@@ -3007,12 +3044,12 @@
       if (!body) return;
 
       if (setupRequired) {
-        body.innerHTML = `<tr><td colspan="9" class="muted">judge_cases 表还未创建，请先执行建表 SQL。</td></tr>`;
+        body.innerHTML = `<tr><td colspan="11" class="muted">judge_cases 表还未创建，请先执行建表 SQL。</td></tr>`;
         return;
       }
 
       if (!cases.length) {
-        body.innerHTML = `<tr><td colspan="9" class="muted">暂无快判案例。</td></tr>`;
+        body.innerHTML = `<tr><td colspan="11" class="muted">暂无快判案例。</td></tr>`;
         return;
       }
 
@@ -3027,6 +3064,8 @@
             <td><div class="case-keywords">${formatCaseKeywords(item.keywords)}</div></td>
             <td>${escapeHtml(item.user_code || "-")}</td>
             <td>${escapeHtml(item.source_from || "-")}</td>
+            <td class="case-summary" title="${escapeHtml(item.source_page || "-")}">${escapeHtml(item.source_page || "-")}</td>
+            <td>${formatJudgeFeedback(item.feedback)}</td>
             <td class="case-summary" title="${escapeHtml(item.ai_result || "")}">${escapeHtml(summarizeCaseResult(item.ai_result))}</td>
             <td><span class="case-status ${judgeCaseStatusClass(item.review_status)}">${escapeHtml(judgeCaseStatusLabel(item.review_status))}</span></td>
             <td>
@@ -3229,6 +3268,9 @@
           region,
           device,
           user.admin_note,
+          user.source_from,
+          user.source_page,
+          user.landing_url,
           tags.join(" ")
         ].join(" ").toLowerCase();
 
@@ -3270,7 +3312,7 @@
       const filteredList = sortSupabaseUsers(filterSupabaseUsers(list));
 
       if (!filteredList.length) {
-        body.innerHTML = `<tr><td colspan="15" class="muted">暂无用户</td></tr>`;
+        body.innerHTML = `<tr><td colspan="17" class="muted">暂无用户</td></tr>`;
         return;
       }
 
@@ -3290,6 +3332,8 @@
               </div>
             </td>
             <td class="col-user" title="${escapeHtml(userId)}"><span class="cell-ellipsis">${escapeHtml(userId)}</span></td>
+            <td title="${escapeHtml(user.source_from || "-")}"><span class="source-badge">${escapeHtml(user.source_from || "-")}</span></td>
+            <td title="${escapeHtml(user.landing_url || user.source_page || "-")}"><span class="cell-ellipsis">${escapeHtml(user.source_page || user.landing_url || "-")}</span></td>
             <td>${user.is_vip ? "是" : "否"}</td>
             <td class="col-ip" title="${escapeHtml(user.last_ip || "-")}"><span class="cell-ellipsis">${escapeHtml(user.last_ip || "-")}</span></td>
             <td>${escapeHtml(region)}</td>

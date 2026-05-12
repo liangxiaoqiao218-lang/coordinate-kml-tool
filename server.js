@@ -1022,6 +1022,54 @@ async function updateSupabaseUserVisitMeta(userId, req) {
   }
 }
 
+async function updateSupabaseUserSourceMeta(userId, req) {
+  if (!supabase || !userId) {
+    return;
+  }
+
+  const sourceMeta = getSourceMetaFromReq(req);
+  if (!sourceMeta?.from_source) {
+    return;
+  }
+
+  try {
+    const sourceFields = {
+      source_from: sourceMeta.from_source || null,
+      source_page: sourceMeta.first_page || sourceMeta.landing_url || sourceMeta.current_page || sourceMeta.page || null,
+      landing_url: sourceMeta.landing_url || null,
+      referrer: sourceMeta.referrer || null
+    };
+    let { error } = await supabase
+      .from("users")
+      .update(sourceFields)
+      .eq("user_id", userId);
+
+    if (error && error.code === "42703") {
+      const fallbackFields = {
+        source_from: sourceFields.source_from,
+        source_page: sourceFields.source_page
+      };
+      const retry = await supabase
+        .from("users")
+        .update(fallbackFields)
+        .eq("user_id", userId);
+      error = retry.error;
+    }
+
+    if (error && error.code !== "42703") {
+      throw error;
+    }
+  } catch (error) {
+    console.error("Supabase user source update failed:", {
+      userId,
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint
+    });
+  }
+}
+
 async function writeAdminLog({ targetUserId, action, beforeData, afterData, note = "" }) {
   if (!supabase || !targetUserId || !action) {
     return;
@@ -1153,6 +1201,13 @@ function sanitizeSourceValue(value, maxLength = 100) {
     .replace(/^-|-$/g, "");
 }
 
+function sanitizeUrlValue(value, maxLength = 500) {
+  return String(value || "")
+    .trim()
+    .slice(0, maxLength)
+    .replace(/[\r\n<>]/g, "");
+}
+
 function sanitizeUserCode(value) {
   const raw = String(value || "")
     .trim()
@@ -1168,8 +1223,15 @@ function getSourceMetaFromReq(req) {
   if (!req) return null;
   const body = req.body || {};
   const query = req.query || {};
+  const rawSource = req.get?.("x-source")
+    || body.fromSource
+    || body.source
+    || query.from
+    || query.utm_source
+    || query.source
+    || query.ref;
   const fromSource = sanitizeSourceValue(
-    req.get?.("x-source") || body.fromSource || body.source || query.from || query.source,
+    rawSource,
     80
   );
 
@@ -1184,9 +1246,17 @@ function getSourceMetaFromReq(req) {
     req.get?.("x-visitor-id") || body.visitorId || body.visitor_id || query.visitorId || query.visitor_id,
     120
   );
-  const page = sanitizeSourceValue(req.get?.("x-page") || body.page || query.page || req.originalUrl || "", 200);
+  const page = sanitizeUrlValue(req.get?.("x-page") || body.page || query.page || req.originalUrl || "", 300);
+  const landingUrl = sanitizeUrlValue(
+    req.get?.("x-landing-url") || body.landingUrl || body.landing_url || query.landing_url || "",
+    500
+  );
+  const referrer = sanitizeUrlValue(
+    req.get?.("x-referrer") || body.referrer || req.get?.("referer") || "",
+    500
+  );
 
-  if (!fromSource && !userCode && !page) {
+  if (!fromSource && !userCode && !page && !landingUrl && !referrer) {
     return null;
   }
 
@@ -1196,8 +1266,10 @@ function getSourceMetaFromReq(req) {
     visitor_id: visitorId,
     ip: getClientIp(req),
     user_agent: sanitizeSourceValue(req.headers?.["user-agent"] || "", 240),
-    first_page: sanitizeSourceValue(req.get?.("x-source-page") || body.firstSourcePage || query.firstPage || "", 200),
+    first_page: sanitizeUrlValue(req.get?.("x-source-page") || body.firstSourcePage || query.firstPage || "", 300),
     first_visit_at: sanitizeSourceValue(req.get?.("x-source-at") || body.firstVisitAt || query.firstVisitAt || "", 80),
+    landing_url: landingUrl,
+    referrer,
     page,
     current_page: page,
     created_at: new Date().toISOString(),
@@ -1453,9 +1525,12 @@ function hashJudgeCaseImage(file) {
   return crypto.createHash("sha256").update(file.buffer).digest("hex");
 }
 
+const JUDGE_FEEDBACK_TYPES = new Set(["helpful", "wrong", "need_more_image", "field_verified"]);
+const JUDGE_FIELD_RESULTS = new Set(["valuable", "not_valuable", "uncertain"]);
+
 async function writeJudgeCase({ req, userId, file, resultText = "", rawText = "" }) {
   if (!supabase || !file?.buffer?.length || !String(resultText || rawText || "").trim()) {
-    return;
+    return null;
   }
 
   try {
@@ -1465,7 +1540,7 @@ async function writeJudgeCase({ req, userId, file, resultText = "", rawText = ""
       user_code: sourceMeta.user_code || null,
       user_id: userId ? String(userId) : null,
       source_from: sourceMeta.from_source || null,
-      source_page: sourceMeta.current_page || sourceMeta.page || null,
+      source_page: sourceMeta.landing_url || sourceMeta.first_page || sourceMeta.current_page || sourceMeta.page || null,
       image_type: extractJudgeCaseImageType(text),
       ai_result: text.slice(0, 12000),
       grade: extractJudgeCaseGrade(text),
@@ -1478,7 +1553,11 @@ async function writeJudgeCase({ req, userId, file, resultText = "", rawText = ""
       reviewer_note: null
     };
 
-    const { error } = await supabase.from("judge_cases").insert(payload);
+    const { data, error } = await supabase
+      .from("judge_cases")
+      .insert(payload)
+      .select("case_id")
+      .single();
     if (error) {
       console.error("Judge case write failed:", {
         message: error.message,
@@ -1486,9 +1565,13 @@ async function writeJudgeCase({ req, userId, file, resultText = "", rawText = ""
         details: error.details,
         hint: error.hint
       });
+      return null;
     }
+
+    return data?.case_id || null;
   } catch (error) {
     console.error("Judge case write exception:", error?.message || error);
+    return null;
   }
 }
 
@@ -4083,6 +4166,7 @@ app.get("/api/config", async (req, res) => {
     if (visitorId) {
       await getOrCreateSupabaseUser(visitorId);
       await updateSupabaseUserVisitMeta(visitorId, req);
+      await updateSupabaseUserSourceMeta(visitorId, req);
       await writeSourceVisitLog(visitorId, req);
     }
 
@@ -4271,7 +4355,49 @@ app.get("/api/admin/supabase-users", requireAdmin, async (req, res) => {
       throw error;
     }
 
-    res.json({ users: data || [] });
+    const users = data || [];
+
+    if (users.length) {
+      const userIds = users.map(user => String(user.user_id || "").trim()).filter(Boolean);
+      const { data: sourceLogs, error: sourceLogError } = userIds.length ? await supabase
+        .from("usage_logs")
+        .select("user_id,note,created_at")
+        .in("user_id", userIds)
+        .order("created_at", { ascending: false })
+        .limit(1000) : { data: [], error: null };
+
+      if (!sourceLogError) {
+        const sourceMap = new Map();
+        for (const log of sourceLogs || []) {
+          const userKey = String(log.user_id || "");
+          const meta = parseUsageSourceMetadata(log.note || "");
+          if (!userKey || !meta?.from_source) continue;
+
+          const item = sourceMap.get(userKey) || {};
+          item.latest_source_from = item.latest_source_from || meta.from_source || "";
+          item.latest_source_page = item.latest_source_page || meta.current_page || meta.page || "";
+          item.landing_url = item.landing_url || meta.landing_url || meta.first_page || "";
+          item.referrer = item.referrer || meta.referrer || "";
+          item.source_from = meta.from_source || item.source_from || "";
+          item.source_page = meta.first_page || meta.landing_url || item.source_page || "";
+          sourceMap.set(userKey, item);
+        }
+
+        for (const user of users) {
+          const meta = sourceMap.get(String(user.user_id || ""));
+          if (meta) {
+            user.source_from = meta.source_from || meta.latest_source_from || "";
+            user.source_page = meta.source_page || meta.landing_url || meta.latest_source_page || "";
+            user.landing_url = meta.landing_url || "";
+            user.referrer = meta.referrer || "";
+          }
+        }
+      } else if (sourceLogError.code !== "42P01") {
+        console.error("Read source logs for users failed:", sourceLogError);
+      }
+    }
+
+    res.json({ users });
   } catch (error) {
     console.error(error);
     res.status(500).json({
@@ -4592,6 +4718,82 @@ app.get("/api/admin/supabase-users/:userId/logs", requireAdmin, async (req, res)
   }
 });
 
+app.post("/api/judge-feedback", async (req, res) => {
+  try {
+    if (!requireSupabase(res)) {
+      return;
+    }
+
+    const caseId = String(req.body?.case_id || req.body?.caseId || "").trim();
+    const feedbackType = String(req.body?.feedback_type || req.body?.feedbackType || "").trim();
+    const fieldResult = String(req.body?.field_result || req.body?.fieldResult || "").trim();
+    const sourceMeta = getSourceMetaFromReq(req) || {};
+    const userCode = sanitizeUserCode(req.body?.user_code || req.body?.userCode || sourceMeta.user_code || "");
+    const userId = String(req.body?.user_id || req.body?.userId || sourceMeta.visitor_id || "").trim().slice(0, 120);
+    const feedbackNote = String(req.body?.feedback_note || req.body?.feedbackNote || "").trim().slice(0, 1000);
+
+    if (!caseId) {
+      return res.status(400).json({
+        success: false,
+        error: "case_id is required"
+      });
+    }
+
+    if (!JUDGE_FEEDBACK_TYPES.has(feedbackType)) {
+      return res.status(400).json({
+        success: false,
+        error: "invalid feedback_type"
+      });
+    }
+
+    if (fieldResult && !JUDGE_FIELD_RESULTS.has(fieldResult)) {
+      return res.status(400).json({
+        success: false,
+        error: "invalid field_result"
+      });
+    }
+
+    const payload = {
+      case_id: caseId,
+      user_code: userCode || null,
+      user_id: userId || null,
+      feedback_type: feedbackType,
+      field_result: feedbackType === "field_verified" ? (fieldResult || null) : null,
+      feedback_note: feedbackNote || null,
+      source_from: sourceMeta.from_source || null,
+      source_page: sourceMeta.landing_url || sourceMeta.first_page || sourceMeta.current_page || sourceMeta.page || null
+    };
+
+    const { data, error } = await supabase
+      .from("judge_feedback")
+      .insert(payload)
+      .select("feedback_id,case_id,feedback_type,field_result,created_at")
+      .single();
+
+    if (error) {
+      if (error.code === "42P01") {
+        return res.status(503).json({
+          success: false,
+          setupRequired: true,
+          error: "judge_feedback table does not exist"
+        });
+      }
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      feedback: data
+    });
+  } catch (error) {
+    console.error("Judge feedback write failed:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "submit judge feedback failed"
+    });
+  }
+});
+
 app.get("/api/admin/judge-cases", requireAdmin, async (req, res) => {
   try {
     if (!requireSupabase(res)) {
@@ -4641,9 +4843,41 @@ app.get("/api/admin/judge-cases", requireAdmin, async (req, res) => {
       throw error;
     }
 
+    const cases = data || [];
+    let feedbackSetupRequired = false;
+
+    if (cases.length) {
+      const caseIds = cases.map(item => item.case_id).filter(Boolean);
+      const { data: feedbackRows, error: feedbackError } = await supabase
+        .from("judge_feedback")
+        .select("feedback_id,case_id,user_code,user_id,feedback_type,field_result,feedback_note,source_from,source_page,created_at")
+        .in("case_id", caseIds)
+        .order("created_at", { ascending: false });
+
+      if (feedbackError) {
+        if (feedbackError.code === "42P01") {
+          feedbackSetupRequired = true;
+        } else {
+          throw feedbackError;
+        }
+      } else {
+        const feedbackMap = new Map();
+        for (const row of feedbackRows || []) {
+          const key = String(row.case_id || "");
+          if (!feedbackMap.has(key)) feedbackMap.set(key, []);
+          feedbackMap.get(key).push(row);
+        }
+
+        for (const item of cases) {
+          item.feedback = feedbackMap.get(String(item.case_id || "")) || [];
+        }
+      }
+    }
+
     res.json({
       success: true,
-      cases: data || []
+      feedbackSetupRequired,
+      cases
     });
   } catch (error) {
     console.error("Read judge cases failed:", error);
@@ -4849,6 +5083,9 @@ app.get("/api/admin/user-code-lookup", requireAdmin, async (req, res) => {
         userIds,
         latestIp: latestLog?.ip || "",
         firstSource: firstSourceMeta?.from_source || "",
+        firstSourcePage: firstSourceMeta?.first_page || firstSourceMeta?.landing_url || "",
+        landingUrl: firstSourceMeta?.landing_url || latestSourceMeta?.landing_url || "",
+        referrer: firstSourceMeta?.referrer || latestSourceMeta?.referrer || "",
         latestPage: latestSourceMeta?.current_page || latestSourceMeta?.page || "",
         latestUsedAt: latestLog?.created_at || "",
         featureTypes,
@@ -5416,6 +5653,7 @@ app.get("/api/usage/quota", async (req, res) => {
     }
 
     await updateSupabaseUserVisitMeta(visitorId, req);
+    await updateSupabaseUserSourceMeta(visitorId, req);
 
     res.json({
       success: true,
@@ -5458,6 +5696,7 @@ app.post("/api/usage/consume", async (req, res) => {
 
     const result = await consumeUsage(visitorId, type, req);
     await updateSupabaseUserVisitMeta(visitorId, req);
+    await updateSupabaseUserSourceMeta(visitorId, req);
 
     if (result.reason === "limit_exceeded") {
       const code = getQuotaExhaustedCode(type);
@@ -5721,6 +5960,13 @@ B 可以观察
         });
       }
       await appendUsageLog(data, user, req, "judge", usageResult.source);
+      const caseId = await writeJudgeCase({
+        req,
+        userId: visitorId,
+        file: firstFile,
+        resultText: normalizedOutput,
+        rawText: rawOutput
+      });
 
       if (user) {
         user.eventCount = Number(user.eventCount || 0) + 1;
@@ -5732,6 +5978,8 @@ B 可以观察
         result: normalizedOutput,
         rawOutput,
         recordId: record.id,
+        caseId,
+        case_id: caseId,
         quota: usageResult.quota,
         warning: "当前版本已支持上传资料文件，但AI判读仍建议使用关键页面截图。"
       });
@@ -5937,7 +6185,7 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       });
     }
     await appendUsageLog(data, user, req, "judge", usageResult.source);
-    await writeJudgeCase({
+    const caseId = await writeJudgeCase({
       req,
       userId: visitorId,
       file: judgeImageFiles[0],
@@ -5959,6 +6207,8 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       content: normalizedOutput,
       rawOutput,
       recordId: record.id,
+      caseId,
+      case_id: caseId,
       quota: usageResult.quota
     };
 

@@ -1741,6 +1741,57 @@
       color: #94a3b8;
     }
 
+    .judge-feedback {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #d7e4dc;
+      border-radius: 12px;
+      background: #ffffff;
+    }
+
+    .judge-feedback[hidden] {
+      display: none;
+    }
+
+    .judge-feedback-title {
+      color: #334155;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .judge-feedback-actions,
+    .judge-feedback-field-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .judge-feedback button {
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #166534;
+      font-size: 13px;
+      box-shadow: none;
+    }
+
+    .judge-feedback-status {
+      color: #166534;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .judge-feedback-field {
+      display: grid;
+      gap: 8px;
+    }
+
+    .judge-feedback-field[hidden] {
+      display: none;
+    }
+
     .judge-decision-card {
       position: relative;
       display: grid;
@@ -3119,6 +3170,24 @@
             </div>
           </div>
         </div>
+            <div id="judgeFeedbackPanel" class="judge-feedback" hidden>
+              <div class="judge-feedback-title">这个判断对你有帮助吗？</div>
+              <div class="judge-feedback-actions">
+                <button type="button" onclick="submitJudgeFeedback('helpful')">👍 有帮助</button>
+                <button type="button" onclick="submitJudgeFeedback('wrong')">👎 不准确</button>
+                <button type="button" onclick="submitJudgeFeedback('need_more_image')">📷 我补图</button>
+                <button type="button" onclick="submitJudgeFeedback('field_verified')">📍 已现场验证</button>
+              </div>
+              <div id="judgeFeedbackFieldPanel" class="judge-feedback-field" hidden>
+                <div class="judge-feedback-title">现场结果更接近哪一种？</div>
+                <div class="judge-feedback-field-actions">
+                  <button type="button" onclick="submitJudgeFeedback('field_verified', 'valuable')">有价值</button>
+                  <button type="button" onclick="submitJudgeFeedback('field_verified', 'not_valuable')">没价值</button>
+                  <button type="button" onclick="submitJudgeFeedback('field_verified', 'uncertain')">还不确定</button>
+                </div>
+              </div>
+              <div id="judgeFeedbackStatus" class="judge-feedback-status"></div>
+            </div>
         <label id="judgeQuickUpload" for="judgeImageInput" class="judge-quick-upload" hidden>上传图片</label>
         <label id="judgeUploadCard" for="judgeImageInput" class="judge-upload-card">
           <span class="judge-upload-icon" aria-hidden="true">+</span>
@@ -3378,12 +3447,16 @@ Au值 = 纯度 × 10 后取整数</div>
     const judgeMessage = document.getElementById("judgeMessage");
     const judgeResult = document.getElementById("judgeResult");
     let judgeResultRawText = "";
+    let currentJudgeCaseId = "";
     const judgeDecisionCard = document.getElementById("judgeDecisionCard");
     const judgeRecentPanel = document.getElementById("judgeRecentPanel");
     const judgeRecentBest = document.getElementById("judgeRecentBest");
     const judgeRecentList = document.getElementById("judgeRecentList");
     const judgeProgressVisual = document.getElementById("judgeProgressVisual");
     const judgeProgressText = document.getElementById("judgeProgressText");
+    const judgeFeedbackPanel = document.getElementById("judgeFeedbackPanel");
+    const judgeFeedbackFieldPanel = document.getElementById("judgeFeedbackFieldPanel");
+    const judgeFeedbackStatus = document.getElementById("judgeFeedbackStatus");
     const judgeAddImageButton = document.getElementById("judgeAddImageButton");
     const judgeImageCount = document.getElementById("judgeImageCount");
     const judgeQrPanel = document.getElementById("judgeQrPanel");
@@ -3657,19 +3730,27 @@ Au值 = 纯度 × 10 后取整数</div>
       const sourceKey = "geoToolFirstSource";
       const pageKey = "geoToolFirstSourcePage";
       const timeKey = "geoToolFirstSourceAt";
+      const landingKey = "geoToolFirstLandingUrl";
+      const referrerKey = "geoToolFirstReferrer";
       const existingSource = normalizeSourceValue(localStorage.getItem(sourceKey));
       const params = new URLSearchParams(window.location.search);
-      const currentSource = normalizeSourceValue(params.get("from"));
+      const currentSource = normalizeSourceValue(
+        params.get("from") || params.get("utm_source") || params.get("source") || params.get("ref")
+      );
 
       if (!existingSource && currentSource) {
         localStorage.setItem(sourceKey, currentSource);
-        localStorage.setItem(pageKey, window.location.pathname || "/");
+        localStorage.setItem(pageKey, `${window.location.pathname || "/"}${window.location.search || ""}`);
+        localStorage.setItem(landingKey, window.location.href || "");
+        localStorage.setItem(referrerKey, document.referrer || "");
         localStorage.setItem(timeKey, new Date().toISOString());
       }
 
       return {
         fromSource: normalizeSourceValue(localStorage.getItem(sourceKey)),
         firstPage: localStorage.getItem(pageKey) || "",
+        landingUrl: localStorage.getItem(landingKey) || "",
+        referrer: localStorage.getItem(referrerKey) || "",
         firstVisitAt: localStorage.getItem(timeKey) || ""
       };
     }
@@ -3683,6 +3764,8 @@ Au值 = 纯度 × 10 后取整数</div>
         headers["x-source"] = firstSourceInfo.fromSource;
         headers["x-source-page"] = firstSourceInfo.firstPage || "/";
         headers["x-source-at"] = firstSourceInfo.firstVisitAt || "";
+        headers["x-landing-url"] = firstSourceInfo.landingUrl || "";
+        headers["x-referrer"] = firstSourceInfo.referrer || document.referrer || "";
       }
 
       return headers;
@@ -4734,6 +4817,89 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeDecisionCard.innerHTML = "";
     }
 
+    function resetJudgeFeedback() {
+      currentJudgeCaseId = "";
+      judgeFeedbackPanel?.querySelectorAll("button").forEach(button => {
+        button.disabled = false;
+      });
+      if (judgeFeedbackPanel) {
+        judgeFeedbackPanel.hidden = true;
+      }
+      if (judgeFeedbackFieldPanel) {
+        judgeFeedbackFieldPanel.hidden = true;
+      }
+      if (judgeFeedbackStatus) {
+        judgeFeedbackStatus.textContent = "";
+      }
+    }
+
+    function showJudgeFeedback(caseId = "") {
+      currentJudgeCaseId = String(caseId || "").trim();
+      if (!judgeFeedbackPanel || !currentJudgeCaseId) {
+        resetJudgeFeedback();
+        return;
+      }
+      judgeFeedbackPanel.hidden = false;
+      judgeFeedbackPanel.querySelectorAll("button").forEach(button => {
+        button.disabled = false;
+      });
+      if (judgeFeedbackFieldPanel) {
+        judgeFeedbackFieldPanel.hidden = true;
+      }
+      if (judgeFeedbackStatus) {
+        judgeFeedbackStatus.textContent = "";
+      }
+    }
+
+    async function submitJudgeFeedback(feedbackType, fieldResult = "") {
+      if (!currentJudgeCaseId) {
+        if (judgeFeedbackStatus) {
+          judgeFeedbackStatus.textContent = "已记录，感谢反馈";
+        }
+        return;
+      }
+
+      if (feedbackType === "field_verified" && !fieldResult) {
+        if (judgeFeedbackFieldPanel) {
+          judgeFeedbackFieldPanel.hidden = false;
+        }
+        if (judgeFeedbackStatus) {
+          judgeFeedbackStatus.textContent = "";
+        }
+        return;
+      }
+
+      judgeFeedbackPanel?.querySelectorAll("button").forEach(button => {
+        button.disabled = true;
+      });
+
+      try {
+        await fetch("/api/judge-feedback", {
+          method: "POST",
+          headers: getSourceHeaders({
+            "content-type": "application/json",
+            "x-visitor-id": visitorId
+          }),
+          body: JSON.stringify({
+            case_id: currentJudgeCaseId,
+            user_id: visitorId,
+            user_code: userCode,
+            feedback_type: feedbackType,
+            field_result: fieldResult || ""
+          })
+        });
+      } catch (error) {
+        console.warn("提交快判反馈失败", error);
+      }
+
+      if (judgeFeedbackFieldPanel) {
+        judgeFeedbackFieldPanel.hidden = feedbackType !== "field_verified";
+      }
+      if (judgeFeedbackStatus) {
+        judgeFeedbackStatus.textContent = "已记录，感谢反馈";
+      }
+    }
+
     function escapeJudgeDetailHtml(value) {
       return String(value || "")
         .replace(/&/g, "&amp;")
@@ -5764,6 +5930,7 @@ Au值 = 纯度 × 10 后取整数</div>
         console.log("AI判读进入成功展示分支");
         showJudgeProgressVisual("快判完成", "done");
         showJudgeMessage("");
+        resetJudgeFeedback();
         await new Promise(resolve => setTimeout(resolve, 350));
         const judgeText = data.result || data.analysis || data.message || data.content || data.rawOutput || "";
         console.log("AI判读最终展示文本", judgeText);
@@ -5799,6 +5966,7 @@ Au值 = 纯度 × 10 后取整数</div>
         if (data.warning && !/完成/.test(data.warning)) {
           showJudgeMessage(sanitizeUserFacingTechMessage(data.warning));
         }
+        showJudgeFeedback(data.caseId || data.case_id || "");
         trackEvent("ai_judge_success", {
           judgeType: judgeType.value
         });
@@ -5846,6 +6014,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function clearJudgeResult() {
       judgeResult.value = "";
       clearJudgeDecisionCard();
+      resetJudgeFeedback();
       hideJudgeProgressVisual();
       showJudgeMessage("判读结果已清除。");
     }
