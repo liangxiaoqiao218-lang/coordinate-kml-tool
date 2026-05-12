@@ -1297,7 +1297,7 @@
           <div class="card"><span>今日免费消耗</span><strong id="dashFreeCount">0</strong></div>
           <div class="card"><span>今日付费消耗</span><strong id="dashPaidCount">0</strong></div>
           <div class="card"><span>今日VIP月度版消耗</span><strong id="dashVipCount">0</strong></div>
-          <div class="card"><span>次数不足失败</span><strong id="dashLimitCount">0</strong></div>
+          <div class="card"><span>今日额度拦截</span><strong id="dashLimitCount">0</strong></div>
         </div>
       </div>
 
@@ -1350,7 +1350,7 @@
         <h3>异常数据</h3>
         <div class="cards">
           <div class="card"><span>矿地快判失败</span><strong id="dashJudgeFailed">0</strong></div>
-          <div class="card"><span>坐标识别失败</span><strong id="dashConvertFailed">0</strong></div>
+          <div class="card"><span>坐标/KML失败</span><strong id="dashConvertFailed">0</strong></div>
           <div class="card"><span>网络/超时失败</span><strong id="dashNetworkFailed">0</strong></div>
         </div>
       </div>
@@ -1371,6 +1371,26 @@
               </tr>
             </thead>
             <tbody id="dashboardErrorsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="dashboard-row">
+        <h3>最近额度拦截记录</h3>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>用户ID</th>
+                <th>功能</th>
+                <th>原因</th>
+                <th>IP</th>
+                <th>设备</th>
+                <th>地区</th>
+              </tr>
+            </thead>
+            <tbody id="dashboardQuotaBlockedBody"></tbody>
           </table>
         </div>
       </div>
@@ -2199,8 +2219,14 @@
       setDashboardValue("dashConvertFailed", errors.convertFailedCount);
       setDashboardValue("dashNetworkFailed", errors.networkTimeoutFailedCount);
       updateErrorMetricCard("dashJudgeFailed", "矿地快判失败", errors.judgeFailedCount);
-      updateErrorMetricCard("dashConvertFailed", "坐标识别失败", errors.convertFailedCount);
+      updateErrorMetricCard("dashConvertFailed", "坐标/KML失败", errors.convertFailedCount);
       updateErrorMetricCard("dashNetworkFailed", "网络/超时失败", errors.networkTimeoutFailedCount);
+      const quotaBlockedLabel = Number(consumption.convertQuotaBlockedCount || 0) > 0 && Number(consumption.judgeQuotaBlockedCount || 0) <= 0
+        ? "坐标/KML额度拦截"
+        : Number(consumption.judgeQuotaBlockedCount || 0) > 0 && Number(consumption.convertQuotaBlockedCount || 0) <= 0
+          ? "矿地快判额度拦截"
+          : "额度拦截";
+      updateErrorMetricCard("dashLimitCount", quotaBlockedLabel, consumption.limitExceededCount);
 
       setDashboardValue("dashAiTodayCalls", aiCost.todayCalls);
       setDashboardText("dashAiTodayCost", formatCurrencyCny(aiCost.todayCostCny));
@@ -2241,25 +2267,45 @@
       }
 
       const body = document.getElementById("dashboardErrorsBody");
-      if (!body) return;
+      if (body && data.setupRequired) {
+        body.innerHTML = `<tr><td colspan="7" class="muted">usage_logs 表未创建，暂无失败记录。</td></tr>`;
+      } else if (body && !(data.recentErrors || []).length) {
+        body.innerHTML = `<tr><td colspan="7" class="muted">暂无失败记录。</td></tr>`;
+      } else if (body) {
+        const recentErrors = data.recentErrors || [];
+        body.innerHTML = recentErrors.map(log => `
+          <tr>
+            <td>${formatTime(log.created_at) || "-"}</td>
+            <td>${escapeHtml(log.user_id || "-")}</td>
+            <td>${escapeHtml(getUsageFeatureLabel(log.feature_type))}</td>
+            <td>${escapeHtml(log.error_reason || log.note || "-")}</td>
+            <td>${escapeHtml(log.ip || "-")}</td>
+            <td>${escapeHtml(log.device_info || "-")}</td>
+            <td>${escapeHtml(log.region || "-")}</td>
+          </tr>
+        `).join("");
+      }
+
+      const quotaBody = document.getElementById("dashboardQuotaBlockedBody");
+      if (!quotaBody) return;
 
       if (data.setupRequired) {
-        body.innerHTML = `<tr><td colspan="7" class="muted">usage_logs 表未创建，暂无失败记录。</td></tr>`;
+        quotaBody.innerHTML = `<tr><td colspan="7" class="muted">usage_logs 表未创建，暂无额度拦截记录。</td></tr>`;
         return;
       }
 
-      const recentErrors = data.recentErrors || [];
-      if (!recentErrors.length) {
-        body.innerHTML = `<tr><td colspan="7" class="muted">暂无失败记录。</td></tr>`;
+      const recentQuotaBlocked = data.recentQuotaBlocked || [];
+      if (!recentQuotaBlocked.length) {
+        quotaBody.innerHTML = `<tr><td colspan="7" class="muted">暂无额度拦截记录。</td></tr>`;
         return;
       }
 
-      body.innerHTML = recentErrors.map(log => `
+      quotaBody.innerHTML = recentQuotaBlocked.map(log => `
         <tr>
           <td>${formatTime(log.created_at) || "-"}</td>
           <td>${escapeHtml(log.user_id || "-")}</td>
           <td>${escapeHtml(getUsageFeatureLabel(log.feature_type))}</td>
-          <td>${escapeHtml(log.error_reason || log.note || "-")}</td>
+          <td>次数已用完</td>
           <td>${escapeHtml(log.ip || "-")}</td>
           <td>${escapeHtml(log.device_info || "-")}</td>
           <td>${escapeHtml(log.region || "-")}</td>
@@ -2336,11 +2382,13 @@
 
       const today = data.today || {};
       const errors = data.errors || {};
+      const consumption = data.consumption || {};
       const failed = Number(today.failedCount || 0);
+      const quotaBlocked = Number(consumption.quotaBlockedCount ?? consumption.limitExceededCount ?? 0);
       const networkFailed = Number(errors.networkTimeoutFailedCount || 0);
-      alert.classList.toggle("active", failed > 0 || networkFailed > 0);
-      alert.textContent = failed > 0 || networkFailed > 0
-        ? `异常提醒：今日失败 ${failed} 次，其中网络/超时 ${networkFailed} 次。`
+      alert.classList.toggle("active", failed > 0 || networkFailed > 0 || quotaBlocked > 0);
+      alert.textContent = failed > 0 || networkFailed > 0 || quotaBlocked > 0
+        ? `异常提醒：今日失败 ${failed} 次，额度拦截 ${quotaBlocked} 次，其中网络/超时 ${networkFailed} 次。`
         : "";
 
       let trend = document.getElementById("dashboardMiniTrend");
@@ -2783,7 +2831,7 @@
                   <td title="${escapeHtml(log.user_id || "")}">${escapeHtml(log.user_id || "-")}</td>
                   <td>${escapeHtml(getUsageFeatureLabel(log.feature_type))}</td>
                   <td>${escapeHtml(getConsumeTypeLabel(log.consume_type))}</td>
-                  <td>${log.success ? "成功" : `失败：${escapeHtml(log.error_reason || "-")}`}</td>
+                  <td>${getUsageStatusLabel(log)}</td>
                   <td>${escapeHtml(log.ip || "-")}</td>
                   <td title="${escapeHtml(log.device_info || log.user_agent || "")}">${escapeHtml(log.device_info || "-")}</td>
                 </tr>
@@ -3081,7 +3129,7 @@
 
     function getUsageStatusLabel(log) {
       if (log?.success) return "成功";
-      if (log?.error_reason === "quota_blocked" || log?.error_reason === "limit_exceeded") {
+      if (log?.status === "quota_blocked" || log?.error_reason === "quota_exhausted" || log?.error_reason === "quota_blocked" || log?.error_reason === "limit_exceeded") {
         return "次数不足";
       }
       return "失败";

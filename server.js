@@ -1317,6 +1317,24 @@ async function writeUsageLog({
   }
 }
 
+function isQuotaBlockedUsageLog(log = {}) {
+  return !log.success && ["quota_exhausted", "limit_exceeded", "quota_blocked"].includes(String(log.error_reason || ""));
+}
+
+function getUsageLogStatus(log = {}) {
+  if (log.success) return "success";
+  return isQuotaBlockedUsageLog(log) ? "quota_blocked" : "failed";
+}
+
+function normalizeUsageLogForResponse(log = {}) {
+  const status = getUsageLogStatus(log);
+  return {
+    ...log,
+    status,
+    reason: status === "quota_blocked" ? "quota_exhausted" : (log.error_reason || "")
+  };
+}
+
 async function writeSourceVisitLog(userId, req) {
   const sourceMeta = getSourceMetaFromReq(req);
   if (!sourceMeta?.from_source && !sourceMeta?.user_code) {
@@ -1576,7 +1594,7 @@ async function consumeUsage(userId, type, req = null, options = {}) {
   }
 
   if (!status.allowed) {
-    const blockedReason = status.reason === "limit_exceeded" ? "quota_blocked" : (status.reason || "not_allowed");
+    const blockedReason = status.reason === "limit_exceeded" ? "quota_exhausted" : (status.reason || "not_allowed");
     await writeUsageLog({
       userId,
       req,
@@ -1661,7 +1679,7 @@ async function consumeUsage(userId, type, req = null, options = {}) {
     beforeBalance,
     afterBalance: extractUsageBalanceFields(freshUser || user),
     success: false,
-    errorReason: "quota_blocked"
+    errorReason: "quota_exhausted"
   });
 
   return {
@@ -4741,7 +4759,7 @@ app.get("/api/admin/usage-logs", requireAdmin, async (req, res) => {
 
     res.json({
       success: true,
-      logs: data || []
+      logs: (data || []).map(normalizeUsageLogForResponse)
     });
   } catch (error) {
     console.error(error);
@@ -4796,7 +4814,7 @@ app.get("/api/admin/user-code-lookup", requireAdmin, async (req, res) => {
     const logs = (rawLogs || []).filter(log => {
       const sourceMeta = parseUsageSourceMetadata(log.note || "");
       return sourceMeta?.user_code === code || String(log.note || "").includes(code);
-    });
+    }).map(normalizeUsageLogForResponse);
 
     const userIds = Array.from(new Set(logs.map(log => String(log.user_id || "").trim()).filter(Boolean)));
     let users = [];
@@ -4894,7 +4912,10 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         freeCount: 0,
         paidCount: 0,
         vipCount: 0,
-        limitExceededCount: 0
+        limitExceededCount: 0,
+        quotaBlockedCount: 0,
+        convertQuotaBlockedCount: 0,
+        judgeQuotaBlockedCount: 0
       },
       errors: {
         judgeFailedCount: 0,
@@ -4921,6 +4942,7 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         sources: []
       },
       recentErrors: [],
+      recentQuotaBlocked: [],
       securityEvents: getSecurityEvents(20)
     };
 
@@ -4930,7 +4952,7 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         .select("user_id,is_vip,paid_convert_count,paid_judge_count,created_at,last_seen_at"),
       supabase
         .from("usage_logs")
-        .select("id,user_id,ip,region,device_info,feature_type,consume_type,success,error_reason,note,created_at")
+        .select("id,user_id,ip,region,device_info,feature_type,consume_type,before_balance,success,error_reason,note,created_at")
         .gte("created_at", queryStart.toISOString())
         .order("created_at", { ascending: false })
         .limit(5000)
@@ -4959,8 +4981,11 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
     const successful7DayLogs = last7Logs.filter(log => log.success);
     const usageSuccessfulTodayLogs = successfulTodayLogs.filter(log => log.feature_type !== "visit");
     const usageSuccessful7DayLogs = successful7DayLogs.filter(log => log.feature_type !== "visit");
-    const todayFailures = todayLogs.filter(log => !log.success);
-    const last7Failures = last7Logs.filter(log => !log.success);
+    const isQuotaBlockedLog = isQuotaBlockedUsageLog;
+    const todayQuotaBlocked = todayLogs.filter(isQuotaBlockedLog);
+    const todayFailures = todayLogs.filter(log => !log.success && !isQuotaBlockedLog(log));
+    const last7Failures = last7Logs.filter(log => !log.success && !isQuotaBlockedLog(log));
+    const withUsageStatus = normalizeUsageLogForResponse;
     const uniqueCount = list => new Set(list.map(item => item.user_id).filter(Boolean)).size;
     const countFeature = (list, feature) => list.filter(log => log.feature_type === feature).length;
     const countConsume = (list, consumeType) => list.filter(log => log.consume_type === consumeType && log.success).length;
@@ -5069,7 +5094,7 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         if (log.feature_type === "judge") item.judgeCount += 1;
         if (log.feature_type === "convert") item.convertCount += 1;
         if (log.feature_type === "gold") item.goldCount += 1;
-      } else {
+      } else if (!isQuotaBlockedLog(log)) {
         item.failedCount += 1;
       }
 
@@ -5135,9 +5160,10 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         freeCount: countConsume(todayLogs, "free"),
         paidCount: countConsume(todayLogs, "paid"),
         vipCount: todayLogs.filter(isVipMonthlyConsume).length,
-        limitExceededCount: todayFailures.filter(log =>
-          log.error_reason === "quota_blocked" || log.error_reason === "limit_exceeded"
-        ).length
+        limitExceededCount: todayQuotaBlocked.length,
+        quotaBlockedCount: todayQuotaBlocked.length,
+        convertQuotaBlockedCount: todayQuotaBlocked.filter(log => log.feature_type === "convert").length,
+        judgeQuotaBlockedCount: todayQuotaBlocked.filter(log => log.feature_type === "judge").length
       },
       errors: {
         judgeFailedCount: todayFailures.filter(log => log.feature_type === "judge").length,
@@ -5178,8 +5204,13 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         sources: sourceStats
       },
       recentErrors: logs
-        .filter(log => !log.success)
-        .slice(0, 10),
+        .filter(log => !log.success && !isQuotaBlockedLog(log))
+        .slice(0, 10)
+        .map(withUsageStatus),
+      recentQuotaBlocked: logs
+        .filter(isQuotaBlockedLog)
+        .slice(0, 10)
+        .map(withUsageStatus),
       securityEvents: getSecurityEvents(20)
     });
   } catch (error) {
@@ -5233,7 +5264,7 @@ app.get("/api/admin/supabase-users/:userId/usage-logs", requireAdmin, async (req
 
     res.json({
       success: true,
-      logs: data || []
+      logs: (data || []).map(normalizeUsageLogForResponse)
     });
   } catch (error) {
     console.error(error);
