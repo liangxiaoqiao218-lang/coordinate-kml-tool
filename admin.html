@@ -1590,7 +1590,7 @@
           <option value="usage_total_desc">总使用次数</option>
           <option value="vip_desc">VIP月度版状态</option>
         </select>
-        <button type="button" onclick="loadSupabaseUsers()">刷新</button>
+        <button type="button" onclick="loadSupabaseUsers()">刷新列表</button>
       </div>
       <div class="table-scroll user-table-scroll">
         <table>
@@ -1599,7 +1599,6 @@
               <th class="sticky-action">操作</th>
               <th class="col-user">用户ID</th>
               <th>来源</th>
-              <th>首次进入</th>
               <th>VIP月度版</th>
               <th class="col-ip">最近IP</th>
               <th>地区</th>
@@ -1702,6 +1701,7 @@
               <th>关键词</th>
               <th>用户识别码</th>
               <th>来源</th>
+              <th>地域</th>
               <th>进入页面</th>
               <th>用户反馈</th>
               <th>AI结论摘要</th>
@@ -2443,7 +2443,7 @@
         renderOverview(supabaseUsers);
 
         if (showMessage) {
-          setSupabaseUserMessage(`用户列表已刷新：${new Date().toLocaleTimeString()}`);
+          setSupabaseUserMessage(`已刷新：${new Date().toLocaleTimeString()}`);
         }
       } catch (error) {
         supabaseUsers = [];
@@ -3044,12 +3044,12 @@
       if (!body) return;
 
       if (setupRequired) {
-        body.innerHTML = `<tr><td colspan="11" class="muted">judge_cases 表还未创建，请先执行建表 SQL。</td></tr>`;
+        body.innerHTML = `<tr><td colspan="12" class="muted">judge_cases 表还未创建，请先执行建表 SQL。</td></tr>`;
         return;
       }
 
       if (!cases.length) {
-        body.innerHTML = `<tr><td colspan="11" class="muted">暂无快判案例。</td></tr>`;
+        body.innerHTML = `<tr><td colspan="12" class="muted">暂无快判案例。</td></tr>`;
         return;
       }
 
@@ -3064,6 +3064,7 @@
             <td><div class="case-keywords">${formatCaseKeywords(item.keywords)}</div></td>
             <td>${escapeHtml(item.user_code || "-")}</td>
             <td>${escapeHtml(item.source_from || "-")}</td>
+            <td>${escapeHtml(item.region || "-")}</td>
             <td class="case-summary" title="${escapeHtml(item.source_page || "-")}">${escapeHtml(item.source_page || "-")}</td>
             <td>${formatJudgeFeedback(item.feedback)}</td>
             <td class="case-summary" title="${escapeHtml(item.ai_result || "")}">${escapeHtml(summarizeCaseResult(item.ai_result))}</td>
@@ -3312,7 +3313,7 @@
       const filteredList = sortSupabaseUsers(filterSupabaseUsers(list));
 
       if (!filteredList.length) {
-        body.innerHTML = `<tr><td colspan="17" class="muted">暂无用户</td></tr>`;
+        body.innerHTML = `<tr><td colspan="16" class="muted">暂无用户</td></tr>`;
         return;
       }
 
@@ -3333,7 +3334,6 @@
             </td>
             <td class="col-user" title="${escapeHtml(userId)}"><span class="cell-ellipsis">${escapeHtml(userId)}</span></td>
             <td title="${escapeHtml(user.source_from || "-")}"><span class="source-badge">${escapeHtml(user.source_from || "-")}</span></td>
-            <td title="${escapeHtml(user.landing_url || user.source_page || "-")}"><span class="cell-ellipsis">${escapeHtml(user.source_page || user.landing_url || "-")}</span></td>
             <td>${user.is_vip ? "是" : "否"}</td>
             <td class="col-ip" title="${escapeHtml(user.last_ip || "-")}"><span class="cell-ellipsis">${escapeHtml(user.last_ip || "-")}</span></td>
             <td>${escapeHtml(region)}</td>

@@ -4801,11 +4801,32 @@ app.get("/api/admin/judge-cases", requireAdmin, async (req, res) => {
     }
 
     const limit = Math.min(toNonNegativeInteger(req.query.limit, 100) || 100, 500);
-    let query = supabase
-      .from("judge_cases")
-      .select("case_id,user_code,user_id,source_from,source_page,image_type,ai_result,grade,keywords,suggested_next_image,image_hash,image_url,image_path,review_status,reviewer_note,created_at,updated_at")
-      .order("created_at", { ascending: false })
-      .limit(limit);
+    const baseCaseFields = "case_id,user_code,user_id,source_from,source_page,image_type,ai_result,grade,keywords,suggested_next_image,image_hash,image_url,image_path,review_status,reviewer_note,created_at,updated_at";
+    const buildCaseQuery = (fields = `${baseCaseFields},region`) => {
+      let caseQuery = supabase
+        .from("judge_cases")
+        .select(fields)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (imageType) {
+        caseQuery = caseQuery.eq("image_type", imageType);
+      }
+      if (grade) {
+        caseQuery = caseQuery.eq("grade", grade);
+      }
+      if (reviewStatus) {
+        caseQuery = caseQuery.eq("review_status", reviewStatus);
+      }
+      if (sourceFrom) {
+        caseQuery = caseQuery.ilike("source_from", `%${sourceFrom}%`);
+      }
+      if (userCode) {
+        caseQuery = caseQuery.eq("user_code", userCode);
+      }
+
+      return caseQuery;
+    };
 
     const imageType = String(req.query.image_type || "").trim();
     const grade = String(req.query.grade || "").trim().toUpperCase();
@@ -4813,23 +4834,13 @@ app.get("/api/admin/judge-cases", requireAdmin, async (req, res) => {
     const sourceFrom = String(req.query.source_from || "").trim();
     const userCode = sanitizeUserCode(req.query.user_code || "");
 
-    if (imageType) {
-      query = query.eq("image_type", imageType);
-    }
-    if (grade) {
-      query = query.eq("grade", grade);
-    }
-    if (reviewStatus) {
-      query = query.eq("review_status", reviewStatus);
-    }
-    if (sourceFrom) {
-      query = query.ilike("source_from", `%${sourceFrom}%`);
-    }
-    if (userCode) {
-      query = query.eq("user_code", userCode);
-    }
+    let { data, error } = await buildCaseQuery();
 
-    const { data, error } = await query;
+    if (error && error.code === "42703") {
+      const retry = await buildCaseQuery(baseCaseFields);
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       if (error.code === "42P01") {
@@ -4847,6 +4858,67 @@ app.get("/api/admin/judge-cases", requireAdmin, async (req, res) => {
     let feedbackSetupRequired = false;
 
     if (cases.length) {
+      const caseUserIds = Array.from(new Set(cases.map(item => String(item.user_id || "").trim()).filter(Boolean)));
+      const caseUserCodes = Array.from(new Set(cases.map(item => sanitizeUserCode(item.user_code || "")).filter(Boolean)));
+      const regionByUserId = new Map();
+      const regionByUserCode = new Map();
+
+      if (caseUserIds.length || caseUserCodes.length) {
+        const { data: logsForRegion, error: logsRegionError } = await supabase
+          .from("usage_logs")
+          .select("user_id,region,note,created_at")
+          .order("created_at", { ascending: false })
+          .limit(1000);
+
+        if (!logsRegionError) {
+          for (const log of logsForRegion || []) {
+            const region = String(log.region || "").trim();
+            if (!region) continue;
+
+            const logUserId = String(log.user_id || "").trim();
+            if (logUserId && caseUserIds.includes(logUserId) && !regionByUserId.has(logUserId)) {
+              regionByUserId.set(logUserId, region);
+            }
+
+            const sourceMeta = parseUsageSourceMetadata(log.note || "");
+            const logUserCode = sanitizeUserCode(sourceMeta?.user_code || "");
+            if (logUserCode && caseUserCodes.includes(logUserCode) && !regionByUserCode.has(logUserCode)) {
+              regionByUserCode.set(logUserCode, region);
+            }
+          }
+        } else if (logsRegionError.code !== "42P01") {
+          console.error("Read usage regions for judge cases failed:", logsRegionError);
+        }
+      }
+
+      if (caseUserIds.length) {
+        const { data: userRowsForRegion, error: usersRegionError } = await supabase
+          .from("users")
+          .select("user_id,region")
+          .in("user_id", caseUserIds);
+
+        if (!usersRegionError) {
+          for (const user of userRowsForRegion || []) {
+            const userId = String(user.user_id || "").trim();
+            const region = String(user.region || "").trim();
+            if (userId && region && !regionByUserId.has(userId)) {
+              regionByUserId.set(userId, region);
+            }
+          }
+        } else if (usersRegionError.code !== "42P01" && usersRegionError.code !== "42703") {
+          console.error("Read user regions for judge cases failed:", usersRegionError);
+        }
+      }
+
+      for (const item of cases) {
+        const itemUserId = String(item.user_id || "").trim();
+        const itemUserCode = sanitizeUserCode(item.user_code || "");
+        item.region = String(item.region || "").trim()
+          || regionByUserId.get(itemUserId)
+          || regionByUserCode.get(itemUserCode)
+          || "";
+      }
+
       const caseIds = cases.map(item => item.case_id).filter(Boolean);
       const { data: feedbackRows, error: feedbackError } = await supabase
         .from("judge_feedback")
