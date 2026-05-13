@@ -175,20 +175,35 @@
       overflow: hidden;
     }
 
-    .module-card::before {
+    .module-card::before,
+    .module-card::after {
       content: "";
       position: absolute;
+      background-repeat: no-repeat;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .module-card::before {
       inset: 0 0 0 auto;
       width: 42%;
-      background-repeat: no-repeat;
       background-position: center right;
       background-size: cover;
       opacity: 0.22;
       filter: saturate(0.9) contrast(0.92);
-      pointer-events: none;
-      z-index: 0;
       -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.7) 26%, #000 72%, transparent 100%);
       mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.7) 26%, #000 72%, transparent 100%);
+    }
+
+    .module-card::after {
+      top: 14px;
+      right: 14px;
+      bottom: 14px;
+      width: 36%;
+      opacity: 0.32;
+      filter: saturate(1.12) contrast(1.14);
+      -webkit-mask-image: radial-gradient(ellipse at center, #000 0%, rgba(0, 0, 0, 0.86) 50%, transparent 80%);
+      mask-image: radial-gradient(ellipse at center, #000 0%, rgba(0, 0, 0, 0.86) 50%, transparent 80%);
     }
 
     .module-card > * {
@@ -371,9 +386,19 @@
       background: #ffffff;
     }
 
-    .module-card.primary-module::before {
+    .module-card.primary-module::before,
+    .module-card.primary-module::after {
       background-image: url("assets/home-coordinate-illustration.png");
+    }
+
+    .module-card.primary-module::before {
       opacity: 0.24;
+    }
+
+    .module-card.primary-module::after {
+      background-position: 58% 54%;
+      background-size: 190%;
+      opacity: 0.35;
     }
 
     .module-card.judge-module {
@@ -381,9 +406,19 @@
       background: #ffffff;
     }
 
-    .module-card.judge-module::before {
+    .module-card.judge-module::before,
+    .module-card.judge-module::after {
       background-image: url("assets/home-judge-illustration.png");
+    }
+
+    .module-card.judge-module::before {
       opacity: 0.22;
+    }
+
+    .module-card.judge-module::after {
+      background-position: 62% 54%;
+      background-size: 182%;
+      opacity: 0.34;
     }
 
     .module-card.gold-module {
@@ -391,9 +426,19 @@
       background: #ffffff;
     }
 
-    .module-card.gold-module::before {
+    .module-card.gold-module::before,
+    .module-card.gold-module::after {
       background-image: url("assets/home-gold-illustration.png");
+    }
+
+    .module-card.gold-module::before {
       opacity: 0.2;
+    }
+
+    .module-card.gold-module::after {
+      background-position: 66% 54%;
+      background-size: 170%;
+      opacity: 0.32;
     }
 
     .module-card.primary-module:hover {
@@ -3088,17 +3133,34 @@
 
       .module-card::before {
         width: 38%;
-        opacity: 0.13;
+        opacity: 0.15;
         background-size: cover;
       }
 
+      .module-card::after {
+        top: 12px;
+        right: 14px;
+        bottom: 12px;
+        width: 36%;
+        opacity: 0.25;
+      }
+
       .module-card.primary-module::before {
-        opacity: 0.15;
+        opacity: 0.17;
       }
 
       .module-card.judge-module::before,
       .module-card.gold-module::before {
-        opacity: 0.13;
+        opacity: 0.15;
+      }
+
+      .module-card.primary-module::after {
+        opacity: 0.3;
+      }
+
+      .module-card.judge-module::after,
+      .module-card.gold-module::after {
+        opacity: 0.28;
       }
 
       .module-card strong {
