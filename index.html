@@ -163,7 +163,11 @@
 
     .module-card {
       min-height: 128px;
-      padding: 18px;
+      padding: 14px 14px 14px 18px;
+      display: grid;
+      grid-template-columns: minmax(0, 0.45fr) minmax(0, 0.55fr);
+      align-items: center;
+      gap: 8px;
       border: 1px solid #d6dfeb;
       border-radius: 8px;
       background: #ffffff;
@@ -175,25 +179,34 @@
       overflow: hidden;
     }
 
-    .module-card::before {
-      content: "";
-      position: absolute;
-      background-repeat: no-repeat;
-      pointer-events: none;
-      z-index: 0;
-      inset: 0 0 0 auto;
-      width: 42%;
-      background-position: center right;
-      background-size: cover;
-      opacity: 0.42;
-      filter: saturate(1.24) contrast(1.4);
-      -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.7) 26%, #000 72%, transparent 100%);
-      mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.7) 26%, #000 72%, transparent 100%);
+    .module-copy {
+      min-width: 0;
     }
 
-    .module-card > * {
-      position: relative;
-      z-index: 1;
+    .module-visual {
+      width: 100%;
+      height: 118px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .module-visual img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      pointer-events: none;
+      -webkit-mask-image:
+        linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%),
+        linear-gradient(180deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+      mask-image:
+        linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%),
+        linear-gradient(180deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+      -webkit-mask-composite: source-in;
+      mask-composite: intersect;
     }
 
     .module-card:hover {
@@ -208,7 +221,7 @@
       color: #0f172a;
     }
 
-    .module-card span {
+    .module-copy > span {
       display: block;
       color: #526071;
       line-height: 1.5;
@@ -371,38 +384,14 @@
       background: #ffffff;
     }
 
-    .module-card.primary-module::before {
-      background-image: url("assets/home-coordinate-illustration.png");
-      background-position: 55% 54%;
-      background-size: 180%;
-      opacity: 0.42;
-      filter: saturate(1.24) contrast(1.4);
-    }
-
     .module-card.judge-module {
       border-color: #d6dfeb;
       background: #ffffff;
     }
 
-    .module-card.judge-module::before {
-      background-image: url("assets/home-judge-illustration.png");
-      background-position: 62% 54%;
-      background-size: 182%;
-      opacity: 0.38;
-      filter: saturate(1.1) contrast(1.2);
-    }
-
     .module-card.gold-module {
       border-color: #d6dfeb;
       background: #ffffff;
-    }
-
-    .module-card.gold-module::before {
-      background-image: url("assets/home-gold-illustration.png");
-      background-position: 45% 50%;
-      background-size: 190%;
-      opacity: 0.39;
-      filter: saturate(1.16) contrast(1.32);
     }
 
     .module-card.primary-module:hover {
@@ -3092,34 +3081,18 @@
       .module-card {
         width: 100%;
         min-height: 112px;
-        padding: 16px 18px;
+        padding: 12px 14px 12px 18px;
       }
 
-      .module-card::before {
-        width: 38%;
-      }
-
-      .module-card.primary-module::before {
-        background-position: 55% 54%;
-        background-size: 185%;
-        opacity: 0.38;
-      }
-
-      .module-card.judge-module::before {
-        opacity: 0.32;
-      }
-
-      .module-card.gold-module::before {
-        background-position: 43% 50%;
-        background-size: 200%;
-        opacity: 0.36;
+      .module-visual {
+        height: 104px;
       }
 
       .module-card strong {
         font-size: 18px;
       }
 
-      .module-card span {
+      .module-copy > span {
         font-size: 14px;
         line-height: 1.45;
       }
@@ -3281,22 +3254,37 @@
 
       <div class="module-grid">
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
+          <span class="module-copy">
           <small class="module-tag">KML</small>
           <strong>坐标处理工具</strong>
           <span>生成 KML</span>
           <small class="module-action">进入</small>
+          </span>
+          <span class="module-visual" aria-hidden="true">
+            <img src="assets/home-coordinate-illustration.png" alt="" loading="lazy" decoding="async" />
+          </span>
         </button>
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
+          <span class="module-copy">
           <small class="module-tag">快判</small>
           <strong>矿地快判</strong>
           <span>结构初筛</span>
           <small class="module-action">进入</small>
+          </span>
+          <span class="module-visual" aria-hidden="true">
+            <img src="assets/home-judge-illustration.png" alt="" loading="lazy" decoding="async" />
+          </span>
         </button>
         <button id="homeGoldEntry" type="button" class="module-card gold-module" onclick="showPage('gold')">
+          <span class="module-copy">
           <small class="module-tag">成色</small>
           <strong>黄金成色计算器</strong>
           <span>成色与总价</span>
           <small class="module-action">进入</small>
+          </span>
+          <span class="module-visual" aria-hidden="true">
+            <img src="assets/home-gold-illustration.png" alt="" loading="lazy" decoding="async" />
+          </span>
         </button>
       </div>
     </section>
