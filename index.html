@@ -3709,6 +3709,8 @@ Au值 = 纯度 × 10 后取整数</div>
     let selectedJudgeImageFiles = [];
     let currentJudgeImageDataUrl = "";
     let recognitionStatusHideTimer = null;
+    let internalNormalizedCoordinateGroups = null;
+    let internalKmlSourceDirty = false;
     const JUDGE_HISTORY_KEY = "judgeHistory";
     const OLD_JUDGE_HISTORY_KEYS = [
       "aiJudgeHistory",
@@ -3723,6 +3725,9 @@ Au值 = 纯度 × 10 后取整数</div>
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
     judgeImageInput.multiple = false;
+    input.addEventListener("input", () => {
+      internalKmlSourceDirty = true;
+    });
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
     loadUserQuota();
@@ -7564,8 +7569,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       });
     }
 
-    function getCoordinatePairs() {
-      const lines = input.value.split(/\r?\n/);
+    function getCoordinatePairsFromText(text) {
+      const lines = String(text || "").split(/\r?\n/);
       const pairs = [];
 
       for (const line of lines) {
@@ -7579,8 +7584,12 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return pairs;
     }
 
-    function getCoordinateGroups() {
-      const lines = input.value.split(/\r?\n/);
+    function getCoordinatePairs() {
+      return getCoordinatePairsFromText(input.value);
+    }
+
+    function getCoordinateGroupsFromText(text) {
+      const lines = String(text || "").split(/\r?\n/);
       const groups = [];
       let currentGroup = [];
 
@@ -7607,6 +7616,59 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       }
 
       return groups;
+    }
+
+    function getCoordinateGroups() {
+      return getCoordinateGroupsFromText(input.value);
+    }
+
+    function normalizeKmlPair(pair) {
+      const longitude = Number(pair.longitude);
+      const latitude = Number(pair.latitude);
+
+      if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
+        return { ...pair };
+      }
+
+      return {
+        longitude: trimNumber(longitude),
+        latitude: trimNumber(latitude)
+      };
+    }
+
+    function cloneCoordinateGroups(groups) {
+      return groups.map(group => group.map(pair => ({ ...pair })));
+    }
+
+    function setInternalKmlSourceFromText(text) {
+      const groups = getCoordinateGroupsFromText(text)
+        .map(group => group.map(normalizeKmlPair))
+        .filter(group => group.length > 0);
+
+      internalNormalizedCoordinateGroups = groups.length > 0 ? groups : null;
+      internalKmlSourceDirty = false;
+    }
+
+    function setInternalKmlSourceFromGroups(groups) {
+      const normalizedGroups = groups
+        .map(group => group.map(normalizeKmlPair))
+        .filter(group => group.length > 0);
+
+      internalNormalizedCoordinateGroups = normalizedGroups.length > 0 ? normalizedGroups : null;
+      internalKmlSourceDirty = false;
+    }
+
+    function clearInternalKmlSource() {
+      internalNormalizedCoordinateGroups = null;
+      internalKmlSourceDirty = false;
+    }
+
+    function getKmlCoordinateGroups() {
+      if (internalNormalizedCoordinateGroups && !internalKmlSourceDirty) {
+        return cloneCoordinateGroups(internalNormalizedCoordinateGroups);
+      }
+
+      return getCoordinateGroups();
     }
 
     async function swapLongitudeLatitude() {
@@ -7648,6 +7710,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       rememberState();
       input.value = swappedLines.join("\n");
       coordinateOrder.value = "lnglat";
+      setInternalKmlSourceFromText(input.value);
       trackEvent("swap_lnglat_click", {
         count: swappedCount
       });
@@ -7666,7 +7729,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return;
       }
 
-      const pairs = getCoordinatePairs();
+      const coordinateGroups = getKmlCoordinateGroups();
+      const pairs = coordinateGroups.flat();
 
       if (pairs.length === 0) {
         if (input.value.trim()) {
@@ -7679,6 +7743,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       input.value = pairs
         .map(pair => formatPairForDisplay(pair, coordinateFormat.value))
         .join("\n");
+      setInternalKmlSourceFromGroups(coordinateGroups);
       trackEvent("format_convert_click", {
         format: coordinateFormat.value,
         count: pairs.length
@@ -8008,6 +8073,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     function clearContent() {
       rememberState();
       input.value = "";
+      clearInternalKmlSource();
       trackEvent("clear_content_click");
       showMessage("内容已清空。");
       input.focus();
@@ -8020,7 +8086,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return;
       }
 
-      const pairs = getCoordinatePairs();
+      const coordinateGroups = getKmlCoordinateGroups();
+      const pairs = coordinateGroups.flat();
 
       if (pairs.length === 0) {
         if (hasProjectedCoordinateRows(input.value)) {
@@ -8034,8 +8101,9 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
       rememberState();
       input.value = pairs.map(pair => `${pair.longitude},${pair.latitude}`).join("\n");
-      coordinateFormat.value = "degree";
+      coordinateFormat.value = "standard";
       coordinateOrder.value = "lnglat";
+      setInternalKmlSourceFromGroups(coordinateGroups);
       trackEvent("normalize_click", {
         count: pairs.length,
         projection: projectionType.value
@@ -8107,7 +8175,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return;
       }
 
-      const coordinateGroups = getCoordinateGroups();
+      const coordinateGroups = getKmlCoordinateGroups();
       const pairs = coordinateGroups.flat();
       const selectedType = exportType.value;
 
@@ -8322,6 +8390,7 @@ ${placemarks}
         rememberState();
         input.value = finalCoordinates;
         coordinateOrder.value = "auto";
+        setInternalKmlSourceFromText(finalCoordinates);
         input.focus();
         coordinateUploadPanel?.classList.add("is-complete");
         trackEvent("image_recognize_success", {
