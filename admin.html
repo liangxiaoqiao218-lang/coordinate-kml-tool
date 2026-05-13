@@ -2543,10 +2543,9 @@
 
       document.getElementById("usageAiBalance")?.remove();
 
-      const successful = usageLogs.filter(log => log.success);
-      const count = feature => successful.filter(log => log.feature_type === feature).length;
       const todayLogs = usageLogs.filter(log => isToday(log.created_at));
       const todaySuccessful = todayLogs.filter(log => log.success);
+      const countTodayFeature = feature => todaySuccessful.filter(log => log.feature_type === feature).length;
       const todayCalls = todaySuccessful.length;
       const todayFailed = todayLogs.filter(log => !log.success).length;
       const aiCost = dashboardStats?.aiCost || {};
@@ -2570,16 +2569,16 @@
       }
 
       const featureCounts = [
-        ["矿地快判调用", count("judge")],
-        ["坐标处理调用", count("convert")],
-        ["黄金成色访问", count("gold")]
+        ["\u4eca\u65e5\u77ff\u5730\u5feb\u5224", countTodayFeature("judge")],
+        ["\u4eca\u65e5\u5750\u6807/KML", countTodayFeature("convert")],
+        ["\u4eca\u65e5\u9ec4\u91d1\u6210\u8272", countTodayFeature("gold")]
       ];
       const maxFeature = Math.max(...featureCounts.map(([, value]) => Number(value || 0)), 1);
       const maxCalls = Math.max(...trendItems.map(item => Number(item.calls || 0)), 1);
 
       analytics.innerHTML = `
         <div class="usage-analytics-panel">
-          <h3>功能调用趋势</h3>
+          <h3>\u4eca\u65e5\u529f\u80fd\u8c03\u7528\u5206\u5e03</h3>
           <div class="mini-trend">
             ${featureCounts.map(([label, value]) => `
               <div class="trend-line">
@@ -2589,6 +2588,7 @@
               </div>
             `).join("")}
           </div>
+          <p class="muted">\u4ec5\u7edf\u8ba1\u4eca\u65e5\u6210\u529f\u8c03\u7528\uff0c\u4e0d\u542b\u989d\u5ea6\u62e6\u622a\u548c\u5931\u8d25\u8bb0\u5f55\u3002</p>
         </div>
         <div class="usage-analytics-panel">
           <h3>每日调用趋势</h3>
