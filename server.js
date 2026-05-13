@@ -254,12 +254,17 @@ const shareMetaMap = {
   "/convert": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-tool.png"
+    image: "/share-coordinate.png"
+  },
+  "/coordinate": {
+    title: "坐标处理工具｜GeoKit Lab",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
+    image: "/share-coordinate.png"
   },
   "/ocr": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-tool.png"
+    image: "/share-coordinate.png"
   },
   "/judge": {
     title: "矿地快判｜GeoKit Lab",
@@ -456,7 +461,7 @@ function renderIndexWithMeta(req, res) {
   res.type("html").send(html);
 }
 
-app.get(["/", "/index.html", "/tool", "/convert", "/ocr", "/judge", "/gold"], renderIndexWithMeta);
+app.get(["/", "/index.html", "/tool", "/convert", "/coordinate", "/ocr", "/judge", "/gold"], renderIndexWithMeta);
 
 app.use(express.static(__dirname, {
   index: false,
