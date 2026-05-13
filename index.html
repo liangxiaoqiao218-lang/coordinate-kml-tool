@@ -467,18 +467,22 @@
     }
 
     .coordinate-workspace {
+      margin-top: 10px;
+      padding: 12px;
       border-color: #bfdbfe;
       background: #f8fbff;
       box-shadow: 0 12px 28px rgba(37, 99, 235, 0.08);
     }
 
     .coordinate-workspace .workspace-head label {
-      color: #1d4ed8;
-      font-size: 18px;
+      margin-bottom: 2px;
+      color: #0f172a;
+      font-size: 15px;
+      font-weight: 900;
     }
 
     .coordinate-workspace .textarea-wrap {
-      margin-top: 8px;
+      margin-top: 4px;
     }
 
     .icon-button {
@@ -528,7 +532,7 @@
     }
 
     #coordinateInput {
-      min-height: 280px;
+      min-height: 250px;
       border-color: #bfdbfe;
       background: #ffffff;
     }
@@ -578,13 +582,13 @@
 
     .coordinate-upload-card {
       display: grid;
-      justify-items: center;
-      gap: 10px;
+      place-items: center;
+      gap: 8px;
       border-color: #93c5fd;
       border-width: 2px;
       border-radius: 14px;
       background: #eff6ff;
-      padding: 22px 18px;
+      padding: 18px 16px;
       text-align: center;
       transition: padding 0.2s ease, background 0.2s ease, border-color 0.2s ease;
     }
@@ -595,11 +599,38 @@
       line-height: 1.2;
     }
 
-    .coordinate-upload-card label {
+    .coordinate-upload-trigger {
+      display: grid;
+      place-items: center;
+      gap: 8px;
+      width: 100%;
       margin: 0;
+      line-height: 1.2;
+      cursor: pointer;
+    }
+
+    .coordinate-upload-icon {
+      display: grid;
+      place-items: center;
+      width: 46px;
+      height: 46px;
+      border-radius: 16px;
+      background: #dbeafe;
       color: #1d4ed8;
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .coordinate-upload-title {
+      color: #0f172a;
       font-size: 18px;
       font-weight: 900;
+    }
+
+    .coordinate-upload-subtitle {
+      color: #475569;
+      font-size: 13px;
+      font-weight: 700;
     }
 
     .upload-box input {
@@ -607,8 +638,13 @@
       min-height: 34px;
     }
 
-    .coordinate-upload-card input {
-      max-width: 360px;
+    .coordinate-file-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
     }
 
     .compact-upload-box {
@@ -626,6 +662,25 @@
 
     .coordinate-upload-card.is-complete label {
       font-size: 15px;
+    }
+
+    .coordinate-upload-card.is-complete .coordinate-upload-trigger {
+      gap: 4px;
+    }
+
+    .coordinate-upload-card.is-complete .coordinate-upload-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      font-size: 17px;
+    }
+
+    .coordinate-upload-card.is-complete .coordinate-upload-title {
+      font-size: 14px;
+    }
+
+    .coordinate-upload-card.is-complete .coordinate-upload-subtitle {
+      font-size: 12px;
     }
 
     .coordinate-upload-card.is-complete .privacy-note {
@@ -2171,7 +2226,7 @@
     }
 
     .judge-detail-title {
-      margin: 12px 0 -2px;
+      margin: 6px 0 2px;
       color: #0f172a;
       font-size: 15px;
       font-weight: 900;
@@ -2864,12 +2919,17 @@
       }
 
       textarea {
-        min-height: 300px;
-        padding-bottom: 60px;
+        min-height: 270px;
+        padding-bottom: 56px;
       }
 
       #coordinateInput {
-        min-height: 245px;
+        min-height: 215px;
+      }
+
+      .coordinate-workspace {
+        margin-top: 8px;
+        padding: 10px;
       }
 
       .workspace-tools {
@@ -2891,7 +2951,18 @@
       }
 
       .coordinate-upload-card {
-        padding: 16px 12px;
+        padding: 14px 12px;
+      }
+
+      .coordinate-upload-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 14px;
+        font-size: 22px;
+      }
+
+      .coordinate-upload-title {
+        font-size: 17px;
       }
 
       .compact-upload-box .image-preview {
@@ -2991,10 +3062,23 @@
 
       .judge-panel textarea,
       .judge-detail-content {
-        min-height: 340px;
+        min-height: 230px;
         max-height: 54vh;
         font-size: 15px;
         line-height: 1.7;
+      }
+
+      .judge-panel {
+        margin-top: 10px;
+        padding: 10px;
+      }
+
+      .judge-detail-title {
+        margin: 2px 0 2px;
+      }
+
+      .judge-result-wrap {
+        margin-top: -2px;
       }
 
       .judge-decision-card {
@@ -3056,8 +3140,9 @@
       }
 
       .judge-upload-card {
-        min-height: 138px;
-        padding: 18px 14px;
+        margin-top: 10px;
+        min-height: 124px;
+        padding: 14px 12px;
       }
 
       .judge-upload-title {
@@ -3139,12 +3224,15 @@
     </div>
 
     <div id="coordinateUploadPanel" class="panel upload-box compact-upload-box coordinate-upload-card">
-      <label for="imageInput">第一步：上传坐标图片</label>
+      <label for="imageInput" class="coordinate-upload-trigger">
+        <span class="coordinate-upload-icon" aria-hidden="true">+</span>
+        <span class="coordinate-upload-title">第一步：上传坐标图片</span>
+        <span class="coordinate-upload-subtitle">只截坐标表，识别更稳定。</span>
+      </label>
       <div id="recognitionStatus" class="recognition-status"></div>
-      <input id="imageInput" type="file" accept="image/*" />
+      <input id="imageInput" class="coordinate-file-input" type="file" accept="image/*" />
       <div id="imagePreview" class="image-preview"></div>
       <div id="uploadMessage" class="upload-message"></div>
-      <p class="privacy-note">只截坐标表，识别更稳定。</p>
     </div>
 
     <button type="button" class="primary-action kml-download-action" onclick="downloadKml()">生成KML文件并下载</button>
