@@ -175,6 +175,27 @@
       overflow: hidden;
     }
 
+    .module-card::before {
+      content: "";
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      bottom: 8px;
+      width: 56%;
+      background-repeat: no-repeat;
+      background-position: right center;
+      background-size: 112px 112px;
+      opacity: 0.34;
+      pointer-events: none;
+      mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.72) 24%, #000 100%);
+      -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.72) 24%, #000 100%);
+    }
+
+    .module-card > * {
+      position: relative;
+      z-index: 1;
+    }
+
     .module-card:hover {
       border-color: #2563eb;
       transform: translateY(-1px);
@@ -350,14 +371,29 @@
       background: #ffffff;
     }
 
+    .module-card.primary-module::before {
+      background-image: url("assets/home-coordinate-illustration.png");
+      opacity: 0.40;
+    }
+
     .module-card.judge-module {
       border-color: #d6dfeb;
       background: #ffffff;
     }
 
+    .module-card.judge-module::before {
+      background-image: url("assets/home-judge-illustration.png");
+      opacity: 0.37;
+    }
+
     .module-card.gold-module {
       border-color: #d6dfeb;
       background: #ffffff;
+    }
+
+    .module-card.gold-module::before {
+      background-image: url("assets/home-gold-illustration.png");
+      opacity: 0.40;
     }
 
     .module-card.primary-module:hover {
@@ -3048,6 +3084,19 @@
         width: 100%;
         min-height: 112px;
         padding: 16px 18px;
+      }
+
+      .module-card::before {
+        top: 6px;
+        right: 8px;
+        bottom: 6px;
+        width: 48%;
+        background-size: 100px 100px;
+        opacity: 0.36;
+      }
+
+      .module-card.judge-module::before {
+        opacity: 0.38;
       }
 
       .module-card strong {
