@@ -444,6 +444,18 @@
       color: #475569;
     }
 
+    .inline-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+    }
+
+    .inline-check input {
+      width: auto;
+      margin: 0;
+    }
+
     .quota-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1590,7 +1602,7 @@
           <option value="usage_total_desc">总使用次数</option>
           <option value="vip_desc">VIP月度版状态</option>
         </select>
-        <button type="button" onclick="loadSupabaseUsers()">刷新列表</button>
+        <button type="button" onclick="refreshSupabaseUserList()">刷新用户列表</button>
       </div>
       <div class="table-scroll user-table-scroll">
         <table>
@@ -1725,7 +1737,10 @@
         </div>
         <div class="readonly-row">
           <strong>VIP月度版状态</strong>
-          <span id="quotaEditVip">-</span>
+          <label class="inline-check">
+            <input id="quotaEditVipInput" type="checkbox" />
+            <span id="quotaEditVip">否</span>
+          </label>
         </div>
 
         <div class="quota-grid">
@@ -1751,7 +1766,7 @@
 
         <div class="quick-add">
           <strong>快捷填充</strong>
-          <button id="quickMonthlyPlanButton" type="button" onclick="quickAddMonthlyPlanQuota()">填充VIP月度版</button>
+          <button id="quickMonthlyPlanButton" type="button" onclick="quickAddMonthlyPlanQuota()">填充月度50/50次数</button>
           <button id="quickAddJudgeButton" type="button" onclick="quickAddConfiguredJudgeQuota()">矿地快判加次</button>
           <button id="quickAddConvertButton" type="button" onclick="quickAddConfiguredConvertQuota()">坐标/KML加次</button>
         </div>
@@ -1759,9 +1774,6 @@
         <div class="note-editor">
           <label for="quotaAdminNote">管理员备注</label>
           <textarea id="quotaAdminNote" placeholder="填写用户来源、付款记录、沟通备注等"></textarea>
-          <div class="note-actions">
-            <button type="button" class="button-secondary" onclick="saveSupabaseNote()">保存备注</button>
-          </div>
         </div>
 
         <div class="log-panel">
@@ -1779,8 +1791,8 @@
         </div>
 
         <div class="editor-actions">
-          <button type="button" onclick="saveSupabaseQuota()">保存并关闭</button>
-          <button type="button" class="button-secondary" onclick="closeSupabaseQuotaEditor()">关闭（不保存）</button>
+          <button type="button" onclick="saveSupabaseQuota()">保存</button>
+          <button type="button" class="button-secondary" onclick="closeSupabaseQuotaEditor()">关闭</button>
         </div>
         <div id="quotaEditMessage" class="message"></div>
       </div>
@@ -1857,7 +1869,7 @@
       const monthlyButton = document.getElementById("quickMonthlyPlanButton");
       const judgeButton = document.getElementById("quickAddJudgeButton");
       const convertButton = document.getElementById("quickAddConvertButton");
-      if (monthlyButton) monthlyButton.textContent = `填充${pricingConfig.monthly.name} ${formatPricingYuan(pricingConfig.monthly.price)}`;
+      if (monthlyButton) monthlyButton.textContent = `填充月度${pricingConfig.monthly.judgeCount}/${pricingConfig.monthly.convertCount}次数`;
       if (judgeButton) judgeButton.textContent = `矿地快判加${pricingConfig.addJudge.count}次 ${formatPricingYuan(pricingConfig.addJudge.price)}`;
       if (convertButton) convertButton.textContent = `坐标/KML加${pricingConfig.addConvert.count}次 ${formatPricingYuan(pricingConfig.addConvert.price)}`;
     }
@@ -1981,8 +1993,11 @@
       });
       showAdminModule(activeAdminModule);
       renderGrowthDashboardExtras({});
-      ["quotaFreeConvert", "quotaPaidConvert", "quotaFreeJudge", "quotaPaidJudge", "quotaAdminNote"].forEach(id => {
+      ["quotaFreeConvert", "quotaPaidConvert", "quotaFreeJudge", "quotaPaidJudge", "quotaAdminNote", "quotaEditVipInput"].forEach(id => {
         document.getElementById(id)?.addEventListener("input", () => {
+          quotaEditorDirty = true;
+        });
+        document.getElementById(id)?.addEventListener("change", () => {
           quotaEditorDirty = true;
         });
       });
@@ -2451,6 +2466,17 @@
         renderOverview(supabaseUsers);
         setSupabaseUserMessage(error.message, true);
         throw error;
+      }
+    }
+
+    async function refreshSupabaseUserList() {
+      try {
+        setSupabaseUserMessage("\u6b63\u5728\u5237\u65b0\u7528\u6237\u5217\u8868...");
+        await loadUsageLogs(false);
+        await loadSupabaseUsers(false);
+        setSupabaseUserMessage(`\u5df2\u5237\u65b0 ${new Date().toLocaleTimeString()}`);
+      } catch (error) {
+        setSupabaseUserMessage(`\u5237\u65b0\u7528\u6237\u5217\u8868\u5931\u8d25\uff1a${error.message}`, true);
       }
     }
 
@@ -3455,6 +3481,7 @@
 
       document.getElementById("quotaEditUserId").textContent = selectedSupabaseUser.user_id || "-";
       document.getElementById("quotaEditVip").textContent = selectedSupabaseUser.is_vip ? "是" : "否";
+      document.getElementById("quotaEditVipInput").checked = Boolean(selectedSupabaseUser.is_vip);
       document.getElementById("quotaFreeConvert").value = toQuotaInputValue(selectedSupabaseUser.free_convert_count);
       document.getElementById("quotaPaidConvert").value = toQuotaInputValue(selectedSupabaseUser.paid_convert_count);
       document.getElementById("quotaFreeJudge").value = toQuotaInputValue(selectedSupabaseUser.free_judge_count);
@@ -3523,7 +3550,7 @@
     function quickAddMonthlyPlanQuota() {
       quickAddSupabaseQuota("judge", pricingConfig.monthly.judgeCount);
       quickAddSupabaseQuota("convert", pricingConfig.monthly.convertCount);
-      setQuotaEditMessage(`已填充${pricingConfig.monthly.name}次数：矿地快判 +${pricingConfig.monthly.judgeCount}，坐标/KML +${pricingConfig.monthly.convertCount}。保存次数后，请按需设置为${pricingConfig.monthly.name}。`);
+      setQuotaEditMessage(`\u5df2\u586b\u5145\u6708\u5ea6\u6b21\u6570\uff1a\u77ff\u5730\u5feb\u5224 +${pricingConfig.monthly.judgeCount}\uff0c\u5750\u6807/KML +${pricingConfig.monthly.convertCount}\u3002\u8be5\u6309\u94ae\u53ea\u586b\u6b21\u6570\uff0c\u4e0d\u6539\u53d8VIP\u72b6\u6001\u3002`);
     }
 
     async function toggleSelectedSupabaseVip() {
@@ -3543,6 +3570,7 @@
         });
         selectedSupabaseUser = result.user || selectedSupabaseUser;
         document.getElementById("quotaEditVip").textContent = selectedSupabaseUser.is_vip ? "是" : "否";
+        document.getElementById("quotaEditVipInput").checked = Boolean(selectedSupabaseUser.is_vip);
         renderUserDetailSummary(selectedSupabaseUser);
         setQuotaEditMessage("VIP月度版状态已更新。");
         showToast("保存成功");
@@ -3572,6 +3600,18 @@
         });
 
         selectedSupabaseUser = result.user || selectedSupabaseUser;
+        const nextVip = Boolean(document.getElementById("quotaEditVipInput").checked);
+        if (nextVip !== Boolean(selectedSupabaseUser.is_vip)) {
+          const vipResult = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/vip`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              is_vip: nextVip
+            })
+          });
+          selectedSupabaseUser = vipResult.user || selectedSupabaseUser;
+        }
+        document.getElementById("quotaEditVip").textContent = selectedSupabaseUser.is_vip ? "是" : "否";
+        document.getElementById("quotaEditVipInput").checked = Boolean(selectedSupabaseUser.is_vip);
         const nextNote = document.getElementById("quotaAdminNote").value;
         if (nextNote !== String(selectedSupabaseUser.admin_note || "")) {
           const noteResult = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/note`, {
@@ -3580,43 +3620,22 @@
           });
           selectedSupabaseUser = noteResult.user || selectedSupabaseUser;
         }
+        document.getElementById("quotaFreeConvert").value = toQuotaInputValue(selectedSupabaseUser.free_convert_count);
+        document.getElementById("quotaPaidConvert").value = toQuotaInputValue(selectedSupabaseUser.paid_convert_count);
+        document.getElementById("quotaFreeJudge").value = toQuotaInputValue(selectedSupabaseUser.free_judge_count);
+        document.getElementById("quotaPaidJudge").value = toQuotaInputValue(selectedSupabaseUser.paid_judge_count);
+        document.getElementById("quotaAdminNote").value = selectedSupabaseUser.admin_note || "";
         renderUserDetailSummary(selectedSupabaseUser);
         setQuotaEditMessage("操作成功。");
         setSupabaseUserMessage("操作成功。");
         await loadSupabaseUsers(false);
         await loadSupabaseLogs(selectedSupabaseUser.user_id);
+        await loadUserUsageLogs(selectedSupabaseUser.user_id);
         quotaEditorDirty = false;
-        showToast("保存成功");
-        closeSupabaseQuotaEditor();
+        setQuotaEditMessage("\u4fdd\u5b58\u6210\u529f\u3002");
+        showToast("\u4fdd\u5b58\u6210\u529f");
       } catch (error) {
         setQuotaEditMessage(`保存失败：${error.message}`, true);
-      }
-    }
-
-    async function saveSupabaseNote() {
-      if (!selectedSupabaseUser?.user_id) {
-        setQuotaEditMessage("没有选中的用户，请重新打开编辑。", true);
-        return;
-      }
-
-      try {
-        setQuotaEditMessage("正在保存备注...");
-        const result = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/note`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            admin_note: document.getElementById("quotaAdminNote").value
-          })
-        });
-
-        selectedSupabaseUser = result.user || selectedSupabaseUser;
-        renderUserDetailSummary(selectedSupabaseUser);
-        setQuotaEditMessage("备注已保存。");
-        quotaEditorDirty = false;
-        showToast("保存成功");
-        await loadSupabaseUsers(false);
-        await loadSupabaseLogs(selectedSupabaseUser.user_id);
-      } catch (error) {
-        setQuotaEditMessage(`保存备注失败：${error.message}`, true);
       }
     }
 
@@ -3749,7 +3768,11 @@
       }
 
       if (log.action === "set_vip" || log.action === "unset_vip") {
-        return `VIP月度版：${formatVipValue(beforeData.is_vip)} → ${formatVipValue(afterData.is_vip)}`;
+        return [
+          `VIP\u6708\u5ea6\u7248\uff1a${formatVipValue(beforeData.is_vip)} \u2192 ${formatVipValue(afterData.is_vip)}`,
+          `\u5750\u6807/KML\u4ed8\u8d39\u6b21\u6570\uff1a${formatChangeValue(beforeData.paid_convert_count)} \u2192 ${formatChangeValue(afterData.paid_convert_count)}`,
+          `\u77ff\u5730\u5feb\u5224\u4ed8\u8d39\u6b21\u6570\uff1a${formatChangeValue(beforeData.paid_judge_count)} \u2192 ${formatChangeValue(afterData.paid_judge_count)}`
+        ].join("\n");
       }
 
       if (log.action === "update_note") {
@@ -3797,14 +3820,18 @@
       const decodedUserId = decodeURIComponent(userId);
 
       try {
-        setSupabaseUserMessage("正在更新VIP月度版状态...");
+        setSupabaseUserMessage("\u6b63\u5728\u66f4\u65b0VIP\u6708\u5ea6\u7248\u72b6\u6001...");
         await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(decodedUserId)}/vip`, {
           method: "PATCH",
           body: JSON.stringify({
             is_vip: Boolean(isVip)
           })
         });
-        setSupabaseUserMessage("VIP月度版状态已更新。");
+        const monthlyJudge = Number(pricingConfig.monthly?.judgeCount || 50);
+        const monthlyConvert = Number(pricingConfig.monthly?.convertCount || 50);
+        setSupabaseUserMessage(Boolean(isVip)
+          ? `\u5df2\u5f00\u901aVIP\u6708\u5ea6\u7248\uff0c\u5e76\u8865\u9f50\u672c\u6708${monthlyJudge}/${monthlyConvert}\u6b21\u6570`
+          : "VIP\u6708\u5ea6\u7248\u72b6\u6001\u5df2\u66f4\u65b0\u3002");
         await loadSupabaseUsers(false);
       } catch (error) {
         setSupabaseUserMessage(error.message, true);

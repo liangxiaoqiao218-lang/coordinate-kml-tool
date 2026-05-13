@@ -939,7 +939,9 @@ function pickSupabaseQuotaLogFields(user) {
 
 function pickSupabaseVipLogFields(user) {
   return {
-    is_vip: Boolean(user?.is_vip)
+    is_vip: Boolean(user?.is_vip),
+    paid_convert_count: toNonNegativeInteger(user?.paid_convert_count, 0),
+    paid_judge_count: toNonNegativeInteger(user?.paid_judge_count, 0)
   };
 }
 
