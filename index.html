@@ -325,6 +325,26 @@
       background: #ffffff;
     }
 
+    .quota-entry-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      margin: -4px 0 10px;
+    }
+
+    .quota-entry-row .quota-status {
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: none;
+      box-shadow: none;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
     .module-card.primary-module {
       border-color: #d6dfeb;
       background: #ffffff;
@@ -3225,10 +3245,12 @@
       </div>
       <div class="page-title-row coordinate-title-row">
         <h1>坐标处理工具</h1>
+      </div>
+      <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
+      <div class="quota-entry-row">
         <div id="convertQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
         <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
       </div>
-      <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
 
       <div class="panel coordinate-workspace">
         <div class="workspace-head">
@@ -3359,10 +3381,12 @@
       </div>
       <div class="page-title-row judge-title-row">
         <h1>矿地快判</h1>
+      </div>
+      <p class="intro">用于矿石、河道、卫星图的现场初筛，先判断是否值得继续看。</p>
+      <div class="quota-entry-row">
         <div id="judgeQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
         <button id="judgeQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
       </div>
-      <p class="intro">用于矿石、河道、卫星图的现场初筛，先判断是否值得继续看。</p>
 
       <div class="panel judge-panel">
         <div id="judgeMessage" class="message"></div>
@@ -3716,6 +3740,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
     const firstSourceInfo = captureFirstSourceInfo();
     let currentQuota = null;
+    let lastQuotaPromptKey = "";
     let appConfig = {
       permissions: {
         aiOcrEnabled: true,
@@ -4082,6 +4107,7 @@ Au值 = 纯度 × 10 后取整数</div>
       setQuotaAction(convertQuotaAction, convertRemaining, false);
       setQuotaAction(judgeQuotaAction, judgeRemaining, false);
       updateAccountQuotaUI();
+      maybePromptActiveQuota(convertRemaining, judgeRemaining);
     }
 
     function getQuotaNumber(quota, snakeKey, camelKey) {
@@ -4110,7 +4136,8 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       element.hidden = false;
-      element.textContent = text;
+      element.textContent = "\u6211\u7684\u6b21\u6570";
+      element.title = total <= 0 ? "\u6b21\u6570\u5df2\u7528\u5b8c" : "\u67e5\u770b\u6211\u7684\u6b21\u6570";
       element.classList.remove("quota-ok", "quota-low", "quota-empty", "quota-vip");
       element.classList.add(getQuotaClass(total, isVip));
     }
@@ -4122,6 +4149,43 @@ Au值 = 纯度 × 10 后取整数</div>
 
       const remaining = Number(total);
       actionElement.hidden = !Number.isFinite(remaining) || remaining !== 0;
+    }
+
+    function getActiveQuotaType() {
+      if (pages.coordinate?.classList.contains("active")) {
+        return "convert";
+      }
+
+      if (pages.judge?.classList.contains("active")) {
+        return "judge";
+      }
+
+      return "";
+    }
+
+    function maybePromptActiveQuota(convertTotal, judgeTotal) {
+      const activeType = getActiveQuotaType();
+      if (!activeType) {
+        return;
+      }
+
+      const total = activeType === "judge" ? judgeTotal : convertTotal;
+      if (!Number.isFinite(Number(total))) {
+        return;
+      }
+
+      const key = `${activeType}:${total}`;
+      if (lastQuotaPromptKey === key) {
+        return;
+      }
+
+      if (total <= 0) {
+        lastQuotaPromptKey = key;
+        showQuotaModal(activeType);
+      } else if (total === 1) {
+        lastQuotaPromptKey = key;
+        showMessage(activeType === "judge" ? "\u77ff\u5730\u5feb\u5224\u5269\u4f59 1 \u6b21" : "\u5750\u6807/KML\u5269\u4f59 1 \u6b21", false, 3000);
+      }
     }
 
     function handleQuotaStatusKey(event) {
@@ -4225,6 +4289,7 @@ Au值 = 纯度 × 10 后取整数</div>
       setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeTotal, false);
       setQuotaAction(judgeQuotaAction, judgeTotal, false);
       updateAccountQuotaUI();
+      maybePromptActiveQuota(convertTotal, judgeTotal);
     }
 
     function canUse(featureName, errorMessage) {
