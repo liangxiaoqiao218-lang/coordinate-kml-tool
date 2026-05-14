@@ -254,17 +254,12 @@ const shareMetaMap = {
   "/convert": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-coordinate.png"
-  },
-  "/coordinate": {
-    title: "坐标处理工具｜GeoKit Lab",
-    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-coordinate.png"
+    image: "/share-tool.png"
   },
   "/ocr": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-coordinate.png"
+    image: "/share-tool.png"
   },
   "/judge": {
     title: "矿地快判｜GeoKit Lab",
@@ -277,8 +272,7 @@ const shareMetaMap = {
     image: "/share-gold.png"
   }
 };
-const shareImageVersion = "20260513share3";
-const shareCanonicalOrigin = "https://geokitlab.com";
+const shareImageVersion = "20260513share1";
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -443,7 +437,7 @@ function getRequestOrigin(req) {
 function getShareMeta(req) {
   const normalizedPath = req.path === "/index.html" ? "/" : req.path;
   const meta = shareMetaMap[normalizedPath] || shareMetaMap["/"];
-  const origin = shareCanonicalOrigin || getRequestOrigin(req);
+  const origin = getRequestOrigin(req);
   return {
     ...meta,
     url: `${origin}${normalizedPath === "/index.html" ? "/" : normalizedPath}`,
@@ -462,7 +456,7 @@ function renderIndexWithMeta(req, res) {
   res.type("html").send(html);
 }
 
-app.get(["/", "/index.html", "/tool", "/convert", "/coordinate", "/ocr", "/judge", "/gold"], renderIndexWithMeta);
+app.get(["/", "/index.html", "/tool", "/convert", "/ocr", "/judge", "/gold"], renderIndexWithMeta);
 
 app.use(express.static(__dirname, {
   index: false,
