@@ -14,6 +14,7 @@
       font-family: Arial, "Microsoft YaHei", sans-serif;
       background: #f4f7fb;
       color: #172033;
+      overflow-x: hidden;
     }
 
     .page {
@@ -530,6 +531,67 @@
       max-width: 420px;
       white-space: normal;
       line-height: 1.5;
+    }
+
+    #judgeCasesPanel {
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .judge-cases-table-scroll {
+      max-width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .judge-cases-table-scroll table {
+      width: max-content;
+      min-width: 1560px;
+    }
+
+    .judge-cases-table-scroll th:last-child,
+    .judge-cases-table-scroll td:last-child {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      min-width: 260px;
+      background: #ffffff;
+      box-shadow: -1px 0 0 #e2e8f0;
+    }
+
+    .judge-cases-table-scroll th:last-child {
+      z-index: 3;
+      background: #f8fafc;
+    }
+
+    .case-summary-toggle {
+      margin-top: 6px;
+      min-height: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #2563eb;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .case-summary-toggle:hover {
+      background: transparent;
+      color: #1d4ed8;
+    }
+
+    .case-summary-text {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 4;
+    }
+
+    .case-summary-text.expanded {
+      display: block;
+      overflow: visible;
+      -webkit-line-clamp: unset;
     }
 
     .case-keywords {
@@ -1703,7 +1765,7 @@
         <input id="caseUserCodeFilter" placeholder="用户识别码" onkeydown="handleJudgeCaseSearchKey(event)" />
         <button type="button" onclick="loadJudgeCases()">刷新案例</button>
       </div>
-      <div class="table-scroll">
+      <div class="table-scroll judge-cases-table-scroll">
         <table>
           <thead>
             <tr>
@@ -2990,7 +3052,23 @@
     function summarizeCaseResult(text = "") {
       const clean = String(text || "").replace(/\s+/g, " ").trim();
       if (!clean) return "-";
-      return clean.length > 140 ? `${clean.slice(0, 140)}...` : clean;
+      return clean;
+    }
+
+    function formatCaseSummary(text = "") {
+      const summary = summarizeCaseResult(text);
+      const canToggle = summary !== "-" && summary.length > 120;
+      return `
+        <div class="case-summary-text">${escapeHtml(summary)}</div>
+        ${canToggle ? `<button type="button" class="case-summary-toggle" onclick="toggleCaseSummary(this)">展开</button>` : ""}
+      `;
+    }
+
+    function toggleCaseSummary(button) {
+      const text = button?.previousElementSibling;
+      if (!text) return;
+      const expanded = text.classList.toggle("expanded");
+      button.textContent = expanded ? "收起" : "展开";
     }
 
     function normalizeCaseKeywords(keywords) {
@@ -3093,7 +3171,7 @@
             <td>${escapeHtml(item.region || "-")}</td>
             <td class="case-summary" title="${escapeHtml(item.source_page || "-")}">${escapeHtml(item.source_page || "-")}</td>
             <td>${formatJudgeFeedback(item.feedback)}</td>
-            <td class="case-summary" title="${escapeHtml(item.ai_result || "")}">${escapeHtml(summarizeCaseResult(item.ai_result))}</td>
+            <td class="case-summary" title="${escapeHtml(item.ai_result || "")}">${formatCaseSummary(item.ai_result)}</td>
             <td><span class="case-status ${judgeCaseStatusClass(item.review_status)}">${escapeHtml(judgeCaseStatusLabel(item.review_status))}</span></td>
             <td>
               <div class="case-actions">
