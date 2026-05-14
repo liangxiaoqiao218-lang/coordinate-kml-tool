@@ -277,7 +277,8 @@ const shareMetaMap = {
     image: "/share-gold.png"
   }
 };
-const shareImageVersion = "20260513share2";
+const shareImageVersion = "20260513share3";
+const shareCanonicalOrigin = "https://geokitlab.com";
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -442,7 +443,7 @@ function getRequestOrigin(req) {
 function getShareMeta(req) {
   const normalizedPath = req.path === "/index.html" ? "/" : req.path;
   const meta = shareMetaMap[normalizedPath] || shareMetaMap["/"];
-  const origin = getRequestOrigin(req);
+  const origin = shareCanonicalOrigin || getRequestOrigin(req);
   return {
     ...meta,
     url: `${origin}${normalizedPath === "/index.html" ? "/" : normalizedPath}`,
