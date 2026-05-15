@@ -527,8 +527,9 @@
     }
 
     .case-summary {
-      min-width: 260px;
-      max-width: 420px;
+      width: 320px;
+      min-width: 320px;
+      max-width: 320px;
       white-space: normal;
       line-height: 1.5;
     }
@@ -540,14 +541,50 @@
 
     .judge-cases-table-scroll {
       max-width: 100%;
-      overflow-x: auto;
-      overflow-y: hidden;
+      max-height: min(68vh, 720px);
+      overflow: auto;
       -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
     }
 
     .judge-cases-table-scroll table {
       width: max-content;
-      min-width: 1320px;
+      min-width: 1280px;
+    }
+
+    .judge-cases-table-scroll thead th {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      background: #f8fafc;
+    }
+
+    .judge-cases-table-scroll .case-col-time {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      min-width: 118px;
+      background: #ffffff;
+      box-shadow: 1px 0 0 #e2e8f0;
+    }
+
+    .judge-cases-table-scroll thead .case-col-time {
+      z-index: 6;
+      background: #f8fafc;
+    }
+
+    .judge-cases-table-scroll .case-col-user {
+      position: sticky;
+      left: 118px;
+      z-index: 3;
+      min-width: 132px;
+      background: #ffffff;
+      box-shadow: 1px 0 0 #e2e8f0;
+    }
+
+    .judge-cases-table-scroll thead .case-col-user {
+      z-index: 6;
+      background: #f8fafc;
     }
 
     .case-summary-toggle {
@@ -1703,11 +1740,11 @@
         <table>
           <thead>
             <tr>
-              <th>时间</th>
+              <th class="case-col-time">时间</th>
               <th>图片类型</th>
               <th>等级</th>
               <th>关键词</th>
-              <th>用户识别码</th>
+              <th class="case-col-user">用户识别码</th>
               <th>来源</th>
               <th>地域</th>
               <th>进入页面</th>
@@ -3076,11 +3113,11 @@
       body.innerHTML = cases.map(item => {
         return `
           <tr>
-            <td>${escapeHtml(formatTime(item.created_at) || "-")}</td>
+            <td class="case-col-time">${escapeHtml(formatTime(item.created_at) || "-")}</td>
             <td>${escapeHtml(item.image_type || "-")}</td>
             <td>${escapeHtml(item.grade || "-")}</td>
             <td><div class="case-keywords">${formatCaseKeywords(item.keywords)}</div></td>
-            <td>${escapeHtml(item.user_code || "-")}</td>
+            <td class="case-col-user">${escapeHtml(item.user_code || "-")}</td>
             <td>${escapeHtml(item.source_from || "-")}</td>
             <td>${escapeHtml(item.region || "-")}</td>
             <td class="case-summary" title="${escapeHtml(item.source_page || "-")}">${escapeHtml(item.source_page || "-")}</td>
