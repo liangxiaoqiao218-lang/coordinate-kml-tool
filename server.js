@@ -254,12 +254,17 @@ const shareMetaMap = {
   "/convert": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-tool.png"
+    image: "/share-coordinate.png"
+  },
+  "/coordinate": {
+    title: "坐标处理工具｜GeoKit Lab",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
+    image: "/share-coordinate.png"
   },
   "/ocr": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-tool.png"
+    image: "/share-coordinate.png"
   },
   "/judge": {
     title: "矿地快判｜GeoKit Lab",
@@ -273,6 +278,7 @@ const shareMetaMap = {
   }
 };
 const shareImageVersion = "20260513share4";
+const shareImageBaseUrl = "https://cdn.jsdelivr.net/gh/liangxiaoqiao218-lang/coordinate-kml-tool@main";
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -441,7 +447,7 @@ function getShareMeta(req) {
   return {
     ...meta,
     url: `${origin}${normalizedPath === "/index.html" ? "/" : normalizedPath}`,
-    imageUrl: `${origin}${meta.image}?v=${shareImageVersion}`
+    imageUrl: `${shareImageBaseUrl}${meta.image}?v=${shareImageVersion}`
   };
 }
 
@@ -456,7 +462,7 @@ function renderIndexWithMeta(req, res) {
   res.type("html").send(html);
 }
 
-app.get(["/", "/index.html", "/tool", "/convert", "/ocr", "/judge", "/gold"], renderIndexWithMeta);
+app.get(["/", "/index.html", "/tool", "/convert", "/coordinate", "/ocr", "/judge", "/gold"], renderIndexWithMeta);
 
 app.use(express.static(__dirname, {
   index: false,

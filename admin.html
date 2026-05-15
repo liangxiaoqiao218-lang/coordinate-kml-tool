@@ -547,22 +547,7 @@
 
     .judge-cases-table-scroll table {
       width: max-content;
-      min-width: 1560px;
-    }
-
-    .judge-cases-table-scroll th:last-child,
-    .judge-cases-table-scroll td:last-child {
-      position: sticky;
-      right: 0;
-      z-index: 2;
-      min-width: 260px;
-      background: #ffffff;
-      box-shadow: -1px 0 0 #e2e8f0;
-    }
-
-    .judge-cases-table-scroll th:last-child {
-      z-index: 3;
-      background: #f8fafc;
+      min-width: 1320px;
     }
 
     .case-summary-toggle {
@@ -608,49 +593,6 @@
       color: #1e3a8a;
       font-size: 12px;
       font-weight: 700;
-    }
-
-    .case-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      min-width: 240px;
-    }
-
-    .case-actions button {
-      padding: 6px 8px;
-      font-size: 12px;
-    }
-
-    .case-status {
-      display: inline-flex;
-      padding: 3px 7px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      background: #e5e7eb;
-      color: #334155;
-      white-space: nowrap;
-    }
-
-    .case-status.useful {
-      background: #dcfce7;
-      color: #166534;
-    }
-
-    .case-status.invalid {
-      background: #f1f5f9;
-      color: #475569;
-    }
-
-    .case-status.wrong {
-      background: #fee2e2;
-      color: #991b1b;
-    }
-
-    .case-status.knowledge_ready {
-      background: #dbeafe;
-      color: #1d4ed8;
     }
 
     .admin-tabs {
@@ -1737,7 +1679,7 @@
 
     <section class="panel" id="judgeCasesPanel">
       <h2>快判案例库</h2>
-      <p class="muted">矿地快判成功后自动沉淀到这里，先人工复核，再决定是否进入知识树候选。</p>
+      <p class="muted">矿地快判成功后自动沉淀到这里，用于观察地域、来源、用户反馈和 AI 判断摘要。</p>
       <div class="table-tools">
         <select id="caseImageTypeFilter" onchange="loadJudgeCases()">
           <option value="">全部类型</option>
@@ -1752,14 +1694,6 @@
           <option value="B">B</option>
           <option value="C">C</option>
           <option value="D">D</option>
-        </select>
-        <select id="caseStatusFilter" onchange="loadJudgeCases()">
-          <option value="">全部状态</option>
-          <option value="pending">待复核</option>
-          <option value="useful">有价值</option>
-          <option value="invalid">无效</option>
-          <option value="wrong">误判</option>
-          <option value="knowledge_ready">知识树候选</option>
         </select>
         <input id="caseSourceFilter" placeholder="来源渠道" onkeydown="handleJudgeCaseSearchKey(event)" />
         <input id="caseUserCodeFilter" placeholder="用户识别码" onkeydown="handleJudgeCaseSearchKey(event)" />
@@ -1779,8 +1713,6 @@
               <th>进入页面</th>
               <th>用户反馈</th>
               <th>AI结论摘要</th>
-              <th>复核状态</th>
-              <th>操作</th>
             </tr>
           </thead>
           <tbody id="judgeCasesBody"></tbody>
@@ -3009,7 +2941,6 @@
       const filters = [
         ["caseImageTypeFilter", "image_type"],
         ["caseGradeFilter", "grade"],
-        ["caseStatusFilter", "review_status"],
         ["caseSourceFilter", "source_from"],
         ["caseUserCodeFilter", "user_code"]
       ];
@@ -3128,38 +3059,21 @@
       }).join("");
     }
 
-    function judgeCaseStatusLabel(status = "pending") {
-      const labels = {
-        pending: "待复核",
-        useful: "有价值",
-        invalid: "无效",
-        wrong: "误判",
-        knowledge_ready: "知识树候选"
-      };
-      return labels[status] || status || "待复核";
-    }
-
-    function judgeCaseStatusClass(status = "pending") {
-      return ["useful", "invalid", "wrong", "knowledge_ready"].includes(status) ? status : "pending";
-    }
-
     function renderJudgeCases(cases = [], setupRequired = false) {
       const body = document.getElementById("judgeCasesBody");
       if (!body) return;
 
       if (setupRequired) {
-        body.innerHTML = `<tr><td colspan="12" class="muted">judge_cases 表还未创建，请先执行建表 SQL。</td></tr>`;
+        body.innerHTML = `<tr><td colspan="10" class="muted">judge_cases 表还未创建，请先执行建表 SQL。</td></tr>`;
         return;
       }
 
       if (!cases.length) {
-        body.innerHTML = `<tr><td colspan="12" class="muted">暂无快判案例。</td></tr>`;
+        body.innerHTML = `<tr><td colspan="10" class="muted">暂无快判案例。</td></tr>`;
         return;
       }
 
       body.innerHTML = cases.map(item => {
-        const caseIdJson = JSON.stringify(item.case_id || "");
-        const statusJson = JSON.stringify(item.review_status || "pending");
         return `
           <tr>
             <td>${escapeHtml(formatTime(item.created_at) || "-")}</td>
@@ -3172,55 +3086,9 @@
             <td class="case-summary" title="${escapeHtml(item.source_page || "-")}">${escapeHtml(item.source_page || "-")}</td>
             <td>${formatJudgeFeedback(item.feedback)}</td>
             <td class="case-summary" title="${escapeHtml(item.ai_result || "")}">${formatCaseSummary(item.ai_result)}</td>
-            <td><span class="case-status ${judgeCaseStatusClass(item.review_status)}">${escapeHtml(judgeCaseStatusLabel(item.review_status))}</span></td>
-            <td>
-              <div class="case-actions">
-                <button type="button" onclick='updateJudgeCaseReview(${caseIdJson}, "useful")'>标记有价值</button>
-                <button type="button" class="secondary" onclick='updateJudgeCaseReview(${caseIdJson}, "invalid")'>标记无效</button>
-                <button type="button" class="secondary" onclick='updateJudgeCaseReview(${caseIdJson}, "wrong")'>标记误判</button>
-                <button type="button" onclick='updateJudgeCaseReview(${caseIdJson}, "knowledge_ready")'>加入知识树候选</button>
-                <button type="button" class="secondary" onclick='updateJudgeCaseReview(${caseIdJson}, ${statusJson}, true)'>备注</button>
-              </div>
-            </td>
           </tr>
         `;
       }).join("");
-    }
-
-    async function updateJudgeCaseReview(caseId, reviewStatus, askNote = false) {
-      if (!caseId) return;
-      const current = judgeCases.find(item => item.case_id === caseId);
-      let reviewerNote = current?.reviewer_note || "";
-      if (askNote) {
-        const nextNote = prompt("填写复核备注（可留空）", reviewerNote);
-        if (nextNote === null) {
-          return;
-        }
-        reviewerNote = nextNote;
-      }
-
-      try {
-        const result = await adminFetch(`/api/admin/judge-cases/${encodeURIComponent(caseId)}/review`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            review_status: reviewStatus,
-            reviewer_note: reviewerNote
-          })
-        });
-
-        if (result.case) {
-          judgeCases = judgeCases.map(item => item.case_id === result.case.case_id ? result.case : item);
-          renderJudgeCases(judgeCases);
-        } else {
-          await loadJudgeCases(false);
-        }
-
-        setJudgeCaseMessage("复核状态已更新。");
-        showToast("复核状态已更新");
-      } catch (error) {
-        setJudgeCaseMessage(`更新失败：${error.message}`, true);
-        showToast("更新失败", true);
-      }
     }
 
     function renderUsageLogs(logs, setupRequired = false) {
