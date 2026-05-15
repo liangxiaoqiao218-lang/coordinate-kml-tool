@@ -244,41 +244,40 @@ const shareMetaMap = {
   "/": {
     title: "GeoKit Lab｜矿业空间实验室",
     desc: "坐标处理、矿地快判、黄金成色计算。",
-    image: "/share-home.png"
+    image: "/share-home-og.jpg"
   },
   "/tool": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-tool.png"
+    image: "/share-tool-og.jpg"
   },
   "/convert": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-coordinate.png"
+    image: "/share-coordinate-og.jpg"
   },
   "/coordinate": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-coordinate.png"
+    image: "/share-coordinate-og.jpg"
   },
   "/ocr": {
     title: "坐标处理工具｜GeoKit Lab",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-    image: "/share-coordinate.png"
+    image: "/share-coordinate-og.jpg"
   },
   "/judge": {
     title: "矿地快判｜GeoKit Lab",
     desc: "上传矿石、河道或卫星图，快速进行结构初筛。",
-    image: "/share-judge.png"
+    image: "/share-judge-og.jpg"
   },
   "/gold": {
     title: "黄金成色计算器｜GeoKit Lab",
     desc: "输入黄金重量和排水差重，快速估算成色、K值和参考总价。",
-    image: "/share-gold.png"
+    image: "/share-gold-og.jpg"
   }
 };
-const shareImageVersion = "20260513share4";
-const shareImageBaseUrl = "https://cdn.jsdelivr.net/gh/liangxiaoqiao218-lang/coordinate-kml-tool@main";
+const shareMetaOrigin = "https://geokitlab.com";
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -443,11 +442,10 @@ function getRequestOrigin(req) {
 function getShareMeta(req) {
   const normalizedPath = req.path === "/index.html" ? "/" : req.path;
   const meta = shareMetaMap[normalizedPath] || shareMetaMap["/"];
-  const origin = getRequestOrigin(req);
   return {
     ...meta,
-    url: `${origin}${normalizedPath === "/index.html" ? "/" : normalizedPath}`,
-    imageUrl: `${shareImageBaseUrl}${meta.image}?v=${shareImageVersion}`
+    url: `${shareMetaOrigin}${normalizedPath === "/index.html" ? "/" : normalizedPath}`,
+    imageUrl: `${shareMetaOrigin}${meta.image}`
   };
 }
 
