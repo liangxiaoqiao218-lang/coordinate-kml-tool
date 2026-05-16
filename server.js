@@ -805,29 +805,85 @@ function getSupabaseFreeResetField(user) {
   return "";
 }
 
+function getNextDateKey(dateKey) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+async function getTodayFreeUsageCounts(userId, todayKey = getTodayKey()) {
+  const counts = {
+    convert: 0,
+    judge: 0
+  };
+
+  if (!supabase || !userId) {
+    return counts;
+  }
+
+  const { data, error } = await supabase
+    .from("usage_logs")
+    .select("feature_type,consume_type,success")
+    .eq("user_id", userId)
+    .eq("success", true)
+    .eq("consume_type", "free")
+    .gte("created_at", `${todayKey}T00:00:00.000Z`)
+    .lt("created_at", `${getNextDateKey(todayKey)}T00:00:00.000Z`);
+
+  if (error) {
+    if (error.code === "42P01") {
+      return counts;
+    }
+    throw error;
+  }
+
+  for (const log of data || []) {
+    const featureType = normalizeUsageFeatureType(log.feature_type);
+    if (featureType === "judge") {
+      counts.judge += 1;
+    } else if (featureType === "convert") {
+      counts.convert += 1;
+    }
+  }
+
+  return counts;
+}
+
 async function normalizeSupabaseDailyFreeQuota(userId, user) {
   const resetField = getSupabaseFreeResetField(user);
 
-  if (!supabase || !user || !resetField) {
+  if (!supabase || !user) {
     return user;
   }
 
   const usageLimits = getPricingUsageLimits();
   const todayKey = getTodayKey();
-  const quotaDate = String(user[resetField] || "").slice(0, 10);
+  const quotaDate = resetField ? String(user[resetField] || "").slice(0, 10) : "";
 
   if (quotaDate === todayKey) {
     return user;
   }
 
+  const todayFreeUsage = await getTodayFreeUsageCounts(userId, todayKey);
+  const updates = {
+    free_convert_count: Math.max(0, usageLimits.freeConvertLimit - todayFreeUsage.convert),
+    free_judge_count: Math.max(0, usageLimits.freeJudgeLimit - todayFreeUsage.judge),
+    updated_at: new Date().toISOString()
+  };
+
+  if (!resetField
+    && Number(user.free_convert_count || 0) === updates.free_convert_count
+    && Number(user.free_judge_count || 0) === updates.free_judge_count) {
+    return user;
+  }
+
+  if (resetField) {
+    updates[resetField] = todayKey;
+  }
+
   const { data, error } = await supabase
     .from("users")
-    .update({
-      free_convert_count: usageLimits.freeConvertLimit,
-      free_judge_count: usageLimits.freeJudgeLimit,
-      [resetField]: todayKey,
-      updated_at: new Date().toISOString()
-    })
+    .update(updates)
     .eq("user_id", userId)
     .select("*")
     .single();

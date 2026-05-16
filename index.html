@@ -4355,8 +4355,10 @@ Au值 = 纯度 × 10 后取整数</div>
       return "";
     }
 
-    function openAccountModal() {
+    async function openAccountModal() {
       showQuotaModal("account", { alertMessage: "" });
+      await loadUserQuota();
+      updateAccountQuotaUI();
     }
 
     function showQuotaModal(type = "account", options = {}) {
