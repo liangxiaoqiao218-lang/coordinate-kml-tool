@@ -849,6 +849,88 @@ async function getTodayFreeUsageCounts(userId, todayKey = getTodayKey()) {
   return counts;
 }
 
+function buildDailyFreeQuotaUpdate(user, todayFreeUsage = {}, todayKey = getTodayKey()) {
+  const usageLimits = getPricingUsageLimits();
+  const updates = {
+    free_convert_count: Math.max(0, usageLimits.freeConvertLimit - Number(todayFreeUsage.convert || 0)),
+    free_judge_count: Math.max(0, usageLimits.freeJudgeLimit - Number(todayFreeUsage.judge || 0)),
+    updated_at: new Date().toISOString()
+  };
+  const unsafePaidFields = ["paid_convert_count", "paid_judge_count"].filter(field => (
+    Object.prototype.hasOwnProperty.call(updates, field)
+    && Number(updates[field] || 0) === 0
+    && Number(user?.[field] || 0) > 0
+  ));
+
+  if (unsafePaidFields.length) {
+    throw new Error(`Blocked daily free quota reset from overwriting paid counts: ${unsafePaidFields.join(",")}`);
+  }
+
+  return updates;
+}
+
+async function restoreDailyPaidBalanceIfChanged(userId, beforeUser, afterUser) {
+  if (!supabase || !beforeUser || !afterUser) {
+    return afterUser || beforeUser;
+  }
+
+  const beforePaidConvert = toNonNegativeInteger(beforeUser.paid_convert_count, 0);
+  const beforePaidJudge = toNonNegativeInteger(beforeUser.paid_judge_count, 0);
+  const afterPaidConvert = toNonNegativeInteger(afterUser.paid_convert_count, 0);
+  const afterPaidJudge = toNonNegativeInteger(afterUser.paid_judge_count, 0);
+
+  if (beforePaidConvert === afterPaidConvert && beforePaidJudge === afterPaidJudge) {
+    return afterUser;
+  }
+
+  console.error("Daily free quota reset unexpectedly changed paid counts; restoring paid balance.", {
+    userId,
+    before: {
+      paid_convert_count: beforePaidConvert,
+      paid_judge_count: beforePaidJudge
+    },
+    after: {
+      paid_convert_count: afterPaidConvert,
+      paid_judge_count: afterPaidJudge
+    }
+  });
+
+  const { data, error } = await supabase
+    .from("users")
+    .update({
+      paid_convert_count: beforePaidConvert,
+      paid_judge_count: beforePaidJudge,
+      updated_at: new Date().toISOString()
+    })
+    .eq("user_id", userId)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Failed to restore paid counts after daily free quota reset:", {
+      userId,
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint
+    });
+    throw error;
+  }
+
+  if (
+    toNonNegativeInteger(data?.paid_convert_count, 0) !== beforePaidConvert
+    || toNonNegativeInteger(data?.paid_judge_count, 0) !== beforePaidJudge
+  ) {
+    throw new Error("Paid counts changed during daily free quota reset and could not be restored. Check database triggers/policies.");
+  }
+
+  return data || {
+    ...afterUser,
+    paid_convert_count: beforePaidConvert,
+    paid_judge_count: beforePaidJudge
+  };
+}
+
 async function normalizeSupabaseDailyFreeQuota(userId, user) {
   const resetField = getSupabaseFreeResetField(user);
 
@@ -856,7 +938,6 @@ async function normalizeSupabaseDailyFreeQuota(userId, user) {
     return user;
   }
 
-  const usageLimits = getPricingUsageLimits();
   const todayKey = getTodayKey();
   const quotaDate = resetField ? String(user[resetField] || "").slice(0, 10) : "";
 
@@ -865,11 +946,7 @@ async function normalizeSupabaseDailyFreeQuota(userId, user) {
   }
 
   const todayFreeUsage = await getTodayFreeUsageCounts(userId, todayKey);
-  const updates = {
-    free_convert_count: Math.max(0, usageLimits.freeConvertLimit - todayFreeUsage.convert),
-    free_judge_count: Math.max(0, usageLimits.freeJudgeLimit - todayFreeUsage.judge),
-    updated_at: new Date().toISOString()
-  };
+  const updates = buildDailyFreeQuotaUpdate(user, todayFreeUsage, todayKey);
 
   if (!resetField
     && Number(user.free_convert_count || 0) === updates.free_convert_count
@@ -880,6 +957,25 @@ async function normalizeSupabaseDailyFreeQuota(userId, user) {
   if (resetField) {
     updates[resetField] = todayKey;
   }
+
+  console.log("Daily free quota reset:", {
+    userId,
+    resetField: resetField || "-",
+    fromDate: quotaDate || "-",
+    toDate: todayKey,
+    before: {
+      free_convert_count: toNonNegativeInteger(user.free_convert_count, 0),
+      free_judge_count: toNonNegativeInteger(user.free_judge_count, 0),
+      paid_convert_count: toNonNegativeInteger(user.paid_convert_count, 0),
+      paid_judge_count: toNonNegativeInteger(user.paid_judge_count, 0)
+    },
+    after: {
+      free_convert_count: updates.free_convert_count,
+      free_judge_count: updates.free_judge_count,
+      paid_convert_count: toNonNegativeInteger(user.paid_convert_count, 0),
+      paid_judge_count: toNonNegativeInteger(user.paid_judge_count, 0)
+    }
+  });
 
   const { data, error } = await supabase
     .from("users")
@@ -892,7 +988,7 @@ async function normalizeSupabaseDailyFreeQuota(userId, user) {
     throw error;
   }
 
-  return data || user;
+  return restoreDailyPaidBalanceIfChanged(userId, user, data || user);
 }
 
 function buildSupabaseQuotaPayload(user) {
@@ -4394,6 +4490,40 @@ const supabaseUserFields = [
   "updated_at"
 ].join(",");
 
+function parseQuotaUpdateValue(body, field, fallback) {
+  if (!Object.prototype.hasOwnProperty.call(body || {}, field)) {
+    return toNonNegativeInteger(fallback, 0);
+  }
+
+  const value = body?.[field];
+  if (value === "" || value === null || value === undefined) {
+    return toNonNegativeInteger(fallback, 0);
+  }
+
+  return toNonNegativeInteger(value, toNonNegativeInteger(fallback, 0));
+}
+
+function getQuotaRequestChangedFields(body = {}, beforeUser = {}, updates = {}) {
+  const fields = ["free_convert_count", "paid_convert_count", "free_judge_count", "paid_judge_count"];
+  return fields.filter(field => (
+    Object.prototype.hasOwnProperty.call(body || {}, field)
+    && parseQuotaUpdateValue(body, field, beforeUser?.[field]) !== toNonNegativeInteger(beforeUser?.[field], 0)
+    && parseQuotaUpdateValue(body, field, beforeUser?.[field]) === toNonNegativeInteger(updates?.[field], 0)
+  ));
+}
+
+function buildQuotaUpdateAdminLog(beforeUser = {}, afterUser = {}, changedFields = [], paidPreserveFields = []) {
+  return {
+    ...pickSupabaseQuotaLogFields(afterUser),
+    before_paid_convert_count: toNonNegativeInteger(beforeUser?.paid_convert_count, 0),
+    after_paid_convert_count: toNonNegativeInteger(afterUser?.paid_convert_count, 0),
+    before_paid_judge_count: toNonNegativeInteger(beforeUser?.paid_judge_count, 0),
+    after_paid_judge_count: toNonNegativeInteger(afterUser?.paid_judge_count, 0),
+    changed_fields: changedFields,
+    paid_preserve_fields: paidPreserveFields
+  };
+}
+
 app.get("/api/admin/supabase-users", requireAdmin, async (req, res) => {
   try {
     if (!requireSupabase(res)) {
@@ -4591,12 +4721,28 @@ app.patch("/api/admin/supabase-users/:userId/quota", requireAdmin, async (req, r
     const beforeUser = await getOrCreateSupabaseUser(userId);
 
     const updates = {
-      free_convert_count: toNonNegativeInteger(req.body?.free_convert_count, 0),
-      paid_convert_count: toNonNegativeInteger(req.body?.paid_convert_count, 0),
-      free_judge_count: toNonNegativeInteger(req.body?.free_judge_count, 0),
-      paid_judge_count: toNonNegativeInteger(req.body?.paid_judge_count, 0),
+      free_convert_count: parseQuotaUpdateValue(req.body, "free_convert_count", beforeUser?.free_convert_count),
+      paid_convert_count: parseQuotaUpdateValue(req.body, "paid_convert_count", beforeUser?.paid_convert_count),
+      free_judge_count: parseQuotaUpdateValue(req.body, "free_judge_count", beforeUser?.free_judge_count),
+      paid_judge_count: parseQuotaUpdateValue(req.body, "paid_judge_count", beforeUser?.paid_judge_count),
       updated_at: new Date().toISOString()
     };
+    const paidPreserveFields = ["paid_convert_count", "paid_judge_count"].filter(field => (
+      !Object.prototype.hasOwnProperty.call(req.body || {}, field)
+      || req.body?.[field] === ""
+      || req.body?.[field] === null
+      || req.body?.[field] === undefined
+    ));
+    const changedFields = getQuotaRequestChangedFields(req.body, beforeUser, updates);
+
+    if (paidPreserveFields.length) {
+      console.warn("preserve existing paid quota", {
+        userId,
+        fields: paidPreserveFields,
+        paid_convert_count: toNonNegativeInteger(beforeUser?.paid_convert_count, 0),
+        paid_judge_count: toNonNegativeInteger(beforeUser?.paid_judge_count, 0)
+      });
+    }
 
     const { data, error } = await supabase
       .from("users")
@@ -4613,7 +4759,7 @@ app.patch("/api/admin/supabase-users/:userId/quota", requireAdmin, async (req, r
       targetUserId: userId,
       action: "update_quota",
       beforeData: pickSupabaseQuotaLogFields(beforeUser),
-      afterData: pickSupabaseQuotaLogFields(data),
+      afterData: buildQuotaUpdateAdminLog(beforeUser, data, changedFields, paidPreserveFields),
       note: String(req.body?.note || "")
     });
 
@@ -4643,22 +4789,10 @@ app.patch("/api/admin/supabase-users/:userId/vip", requireAdmin, async (req, res
 
     const beforeUser = await getOrCreateSupabaseUser(userId);
     const nextVip = Boolean(req.body?.is_vip);
-    const usageLimits = getPricingUsageLimits();
     const updates = {
       is_vip: nextVip,
       updated_at: new Date().toISOString()
     };
-
-    if (nextVip) {
-      updates.paid_convert_count = Math.max(
-        toNonNegativeInteger(beforeUser?.paid_convert_count, 0),
-        usageLimits.vipConvertLimit
-      );
-      updates.paid_judge_count = Math.max(
-        toNonNegativeInteger(beforeUser?.paid_judge_count, 0),
-        usageLimits.vipJudgeLimit
-      );
-    }
 
     const { data, error } = await supabase
       .from("users")
