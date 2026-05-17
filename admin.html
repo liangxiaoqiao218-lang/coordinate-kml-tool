@@ -147,6 +147,44 @@
       color: #334155;
     }
 
+    .period-row-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .period-row-title h3 {
+      margin: 0;
+    }
+
+    .period-switch {
+      display: inline-flex;
+      gap: 4px;
+      padding: 3px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      white-space: nowrap;
+    }
+
+    .period-switch button {
+      min-height: 0;
+      padding: 5px 10px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .period-switch button.active {
+      background: #ffffff;
+      color: #0f172a;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+    }
+
     .dashboard-errors {
       border-color: #fecaca;
       background: #fff7f7;
@@ -822,6 +860,11 @@
       margin: 12px 0;
     }
 
+    .usage-summary .period-row-title {
+      grid-column: 1 / -1;
+      margin-bottom: 0;
+    }
+
     .usage-analytics-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -1311,7 +1354,13 @@
       <p class="muted">来自 Supabase users 和 usage_logs，用于快速查看今日活跃、功能使用和异常情况。</p>
 
       <div class="dashboard-row">
-        <h3>今日数据</h3>
+        <div class="period-row-title">
+          <h3 id="dashboardPeriodTitle">今日数据</h3>
+          <div class="period-switch" aria-label="运营总览日期切换">
+            <button type="button" class="active" data-dashboard-period="today" onclick="setDashboardPeriod('today')">今日</button>
+            <button type="button" data-dashboard-period="yesterday" onclick="setDashboardPeriod('yesterday')">昨日</button>
+          </div>
+        </div>
         <div class="cards">
           <div class="card"><span>今日活跃用户</span><strong id="dashTodayActive">0</strong></div>
           <div class="card"><span>今日 矿地快判</span><strong id="dashTodayJudge">0</strong></div>
@@ -1842,6 +1891,8 @@
     let userUsageCounts = {};
     let supabaseUserFilter = "all";
     let dashboardStats = null;
+    let dashboardPeriod = "today";
+    let usageSummaryPeriod = "today";
     let activeAdminModule = "dashboard";
     let quotaEditorDirty = false;
     let toastTimer = null;
@@ -2228,18 +2279,60 @@
       el.textContent = value == null ? "-" : String(value);
     }
 
+    function setDashboardCardLabel(id, label) {
+      const span = document.getElementById(id)?.closest(".card")?.querySelector("span");
+      if (span) span.textContent = label;
+    }
+
     function formatCurrencyCny(value) {
       return `¥${Number(value || 0).toFixed(2)}`;
     }
 
+    function getPeriodLabel(period) {
+      return period === "yesterday" ? "昨日" : "今日";
+    }
+
+    function setDashboardPeriod(period) {
+      dashboardPeriod = period === "yesterday" ? "yesterday" : "today";
+      document.querySelectorAll("[data-dashboard-period]").forEach(button => {
+        button.classList.toggle("active", button.dataset.dashboardPeriod === dashboardPeriod);
+      });
+      renderDashboardStats(dashboardStats);
+    }
+
+    function setUsageSummaryPeriod(period) {
+      usageSummaryPeriod = period === "yesterday" ? "yesterday" : "today";
+      document.querySelectorAll("[data-usage-period]").forEach(button => {
+        button.classList.toggle("active", button.dataset.usagePeriod === usageSummaryPeriod);
+      });
+      renderUsageSummary();
+    }
+
     function renderDashboardStats(stats) {
       const data = stats || {};
-      const today = data.today || {};
+      const periodLabel = getPeriodLabel(dashboardPeriod);
+      const today = dashboardPeriod === "yesterday" ? (data.yesterday || {}) : (data.today || {});
       const last7 = data.last7Days || {};
       const users = data.users || {};
-      const consumption = data.consumption || {};
-      const errors = data.errors || {};
+      const consumption = dashboardPeriod === "yesterday" ? (data.yesterdayConsumption || {}) : (data.consumption || {});
+      const errors = dashboardPeriod === "yesterday" ? (data.yesterdayErrors || {}) : (data.errors || {});
       const aiCost = data.aiCost || {};
+      setDashboardText("dashboardPeriodTitle", `${periodLabel}数据`);
+      setDashboardCardLabel("dashTodayActive", `${periodLabel}活跃用户`);
+      setDashboardCardLabel("dashTodayJudge", `${periodLabel} 矿地快判`);
+      setDashboardCardLabel("dashTodayConvert", `${periodLabel}坐标转换`);
+      setDashboardCardLabel("dashTodayGold", `${periodLabel}黄金成色`);
+      setDashboardCardLabel("dashTodayTotal", `${periodLabel}总使用`);
+      setDashboardCardLabel("dashTodayFailed", `${periodLabel}失败`);
+      setDashboardCardLabel("dashUsersNew", `${periodLabel}新增`);
+      setDashboardCardLabel("dashUsersReturning", `${periodLabel}回访`);
+      setDashboardCardLabel("dashFreeCount", `${periodLabel}免费消耗`);
+      setDashboardCardLabel("dashPaidCount", `${periodLabel}付费消耗`);
+      setDashboardCardLabel("dashVipCount", `${periodLabel}VIP月度版消耗`);
+      setDashboardCardLabel("dashLimitCount", `${periodLabel}额度拦截`);
+      setDashboardCardLabel("dashAiTodayCalls", `${periodLabel}快判调用`);
+      setDashboardCardLabel("dashAiTodayCost", `${periodLabel}估算成本`);
+      setDashboardCardLabel("dashAiTodayTokens", `${periodLabel} tokens`);
 
       setDashboardValue("dashTodayActive", today.activeUsers);
       setDashboardValue("dashTodayJudge", today.judgeCount);
@@ -2257,8 +2350,8 @@
       setDashboardValue("dashUsersTotal", users.totalUsers);
       setDashboardValue("dashUsersVip", users.vipUsers);
       setDashboardValue("dashUsersPaid", users.paidUsers);
-      setDashboardValue("dashUsersNew", users.todayNewUsers);
-      setDashboardValue("dashUsersReturning", users.todayReturningUsers);
+      setDashboardValue("dashUsersNew", dashboardPeriod === "yesterday" ? users.yesterdayNewUsers : users.todayNewUsers);
+      setDashboardValue("dashUsersReturning", dashboardPeriod === "yesterday" ? users.yesterdayReturningUsers : users.todayReturningUsers);
 
       setDashboardValue("dashFreeCount", consumption.freeCount);
       setDashboardValue("dashPaidCount", consumption.paidCount);
@@ -2278,12 +2371,12 @@
           : "额度拦截";
       updateErrorMetricCard("dashLimitCount", quotaBlockedLabel, consumption.limitExceededCount);
 
-      setDashboardValue("dashAiTodayCalls", aiCost.todayCalls);
-      setDashboardText("dashAiTodayCost", formatCurrencyCny(aiCost.todayCostCny));
+      setDashboardValue("dashAiTodayCalls", dashboardPeriod === "yesterday" ? aiCost.yesterdayCalls : aiCost.todayCalls);
+      setDashboardText("dashAiTodayCost", formatCurrencyCny(dashboardPeriod === "yesterday" ? aiCost.yesterdayCostCny : aiCost.todayCostCny));
       setDashboardText("dashAiMonthCost", formatCurrencyCny(aiCost.monthCostCny));
       setDashboardText("dashAiAverageCost", formatCurrencyCny(aiCost.averageCostCny));
       setDashboardText("dashAiRemainingCalls", `${Number(aiCost.remainingCallsFor100Cny || 0).toLocaleString("zh-CN")} 次`);
-      setDashboardValue("dashAiTodayTokens", aiCost.todayTotalTokens);
+      setDashboardValue("dashAiTodayTokens", dashboardPeriod === "yesterday" ? aiCost.yesterdayTotalTokens : aiCost.todayTotalTokens);
       renderDashboardSecurityEvents(data.securityEvents || []);
       renderGrowthDashboardExtras(data);
 
@@ -2430,15 +2523,16 @@
         panel.insertBefore(alert, rows[1] || null);
       }
 
-      const today = data.today || {};
-      const errors = data.errors || {};
-      const consumption = data.consumption || {};
+      const periodLabel = getPeriodLabel(dashboardPeriod);
+      const today = dashboardPeriod === "yesterday" ? (data.yesterday || {}) : (data.today || {});
+      const errors = dashboardPeriod === "yesterday" ? (data.yesterdayErrors || {}) : (data.errors || {});
+      const consumption = dashboardPeriod === "yesterday" ? (data.yesterdayConsumption || {}) : (data.consumption || {});
       const failed = Number(today.failedCount || 0);
       const quotaBlocked = Number(consumption.quotaBlockedCount ?? consumption.limitExceededCount ?? 0);
       const networkFailed = Number(errors.networkTimeoutFailedCount || 0);
       alert.classList.toggle("active", failed > 0 || networkFailed > 0 || quotaBlocked > 0);
       alert.textContent = failed > 0 || networkFailed > 0 || quotaBlocked > 0
-        ? `异常提醒：今日失败 ${failed} 次，额度拦截 ${quotaBlocked} 次，其中网络/超时 ${networkFailed} 次。`
+        ? `异常提醒：${periodLabel}失败 ${failed} 次，额度拦截 ${quotaBlocked} 次，其中网络/超时 ${networkFailed} 次。`
         : "";
 
       let trend = document.getElementById("dashboardMiniTrend");
@@ -2574,21 +2668,32 @@
 
       document.getElementById("usageAiBalance")?.remove();
 
-      const todayLogs = usageLogs.filter(log => isToday(log.created_at));
-      const todaySuccessful = todayLogs.filter(log => log.success);
-      const countTodayFeature = feature => todaySuccessful.filter(log => log.feature_type === feature).length;
-      const todayCalls = todaySuccessful.length;
-      const todayFailed = todayLogs.filter(log => !log.success).length;
+      const periodLabel = getPeriodLabel(usageSummaryPeriod);
+      const isUsageSummaryDate = usageSummaryPeriod === "yesterday" ? isYesterday : isToday;
+      const periodLogs = usageLogs.filter(log => isUsageSummaryDate(log.created_at));
+      const periodSuccessful = periodLogs.filter(log => log.success);
+      const countPeriodFeature = feature => periodSuccessful.filter(log => log.feature_type === feature).length;
+      const periodCalls = periodSuccessful.length;
+      const periodFailed = periodLogs.filter(log => !log.success).length;
       const aiCost = dashboardStats?.aiCost || {};
-      const todayAiCost = Number(aiCost.todayCostCny || 0);
+      const periodAiCost = usageSummaryPeriod === "yesterday"
+        ? Number(aiCost.yesterdayCostCny || 0)
+        : Number(aiCost.todayCostCny || 0);
       const trendItems = aiCost.trend || [];
       const sevenDayAiCost = trendItems.reduce((sum, item) => sum + Number(item.cost_cny || item.costCny || 0), 0);
 
       summary.innerHTML = `
-        <div class="card ${todayAiCost > 0 ? "" : "metric-ok"}"><span>今日快判成本</span><strong>${formatCurrencyCny(todayAiCost)}</strong></div>
+        <div class="period-row-title">
+          <h3>${periodLabel}使用概览</h3>
+          <div class="period-switch" aria-label="使用分析日期切换">
+            <button type="button" class="${usageSummaryPeriod === "today" ? "active" : ""}" data-usage-period="today" onclick="setUsageSummaryPeriod('today')">今日</button>
+            <button type="button" class="${usageSummaryPeriod === "yesterday" ? "active" : ""}" data-usage-period="yesterday" onclick="setUsageSummaryPeriod('yesterday')">昨日</button>
+          </div>
+        </div>
+        <div class="card ${periodAiCost > 0 ? "" : "metric-ok"}"><span>${periodLabel}快判成本</span><strong>${formatCurrencyCny(periodAiCost)}</strong></div>
         <div class="card ${sevenDayAiCost > 0 ? "" : "metric-ok"}"><span>近 7 日快判成本</span><strong>${formatCurrencyCny(sevenDayAiCost)}</strong></div>
-        <div class="card ${todayCalls > 0 ? "" : "metric-ok"}"><span>今日调用次数</span><strong>${todayCalls.toLocaleString("zh-CN")}</strong></div>
-        <div class="card ${todayFailed ? "metric-danger" : "metric-ok"}"><span>今日失败数</span><strong>${todayFailed.toLocaleString("zh-CN")}</strong></div>
+        <div class="card ${periodCalls > 0 ? "" : "metric-ok"}"><span>${periodLabel}调用次数</span><strong>${periodCalls.toLocaleString("zh-CN")}</strong></div>
+        <div class="card ${periodFailed ? "metric-danger" : "metric-ok"}"><span>${periodLabel}失败数</span><strong>${periodFailed.toLocaleString("zh-CN")}</strong></div>
       `;
 
       let analytics = document.getElementById("usageAnalyticsGrid");
@@ -2600,16 +2705,16 @@
       }
 
       const featureCounts = [
-        ["\u4eca\u65e5\u77ff\u5730\u5feb\u5224", countTodayFeature("judge")],
-        ["\u4eca\u65e5\u5750\u6807/KML", countTodayFeature("convert")],
-        ["\u4eca\u65e5\u9ec4\u91d1\u6210\u8272", countTodayFeature("gold")]
+        [`${periodLabel}矿地快判`, countPeriodFeature("judge")],
+        [`${periodLabel}坐标/KML`, countPeriodFeature("convert")],
+        [`${periodLabel}黄金成色`, countPeriodFeature("gold")]
       ];
       const maxFeature = Math.max(...featureCounts.map(([, value]) => Number(value || 0)), 1);
       const maxCalls = Math.max(...trendItems.map(item => Number(item.calls || 0)), 1);
 
       analytics.innerHTML = `
         <div class="usage-analytics-panel">
-          <h3>\u4eca\u65e5\u529f\u80fd\u8c03\u7528\u5206\u5e03</h3>
+          <h3>${periodLabel}功能调用分布</h3>
           <div class="mini-trend">
             ${featureCounts.map(([label, value]) => `
               <div class="trend-line">
@@ -2619,7 +2724,7 @@
               </div>
             `).join("")}
           </div>
-          <p class="muted">\u4ec5\u7edf\u8ba1\u4eca\u65e5\u6210\u529f\u8c03\u7528\uff0c\u4e0d\u542b\u989d\u5ea6\u62e6\u622a\u548c\u5931\u8d25\u8bb0\u5f55\u3002</p>
+          <p class="muted">仅统计${periodLabel}成功调用，不含额度拦截和失败记录。</p>
         </div>
         <div class="usage-analytics-panel">
           <h3>每日调用趋势</h3>
@@ -3243,6 +3348,17 @@
       return date.getFullYear() === now.getFullYear()
         && date.getMonth() === now.getMonth()
         && date.getDate() === now.getDate();
+    }
+
+    function isYesterday(value) {
+      if (!value) return false;
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return false;
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      return date.getFullYear() === yesterday.getFullYear()
+        && date.getMonth() === yesterday.getMonth()
+        && date.getDate() === yesterday.getDate();
     }
 
     function getUserRegion(user) {

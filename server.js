@@ -5246,6 +5246,8 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
     const now = new Date();
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
     const last7Start = new Date(now);
     last7Start.setDate(last7Start.getDate() - 6);
     last7Start.setHours(0, 0, 0, 0);
@@ -5265,6 +5267,14 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         totalCount: 0,
         failedCount: 0
       },
+      yesterday: {
+        activeUsers: 0,
+        judgeCount: 0,
+        convertCount: 0,
+        goldCount: 0,
+        totalCount: 0,
+        failedCount: 0
+      },
       last7Days: {
         activeUsers: 0,
         judgeCount: 0,
@@ -5277,9 +5287,20 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         vipUsers: 0,
         paidUsers: 0,
         todayNewUsers: 0,
-        todayReturningUsers: 0
+        todayReturningUsers: 0,
+        yesterdayNewUsers: 0,
+        yesterdayReturningUsers: 0
       },
       consumption: {
+        freeCount: 0,
+        paidCount: 0,
+        vipCount: 0,
+        limitExceededCount: 0,
+        quotaBlockedCount: 0,
+        convertQuotaBlockedCount: 0,
+        judgeQuotaBlockedCount: 0
+      },
+      yesterdayConsumption: {
         freeCount: 0,
         paidCount: 0,
         vipCount: 0,
@@ -5293,15 +5314,25 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         convertFailedCount: 0,
         networkTimeoutFailedCount: 0
       },
+      yesterdayErrors: {
+        judgeFailedCount: 0,
+        convertFailedCount: 0,
+        networkTimeoutFailedCount: 0
+      },
       aiCost: {
         todayCalls: 0,
         todayCostCny: 0,
+        yesterdayCalls: 0,
+        yesterdayCostCny: 0,
         monthCostCny: 0,
         averageCostCny: 0,
         remainingCallsFor100Cny: 0,
         todayPromptTokens: 0,
         todayCompletionTokens: 0,
         todayTotalTokens: 0,
+        yesterdayPromptTokens: 0,
+        yesterdayCompletionTokens: 0,
+        yesterdayTotalTokens: 0,
         monthPromptTokens: 0,
         monthCompletionTokens: 0,
         monthTotalTokens: 0,
@@ -5347,14 +5378,22 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
     const users = usersData || [];
     const logs = logsData || [];
     const todayLogs = logs.filter(log => new Date(log.created_at) >= todayStart);
+    const yesterdayLogs = logs.filter(log => {
+      const createdAt = new Date(log.created_at);
+      return createdAt >= yesterdayStart && createdAt < todayStart;
+    });
     const last7Logs = logs.filter(log => new Date(log.created_at) >= last7Start);
     const successfulTodayLogs = todayLogs.filter(log => log.success);
+    const successfulYesterdayLogs = yesterdayLogs.filter(log => log.success);
     const successful7DayLogs = last7Logs.filter(log => log.success);
     const usageSuccessfulTodayLogs = successfulTodayLogs.filter(log => log.feature_type !== "visit");
+    const usageSuccessfulYesterdayLogs = successfulYesterdayLogs.filter(log => log.feature_type !== "visit");
     const usageSuccessful7DayLogs = successful7DayLogs.filter(log => log.feature_type !== "visit");
     const isQuotaBlockedLog = isQuotaBlockedUsageLog;
     const todayQuotaBlocked = todayLogs.filter(isQuotaBlockedLog);
+    const yesterdayQuotaBlocked = yesterdayLogs.filter(isQuotaBlockedLog);
     const todayFailures = todayLogs.filter(log => !log.success && !isQuotaBlockedLog(log));
+    const yesterdayFailures = yesterdayLogs.filter(log => !log.success && !isQuotaBlockedLog(log));
     const last7Failures = last7Logs.filter(log => !log.success && !isQuotaBlockedLog(log));
     const withUsageStatus = normalizeUsageLogForResponse;
     const uniqueCount = list => new Set(list.map(item => item.user_id).filter(Boolean)).size;
@@ -5391,8 +5430,10 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
     const roundCurrency = value => Number(toFiniteNumber(value, 0).toFixed(2));
     const successfulMonthLogs = logs.filter(log => log.success && new Date(log.created_at) >= monthStart);
     const successfulAiTodayLogs = successfulTodayLogs.filter(log => log.feature_type === "judge");
+    const successfulAiYesterdayLogs = successfulYesterdayLogs.filter(log => log.feature_type === "judge");
     const successfulAiMonthLogs = successfulMonthLogs.filter(log => log.feature_type === "judge");
     const aiTodayCost = sum(successfulAiTodayLogs, getAiCost);
+    const aiYesterdayCost = sum(successfulAiYesterdayLogs, getAiCost);
     const aiMonthCost = sum(successfulAiMonthLogs, getAiCost);
     const aiAverageCost = successfulAiMonthLogs.length
       ? aiMonthCost / successfulAiMonthLogs.length
@@ -5426,15 +5467,20 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
       }
       topAiUsersMap.set(userId, userItem);
     }
-    const byFeature = {};
-    for (const log of usageSuccessfulTodayLogs) {
-      const feature = log.feature_type || "unknown";
-      byFeature[feature] = byFeature[feature] || { calls: 0, costCny: 0 };
-      byFeature[feature].calls += 1;
-      if (feature === "judge") {
-        byFeature[feature].costCny += getAiCost(log);
+    const buildFeatureStats = list => {
+      const byFeature = {};
+      for (const log of list) {
+        const feature = log.feature_type || "unknown";
+        byFeature[feature] = byFeature[feature] || { calls: 0, costCny: 0 };
+        byFeature[feature].calls += 1;
+        if (feature === "judge") {
+          byFeature[feature].costCny += getAiCost(log);
+        }
       }
-    }
+      return byFeature;
+    };
+    const byFeature = buildFeatureStats(usageSuccessfulTodayLogs);
+    const byFeatureYesterday = buildFeatureStats(usageSuccessfulYesterdayLogs);
     const sourceMap = new Map();
     for (const log of logs) {
       const sourceMeta = parseUsageSourceMetadata(log.note);
@@ -5502,6 +5548,20 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
       if (!user.created_at) return true;
       return new Date(user.created_at) < todayStart;
     });
+    const yesterdayActiveUsers = users.filter(user => {
+      if (!user.last_seen_at) return false;
+      const lastSeenAt = new Date(user.last_seen_at);
+      return lastSeenAt >= yesterdayStart && lastSeenAt < todayStart;
+    });
+    const yesterdayNewUsers = users.filter(user => {
+      if (!user.created_at) return false;
+      const createdAt = new Date(user.created_at);
+      return createdAt >= yesterdayStart && createdAt < todayStart;
+    });
+    const yesterdayReturningUsers = yesterdayActiveUsers.filter(user => {
+      if (!user.created_at) return true;
+      return new Date(user.created_at) < yesterdayStart;
+    });
 
     res.json({
       success: true,
@@ -5512,6 +5572,14 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         goldCount: countFeature(usageSuccessfulTodayLogs, "gold"),
         totalCount: usageSuccessfulTodayLogs.length,
         failedCount: todayFailures.length
+      },
+      yesterday: {
+        activeUsers: uniqueCount(yesterdayLogs),
+        judgeCount: countFeature(usageSuccessfulYesterdayLogs, "judge"),
+        convertCount: countFeature(usageSuccessfulYesterdayLogs, "convert"),
+        goldCount: countFeature(usageSuccessfulYesterdayLogs, "gold"),
+        totalCount: usageSuccessfulYesterdayLogs.length,
+        failedCount: yesterdayFailures.length
       },
       last7Days: {
         activeUsers: uniqueCount(last7Logs),
@@ -5525,7 +5593,9 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         vipUsers: users.filter(user => user.is_vip).length,
         paidUsers,
         todayNewUsers: todayNewUsers.length,
-        todayReturningUsers: todayReturningUsers.length
+        todayReturningUsers: todayReturningUsers.length,
+        yesterdayNewUsers: yesterdayNewUsers.length,
+        yesterdayReturningUsers: yesterdayReturningUsers.length
       },
       consumption: {
         freeCount: countConsume(todayLogs, "free"),
@@ -5536,20 +5606,39 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
         convertQuotaBlockedCount: todayQuotaBlocked.filter(log => log.feature_type === "convert").length,
         judgeQuotaBlockedCount: todayQuotaBlocked.filter(log => log.feature_type === "judge").length
       },
+      yesterdayConsumption: {
+        freeCount: countConsume(yesterdayLogs, "free"),
+        paidCount: countConsume(yesterdayLogs, "paid"),
+        vipCount: yesterdayLogs.filter(isVipMonthlyConsume).length,
+        limitExceededCount: yesterdayQuotaBlocked.length,
+        quotaBlockedCount: yesterdayQuotaBlocked.length,
+        convertQuotaBlockedCount: yesterdayQuotaBlocked.filter(log => log.feature_type === "convert").length,
+        judgeQuotaBlockedCount: yesterdayQuotaBlocked.filter(log => log.feature_type === "judge").length
+      },
       errors: {
         judgeFailedCount: todayFailures.filter(log => log.feature_type === "judge").length,
         convertFailedCount: todayFailures.filter(log => log.feature_type === "convert").length,
         networkTimeoutFailedCount: todayFailures.filter(isNetworkTimeout).length
       },
+      yesterdayErrors: {
+        judgeFailedCount: yesterdayFailures.filter(log => log.feature_type === "judge").length,
+        convertFailedCount: yesterdayFailures.filter(log => log.feature_type === "convert").length,
+        networkTimeoutFailedCount: yesterdayFailures.filter(isNetworkTimeout).length
+      },
       aiCost: {
         todayCalls: successfulAiTodayLogs.length,
         todayCostCny: roundCurrency(aiTodayCost),
+        yesterdayCalls: successfulAiYesterdayLogs.length,
+        yesterdayCostCny: roundCurrency(aiYesterdayCost),
         monthCostCny: roundCurrency(aiMonthCost),
         averageCostCny: roundCurrency(aiAverageCost),
         remainingCallsFor100Cny: aiAverageCost > 0 ? Math.floor(100 / aiAverageCost) : 0,
         todayPromptTokens: sum(successfulAiTodayLogs, log => getAiTokens(log, "prompt_tokens")),
         todayCompletionTokens: sum(successfulAiTodayLogs, log => getAiTokens(log, "completion_tokens")),
         todayTotalTokens: sum(successfulAiTodayLogs, log => getAiTokens(log, "total_tokens")),
+        yesterdayPromptTokens: sum(successfulAiYesterdayLogs, log => getAiTokens(log, "prompt_tokens")),
+        yesterdayCompletionTokens: sum(successfulAiYesterdayLogs, log => getAiTokens(log, "completion_tokens")),
+        yesterdayTotalTokens: sum(successfulAiYesterdayLogs, log => getAiTokens(log, "total_tokens")),
         monthPromptTokens: sum(successfulAiMonthLogs, log => getAiTokens(log, "prompt_tokens")),
         monthCompletionTokens: sum(successfulAiMonthLogs, log => getAiTokens(log, "completion_tokens")),
         monthTotalTokens: sum(successfulAiMonthLogs, log => getAiTokens(log, "total_tokens")),
@@ -5566,6 +5655,12 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
           })),
         byFeature: Object.fromEntries(
           Object.entries(byFeature).map(([key, value]) => [
+            key,
+            { calls: value.calls, costCny: roundCurrency(value.costCny) }
+          ])
+        ),
+        byFeatureYesterday: Object.fromEntries(
+          Object.entries(byFeatureYesterday).map(([key, value]) => [
             key,
             { calls: value.calls, costCny: roundCurrency(value.costCny) }
           ])
