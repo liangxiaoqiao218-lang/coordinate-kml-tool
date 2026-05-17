@@ -242,7 +242,7 @@ const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "https://www.go
 const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE_API_KEY || "").trim();
 const shareMetaMap = {
   "/": {
-    title: "GeoKit Lab｜矿业空间实验室",
+    title: "GeoKit Lab｜空间工具实验室",
     desc: "坐标处理、矿地快判、黄金成色计算。",
     image: "/share-home-og.jpg"
   },
