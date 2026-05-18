@@ -16,6 +16,8 @@
   <meta property="og:image:height" content="800" />
   <meta property="og:image:type" content="image/jpeg" />
   <meta property="og:url" content="<!--URL-->" />
+  <meta itemprop="image" content="<!--IMAGE-->" />
+  <link rel="image_src" href="<!--IMAGE-->" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="<!--TITLE-->" />
   <meta name="twitter:description" content="<!--DESC-->" />
@@ -3239,18 +3241,19 @@
 
     .social-share-fallback-image {
       position: absolute;
-      left: -9999px;
+      left: 0;
       top: 0;
       width: 300px;
       height: 300px;
-      opacity: 0.01;
+      opacity: 0.001;
       pointer-events: none;
+      object-fit: cover;
     }
   </style>
   <script src="pricing-config.js"></script>
 </head>
 <body>
-  <img id="socialShareFallbackImage" class="social-share-fallback-image" src="<!--IMAGE-->" alt="GeoKit Lab 分享预览图" aria-hidden="true" />
+  <img id="socialShareFallbackImage" class="social-share-fallback-image" src="<!--IMAGE-->" alt="GeoKit Lab 分享预览图" width="300" height="300" />
   <main class="page">
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
@@ -3880,9 +3883,14 @@ Au值 = 纯度 × 10 后取整数</div>
       setMetaContent('meta[property="og:image"]', meta.image);
       setMetaContent('meta[property="og:image:secure_url"]', meta.image);
       setMetaContent('meta[property="og:url"]', url);
+      setMetaContent('meta[itemprop="image"]', meta.image);
       setMetaContent('meta[name="twitter:title"]', meta.title);
       setMetaContent('meta[name="twitter:description"]', meta.desc);
       setMetaContent('meta[name="twitter:image"]', meta.image);
+      const imageSrcLink = document.querySelector('link[rel="image_src"]');
+      if (imageSrcLink) {
+        imageSrcLink.setAttribute("href", meta.image);
+      }
       const fallbackImage = document.getElementById("socialShareFallbackImage");
       if (fallbackImage) {
         fallbackImage.src = meta.image;
