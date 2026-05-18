@@ -3820,54 +3820,127 @@ Au值 = 纯度 × 10 后取整数</div>
     loadGoldReferencePrice();
     trackEvent("page_visit");
 
+    const PAGE_ROUTE_META = {
+      home: {
+        path: "/",
+        title: "GeoKit Lab｜空间工具实验室",
+        desc: "坐标处理、矿地快判、黄金成色计算。",
+        image: "https://geokitlab.com/share-home-og.jpg"
+      },
+      coordinate: {
+        path: "/tool",
+        title: "坐标处理工具｜GeoKit Lab",
+        desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
+        image: "https://geokitlab.com/share-tool-og.jpg"
+      },
+      judge: {
+        path: "/judge",
+        title: "矿地快判｜GeoKit Lab",
+        desc: "上传矿石、河道或卫星图，快速进行结构初筛。",
+        image: "https://geokitlab.com/share-judge-og.jpg"
+      },
+      gold: {
+        path: "/gold",
+        title: "黄金成色计算器｜GeoKit Lab",
+        desc: "输入黄金重量和排水差重，快速估算成色、K值和参考总价。",
+        image: "https://geokitlab.com/share-gold-og.jpg"
+      }
+    };
+
+    function getPageRouteMeta(pageName) {
+      return PAGE_ROUTE_META[pageName] || PAGE_ROUTE_META.home;
+    }
+
+    function setMetaContent(selector, value) {
+      const element = document.querySelector(selector);
+      if (element) {
+        element.setAttribute("content", value);
+      }
+    }
+
+    function updateShareMetaForPage(pageName) {
+      const meta = getPageRouteMeta(pageName);
+      const url = `https://geokitlab.com${meta.path}`;
+      document.title = meta.title;
+      setMetaContent('meta[name="description"]', meta.desc);
+      setMetaContent('meta[property="og:title"]', meta.title);
+      setMetaContent('meta[property="og:description"]', meta.desc);
+      setMetaContent('meta[property="og:image"]', meta.image);
+      setMetaContent('meta[property="og:url"]', url);
+      setMetaContent('meta[name="twitter:title"]', meta.title);
+      setMetaContent('meta[name="twitter:description"]', meta.desc);
+      setMetaContent('meta[name="twitter:image"]', meta.image);
+    }
+
+    function syncPageUrl(pageName, focusTarget = "", mode = "push") {
+      const meta = getPageRouteMeta(pageName);
+      const nextPath = meta.path;
+      const currentPath = location.pathname || "/";
+      const state = { pageName, focusTarget };
+      const method = mode === "replace" ? "replaceState" : "pushState";
+
+      if (currentPath === nextPath) {
+        history.replaceState(state, "", nextPath);
+        return;
+      }
+
+      history[method](state, "", nextPath);
+    }
+
+    function resolvePageFromPath(pathname = location.pathname, hash = location.hash) {
+      if (pathname === "/tool" || pathname === "/coordinate" || pathname === "/convert" || hash === "#coordinate") {
+        return { pageName: "coordinate", focusTarget: "" };
+      }
+      if (pathname === "/ocr") {
+        return { pageName: "coordinate", focusTarget: "upload" };
+      }
+      if (pathname === "/judge" || hash === "#judge") {
+        return { pageName: "judge", focusTarget: "" };
+      }
+      if (pathname === "/gold" || hash === "#gold") {
+        return { pageName: "gold", focusTarget: "" };
+      }
+      return { pageName: "home", focusTarget: "" };
+    }
+
     function showPage(pageName, focusTarget = "", updateUrl = true) {
       Object.values(pages).forEach(page => page.classList.remove("active"));
-      const nextPage = pages[pageName] || pages.home;
+      const safePageName = pages[pageName] ? pageName : "home";
+      const nextPage = pages[safePageName] || pages.home;
       nextPage.classList.add("active");
+      updateShareMetaForPage(safePageName);
 
       if (updateUrl) {
-        const pathMap = {
-          home: "/",
-          coordinate: focusTarget === "upload" ? "/ocr" : "/tool",
-          judge: "/judge",
-          gold: "/gold"
-        };
-        history.pushState({ pageName, focusTarget }, "", pathMap[pageName] || "/");
+        syncPageUrl(safePageName, focusTarget, "push");
       }
 
       if (focusTarget === "support") {
         return;
       }
 
-      if (pageName === "coordinate" || pageName === "judge") {
+      if (safePageName === "coordinate" || safePageName === "judge") {
         loadUserQuota();
       }
 
       window.scrollTo({ top: 0, behavior: "smooth" });
 
-      if (pageName === "coordinate" && focusTarget === "upload") {
+      if (safePageName === "coordinate" && focusTarget === "upload") {
         setTimeout(() => {
           coordinateUploadPanel.scrollIntoView({ behavior: "smooth", block: "start" });
         }, 160);
       }
     }
 
-    function openPageFromPath() {
-      if (location.pathname === "/tool" || location.pathname === "/convert" || location.hash === "#coordinate") {
-        showPage("coordinate", "", false);
-      } else if (location.pathname === "/ocr") {
-        showPage("coordinate", "upload", false);
-      } else if (location.pathname === "/judge" || location.hash === "#judge") {
-        showPage("judge", "", false);
-      } else if (location.pathname === "/gold" || location.hash === "#gold") {
-        showPage("gold", "", false);
-      } else {
-        showPage("home", "", false);
+    function openPageFromPath(options = {}) {
+      const route = resolvePageFromPath();
+      showPage(route.pageName, route.focusTarget, false);
+      if (options.replaceState) {
+        history.replaceState(route, "", `${location.pathname || "/"}${location.search || ""}${location.hash || ""}`);
       }
     }
 
-    window.addEventListener("popstate", openPageFromPath);
-    openPageFromPath();
+    window.addEventListener("popstate", () => openPageFromPath());
+    openPageFromPath({ replaceState: true });
     document.documentElement.dataset.appVersion = APP_VERSION;
     addVersionStamp();
 
