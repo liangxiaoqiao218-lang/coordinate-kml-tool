@@ -11,6 +11,7 @@
   <meta property="og:title" content="<!--TITLE-->" />
   <meta property="og:description" content="<!--DESC-->" />
   <meta property="og:image" content="<!--IMAGE-->" />
+  <meta property="og:image:secure_url" content="<!--IMAGE-->" />
   <meta property="og:image:width" content="800" />
   <meta property="og:image:height" content="800" />
   <meta property="og:image:type" content="image/jpeg" />
@@ -3235,10 +3236,21 @@
       text-align: center;
       user-select: text;
     }
+
+    .social-share-fallback-image {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+      width: 300px;
+      height: 300px;
+      opacity: 0.01;
+      pointer-events: none;
+    }
   </style>
   <script src="pricing-config.js"></script>
 </head>
 <body>
+  <img id="socialShareFallbackImage" class="social-share-fallback-image" src="<!--IMAGE-->" alt="GeoKit Lab 分享预览图" aria-hidden="true" />
   <main class="page">
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
@@ -3866,10 +3878,15 @@ Au值 = 纯度 × 10 后取整数</div>
       setMetaContent('meta[property="og:title"]', meta.title);
       setMetaContent('meta[property="og:description"]', meta.desc);
       setMetaContent('meta[property="og:image"]', meta.image);
+      setMetaContent('meta[property="og:image:secure_url"]', meta.image);
       setMetaContent('meta[property="og:url"]', url);
       setMetaContent('meta[name="twitter:title"]', meta.title);
       setMetaContent('meta[name="twitter:description"]', meta.desc);
       setMetaContent('meta[name="twitter:image"]', meta.image);
+      const fallbackImage = document.getElementById("socialShareFallbackImage");
+      if (fallbackImage) {
+        fallbackImage.src = meta.image;
+      }
     }
 
     function syncPageUrl(pageName, focusTarget = "", mode = "push") {
