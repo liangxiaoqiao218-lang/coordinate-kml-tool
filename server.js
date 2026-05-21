@@ -2979,6 +2979,8 @@ function looksLikeHandwrittenDmsBlock(text) {
 }
 
 function groupEveryFourLinesWhenLikely(text, sourceText = "") {
+  // Stable path: handwritten DMS uses rawText-derived recognizedLines and this four-line grouping.
+  // Do not apply this to table formats such as standard DMS tables, BFTM/X-Y, or cadastral grids.
   if (looksLikeCoordinateTable(sourceText)) {
     return text;
   }
@@ -2998,6 +3000,8 @@ function groupEveryFourLinesWhenLikely(text, sourceText = "") {
 }
 
 function extractDecimalCoordinateLines(text) {
+  // Stable path: plain decimal lon/lat is only the ordinary polygon fallback.
+  // It must not override BFTM/X-Y projected tables or Madagascar cadastral grid num|XV|YV tables.
   const lines = normalizeText(text)
     .split(/\r?\n/)
     .map(line => line.trim())
@@ -3119,6 +3123,8 @@ function normalizeGridValue(value) {
 }
 
 function extractCadastralGridRows(text) {
+  // Stable path: Madagascar cadastral grid extraction returns only num | XV | YV.
+  // Do not include NC/CM_NOMFIR here and do not convert XV/YV in the backend recognition response.
   if (!hasCadastralGridContext(text)) {
     return [];
   }
@@ -6825,16 +6831,25 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
  * same horizontal row.
  *
  * Stable recognition checklist:
- * - Handwritten DMS: keep the old recognizedLines display path and groupEveryFourLinesWhenLikely().
- * - Standard DMS tables: visual understanding first.
- * - BFTM / X-Y tables: visual model reads the table layout first; OCR is only fallback.
+ * - Handwritten DMS: rawText -> recognizedLines -> groupEveryFourLinesWhenLikely(); show original
+ *   DMS text in the workspace and convert to decimal degrees only for KML internals.
+ * - Standard DMS tables: visual understanding first; keep Latitude/Longitude DMS display; W/O/Ouest
+ *   means negative longitude; do not force four-line grouping or OCR bbox priority.
+ * - BFTM / X-Y tables: visual model reads SOMMETS | X | Y row layout first; keep X/Y as projected
+ *   coordinates; reject bbox pollution and X,X / Y,Y column-pairing errors.
+ * - Madagascar cadastral grid: detect Liste_Carres / cadastral grid / grille cadastrale / num|XV|YV;
+ *   prioritize the right-side grid table, ignore large map DMS labels, extract only num | XV | YV.
+ *   Frontend KML uses inferred dx/dy, treats XV/YV as cell centers, and converts EPSG:29702 to WGS84.
+ * - Decimal lon/lat: plain decimal polygon path only; never enter cadastral grid mode.
  * - Multi-table and Point A-Z tables: visual understanding first so table boundaries and row order survive.
  * - OCR: use only for low-row-count retry or fallback, never as the main flow for table coordinates.
  *
  * Backend rules are guardrails only: validate coordinates, reject bbox pollution, reject X,X / Y,Y
  * column-pairing errors, and extract from clear text. Do not try to reconstruct table rows from
- * corrupted OCR bbox output. For future fixes, identify the image type first and adjust only that
- * type's model flow; do not rewrite the whole recognition system.
+ * corrupted OCR bbox output. For future fixes, identify the coordinate type first and adjust only
+ * that type's model flow; do not rewrite the whole recognition system, do not let decimal output
+ * override BFTM, do not let DMS override cadastral grid, and do not let a new display layer override
+ * recognizedLines.
  */
 app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) => {
   console.log("---- 收到阿里云识别请求 ----");

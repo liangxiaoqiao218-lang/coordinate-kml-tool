@@ -7366,6 +7366,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     function extractRecognizedCoordinateLines(text) {
+      // Stable path: this preserves rawText-derived DMS for the workspace.
+      // Do not replace it with reconstructed decimal output; KML conversion happens separately.
       const lines = String(text || "")
         .replace(/[º˚]/g, "°")
         .replace(/[‘’´`′]/g, "'")
@@ -7920,6 +7922,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     async function convertMadagascarCadastralToWgs84(x, y) {
+      // Stable path: Madagascar cadastral grid KML conversion only.
+      // Recognition output remains num | XV | YV; polygons are built from center points then converted to WGS84.
       const easting = Number(x);
       const northing = Number(y);
 
@@ -7976,6 +7980,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     function groupEveryFourLinesWhenLikely(text) {
+      // Stable path: handwritten DMS may be written as four lines per point.
+      // Table formats must not be forced through this grouping.
       const lines = String(text || "")
         .split(/\r?\n/)
         .map(line => line.trim())
@@ -8749,6 +8755,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     function buildCadastralGridPolygonRows(rows) {
+      // Stable path: XV/YV are treated as Madagascar cadastral cell centers.
+      // Keep the center +/- dx/2,dy/2 construction unless the source cadastre definition changes.
       const dx = inferCadastralGridStep(rows.map(row => row.xv));
       const dy = inferCadastralGridStep(rows.map(row => row.yv));
 
@@ -9085,9 +9093,13 @@ ${placemarks}
           }
         }
 
-        // 固定规则：这是旧版验证有效的坐标工作区显示路径，不要轻易改动。
-        // recognizedLines 来自 rawText，优先保留原图坐标格式；手写 DMS 由 groupEveryFourLinesWhenLikely() 分组。
-        // data.coordinates 是后端转换后的结果，只作为兜底，避免覆盖用户核对所需的原始格式。
+        // Stable coordinate display path:
+        // 1. Handwritten DMS: rawText -> recognizedLines -> groupEveryFourLinesWhenLikely(); keep original DMS display.
+        // 2. Standard DMS tables: keep visual-model DMS table display; W/O/Ouest stays negative longitude internally.
+        // 3. BFTM/X-Y: keep projected X,Y text and never let decimal extraction override it.
+        // 4. Madagascar cadastral grid: display only num | XV | YV; KML later converts EPSG:29702 corners to WGS84.
+        // 5. Plain decimal lon/lat: use the ordinary polygon path only.
+        // Do not add a new display layer that overwrites recognizedLines or cadastralGridText.
         const finalCoordinates = isCadastralGrid
           ? (cadastralGridText || data.coordinates || "")
           : chooseBestCoordinateResult([
