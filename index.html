@@ -485,6 +485,22 @@
       margin-bottom: 8px;
     }
 
+    .cadastral-grid-badge {
+      display: none;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .cadastral-grid-badge.is-active {
+      display: inline-flex;
+      align-items: center;
+    }
+
     .textarea-wrap {
       position: relative;
     }
@@ -3339,6 +3355,7 @@
       <div class="panel coordinate-workspace">
         <div class="workspace-head">
         <label for="coordinateInput">坐标工作区</label>
+        <span id="cadastralGridBadge" class="cadastral-grid-badge">矿权网格模式</span>
         </div>
         <div class="textarea-wrap">
         <textarea id="coordinateInput" placeholder="示例：
@@ -3737,6 +3754,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const exportType = document.getElementById("exportType");
     const projectionType = document.getElementById("projectionType");
     const cadastralGridPanel = document.getElementById("cadastralGridPanel");
+    const cadastralGridBadge = document.getElementById("cadastralGridBadge");
     const cadastralGridSelection = document.getElementById("cadastralGridSelection");
     const imageInput = document.getElementById("imageInput");
     const message = document.getElementById("message");
@@ -7680,11 +7698,17 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     function updateCadastralGridPanel() {
-      if (!cadastralGridPanel) {
-        return;
+      const rows = extractCadastralGridRows(input.value);
+      const isCadastralGrid = rows.length > 0;
+
+      if (cadastralGridPanel) {
+        cadastralGridPanel.classList.toggle("is-active", isCadastralGrid);
       }
 
-      cadastralGridPanel.classList.toggle("is-active", hasCadastralGridRows(input.value));
+      if (cadastralGridBadge) {
+        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid);
+        cadastralGridBadge.textContent = isCadastralGrid ? `矿权网格模式 · ${rows.length} 格` : "矿权网格模式";
+      }
     }
 
     function detectProjectionFromText(text) {
