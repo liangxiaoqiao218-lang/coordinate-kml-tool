@@ -3044,6 +3044,90 @@ function looksLikeBftmProjectedPair(first, second) {
   return isBftmXValue(first) && isBftmYValue(second);
 }
 
+function hasCadastralGridContext(text) {
+  const value = String(text || "");
+  return /\bXV\b/i.test(value)
+    && /\bYV\b/i.test(value)
+    && (/\bnum\b|n[°o]\b|cadastral|cadastre|grid|grille|quadrillage|carreau|矿权|网格/i.test(value));
+}
+
+function normalizeGridValue(value) {
+  return String(value || "")
+    .trim()
+    .replace(/,/g, ".")
+    .replace(/\s+/g, "");
+}
+
+function extractCadastralGridRows(text) {
+  if (!hasCadastralGridContext(text)) {
+    return [];
+  }
+
+  const rows = [];
+  const seen = new Set();
+
+  normalizeText(text)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .forEach(line => {
+      if (/^(?:num|n[°o]?|#)?\s*[\|,;\s-]*xv[\|,;\s-]*yv$/i.test(line)) {
+        return;
+      }
+
+      let row = null;
+      const labeled = line.match(/(?:^|\b)(?:num|n[°o]?|#)?\s*([A-Za-z0-9-]{1,16})\D+XV\D*([-+]?\d+(?:[.,]\d+)?)\D+YV\D*([-+]?\d+(?:[.,]\d+)?)/i);
+
+      if (labeled) {
+        row = {
+          num: labeled[1].trim(),
+          xv: normalizeGridValue(labeled[2]),
+          yv: normalizeGridValue(labeled[3])
+        };
+      } else {
+        const cleaned = line
+          .replace(/\b(?:num|n[°o]?|xv|yv)\b/gi, " ")
+          .replace(/[|:;，,]/g, " ");
+        const tokens = cleaned.match(/[A-Za-z]?\d[A-Za-z0-9-]*|[-+]?\d+(?:[.,]\d+)?/g) || [];
+
+        if (tokens.length >= 3) {
+          row = {
+            num: tokens[0].trim(),
+            xv: normalizeGridValue(tokens[1]),
+            yv: normalizeGridValue(tokens[2])
+          };
+        }
+      }
+
+      if (!row || !row.num || !row.xv || !row.yv) {
+        return;
+      }
+
+      const key = `${row.num}|${row.xv}|${row.yv}`;
+      if (seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      rows.push(row);
+    });
+
+  return rows;
+}
+
+function formatCadastralGridRows(rows) {
+  return ["num | XV | YV", ...rows.map(row => `${row.num} | ${row.xv} | ${row.yv}`)].join("\n");
+}
+
+function getCadastralGridInfo(text) {
+  const rows = extractCadastralGridRows(text);
+  return {
+    isCadastralGrid: rows.length > 0,
+    rows,
+    rowCount: rows.length
+  };
+}
+
 function looksLikeBftmColumnPairError(first, second) {
   return (isBftmXValue(first) && isBftmXValue(second)) || (isBftmYValue(first) && isBftmYValue(second));
 }
@@ -3697,6 +3781,11 @@ function extractDmsCoordinateLines(text) {
 }
 
 function extractCoordinateLines(text) {
+  const cadastralGrid = getCadastralGridInfo(text);
+  if (cadastralGrid.isCadastralGrid) {
+    return formatCadastralGridRows(cadastralGrid.rows);
+  }
+
   if (shouldUseStrictBftmValidation(text)) {
     const projectedLines = extractProjectedCoordinateLines(text);
     return projectedLines.length > 0 ? projectedLines.join("\n") : noCoordinatesText;
@@ -3725,6 +3814,7 @@ function countCoordinateRows(text) {
     .map(line => line.trim())
     .filter(Boolean)
       .filter(line => line !== noCoordinatesText)
+      .filter(line => !/^num\s*\|\s*XV\s*\|\s*YV$/i.test(line))
       .length;
 }
 
@@ -6764,27 +6854,29 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 3. Point A-Z 或 1-99 的长表。
 4. Nord / Est 表头，结合 N/S/E/W 判断纬度和经度。
 5. X / Y、Liste des Coordonnées、BFTM / ITRF 2008 / Projection BFTM 平面坐标表。
-6. 十进制度、度分、度分秒 DMS。
-7. N/S/E/W，法语 O / Ouest = West = 西经。
-8. Latitude nord = 北纬；Longitude ouest = 西经。
-9. 表格数字可能带空格分组，例如 658 800 和 1 364 200，必须分别理解为 658800 和 1364200。
-10. 手写坐标可能写成 11°28.31.26N、08.40.42.13W、11°27'57.74 N、08 36 46.30 W 等不规范 DMS，请按度分秒理解。
-11. 如果表格里有红色、手写、框选修正标记，例如把打印的 11° 手工改成 10°，优先按修正后的值识别；同时在最后增加一行识别提示，提醒用户核对。
+6. num / XV / YV 矿权网格表、cadastral grid、grille cadastrale、carreau grid 表。
+7. 十进制度、度分、度分秒 DMS。
+8. N/S/E/W，法语 O / Ouest = West = 西经。
+9. Latitude nord = 北纬；Longitude ouest = 西经。
+10. 表格数字可能带空格分组，例如 658 800 和 1 364 200，必须分别理解为 658800 和 1364200。
+11. 手写坐标可能写成 11°28.31.26N、08.40.42.13W、11°27'57.74 N、08 36 46.30 W 等不规范 DMS，请按度分秒理解。
+12. 如果表格里有红色、手写、框选修正标记，例如把打印的 11° 手工改成 10°，优先按修正后的值识别；同时在最后增加一行识别提示，提醒用户核对。
 
 输出规则：
-1. 识别出什么格式，就保留什么格式。不要把度分秒自动转换成十进制度。
-2. 每一行只输出一组坐标，格式固定为：经度,纬度。
-3. 如果表格是 X/Y 平面坐标，每一行输出：X,Y，保留原数字。
-4. 如果原图没有 N/W/O 字母，但表头写了 Latitude nord / Longitude ouest，需要在输出中补上 N 和 W，或用负号表达西经。
-5. 必须按 Point 编号逐行读取。看到 4 个点就输出 4 行；看到 A-Z 就输出 A-Z 对应的全部行；看到 1-99 长表就按原编号顺序逐行输出。
-6. 不能漏掉第一行、中间行或最后一行。
-7. 如果 X 列连续两行相同，或 Y 列连续两行相同，也必须按同一行的 X 和 Y 配对，不要把下一行的 Y 拿来配上一行。
-8. 表格右侧的斜线、手写勾、批注线不是数字，不要因为这些标记跳行或漏行。
-9. 不要输出点号、表头、解释文字、Markdown、编号。
-10. 不要压缩小数位，不要改写原始精度。
-11. 如果同一张图片里有多块不同矿区/多组坐标，必须在不同组之间保留一个空行。每组内部仍然按原顺序逐行输出。
-12. 手写坐标如果出现多段明显分开的 1、2、3、4 编号，每一段就是一组坐标，段与段之间必须输出一个空行。
-13. 如果采用了手写、红色或框选修正，坐标行输出完成后，最后额外输出一行：识别提示：发现疑似人工修正，已按修正值识别，请核对。
+1. 如果表格是矿权网格 / cadastral grid，表头包含 num / XV / YV，则不要把 XV/YV 当 polygon 点，不要转经纬度，不要输出 X,Y。每行只输出：num | XV | YV。
+2. 识别出什么格式，就保留什么格式。不要把度分秒自动转换成十进制度。
+3. 每一行只输出一组坐标，格式固定为：经度,纬度。
+4. 如果表格是 X/Y 平面坐标，每一行输出：X,Y，保留原数字。
+5. 如果原图没有 N/W/O 字母，但表头写了 Latitude nord / Longitude ouest，需要在输出中补上 N 和 W，或用负号表达西经。
+6. 必须按 Point 编号逐行读取。看到 4 个点就输出 4 行；看到 A-Z 就输出 A-Z 对应的全部行；看到 1-99 长表就按原编号顺序逐行输出。
+7. 不能漏掉第一行、中间行或最后一行。
+8. 如果 X 列连续两行相同，或 Y 列连续两行相同，也必须按同一行的 X 和 Y 配对，不要把下一行的 Y 拿来配上一行。
+9. 表格右侧的斜线、手写勾、批注线不是数字，不要因为这些标记跳行或漏行。
+10. 不要输出点号、表头、解释文字、Markdown、编号。
+11. 不要压缩小数位，不要改写原始精度。
+12. 如果同一张图片里有多块不同矿区/多组坐标，必须在不同组之间保留一个空行。每组内部仍然按原顺序逐行输出。
+13. 手写坐标如果出现多段明显分开的 1、2、3、4 编号，每一段就是一组坐标，段与段之间必须输出一个空行。
+14. 如果采用了手写、红色或框选修正，坐标行输出完成后，最后额外输出一行：识别提示：发现疑似人工修正，已按修正值识别，请核对。
 
 示例：
 09°01'13.67"W,11°43'16.45"N
@@ -6792,6 +6884,10 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 
 642405.693,1051600.499
 642812.120,1051903.440
+
+矿权网格表示例：
+1062 | 58 | 143
+1063 | 59 | 143
 
 无法识别有效坐标时，只输出：${noCoordinatesText}`;
     const retryPrompt = `${prompt}
@@ -6876,8 +6972,15 @@ Rules:
     let coordinates = extractCoordinateLines(rawText);
     let warning = extractRecognitionWarning(rawText);
     let usedModel = aliyunVisionModel;
+    let cadastralGrid = getCadastralGridInfo(rawText);
 
-    if (shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (cadastralGrid.isCadastralGrid) {
+      coordinates = formatCadastralGridRows(cadastralGrid.rows);
+      usedModel = `${usedModel}+cadastral-grid`;
+      warning = warning || "识别到矿权网格表，已提取 num / XV / YV；当前阶段不转换经纬度，也不生成 KML。";
+    }
+
+    if (!cadastralGrid.isCadastralGrid && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y result looks like column-paired output, retrying row-wise extraction.");
         const bftmRetryResponse = await callAliyunVision({
@@ -6914,7 +7017,7 @@ Rules:
       }
     }
 
-    if (shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y OCR retry still invalid, using vision layout retry.");
         const bftmVisionRetryResponse = await callAliyunVision({
@@ -6951,7 +7054,7 @@ Rules:
       }
     }
 
-    if (shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -6980,7 +7083,7 @@ Rules:
       }
     }
 
-    if (countCommaDmsLongTableRows(rawText) >= 20) {
+    if (!cadastralGrid.isCadastralGrid && countCommaDmsLongTableRows(rawText) >= 20) {
       const smoothedRawText = smoothDmsMinuteIslandsForLongTable(rawText);
 
       if (smoothedRawText !== rawText) {
@@ -6991,7 +7094,7 @@ Rules:
       }
     }
 
-    if (shouldRetryRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -7014,7 +7117,7 @@ Rules:
       }
     }
 
-    if (shouldRetryRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -7039,6 +7142,10 @@ Rules:
     console.log(rawText);
     console.log("坐标提取结果：");
     console.log(coordinates);
+    cadastralGrid = getCadastralGridInfo(rawText);
+    if (cadastralGrid.isCadastralGrid) {
+      coordinates = formatCadastralGridRows(cadastralGrid.rows);
+    }
 
     const bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     const bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
@@ -7076,8 +7183,9 @@ Rules:
       model: usedModel,
       rawText,
       coordinates,
-      precisionMode: "preserve-original-decimals-and-parse-dms",
+      precisionMode: cadastralGrid.isCadastralGrid ? "cadastral-grid-num-xv-yv" : "preserve-original-decimals-and-parse-dms",
       warning,
+      cadastralGrid,
       bftmLongTable,
       quota: consumeResult.quota
     });
@@ -7099,10 +7207,18 @@ Rules:
       }
 
       const fallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
+      const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
+      if (fallbackCadastralGrid.isCadastralGrid) {
+        fallback.coordinates = formatCadastralGridRows(fallbackCadastralGrid.rows);
+        fallback.model = `${fallback.model || "local-ocr-fallback"}+cadastral-grid`;
+        fallback.precisionMode = "cadastral-grid-num-xv-yv";
+        fallback.warning = fallback.warning || "识别到矿权网格表，已提取 num / XV / YV；当前阶段不转换经纬度，也不生成 KML。";
+        fallback.cadastralGrid = fallbackCadastralGrid;
+      }
       let bftmLongTable = getBftmLongTableInfo(fallback.rawText, fallback.coordinates);
       let bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
 
-      if (bftmIncompleteWarning && aliyunApiKey && req.file) {
+      if (!fallbackCadastralGrid.isCadastralGrid && bftmIncompleteWarning && aliyunApiKey && req.file) {
         try {
           console.log("BFTM long table fallback is incomplete, retrying Aliyun visual table extraction once.");
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
