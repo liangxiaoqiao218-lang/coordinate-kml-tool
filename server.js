@@ -347,17 +347,40 @@ function getProtectedEndpointType(pathname = "") {
   return "";
 }
 
+const allowedRequestOrigins = new Set([
+  "https://geokitlab.com",
+  "https://www.geokitlab.com",
+  "https://coordinate-kml-tool.onrender.com"
+]);
+
+function parseRequestOrigin(value) {
+  if (!value) return { empty: true, origin: "" };
+
+  try {
+    const url = new URL(value);
+    return { empty: false, origin: url.origin, hostname: url.hostname.toLowerCase(), protocol: url.protocol.toLowerCase() };
+  } catch (error) {
+    return { empty: false, invalid: true, origin: "", error: error.message || "invalid_url" };
+  }
+}
+
 function isAllowedRequestOrigin(value) {
   if (!value) return true;
+
+  const parsed = parseRequestOrigin(value);
+
+  if (parsed.invalid) {
+    return false;
+  }
+
+  if (allowedRequestOrigins.has(parsed.origin)) {
+    return true;
+  }
 
   try {
     const url = new URL(value);
     const hostname = url.hostname.toLowerCase();
     const protocol = url.protocol.toLowerCase();
-
-    if ((hostname === "geokitlab.com" || hostname === "www.geokitlab.com") && protocol === "https:") {
-      return true;
-    }
 
     if (["localhost", "127.0.0.1", "::1", "[::1]"].includes(hostname) && (protocol === "http:" || protocol === "https:")) {
       return true;
@@ -375,19 +398,56 @@ function originGuard(req, res, next) {
 
   const origin = req.get("origin") || "";
   const referer = req.get("referer") || "";
+  const userAgent = req.get("user-agent") || "";
 
   if (!origin && !referer) {
     recordSecurityEvent(req, "missing_origin", { endpoint });
     return next();
   }
 
-  if (!isAllowedRequestOrigin(origin) || !isAllowedRequestOrigin(referer)) {
+  if (origin && !isAllowedRequestOrigin(origin)) {
+    console.warn("来源校验拦截：origin 不允许", {
+      origin,
+      referer,
+      path: req.path,
+      userAgent
+    });
     recordSecurityEvent(req, "invalid_origin", { endpoint, origin, referer });
     return res.status(403).json({
       success: false,
       error: "来源不允许",
       reason: "invalid_origin"
     });
+  }
+
+  if (!origin && referer) {
+    const parsedReferer = parseRequestOrigin(referer);
+
+    if (parsedReferer.invalid) {
+      console.warn("来源校验警告：referer 解析失败，已放行", {
+        origin,
+        referer,
+        path: req.path,
+        userAgent
+      });
+      recordSecurityEvent(req, "invalid_referer_allowed", { endpoint, origin, referer });
+      return next();
+    }
+
+    if (!isAllowedRequestOrigin(referer)) {
+      console.warn("来源校验拦截：referer 不允许", {
+        origin,
+        referer,
+        path: req.path,
+        userAgent
+      });
+      recordSecurityEvent(req, "invalid_origin", { endpoint, origin, referer });
+      return res.status(403).json({
+        success: false,
+        error: "来源不允许",
+        reason: "invalid_origin"
+      });
+    }
   }
 
   return next();
