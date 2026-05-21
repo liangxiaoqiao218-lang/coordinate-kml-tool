@@ -7644,7 +7644,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
             const cleaned = line
               .replace(/\b(?:num|n[°o]?|xv|yv)\b/gi, " ")
               .replace(/[|:;，,]/g, " ");
-            const tokens = cleaned.match(/[A-Za-z]?\d[A-Za-z0-9-]*|[-+]?\d+(?:[.,]\d+)?/g) || [];
+            const tokens = cleaned.match(/[-+]?\d+(?:[.,]\d+)?|[A-Za-z]?\d[A-Za-z0-9-]*/g) || [];
 
             if (tokens.length >= 3) {
               row = {

@@ -3148,7 +3148,7 @@ function extractCadastralGridRows(text) {
         const cleaned = line
           .replace(/\b(?:num|n[°o]?|xv|yv)\b/gi, " ")
           .replace(/[|:;，,]/g, " ");
-        const tokens = cleaned.match(/[A-Za-z]?\d[A-Za-z0-9-]*|[-+]?\d+(?:[.,]\d+)?/g) || [];
+        const tokens = cleaned.match(/[-+]?\d+(?:[.,]\d+)?|[A-Za-z]?\d[A-Za-z0-9-]*/g) || [];
 
         if (tokens.length >= 3) {
           row = {
@@ -3186,6 +3186,33 @@ function getCadastralGridInfo(text) {
     rows,
     rowCount: rows.length
   };
+}
+
+function shouldCheckCadastralGridLayout(rawText, coordinates) {
+  if (getCadastralGridInfo(rawText).isCadastralGrid || getCadastralGridInfo(coordinates).isCadastralGrid) {
+    return false;
+  }
+
+  const coordinateRows = countCoordinateRows(coordinates);
+  const text = String(rawText || "");
+
+  return coordinateRows <= 4 || /[°º'′″"NSEWO]/i.test(text) || /liste|carr[eé]s?|carreau|grid|cadastral|cadastre|XV|YV/i.test(text);
+}
+
+function isCadastralGridLayoutDetected(text) {
+  const value = String(text || "").trim();
+
+  if (!value) {
+    return false;
+  }
+
+  if (/^YES\b/i.test(value) || /"hasCadastralGrid"\s*:\s*true/i.test(value)) {
+    return true;
+  }
+
+  return /liste[_\s-]*carr[eé]s?|grille\s+cadastrale|cadastral\s+grid|mineral\s+cadastral|carreau/i.test(value)
+    && /\bXV\b/i.test(value)
+    && /\bYV\b/i.test(value);
 }
 
 function looksLikeBftmColumnPairError(first, second) {
@@ -6980,6 +7007,47 @@ Use the visual table layout, not OCR detection boxes.
 Find the table headed SOMMETS / X / Y and read across each horizontal row.
 Ignore all numbers that belong to OCR bounding boxes or pixel positions.
 The expected result for a BFTM table is a list of real row pairs such as X,Y only.`;
+    const cadastralGridLayoutPrompt = `Inspect the whole image for a mineral cadastral grid table.
+This is a layout detection task, not coordinate extraction.
+
+Look specifically for a table area, often on the right side, headed by any of:
+- Liste_Carrés / Liste Carres / Liste Carrés
+- num / XV / YV
+- carreau / carreaux
+- grille cadastrale
+- cadastral grid / mineral cadastral grid
+
+Important:
+- Ignore large DMS labels printed on the map, such as 22°49'15.67"S.
+- Ignore the map polygon and central coordinate annotations.
+- Only answer whether the cadastral grid table is visible.
+
+Output exactly one line:
+YES - if a num/XV/YV or Liste_Carrés cadastral grid table is visible.
+NO - if no such table is visible.`;
+    const cadastralGridTablePrompt = `Read ONLY the mineral cadastral grid table in the image.
+Focus on the right-side table area if present.
+
+Target table headers:
+Liste_Carrés, Liste Carres, Liste Carrés, num, XV, YV, carreau, cadastral grid, grille cadastrale.
+
+Critical rules:
+- This is NOT a DMS coordinate recognition task.
+- Do NOT read large map labels like 22°49'15.67"S or 22°49'22.0"S.
+- Do NOT read the map polygon.
+- Do NOT convert XV/YV to longitude/latitude.
+- Do NOT output ordinary coordinates.
+- Read the table row by row.
+- Output only rows in this exact format:
+num | XV | YV
+
+Keep original precision. If XV/YV have decimals, preserve them.
+If the table is not readable, output only: ${noCoordinatesText}
+
+Example:
+num | XV | YV
+280 | 292812.5 | 360937.5
+281 | 292812.5 | 361562.5`;
     const pointAzDmsRetryPrompt = `You are reading a mining coordinate table from an image.
 Focus ONLY on the printed coordinate table headed Point / Nord / Est, Point / Latitude / Longitude, or Point / N / E.
 Ignore the map, phone UI, page text, watermarks, captions, and all non-table content.
@@ -7038,6 +7106,47 @@ Rules:
       coordinates = formatCadastralGridRows(cadastralGrid.rows);
       usedModel = `${usedModel}+cadastral-grid`;
       warning = warning || "识别到矿权网格表，已提取 num / XV / YV；当前阶段不转换经纬度，也不生成 KML。";
+    }
+
+    if (!cadastralGrid.isCadastralGrid && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+      try {
+        console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
+        const layoutResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: cadastralGridLayoutPrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 80,
+          timeoutMs: 25000
+        });
+        const layoutText = layoutResponse.choices?.[0]?.message?.content || "";
+
+        if (isCadastralGridLayoutDetected(layoutText)) {
+          console.log("Cadastral grid layout detected, reading table area first:", layoutText.slice(0, 300));
+          const gridResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: cadastralGridTablePrompt,
+            imageItems,
+            temperature: 0,
+            maxTokens: 1400,
+            timeoutMs: 35000
+          });
+          const gridRawText = gridResponse.choices?.[0]?.message?.content || "";
+          const gridInfo = getCadastralGridInfo(gridRawText);
+
+          if (gridInfo.isCadastralGrid) {
+            rawText = gridRawText;
+            coordinates = formatCadastralGridRows(gridInfo.rows);
+            cadastralGrid = gridInfo;
+            usedModel = `${aliyunVisionModel}+cadastral-grid-priority`;
+            warning = "识别到 Liste_Carrés / 矿权网格表，已优先读取 num / XV / YV；已忽略地图中央的大号 DMS 标注。";
+          } else {
+            console.log("Cadastral grid table priority read did not return parsable rows:", gridRawText.slice(0, 500));
+          }
+        }
+      } catch (gridPriorityError) {
+        console.error("Cadastral grid layout/table priority check failed:", gridPriorityError.message || gridPriorityError);
+      }
     }
 
     if (!cadastralGrid.isCadastralGrid && shouldRetryBftmRecognition(rawText, coordinates)) {
