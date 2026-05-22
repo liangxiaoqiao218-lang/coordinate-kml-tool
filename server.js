@@ -6940,8 +6940,8 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
  * - Madagascar cadastral grid: detect Liste_Carres / cadastral grid / grille cadastrale / num|XV|YV;
  *   prioritize the right-side grid table, ignore large map DMS labels, extract only num | XV | YV.
  *   Frontend KML uses inferred dx/dy, treats XV/YV as cell centers, and converts EPSG:29702 to WGS84.
- * - Kyrgyzstan Gauss-Kruger: detect Russian corner-point X/Y tables; preserve point | X | Y and
- *   sort by point number. Stage 1 does not generate KML until EPSG:28413 conversion is wired.
+ * - Kyrgyzstan Gauss-Kruger: detect Russian corner-point X/Y tables; preserve point | X | Y,
+ *   sort by point number, and keep full X easting / Y northing for EPSG:28413 KML conversion.
  * - Decimal lon/lat: plain decimal polygon path only; never enter cadastral grid mode.
  * - Multi-table and Point A-Z tables: visual understanding first so table boundaries and row order survive.
  * - OCR: use only for low-row-count retry or fallback, never as the main flow for table coordinates.

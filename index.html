@@ -9319,7 +9319,7 @@ ${placemarks}
         // 2. Standard DMS tables: keep visual-model DMS table display; W/O/Ouest stays negative longitude internally.
         // 3. BFTM/X-Y: keep projected X,Y text and never let decimal extraction override it.
         // 4. Madagascar cadastral grid: display only num | XV | YV; KML later converts EPSG:29702 corners to WGS84.
-        // 5. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML waits for projection conversion.
+        // 5. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
         // 6. Plain decimal lon/lat: use the ordinary polygon path only.
         // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, or kyrgyzGkText.
         const finalCoordinates = isCadastralGrid
