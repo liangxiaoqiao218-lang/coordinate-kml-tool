@@ -3194,6 +3194,106 @@ function getCadastralGridInfo(text) {
   };
 }
 
+function hasKyrgyzGkContext(text) {
+  const value = String(text || "");
+  return /Координаты\s+угловых\s+точек|лицензионн(?:ой|ая|ую)|прямоугольн(?:ой|ая|ую)\s+систем|№\s*точек|N\s*o?\s*points?|Kyrgyzstan|Киргиз|Кыргыз|Pulkovo|Gauss|Гаусс|Крюгер/i.test(value)
+    && /\bX\b/i.test(value)
+    && /\bY\b/i.test(value);
+}
+
+function looksLikeKyrgyzGkPair(x, y) {
+  const easting = Number(x);
+  const northing = Number(y);
+  return Number.isFinite(easting)
+    && Number.isFinite(northing)
+    && easting >= 13000000
+    && easting <= 13999999
+    && northing >= 3900000
+    && northing <= 4800000;
+}
+
+function normalizeKyrgyzGkValue(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/,/g, ".");
+}
+
+function extractKyrgyzGkRows(text) {
+  const source = normalizeText(text);
+
+  if (!hasKyrgyzGkContext(source) && !/^point\s*\|\s*X\s*\|\s*Y/im.test(source)) {
+    return [];
+  }
+
+  const rowsByPoint = new Map();
+  const rowPattern = /(?:^|[^\d])(\d{1,3})\s*[\|,;\s]+\s*(13\d{5,7})\s*[\|,;\s]+\s*(4\d{6})(?=$|[^\d])/g;
+
+  source
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .forEach(line => {
+      if (/^(?:point|№|no\.?|n)\s*[\|,;\s-]*x\s*[\|,;\s-]*y$/i.test(line) || /точек/i.test(line)) {
+        return;
+      }
+
+      rowPattern.lastIndex = 0;
+      let match;
+
+      while ((match = rowPattern.exec(line)) !== null) {
+        const point = Number(match[1]);
+        const x = normalizeKyrgyzGkValue(match[2]);
+        const y = normalizeKyrgyzGkValue(match[3]);
+
+        if (!Number.isInteger(point) || point <= 0 || !looksLikeKyrgyzGkPair(x, y)) {
+          continue;
+        }
+
+        if (!rowsByPoint.has(point)) {
+          rowsByPoint.set(point, { point, x, y });
+        }
+      }
+    });
+
+  return Array.from(rowsByPoint.values()).sort((a, b) => a.point - b.point);
+}
+
+function countKyrgyzGkCoordinatePairs(text) {
+  const source = normalizeText(text);
+  const pairPattern = /(?:^|[^\d])(13\d{5,7})\s*[\|,;\s]+\s*(4\d{6})(?=$|[^\d])/g;
+  let count = 0;
+  let match;
+
+  while ((match = pairPattern.exec(source)) !== null) {
+    if (looksLikeKyrgyzGkPair(match[1], match[2])) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function shouldCheckKyrgyzGkTable(rawText, coordinates) {
+  return hasKyrgyzGkContext(rawText)
+    || hasKyrgyzGkContext(coordinates)
+    || countKyrgyzGkCoordinatePairs(rawText) >= 8
+    || countKyrgyzGkCoordinatePairs(coordinates) >= 8;
+}
+
+function formatKyrgyzGkRows(rows) {
+  return ["point | X | Y", ...rows.map(row => `${row.point} | ${row.x} | ${row.y}`)].join("\n");
+}
+
+function getKyrgyzGkInfo(text) {
+  const rows = extractKyrgyzGkRows(text);
+  return {
+    isKyrgyzGk: rows.length > 0,
+    rows,
+    rowCount: rows.length
+  };
+}
+
 function shouldCheckCadastralGridLayout(rawText, coordinates) {
   if (getCadastralGridInfo(rawText).isCadastralGrid || getCadastralGridInfo(coordinates).isCadastralGrid) {
     return false;
@@ -6840,6 +6940,8 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
  * - Madagascar cadastral grid: detect Liste_Carres / cadastral grid / grille cadastrale / num|XV|YV;
  *   prioritize the right-side grid table, ignore large map DMS labels, extract only num | XV | YV.
  *   Frontend KML uses inferred dx/dy, treats XV/YV as cell centers, and converts EPSG:29702 to WGS84.
+ * - Kyrgyzstan Gauss-Kruger: detect Russian corner-point X/Y tables; preserve point | X | Y and
+ *   sort by point number. Stage 1 does not generate KML until EPSG:28413 conversion is wired.
  * - Decimal lon/lat: plain decimal polygon path only; never enter cadastral grid mode.
  * - Multi-table and Point A-Z tables: visual understanding first so table boundaries and row order survive.
  * - OCR: use only for low-row-count retry or fallback, never as the main flow for table coordinates.
@@ -6957,7 +7059,8 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 4. Nord / Est 表头，结合 N/S/E/W 判断纬度和经度。
 5. X / Y、Liste des Coordonnées、BFTM / ITRF 2008 / Projection BFTM 平面坐标表。
 6. num / XV / YV 矿权网格表、cadastral grid、grille cadastrale、carreau grid 表。
-7. 十进制度、度分、度分秒 DMS。
+7. Kyrgyzstan / Soviet Gauss-Kruger corner-point tables in Russian, headed № точек | X | Y.
+8. 十进制度、度分、度分秒 DMS。
 8. N/S/E/W，法语 O / Ouest = West = 西经。
 9. Latitude nord = 北纬；Longitude ouest = 西经。
 10. 表格数字可能带空格分组，例如 658 800 和 1 364 200，必须分别理解为 658800 和 1364200。
@@ -6966,6 +7069,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 
 输出规则：
 1. 如果表格是矿权网格 / cadastral grid，表头包含 num / XV / YV，则不要把 XV/YV 当 polygon 点，不要转经纬度，不要输出 X,Y。每行只输出：num | XV | YV。
+2. 如果表格是吉尔吉斯斯坦 / 苏联高斯克吕格平面坐标，表头包含 № точек / X / Y，则必须保留点号。每行只输出：point | X | Y，不要只输出 X,Y。
 2. 识别出什么格式，就保留什么格式。不要把度分秒自动转换成十进制度。
 3. 每一行只输出一组坐标，格式固定为：经度,纬度。
 4. 如果表格是 X/Y 平面坐标，每一行输出：X,Y，保留原数字。
@@ -7063,6 +7167,30 @@ Example:
 num | XV | YV
 280 | 292812.5 | 360937.5
 281 | 292812.5 | 361562.5`;
+    const kyrgyzGkTablePrompt = `Read ONLY the Kyrgyzstan / Soviet Gauss-Kruger coordinate table in the image.
+This is a Russian table usually headed:
+Координаты угловых точек лицензионной площади в прямоугольной системе координат
+
+Target table headers:
+№ точек, No points, point, X, Y.
+
+Critical rules:
+- Preserve the visible point number from the first column.
+- Read every row from all table blocks, including left block, right block, and lower continuation block.
+- Output only rows in this exact format:
+point | X | Y
+- Sort rows by numeric point number ascending.
+- Do NOT output plain X,Y.
+- Do NOT convert coordinates to longitude/latitude.
+- Do NOT output explanations or markdown.
+
+Example:
+point | X | Y
+1 | 13261341 | 4607777
+2 | 13261396 | 4607769
+65 | 13261317 | 4607721
+
+If the table is not readable, output only: ${noCoordinatesText}`;
     const pointAzDmsRetryPrompt = `You are reading a mining coordinate table from an image.
 Focus ONLY on the printed coordinate table headed Point / Nord / Est, Point / Latitude / Longitude, or Point / N / E.
 Ignore the map, phone UI, page text, watermarks, captions, and all non-table content.
@@ -7116,6 +7244,7 @@ Rules:
     let warning = extractRecognitionWarning(rawText);
     let usedModel = aliyunVisionModel;
     let cadastralGrid = getCadastralGridInfo(rawText);
+    let kyrgyzGk = getKyrgyzGkInfo(rawText);
 
     if (cadastralGrid.isCadastralGrid) {
       coordinates = formatCadastralGridRows(cadastralGrid.rows);
@@ -7123,7 +7252,41 @@ Rules:
       warning = warning || "识别到矿权网格表，已提取 num / XV / YV；当前阶段不转换经纬度，也不生成 KML。";
     }
 
-    if (!cadastralGrid.isCadastralGrid && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && kyrgyzGk.isKyrgyzGk) {
+      coordinates = formatKyrgyzGkRows(kyrgyzGk.rows);
+      usedModel = `${usedModel}+kyrgyz-gk`;
+      warning = warning || "识别到吉尔吉斯斯坦高斯克吕格平面坐标表，已保留 point / X / Y 并按点号排序；当前阶段需投影转换后才能生成 KML。";
+    }
+
+    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
+      try {
+        console.log("Kyrgyzstan Gauss-Kruger table context detected, reading point/X/Y table.");
+        const kyrgyzResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: kyrgyzGkTablePrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 2200,
+          timeoutMs: 35000
+        });
+        const kyrgyzRawText = kyrgyzResponse.choices?.[0]?.message?.content || "";
+        const kyrgyzInfo = getKyrgyzGkInfo(kyrgyzRawText);
+
+        if (kyrgyzInfo.isKyrgyzGk) {
+          rawText = kyrgyzRawText;
+          coordinates = formatKyrgyzGkRows(kyrgyzInfo.rows);
+          kyrgyzGk = kyrgyzInfo;
+          usedModel = `${aliyunVisionModel}+kyrgyz-gk-priority`;
+          warning = "识别到吉尔吉斯斯坦高斯克吕格平面坐标表，已保留 point / X / Y 并按点号排序；当前阶段需投影转换后才能生成 KML。";
+        } else {
+          console.log("Kyrgyzstan GK priority read did not return parsable rows:", kyrgyzRawText.slice(0, 500));
+        }
+      } catch (kyrgyzError) {
+        console.error("Kyrgyzstan GK priority check failed:", kyrgyzError.message || kyrgyzError);
+      }
+    }
+
+    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
       try {
         console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
         const layoutResponse = await callAliyunVision({
@@ -7164,7 +7327,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y result looks like column-paired output, retrying row-wise extraction.");
         const bftmRetryResponse = await callAliyunVision({
@@ -7201,7 +7364,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y OCR retry still invalid, using vision layout retry.");
         const bftmVisionRetryResponse = await callAliyunVision({
@@ -7238,7 +7401,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -7267,7 +7430,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && countCommaDmsLongTableRows(rawText) >= 20) {
+    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
       const smoothedRawText = smoothDmsMinuteIslandsForLongTable(rawText);
 
       if (smoothedRawText !== rawText) {
@@ -7278,7 +7441,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && shouldRetryRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -7301,7 +7464,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && shouldRetryRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -7327,8 +7490,11 @@ Rules:
     console.log("坐标提取结果：");
     console.log(coordinates);
     cadastralGrid = getCadastralGridInfo(rawText);
+    kyrgyzGk = getKyrgyzGkInfo(rawText);
     if (cadastralGrid.isCadastralGrid) {
       coordinates = formatCadastralGridRows(cadastralGrid.rows);
+    } else if (kyrgyzGk.isKyrgyzGk) {
+      coordinates = formatKyrgyzGkRows(kyrgyzGk.rows);
     }
 
     const bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
@@ -7367,9 +7533,14 @@ Rules:
       model: usedModel,
       rawText,
       coordinates,
-      precisionMode: cadastralGrid.isCadastralGrid ? "cadastral-grid-num-xv-yv" : "preserve-original-decimals-and-parse-dms",
+      precisionMode: cadastralGrid.isCadastralGrid
+        ? "cadastral-grid-num-xv-yv"
+        : kyrgyzGk.isKyrgyzGk
+          ? "kyrgyz-gk-point-x-y"
+          : "preserve-original-decimals-and-parse-dms",
       warning,
       cadastralGrid,
+      kyrgyzGk,
       bftmLongTable,
       quota: consumeResult.quota
     });

@@ -7699,17 +7699,80 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return ["num | XV | YV", ...rows.map(row => `${row.num} | ${row.xv} | ${row.yv}`)].join("\n");
     }
 
+    function hasKyrgyzGkContext(text) {
+      const value = String(text || "");
+      return /Координаты\s+угловых\s+точек|лицензионн(?:ой|ая|ую)|прямоугольн(?:ой|ая|ую)\s+систем|№\s*точек|N\s*o?\s*points?|Kyrgyzstan|Киргиз|Кыргыз|Pulkovo|Gauss|Гаусс|Крюгер/i.test(value)
+        && /\bX\b/i.test(value)
+        && /\bY\b/i.test(value);
+    }
+
+    function extractKyrgyzGkRows(text) {
+      const source = String(text || "");
+
+      if (!hasKyrgyzGkContext(source) && !/^point\s*\|\s*X\s*\|\s*Y/im.test(source)) {
+        return [];
+      }
+
+      const rowsByPoint = new Map();
+      const rowPattern = /(?:^|[^\d])(\d{1,3})\s*[\|,;\s]+\s*(13\d{5,7})\s*[\|,;\s]+\s*(4\d{6})(?=$|[^\d])/g;
+
+      source
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .forEach(line => {
+          if (/^(?:point|№|no\.?|n)\s*[\|,;\s-]*x\s*[\|,;\s-]*y$/i.test(line) || /точек/i.test(line)) {
+            return;
+          }
+
+          rowPattern.lastIndex = 0;
+          let match;
+
+          while ((match = rowPattern.exec(line)) !== null) {
+            const point = Number(match[1]);
+            const x = String(match[2] || "").replace(/\s+/g, "");
+            const y = String(match[3] || "").replace(/\s+/g, "");
+            const easting = Number(x);
+            const northing = Number(y);
+
+            if (!Number.isInteger(point) || point <= 0 || easting < 13000000 || easting > 13999999 || northing < 3900000 || northing > 4800000) {
+              continue;
+            }
+
+            if (!rowsByPoint.has(point)) {
+              rowsByPoint.set(point, { point, x, y });
+            }
+          }
+        });
+
+      return Array.from(rowsByPoint.values()).sort((a, b) => a.point - b.point);
+    }
+
+    function hasKyrgyzGkRows(text) {
+      return extractKyrgyzGkRows(text).length > 0;
+    }
+
+    function formatKyrgyzGkRows(rows) {
+      return ["point | X | Y", ...rows.map(row => `${row.point} | ${row.x} | ${row.y}`)].join("\n");
+    }
+
     function updateCadastralGridPanel() {
-      const rows = extractCadastralGridRows(input.value);
-      const isCadastralGrid = rows.length > 0;
+      const cadastralRows = extractCadastralGridRows(input.value);
+      const kyrgyzRows = extractKyrgyzGkRows(input.value);
+      const isCadastralGrid = cadastralRows.length > 0;
+      const isKyrgyzGk = !isCadastralGrid && kyrgyzRows.length > 0;
 
       if (cadastralGridPanel) {
         cadastralGridPanel.classList.toggle("is-active", isCadastralGrid);
       }
 
       if (cadastralGridBadge) {
-        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid);
-        cadastralGridBadge.textContent = isCadastralGrid ? `矿权网格模式 · ${rows.length} 格` : "矿权网格模式";
+        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid || isKyrgyzGk);
+        cadastralGridBadge.textContent = isCadastralGrid
+          ? `矿权网格模式 · ${cadastralRows.length} 格`
+          : isKyrgyzGk
+            ? `Kyrgyzstan GK 模式 · ${kyrgyzRows.length} 点`
+            : "矿权网格模式";
       }
     }
 
@@ -7888,8 +7951,10 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     const MADAGASCAR_CADASTRAL_CRS_CODE = "EPSG:29702";
+    const KYRGYZ_GK_CRS_CODE = "EPSG:28413";
     const MADAGASCAR_CADASTRAL_PROJ4_URL = "https://cdn.jsdelivr.net/npm/proj4@2.11.0/dist/proj4.min.js";
     const MADAGASCAR_CADASTRAL_PROJ4_DEF = "+proj=omerc +lat_0=-18.9 +lonc=44.1 +alpha=18.9 +gamma=18.9 +k=0.9995 +x_0=400000 +y_0=800000 +ellps=intl +pm=paris +towgs84=-198.383,-240.517,-107.909,0,0,0,0 +units=m +no_defs +type=crs";
+    const KYRGYZ_GK_PROJ4_DEF = "+proj=tmerc +lat_0=0 +lon_0=75 +k=1 +x_0=13500000 +y_0=0 +ellps=krass +towgs84=25,-141,-78.5,0,-0.35,-0.736,0 +units=m +no_defs +type=crs";
     let proj4LoadPromise = null;
 
     function ensureProj4Loaded() {
@@ -7921,6 +7986,16 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       }
     }
 
+    function defineKyrgyzGkProjection(proj4) {
+      if (!proj4 || typeof proj4.defs !== "function") {
+        throw new Error("Projection engine is unavailable.");
+      }
+
+      if (!proj4.defs(KYRGYZ_GK_CRS_CODE)) {
+        proj4.defs(KYRGYZ_GK_CRS_CODE, KYRGYZ_GK_PROJ4_DEF);
+      }
+    }
+
     async function convertMadagascarCadastralToWgs84(x, y) {
       // Stable path: Madagascar cadastral grid KML conversion only.
       // Recognition output remains num | XV | YV; polygons are built from center points then converted to WGS84.
@@ -7939,6 +8014,32 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
       if (!Number.isFinite(lon) || !Number.isFinite(lat) || lon < 42 || lon > 52 || lat < -27 || lat > -10) {
         throw new Error("Converted coordinate is outside Madagascar bounds.");
+      }
+
+      return {
+        lon: trimNumber(lon),
+        lat: trimNumber(lat)
+      };
+    }
+
+    async function convertKyrgyzGkToWgs84(x, y) {
+      // Stable path: Kyrgyzstan / Soviet Gauss-Kruger stage 2.
+      // X is the full EPSG:28413 easting with zone prefix; Y is northing. Do not swap or strip the zone.
+      const easting = Number(x);
+      const northing = Number(y);
+
+      if (!Number.isFinite(easting) || !Number.isFinite(northing)) {
+        throw new Error("Invalid Kyrgyzstan Gauss-Kruger coordinate.");
+      }
+
+      const proj4 = await ensureProj4Loaded();
+      defineKyrgyzGkProjection(proj4);
+      const result = proj4(KYRGYZ_GK_CRS_CODE, "EPSG:4326", [easting, northing]);
+      const lon = Number(result?.[0]);
+      const lat = Number(result?.[1]);
+
+      if (!Number.isFinite(lon) || !Number.isFinite(lat) || lon < 69 || lon > 80 || lat < 39 || lat > 43) {
+        throw new Error("Converted coordinate is outside Kyrgyzstan bounds.");
       }
 
       return {
@@ -8848,6 +8949,76 @@ ${placemarks}
 </kml>`;
     }
 
+    async function buildKyrgyzGkWgs84PolygonRows(rows) {
+      const sortedRows = [...rows]
+        .map(row => ({
+          point: Number(row.point),
+          x: Number(row.x),
+          y: Number(row.y)
+        }))
+        .filter(row => Number.isInteger(row.point) && Number.isFinite(row.x) && Number.isFinite(row.y))
+        .sort((a, b) => a.point - b.point);
+
+      if (sortedRows.length < 3) {
+        return [];
+      }
+
+      const pairs = [];
+
+      for (const row of sortedRows) {
+        const converted = await convertKyrgyzGkToWgs84(row.x, row.y);
+        pairs.push({
+          point: row.point,
+          longitude: converted.lon,
+          latitude: converted.lat
+        });
+      }
+
+      const first = pairs[0];
+      const last = pairs[pairs.length - 1];
+
+      if (first.longitude !== last.longitude || first.latitude !== last.latitude) {
+        pairs.push({
+          point: first.point,
+          longitude: first.longitude,
+          latitude: first.latitude
+        });
+      }
+
+      return pairs;
+    }
+
+    function buildKyrgyzGkKml(pairs) {
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Kyrgyzstan Gauss-Kruger Polygon</name>
+    <description>已识别为吉尔吉斯斯坦高斯克吕格平面坐标，按 point 升序构建 polygon，并尝试从 EPSG:28413 转换为 WGS84 经纬度。转换结果需结合原图人工核对。Generated by GeoKit Lab｜geokitlab.com</description>
+    <Placemark>
+      <name>Kyrgyzstan GK Polygon</name>
+      <description>${escapeXml(`Source CRS: ${KYRGYZ_GK_CRS_CODE}. X is full easting with zone prefix; Y is northing. Points are sorted by point number before polygon generation.`)}</description>
+      <Style>
+        <LineStyle>
+          <color>ff16a34a</color>
+          <width>2</width>
+        </LineStyle>
+        <PolyStyle>
+          <color>3316a34a</color>
+        </PolyStyle>
+      </Style>
+      <Polygon>
+        <tessellate>1</tessellate>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>${formatKmlCoordinates(pairs)}</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>`;
+    }
+
     async function downloadKml() {
       await loadUserConfig();
 
@@ -8907,6 +9078,51 @@ ${placemarks}
           convertedToWgs84: true
         });
         showMessage(`已生成 ${gridResult.polygons.length} 个矿权网格 KML。已按马达加斯加矿权格网尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, true, 7000);
+        return;
+      }
+
+      if (hasKyrgyzGkRows(input.value)) {
+        const rows = extractKyrgyzGkRows(input.value);
+        let wgs84Pairs;
+
+        try {
+          wgs84Pairs = await buildKyrgyzGkWgs84PolygonRows(rows);
+        } catch (error) {
+          console.warn("Kyrgyzstan Gauss-Kruger projection conversion failed:", error);
+          showMessage("已识别吉尔吉斯斯坦高斯克吕格平面坐标，但投影转换失败，不能生成 KML。请结合原图和坐标系人工校核。", true, 8000);
+          return;
+        }
+
+        if (wgs84Pairs.length < 4) {
+          showMessage("吉尔吉斯斯坦 GK 坐标点不足，至少需要 3 个点才能生成 polygon KML。", true);
+          return;
+        }
+
+        const usageAllowed = await consumeUsage("convert");
+        if (!usageAllowed) {
+          return;
+        }
+
+        const kml = buildKyrgyzGkKml(wgs84Pairs);
+        const blob = new Blob([kml], {
+          type: "application/vnd.google-earth.kml+xml;charset=utf-8"
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = "kyrgyzstan-gk-polygon.kml";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        trackEvent("kml_download_click", {
+          exportType: "KyrgyzstanGaussKruger",
+          count: rows.length,
+          projection: KYRGYZ_GK_CRS_CODE,
+          convertedToWgs84: true
+        });
+        showMessage(`已生成 ${rows.length} 点 Kyrgyzstan GK polygon KML。已尝试转换为 WGS84 经纬度，结果需结合原图人工核对。`, true, 7000);
         return;
       }
 
@@ -9080,8 +9296,13 @@ ${placemarks}
           : extractCadastralGridRows(data.rawText || data.coordinates);
         const cadastralGridText = formatCadastralGridRows(cadastralGridRows);
         const isCadastralGrid = Boolean(data.cadastralGrid?.isCadastralGrid || cadastralGridRows.length > 0);
+        const kyrgyzGkRows = Array.isArray(data.kyrgyzGk?.rows) && data.kyrgyzGk.rows.length > 0
+          ? data.kyrgyzGk.rows
+          : extractKyrgyzGkRows(data.rawText || data.coordinates);
+        const kyrgyzGkText = formatKyrgyzGkRows(kyrgyzGkRows);
+        const isKyrgyzGk = !isCadastralGrid && Boolean(data.kyrgyzGk?.isKyrgyzGk || kyrgyzGkRows.length > 0);
 
-        if (!isCadastralGrid && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
+        if (!isCadastralGrid && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
           const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
 
           if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeLikelyUtm30Coordinate(firstProjectedPair[0], firstProjectedPair[1])) {
@@ -9098,21 +9319,25 @@ ${placemarks}
         // 2. Standard DMS tables: keep visual-model DMS table display; W/O/Ouest stays negative longitude internally.
         // 3. BFTM/X-Y: keep projected X,Y text and never let decimal extraction override it.
         // 4. Madagascar cadastral grid: display only num | XV | YV; KML later converts EPSG:29702 corners to WGS84.
-        // 5. Plain decimal lon/lat: use the ordinary polygon path only.
-        // Do not add a new display layer that overwrites recognizedLines or cadastralGridText.
+        // 5. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML waits for projection conversion.
+        // 6. Plain decimal lon/lat: use the ordinary polygon path only.
+        // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, or kyrgyzGkText.
         const finalCoordinates = isCadastralGrid
           ? (cadastralGridText || data.coordinates || "")
-          : chooseBestCoordinateResult([
-            recognizedLines,
-            projectedLines,
-            preservedCoordinates,
-            data.coordinates || "",
-            dmsCoordinates
-          ]);
+          : isKyrgyzGk
+            ? (kyrgyzGkText || data.coordinates || "")
+            : chooseBestCoordinateResult([
+              recognizedLines,
+              projectedLines,
+              preservedCoordinates,
+              data.coordinates || "",
+              dmsCoordinates
+            ]);
 
         appendDebug(`识别原文：\n${data.rawText || "无"}`);
         appendDebug(`平面坐标系判断：${detectedProjection || projectionType.value || "自动"}`);
         appendDebug(`矿权网格识别：${isCadastralGrid ? `已识别 ${cadastralGridRows.length} 行 num / XV / YV` : "无"}`);
+        appendDebug(`Kyrgyzstan GK识别：${isKyrgyzGk ? `已识别 ${kyrgyzGkRows.length} 行 point / X / Y` : "无"}`);
         appendDebug(`原样坐标行：\n${recognizedLines || "无"}`);
         appendDebug(`X/Y平面坐标提取结果：\n${projectedLines || "无"}`);
         appendDebug(`后端坐标提取结果：\n${data.coordinates || "无"}`);
@@ -9142,7 +9367,7 @@ ${placemarks}
         input.value = finalCoordinates;
         coordinateOrder.value = "auto";
         updateCadastralGridPanel();
-        if (isCadastralGrid) {
+        if (isCadastralGrid || isKyrgyzGk) {
           clearInternalKmlSource();
         } else {
           setInternalKmlSourceFromText(finalCoordinates);
@@ -9152,10 +9377,13 @@ ${placemarks}
         trackEvent("image_recognize_success", {
           rows: countCoordinateRows(finalCoordinates),
           cadastralGrid: isCadastralGrid,
+          kyrgyzGk: isKyrgyzGk,
           projected: hasProjectedCoordinateRows(finalCoordinates)
         });
         if (isCadastralGrid) {
           showMessage(`已识别矿权网格表 ${cadastralGridRows.length} 行，已提取 num / XV / YV。已识别为马达加斯加矿权格网，生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+        } else if (isKyrgyzGk) {
+          showMessage(`已识别为吉尔吉斯斯坦高斯克吕格平面坐标 ${kyrgyzGkRows.length} 点，生成 KML 时会尝试转换为 WGS84，经纬度结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (data.bftmLongTable?.incomplete) {
           showMessage(`该图为 BFTM 坐标长表，建议只截取坐标表区域后重试，识别会更稳定。已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行，缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (hasProjectedCoordinateRows(finalCoordinates)) {
