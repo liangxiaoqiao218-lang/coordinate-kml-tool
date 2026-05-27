@@ -17,44 +17,14 @@
   <meta property="og:image:height" content="800" />
   <meta property="og:image:type" content="image/jpeg" />
   <meta property="og:url" content="<!--URL-->" />
+  <link rel="canonical" href="<!--CANONICAL-->" />
   <meta itemprop="image" content="<!--IMAGE-->" />
   <link rel="image_src" href="<!--IMAGE-->" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="<!--TITLE-->" />
   <meta name="twitter:description" content="<!--DESC-->" />
   <meta name="twitter:image" content="<!--IMAGE-->" />
-  <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "什么是 KML 文件？",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "KML 是 Google Earth 与奥维地图常用的地图标注格式，可用于显示边界、坐标点与区域范围。"
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "如何把图片坐标转换成 KML？",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "GeoKit Lab 支持图片坐标识别，可自动提取经纬度并生成 KML 文件，适用于矿区边界整理和野外坐标处理。"
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "什么是 BFTM 坐标？",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "BFTM 是布基纳法索常见矿业投影坐标系统，广泛用于矿权边界与测绘数据。"
-          }
-        }
-      ]
-    }
-  </script>
+  <script id="pageStructuredData" type="application/ld+json"><!--JSONLD--></script>
   <style>
     * {
       box-sizing: border-box;
@@ -237,7 +207,7 @@
       line-height: 1.55;
     }
 
-    .home-faq {
+    .product-faq {
       width: 100%;
       max-width: 960px;
       margin: 28px auto 0;
@@ -248,22 +218,43 @@
       box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
     }
 
-    .home-faq h2 {
+    .product-faq h2 {
       margin: 0 0 8px;
       font-size: 17px;
       line-height: 1.35;
       color: #0f172a;
     }
 
-    .home-faq p {
+    .product-faq p {
       margin: 0 0 16px;
       color: #526071;
       font-size: 14px;
       line-height: 1.65;
     }
 
-    .home-faq p:last-child {
+    .product-faq p:last-child {
       margin-bottom: 0;
+    }
+
+    .product-faq details {
+      border-top: 1px solid #e2e8f0;
+      padding: 12px 0;
+    }
+
+    .product-faq details:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .product-faq summary {
+      cursor: pointer;
+      color: #0f172a;
+      font-weight: 800;
+      line-height: 1.45;
+    }
+
+    .product-faq details p {
+      margin: 10px 0 0;
     }
 
     .user-code-card {
@@ -3379,55 +3370,43 @@
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
         <p class="eyebrow">GeoKit Lab</p>
-        <h1>坐标转KML与矿地快判工具</h1>
-        <p class="intro">坐标处理｜矿地快判｜黄金成色计算</p>
+        <h1>矿业与空间工具平台</h1>
+        <p class="intro">坐标识别｜矿地快判｜黄金成色计算</p>
       </div>
 
       <div class="module-grid">
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
           <small class="module-tag">KML</small>
-          <strong>坐标处理工具</strong>
-          <span>经纬度转换、图片坐标识别与 KML 生成</span>
-          <span class="module-desc">支持奥维地图与 Google Earth 坐标导入导出，适用于矿区边界整理、野外坐标处理与地图标绘。</span>
+          <strong>坐标与 KML 工具</strong>
+          <span>图片坐标识别、多格式转换、KML 生成</span>
           <small class="module-action">进入</small>
         </button>
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
           <small class="module-tag">快判</small>
           <strong>矿地快判</strong>
-          <span>河道砂金、卫星图与矿石照片快速初筛</span>
-          <span class="module-desc">基于地形结构、沉积逻辑与图像特征进行矿地快速判断，适用于河道砂金、卫星图、矿石照片等场景。</span>
+          <span>矿石、河道、卫星图快速结构分析</span>
           <small class="module-action">进入</small>
         </button>
         <button id="homeGoldEntry" type="button" class="module-card gold-module" onclick="showPage('gold')">
           <small class="module-tag">成色</small>
           <strong>黄金成色计算器</strong>
-          <span>黄金纯度、K值、密度与参考价格计算</span>
-          <span class="module-desc">通过重量与排水差值计算黄金纯度、K值、密度与参考价格，适用于黄金回收与成色快速估算。</span>
+          <span>吊水法纯度、K值、密度与参考价格计算</span>
           <small class="module-action">进入</small>
         </button>
       </div>
-
-      <section class="home-faq" aria-label="坐标处理与矿地分析常见问题">
-        <h2>什么是 KML 文件？</h2>
-        <p>KML 是 Google Earth 与奥维地图常用的地图标注格式，可用于显示边界、坐标点与区域范围。</p>
-        <h2>如何把图片坐标转换成 KML？</h2>
-        <p>GeoKit Lab 支持图片坐标识别，可自动提取经纬度并生成 KML 文件，适用于矿区边界整理和野外坐标处理。</p>
-        <h2>什么是 BFTM 坐标？</h2>
-        <p>BFTM 是布基纳法索常见矿业投影坐标系统，广泛用于矿权边界与测绘数据。</p>
-      </section>
     </section>
 
     <section id="coordinatePage" class="view">
       <div class="page-nav">
         <button type="button" class="back-button" onclick="showPage('home')">首页</button>
-        <button type="button" class="back-button coordinate-switch is-active" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button coordinate-switch is-active" onclick="showPage('coordinate')">坐标与 KML 工具</button>
         <button type="button" class="back-button judge-switch" onclick="showPage('judge')">矿地快判</button>
         <button type="button" class="back-button gold-switch" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
       <div class="page-title-row coordinate-title-row">
-        <h1>坐标处理工具</h1>
+        <h1>坐标与 KML 工具</h1>
       </div>
-      <p class="intro">所有坐标相关操作都在这里完成：粘贴、图片识别、标准化、经纬度交换、复制结果和生成 KML。</p>
+      <p class="intro">图片坐标识别、多格式转换、KML 生成。支持手写坐标、经纬度、BFTM、奥维地图与 Google Earth 导入。</p>
       <div class="quota-entry-row">
         <div id="convertQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
         <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
@@ -3558,19 +3537,37 @@
         建议让用户发送：原图 + 识别调试信息 + 需要导出的类型（Polygon/LineString/Point）
       </div>
     </div>
+    <section class="product-faq" aria-label="坐标与 KML 工具常见问题">
+      <details>
+        <summary>什么是图片坐标识别？</summary>
+        <p>图片坐标识别是从坐标截图、测绘表格或手写坐标中提取可编辑坐标文本，再整理为地图可用格式。</p>
+      </details>
+      <details>
+        <summary>如何把截图中的坐标生成 KML？</summary>
+        <p>上传坐标截图或粘贴坐标文本后，先核对识别结果，再选择 Polygon、LineString 或 Point 导出 KML 文件。</p>
+      </details>
+      <details>
+        <summary>什么是 BFTM 坐标？</summary>
+        <p>BFTM 是布基纳法索常见矿业投影坐标系统，广泛用于矿权边界与测绘数据，需要转换后才能在 WGS84 地图中使用。</p>
+      </details>
+      <details>
+        <summary>GeoKit Lab 与普通坐标工具有什么区别？</summary>
+        <p>GeoKit Lab 面向矿区边界、野外截图、投影坐标表和 KML 生成流程，重点处理真实项目中的复杂坐标格式。</p>
+      </details>
+    </section>
     </section>
 
     <section id="judgePage" class="view">
       <div class="page-nav">
         <button type="button" class="back-button" onclick="showPage('home')">首页</button>
-        <button type="button" class="back-button coordinate-switch" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button coordinate-switch" onclick="showPage('coordinate')">坐标与 KML 工具</button>
         <button type="button" class="back-button judge-switch is-active" onclick="showPage('judge')">矿地快判</button>
         <button type="button" class="back-button gold-switch" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
       <div class="page-title-row judge-title-row">
         <h1>矿地快判</h1>
       </div>
-      <p class="intro">用于矿石、河道、卫星图的现场初筛，先判断是否值得继续看。</p>
+      <p class="intro">矿石、河道、卫星图快速结构分析。用于矿石照片、河道砂金、老鼠洞和地貌截图的保守初筛。</p>
       <div class="quota-entry-row">
         <div id="judgeQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
         <button id="judgeQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
@@ -3630,17 +3627,35 @@
           <div id="judgeRecentList" class="judge-recent-list"></div>
         </div>
       </div>
+      <section class="product-faq" aria-label="矿地快判常见问题">
+        <details>
+          <summary>什么是矿地快判？</summary>
+          <p>矿地快判是根据矿石照片、河道照片、卫星图和现场环境图做快速初筛，帮助判断是否值得继续实地核验。</p>
+        </details>
+        <details>
+          <summary>矿石照片能不能判断有金？</summary>
+          <p>照片只能判断外观、结构和误判风险，不能承诺有金或品位，仍需要密度测试、XRF、火试金或现场验证。</p>
+        </details>
+        <details>
+          <summary>河道砂金应该看哪些结构？</summary>
+          <p>重点看弯道、收窄、汇流、阶地、老河道、重砂富集和采挖痕迹，而不是只看颜色。</p>
+        </details>
+        <details>
+          <summary>为什么快判只能做初筛，不能代替试采？</summary>
+          <p>图像分析无法确认储量、品位和连续性，只能作为前期筛选，最终仍需现场采样、试采和检测。</p>
+        </details>
+      </section>
     </section>
 
     <section id="goldPage" class="view">
       <div class="page-nav">
         <button type="button" class="back-button" onclick="showPage('home')">首页</button>
-        <button type="button" class="back-button coordinate-switch" onclick="showPage('coordinate')">坐标处理工具</button>
+        <button type="button" class="back-button coordinate-switch" onclick="showPage('coordinate')">坐标与 KML 工具</button>
         <button type="button" class="back-button judge-switch" onclick="showPage('judge')">矿地快判</button>
         <button type="button" class="back-button gold-switch is-active" onclick="showPage('gold')">黄金成色计算器</button>
       </div>
       <h1>黄金成色计算器</h1>
-      <p class="intro">输入黄金重量和排水差重，快速估算纯度、K值和Au值。结果仅供现场快速参考。</p>
+      <p class="intro">吊水法纯度、K值、密度与参考价格计算。输入黄金重量、排水差值和报价即可估算结果。</p>
 
       <div id="goldUnavailableNotice" class="feature-unavailable" hidden>该功能暂未开放</div>
 
@@ -3734,6 +3749,24 @@ Au值 = 纯度 × 10 后取整数</div>
 
         <div id="goldMessage" class="message"></div>
       </div>
+      <section class="product-faq" aria-label="黄金成色计算常见问题">
+        <details>
+          <summary>什么是吊水法？</summary>
+          <p>吊水法通过黄金在空气中的重量和水中的排水差值估算密度，再根据密度换算纯度和 K 值。</p>
+        </details>
+        <details>
+          <summary>黄金密度为什么接近 19.32？</summary>
+          <p>纯金理论密度约为 19.32 g/cm³，实际首饰或金块会因合金、空隙、杂质和测量误差产生偏差。</p>
+        </details>
+        <details>
+          <summary>K 值怎么计算？</summary>
+          <p>K 值通常按纯度比例换算，24K 约等于纯金，18K 约为 75% 含金量。</p>
+        </details>
+        <details>
+          <summary>为什么计算结果只能作为参考？</summary>
+          <p>吊水法受气泡、绑线、表面附着物和样品结构影响，交易或回收前仍建议结合专业检测。</p>
+        </details>
+      </section>
     </section>
   </main>
   <div id="goldCopyFloat" class="copy-float">结果已复制，可直接发送或对比报价</div>
@@ -3982,26 +4015,26 @@ Au值 = 纯度 × 10 后取整数</div>
     const PAGE_ROUTE_META = {
       home: {
         path: "/",
-        title: "GeoKit Lab｜坐标处理、KML生成、矿地快判工具平台",
-        desc: "GeoKit Lab 提供坐标转KML、经纬度转换、图片坐标识别、奥维地图坐标处理、矿地快判、黄金成色计算等工具，支持 Google Earth、BFTM 等多种坐标格式。",
+        title: "GeoKit Lab｜矿业与空间工具平台",
+        desc: "GeoKit Lab 是面向矿业与空间数据处理的工具平台，提供坐标识别、KML生成、矿地快判和黄金成色计算等产品入口。",
         image: "https://geokitlab.com/share-home-og.jpg"
       },
       coordinate: {
-        path: "/coordinate-tool",
-        title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
-        desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
-        image: "https://geokitlab.com/share-tool-og.jpg"
+        path: "/coordinate",
+        title: "图片坐标识别与KML生成工具｜GeoKit Lab",
+        desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
+        image: "https://geokitlab.com/share-coordinate-og.jpg"
       },
       judge: {
-        path: "/mining-judge",
-        title: "矿地快判｜河道砂金与矿地分析工具 - GeoKit Lab",
-        desc: "GeoKit Lab 矿地快判用于河道砂金分析、卫星图结构初筛、矿石照片快判与矿地线索整理。",
+        path: "/mining",
+        title: "矿地快判｜矿石、河道、卫星图结构分析 - GeoKit Lab",
+        desc: "GeoKit Lab 矿地快判支持矿石照片、河道砂金、卫星图、老鼠洞等场景的快速初筛，基于地形结构、沉积逻辑和图像特征给出保守判断结果。",
         image: "https://geokitlab.com/share-judge-og.jpg"
       },
       gold: {
-        path: "/gold-calculator",
-        title: "黄金成色计算器｜黄金K值与纯度计算 - GeoKit Lab",
-        desc: "GeoKit Lab 黄金成色计算器可通过重量与排水差值估算黄金纯度、K值、密度和参考价格。",
+        path: "/gold",
+        title: "黄金成色计算器｜吊水法纯度与K值计算 - GeoKit Lab",
+        desc: "GeoKit Lab 黄金成色计算器支持通过黄金重量与排水差值计算密度、纯度、K值、Au值和参考价格，适用于吊水法成色估算、黄金回收和交易前快速判断。",
         image: "https://geokitlab.com/share-gold-og.jpg"
       }
     };
@@ -4015,6 +4048,70 @@ Au值 = 纯度 × 10 后取整数</div>
       if (element) {
         element.setAttribute("content", value);
       }
+    }
+
+    function buildFaqStructuredData(items) {
+      return {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        mainEntity: items.map(item => ({
+          "@type": "Question",
+          name: item.q,
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: item.a
+          }
+        }))
+      };
+    }
+
+    function buildSoftwareStructuredData(meta, pageName) {
+      const names = {
+        home: "GeoKit Lab",
+        coordinate: "GeoKit Lab 坐标与 KML 工具",
+        judge: "GeoKit Lab 矿地快判",
+        gold: "GeoKit Lab 黄金成色计算器"
+      };
+      return {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        name: names[pageName] || names.home,
+        applicationCategory: "BusinessApplication",
+        operatingSystem: "Web",
+        url: `https://geokitlab.com${meta.path}`,
+        description: meta.desc,
+        offers: {
+          "@type": "Offer",
+          price: "0",
+          priceCurrency: "USD"
+        }
+      };
+    }
+
+    function buildPageStructuredData(pageName) {
+      const meta = getPageRouteMeta(pageName);
+      const software = buildSoftwareStructuredData(meta, pageName);
+      const faqMap = {
+        coordinate: [
+          { q: "什么是图片坐标识别？", a: "图片坐标识别是从坐标截图、测绘表格或手写坐标中提取可编辑坐标文本，再整理为地图可用格式。" },
+          { q: "如何把截图中的坐标生成 KML？", a: "上传坐标截图或粘贴坐标文本后，先核对识别结果，再选择 Polygon、LineString 或 Point 导出 KML 文件。" },
+          { q: "什么是 BFTM 坐标？", a: "BFTM 是布基纳法索常见矿业投影坐标系统，广泛用于矿权边界与测绘数据，需要转换后才能在 WGS84 地图中使用。" },
+          { q: "GeoKit Lab 与普通坐标工具有什么区别？", a: "GeoKit Lab 面向矿区边界、野外截图、投影坐标表和 KML 生成流程，重点处理真实项目中的复杂坐标格式。" }
+        ],
+        judge: [
+          { q: "什么是矿地快判？", a: "矿地快判是根据矿石照片、河道照片、卫星图和现场环境图做快速初筛，帮助判断是否值得继续实地核验。" },
+          { q: "矿石照片能不能判断有金？", a: "照片只能判断外观、结构和误判风险，不能承诺有金或品位，仍需要密度测试、XRF、火试金或现场验证。" },
+          { q: "河道砂金应该看哪些结构？", a: "重点看弯道、收窄、汇流、阶地、老河道、重砂富集和采挖痕迹，而不是只看颜色。" },
+          { q: "为什么快判只能做初筛，不能代替试采？", a: "图像分析无法确认储量、品位和连续性，只能作为前期筛选，最终仍需现场采样、试采和检测。" }
+        ],
+        gold: [
+          { q: "什么是吊水法？", a: "吊水法通过黄金在空气中的重量和水中的排水差值估算密度，再根据密度换算纯度和 K 值。" },
+          { q: "黄金密度为什么接近 19.32？", a: "纯金理论密度约为 19.32 g/cm³，实际首饰或金块会因合金、空隙、杂质和测量误差产生偏差。" },
+          { q: "K 值怎么计算？", a: "K 值通常按纯度比例换算，24K 约等于纯金，18K 约为 75% 含金量。" },
+          { q: "为什么计算结果只能作为参考？", a: "吊水法受气泡、绑线、表面附着物和样品结构影响，交易或回收前仍建议结合专业检测。" }
+        ]
+      };
+      return faqMap[pageName] ? [software, buildFaqStructuredData(faqMap[pageName])] : [software];
     }
 
     function updateShareMetaForPage(pageName) {
@@ -4031,6 +4128,14 @@ Au值 = 纯度 × 10 后取整数</div>
       setMetaContent('meta[name="twitter:title"]', meta.title);
       setMetaContent('meta[name="twitter:description"]', meta.desc);
       setMetaContent('meta[name="twitter:image"]', meta.image);
+      const canonicalLink = document.querySelector('link[rel="canonical"]');
+      if (canonicalLink) {
+        canonicalLink.setAttribute("href", url);
+      }
+      const structuredData = document.getElementById("pageStructuredData");
+      if (structuredData) {
+        structuredData.textContent = JSON.stringify(buildPageStructuredData(pageName));
+      }
       const imageSrcLink = document.querySelector('link[rel="image_src"]');
       if (imageSrcLink) {
         imageSrcLink.setAttribute("href", meta.image);
@@ -4057,16 +4162,16 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function resolvePageFromPath(pathname = location.pathname, hash = location.hash) {
-      if (pathname === "/coordinate-tool" || pathname === "/tool" || pathname === "/coordinate" || pathname === "/convert" || hash === "#coordinate") {
+      if (pathname === "/coordinate" || pathname === "/coordinate-tool" || pathname === "/tool" || pathname === "/convert" || hash === "#coordinate") {
         return { pageName: "coordinate", focusTarget: "" };
       }
       if (pathname === "/ocr") {
         return { pageName: "coordinate", focusTarget: "upload" };
       }
-      if (pathname === "/mining-judge" || pathname === "/mining-analysis" || pathname === "/judge" || hash === "#judge") {
+      if (pathname === "/mining" || pathname === "/mining-judge" || pathname === "/mining-analysis" || pathname === "/judge" || hash === "#judge") {
         return { pageName: "judge", focusTarget: "" };
       }
-      if (pathname === "/gold-calculator" || pathname === "/gold" || hash === "#gold") {
+      if (pathname === "/gold" || pathname === "/gold-calculator" || hash === "#gold") {
         return { pageName: "gold", focusTarget: "" };
       }
       return { pageName: "home", focusTarget: "" };
@@ -4918,7 +5023,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const message = sanitizeUserFacingTechMessage(errorMessage).trim();
 
       if (responseStatus === 403 || /未开通|权限|禁用|permission/i.test(message)) {
-        return `权限未开通：${message || "当前用户没有 AI 图片识别权限"}，请联系管理员开通或使用`;
+        return `权限未开通：${message || "当前用户没有图片识别权限"}，请联系管理员开通或使用`;
       }
 
       if (/未收到图片|重新选择图片|没有收到图片/i.test(message)) {
@@ -4926,7 +5031,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       if (/未识别到有效坐标|没有提取|有效坐标|坐标区域/i.test(message)) {
-        return "坐标未提取：AI 没有从图片中识别到有效坐标，请尽量只截坐标表格区域，或使用";
+        return "坐标未提取：识别服务没有从图片中识别到有效坐标，请尽量只截坐标表格区域，或使用";
       }
 
       if (/API|HTTP|quota|余额|key|模型|OpenAI|DashScope|timeout|fetch|network|请求/i.test(message)) {
@@ -6226,7 +6331,7 @@ Au值 = 纯度 × 10 后取整数</div>
             <span class="judge-decision-metric">可信度 <strong>${escapeHtml(official.confidence)}</strong></span>
             <span class="judge-decision-metric">建议 <strong>${escapeHtml(getJudgeDecisionText(grade, text, meta))}</strong></span>
           </div>
-          <div class="judge-official-note">AI快判仅供初筛参考，需结合现场与检测结果确认。</div>
+          <div class="judge-official-note">快判结果仅供初筛参考，需结合现场与检测结果确认。</div>
         </div>`;
       console.log("AI判读移动端状态：renderResultCard 完成", {
         grade,
@@ -9344,7 +9449,7 @@ ${placemarks}
 
       await loadUserConfig();
 
-      if (!canUse("aiOcrEnabled", "当前用户暂未开通 AI 图片识别。")) {
+      if (!canUse("aiOcrEnabled", "当前用户暂未开通图片识别。")) {
         imageInput.value = "";
         return;
       }

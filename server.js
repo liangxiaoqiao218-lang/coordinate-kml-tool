@@ -242,69 +242,166 @@ const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "https://www.go
 const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE_API_KEY || "").trim();
 const shareMetaMap = {
   "/": {
-    title: "GeoKit Lab｜坐标处理、KML生成、矿地快判工具平台",
-    desc: "GeoKit Lab 提供坐标转KML、经纬度转换、图片坐标识别、奥维地图坐标处理、矿地快判、黄金成色计算等工具，支持 Google Earth、BFTM 等多种坐标格式。",
+    title: "GeoKit Lab｜矿业与空间工具平台",
+    desc: "GeoKit Lab 是面向矿业与空间数据处理的工具平台，提供坐标识别、KML生成、矿地快判和黄金成色计算等产品入口。",
     image: "/share-home-og.jpg"
   },
+  "/coordinate": {
+    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
+    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
+    image: "/share-coordinate-og.jpg"
+  },
   "/coordinate-tool": {
-    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
-    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
+    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
+    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
     image: "/share-tool-og.jpg"
   },
   "/tool": {
-    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
-    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
+    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
+    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
     image: "/share-tool-og.jpg"
   },
   "/convert": {
-    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
-    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
-    image: "/share-coordinate-og.jpg"
-  },
-  "/coordinate": {
-    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
-    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
+    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
+    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
     image: "/share-coordinate-og.jpg"
   },
   "/ocr": {
-    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
-    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
+    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
+    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
     image: "/share-coordinate-og.jpg"
   },
+  "/mining": {
+    title: "矿地快判｜矿石、河道、卫星图结构分析 - GeoKit Lab",
+    desc: "GeoKit Lab 矿地快判支持矿石照片、河道砂金、卫星图、老鼠洞等场景的快速初筛，基于地形结构、沉积逻辑和图像特征给出保守判断结果。",
+    image: "/share-judge-og.jpg"
+  },
   "/mining-judge": {
-    title: "矿地快判｜河道砂金与矿地分析工具 - GeoKit Lab",
-    desc: "GeoKit Lab 矿地快判用于河道砂金分析、卫星图结构初筛、矿石照片快判与矿地线索整理。",
+    title: "矿地快判｜矿石、河道、卫星图结构分析 - GeoKit Lab",
+    desc: "GeoKit Lab 矿地快判支持矿石照片、河道砂金、卫星图、老鼠洞等场景的快速初筛，基于地形结构、沉积逻辑和图像特征给出保守判断结果。",
     image: "/share-judge-og.jpg"
   },
   "/mining-analysis": {
-    title: "矿地快判｜河道砂金与矿地分析工具 - GeoKit Lab",
-    desc: "GeoKit Lab 矿地快判用于河道砂金分析、卫星图结构初筛、矿石照片快判与矿地线索整理。",
+    title: "矿地快判｜矿石、河道、卫星图结构分析 - GeoKit Lab",
+    desc: "GeoKit Lab 矿地快判支持矿石照片、河道砂金、卫星图、老鼠洞等场景的快速初筛，基于地形结构、沉积逻辑和图像特征给出保守判断结果。",
     image: "/share-judge-og.jpg"
   },
   "/judge": {
-    title: "矿地快判｜河道砂金与矿地分析工具 - GeoKit Lab",
-    desc: "GeoKit Lab 矿地快判用于河道砂金分析、卫星图结构初筛、矿石照片快判与矿地线索整理。",
+    title: "矿地快判｜矿石、河道、卫星图结构分析 - GeoKit Lab",
+    desc: "GeoKit Lab 矿地快判支持矿石照片、河道砂金、卫星图、老鼠洞等场景的快速初筛，基于地形结构、沉积逻辑和图像特征给出保守判断结果。",
     image: "/share-judge-og.jpg"
   },
   "/gold-calculator": {
-    title: "黄金成色计算器｜黄金K值与纯度计算 - GeoKit Lab",
-    desc: "GeoKit Lab 黄金成色计算器可通过重量与排水差值估算黄金纯度、K值、密度和参考价格。",
+    title: "黄金成色计算器｜吊水法纯度与K值计算 - GeoKit Lab",
+    desc: "GeoKit Lab 黄金成色计算器支持通过黄金重量与排水差值计算密度、纯度、K值、Au值和参考价格，适用于吊水法成色估算、黄金回收和交易前快速判断。",
     image: "/share-gold-og.jpg"
   },
   "/gold": {
-    title: "黄金成色计算器｜黄金K值与纯度计算 - GeoKit Lab",
-    desc: "GeoKit Lab 黄金成色计算器可通过重量与排水差值估算黄金纯度、K值、密度和参考价格。",
+    title: "黄金成色计算器｜吊水法纯度与K值计算 - GeoKit Lab",
+    desc: "GeoKit Lab 黄金成色计算器支持通过黄金重量与排水差值计算密度、纯度、K值、Au值和参考价格，适用于吊水法成色估算、黄金回收和交易前快速判断。",
     image: "/share-gold-og.jpg"
   }
 };
 const shareMetaOrigin = "https://geokitlab.com";
+const canonicalPathMap = {
+  "/index.html": "/",
+  "/coordinate-tool": "/coordinate",
+  "/tool": "/coordinate",
+  "/convert": "/coordinate",
+  "/ocr": "/coordinate",
+  "/mining-judge": "/mining",
+  "/mining-analysis": "/mining",
+  "/judge": "/mining",
+  "/gold-calculator": "/gold"
+};
+
+function getCanonicalPath(pathname) {
+  return canonicalPathMap[pathname] || pathname || "/";
+}
+
+function buildSoftwareApplicationJsonLd(meta, canonicalUrl, pageType) {
+  const appName = pageType === "coordinate"
+    ? "GeoKit Lab 坐标与 KML 工具"
+    : pageType === "mining"
+      ? "GeoKit Lab 矿地快判"
+      : pageType === "gold"
+        ? "GeoKit Lab 黄金成色计算器"
+        : "GeoKit Lab";
+  return {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: appName,
+    applicationCategory: "BusinessApplication",
+    operatingSystem: "Web",
+    url: canonicalUrl,
+    description: meta.desc,
+    offers: {
+      "@type": "Offer",
+      price: "0",
+      priceCurrency: "USD"
+    }
+  };
+}
+
+function buildFaqJsonLd(items) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: items.map(item => ({
+      "@type": "Question",
+      name: item.q,
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: item.a
+      }
+    }))
+  };
+}
+
+function getStructuredData(meta, canonicalPath) {
+  const canonicalUrl = `${shareMetaOrigin}${canonicalPath}`;
+  if (canonicalPath === "/coordinate") {
+    return [
+      buildSoftwareApplicationJsonLd(meta, canonicalUrl, "coordinate"),
+      buildFaqJsonLd([
+        { q: "什么是图片坐标识别？", a: "图片坐标识别是从坐标截图、测绘表格或手写坐标中提取可编辑坐标文本，再整理为地图可用格式。" },
+        { q: "如何把截图中的坐标生成 KML？", a: "上传坐标截图或粘贴坐标文本后，先核对识别结果，再选择 Polygon、LineString 或 Point 导出 KML 文件。" },
+        { q: "什么是 BFTM 坐标？", a: "BFTM 是布基纳法索常见矿业投影坐标系统，广泛用于矿权边界与测绘数据，需要转换后才能在 WGS84 地图中使用。" },
+        { q: "GeoKit Lab 与普通坐标工具有什么区别？", a: "GeoKit Lab 面向矿区边界、野外截图、投影坐标表和 KML 生成流程，重点处理真实项目中的复杂坐标格式。" }
+      ])
+    ];
+  }
+  if (canonicalPath === "/mining") {
+    return [
+      buildSoftwareApplicationJsonLd(meta, canonicalUrl, "mining"),
+      buildFaqJsonLd([
+        { q: "什么是矿地快判？", a: "矿地快判是根据矿石照片、河道照片、卫星图和现场环境图做快速初筛，帮助判断是否值得继续实地核验。" },
+        { q: "矿石照片能不能判断有金？", a: "照片只能判断外观、结构和误判风险，不能承诺有金或品位，仍需要密度测试、XRF、火试金或现场验证。" },
+        { q: "河道砂金应该看哪些结构？", a: "重点看弯道、收窄、汇流、阶地、老河道、重砂富集和采挖痕迹，而不是只看颜色。" },
+        { q: "为什么快判只能做初筛，不能代替试采？", a: "图像分析无法确认储量、品位和连续性，只能作为前期筛选，最终仍需现场采样、试采和检测。" }
+      ])
+    ];
+  }
+  if (canonicalPath === "/gold") {
+    return [
+      buildSoftwareApplicationJsonLd(meta, canonicalUrl, "gold"),
+      buildFaqJsonLd([
+        { q: "什么是吊水法？", a: "吊水法通过黄金在空气中的重量和水中的排水差值估算密度，再根据密度换算纯度和 K 值。" },
+        { q: "黄金密度为什么接近 19.32？", a: "纯金理论密度约为 19.32 g/cm³，实际首饰或金块会因合金、空隙、杂质和测量误差产生偏差。" },
+        { q: "K 值怎么计算？", a: "K 值通常按纯度比例换算，24K 约等于纯金，18K 约为 75% 含金量。" },
+        { q: "为什么计算结果只能作为参考？", a: "吊水法受气泡、绑线、表面附着物和样品结构影响，交易或回收前仍建议结合专业检测。" }
+      ])
+    ];
+  }
+  return [buildSoftwareApplicationJsonLd(meta, canonicalUrl, "home")];
+}
 
 app.use(express.json({ limit: "1mb" }));
 
 const appVersion = "2026-05-01-quota-contact-v2";
 
 app.use((req, res, next) => {
-  const noCachePaths = new Set(["/", "/coordinate-tool", "/tool", "/convert", "/coordinate", "/ocr", "/mining-judge", "/mining-analysis", "/judge", "/gold-calculator", "/gold", "/admin", "/index.html", "/admin.html"]);
+  const noCachePaths = new Set(["/", "/coordinate", "/coordinate-tool", "/tool", "/convert", "/ocr", "/mining", "/mining-judge", "/mining-analysis", "/judge", "/gold", "/gold-calculator", "/admin", "/index.html", "/admin.html"]);
 
   if (noCachePaths.has(req.path) || req.path.endsWith(".html")) {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -521,11 +618,14 @@ function getRequestOrigin(req) {
 
 function getShareMeta(req) {
   const normalizedPath = req.path === "/index.html" ? "/" : req.path;
-  const meta = shareMetaMap[normalizedPath] || shareMetaMap["/"];
+  const canonicalPath = getCanonicalPath(normalizedPath);
+  const meta = shareMetaMap[normalizedPath] || shareMetaMap[canonicalPath] || shareMetaMap["/"];
   return {
     ...meta,
     url: `${shareMetaOrigin}${normalizedPath === "/index.html" ? "/" : normalizedPath}`,
-    imageUrl: `${shareMetaOrigin}${meta.image}`
+    canonicalUrl: `${shareMetaOrigin}${canonicalPath === "/index.html" ? "/" : canonicalPath}`,
+    imageUrl: `${shareMetaOrigin}${meta.image}`,
+    structuredData: JSON.stringify(getStructuredData(meta, canonicalPath))
   };
 }
 
@@ -535,12 +635,24 @@ function renderIndexWithMeta(req, res) {
     .replaceAll("<!--TITLE-->", escapeHtml(meta.title))
     .replaceAll("<!--DESC-->", escapeHtml(meta.desc))
     .replaceAll("<!--IMAGE-->", escapeHtml(meta.imageUrl))
-    .replaceAll("<!--URL-->", escapeHtml(meta.url));
+    .replaceAll("<!--URL-->", escapeHtml(meta.url))
+    .replaceAll("<!--CANONICAL-->", escapeHtml(meta.canonicalUrl))
+    .replaceAll("<!--JSONLD-->", meta.structuredData);
 
   res.type("html").send(html);
 }
 
-app.get(["/", "/index.html", "/coordinate-tool", "/tool", "/convert", "/coordinate", "/ocr", "/mining-judge", "/mining-analysis", "/judge", "/gold-calculator", "/gold"], renderIndexWithMeta);
+app.get(["/", "/index.html", "/coordinate", "/coordinate-tool", "/tool", "/convert", "/ocr", "/mining", "/mining-judge", "/mining-analysis", "/judge", "/gold", "/gold-calculator"], renderIndexWithMeta);
+
+app.get("/robots.txt", (req, res) => {
+  res.type("text/plain").send("User-agent: *\nAllow: /\n\nSitemap: https://geokitlab.com/sitemap.xml\n");
+});
+
+app.get("/sitemap.xml", (req, res) => {
+  const urls = ["/", "/coordinate", "/mining", "/gold"];
+  const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map(pathname => `  <url><loc>${shareMetaOrigin}${pathname}</loc></url>`).join("\n")}\n</urlset>\n`;
+  res.type("application/xml").send(body);
+});
 
 app.use(express.static(__dirname, {
   index: false,
@@ -7085,7 +7197,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
       }
 
       return res.status(403).json({
-        error: "当前用户暂未开通 AI 图片识别。",
+        error: "当前用户暂未开通图片识别。",
         rawText: "",
         coordinates: ""
       });
