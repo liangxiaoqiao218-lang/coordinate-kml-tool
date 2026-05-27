@@ -242,38 +242,58 @@ const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "https://www.go
 const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE_API_KEY || "").trim();
 const shareMetaMap = {
   "/": {
-    title: "GeoKit Lab｜空间工具实验室",
-    desc: "坐标处理、矿地快判、黄金成色计算。",
+    title: "GeoKit Lab｜坐标处理、KML生成、矿地快判工具平台",
+    desc: "GeoKit Lab 提供坐标转KML、经纬度转换、图片坐标识别、奥维地图坐标处理、矿地快判、黄金成色计算等工具，支持 Google Earth、BFTM 等多种坐标格式。",
     image: "/share-home-og.jpg"
   },
+  "/coordinate-tool": {
+    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
+    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
+    image: "/share-tool-og.jpg"
+  },
   "/tool": {
-    title: "坐标处理工具｜GeoKit Lab",
-    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
+    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
+    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
     image: "/share-tool-og.jpg"
   },
   "/convert": {
-    title: "坐标处理工具｜GeoKit Lab",
-    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
+    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
+    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
     image: "/share-coordinate-og.jpg"
   },
   "/coordinate": {
-    title: "坐标处理工具｜GeoKit Lab",
-    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
+    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
+    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
     image: "/share-coordinate-og.jpg"
   },
   "/ocr": {
-    title: "坐标处理工具｜GeoKit Lab",
-    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
+    title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
+    desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
     image: "/share-coordinate-og.jpg"
   },
-  "/judge": {
-    title: "矿地快判｜GeoKit Lab",
-    desc: "上传矿石、河道或卫星图，快速进行结构初筛。",
+  "/mining-judge": {
+    title: "矿地快判｜河道砂金与矿地分析工具 - GeoKit Lab",
+    desc: "GeoKit Lab 矿地快判用于河道砂金分析、卫星图结构初筛、矿石照片快判与矿地线索整理。",
     image: "/share-judge-og.jpg"
   },
+  "/mining-analysis": {
+    title: "矿地快判｜河道砂金与矿地分析工具 - GeoKit Lab",
+    desc: "GeoKit Lab 矿地快判用于河道砂金分析、卫星图结构初筛、矿石照片快判与矿地线索整理。",
+    image: "/share-judge-og.jpg"
+  },
+  "/judge": {
+    title: "矿地快判｜河道砂金与矿地分析工具 - GeoKit Lab",
+    desc: "GeoKit Lab 矿地快判用于河道砂金分析、卫星图结构初筛、矿石照片快判与矿地线索整理。",
+    image: "/share-judge-og.jpg"
+  },
+  "/gold-calculator": {
+    title: "黄金成色计算器｜黄金K值与纯度计算 - GeoKit Lab",
+    desc: "GeoKit Lab 黄金成色计算器可通过重量与排水差值估算黄金纯度、K值、密度和参考价格。",
+    image: "/share-gold-og.jpg"
+  },
   "/gold": {
-    title: "黄金成色计算器｜GeoKit Lab",
-    desc: "输入黄金重量和排水差重，快速估算成色、K值和参考总价。",
+    title: "黄金成色计算器｜黄金K值与纯度计算 - GeoKit Lab",
+    desc: "GeoKit Lab 黄金成色计算器可通过重量与排水差值估算黄金纯度、K值、密度和参考价格。",
     image: "/share-gold-og.jpg"
   }
 };
@@ -284,7 +304,7 @@ app.use(express.json({ limit: "1mb" }));
 const appVersion = "2026-05-01-quota-contact-v2";
 
 app.use((req, res, next) => {
-  const noCachePaths = new Set(["/", "/tool", "/convert", "/ocr", "/judge", "/gold", "/admin", "/index.html", "/admin.html"]);
+  const noCachePaths = new Set(["/", "/coordinate-tool", "/tool", "/convert", "/coordinate", "/ocr", "/mining-judge", "/mining-analysis", "/judge", "/gold-calculator", "/gold", "/admin", "/index.html", "/admin.html"]);
 
   if (noCachePaths.has(req.path) || req.path.endsWith(".html")) {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -520,7 +540,7 @@ function renderIndexWithMeta(req, res) {
   res.type("html").send(html);
 }
 
-app.get(["/", "/index.html", "/tool", "/convert", "/coordinate", "/ocr", "/judge", "/gold"], renderIndexWithMeta);
+app.get(["/", "/index.html", "/coordinate-tool", "/tool", "/convert", "/coordinate", "/ocr", "/mining-judge", "/mining-analysis", "/judge", "/gold-calculator", "/gold"], renderIndexWithMeta);
 
 app.use(express.static(__dirname, {
   index: false,

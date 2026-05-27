@@ -1,5 +1,5 @@
 <!-- force rebuild 20260504 -->
-<!-- © GeoKit Lab / 空间工具实验室。未经授权不得复制、反编译、二次分发或商业使用。 -->
+<!-- © GeoKit Lab. 未经授权不得复制、反编译、二次分发或商业使用。 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -7,6 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title><!--TITLE--></title>
   <meta name="description" content="<!--DESC-->" />
+  <meta name="keywords" content="坐标转KML, 经纬度转KML, 图片提取坐标, 奥维地图坐标转换, Google Earth KML, BFTM坐标转换, 坐标识别工具, 矿地快判, 河道砂金分析, 黄金成色计算, 黄金K值计算, 黄金纯度计算" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="<!--TITLE-->" />
   <meta property="og:description" content="<!--DESC-->" />
@@ -22,6 +23,38 @@
   <meta name="twitter:title" content="<!--TITLE-->" />
   <meta name="twitter:description" content="<!--DESC-->" />
   <meta name="twitter:image" content="<!--IMAGE-->" />
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "什么是 KML 文件？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "KML 是 Google Earth 与奥维地图常用的地图标注格式，可用于显示边界、坐标点与区域范围。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "如何把图片坐标转换成 KML？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "GeoKit Lab 支持图片坐标识别，可自动提取经纬度并生成 KML 文件，适用于矿区边界整理和野外坐标处理。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "什么是 BFTM 坐标？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "BFTM 是布基纳法索常见矿业投影坐标系统，广泛用于矿权边界与测绘数据。"
+          }
+        }
+      ]
+    }
+  </script>
   <style>
     * {
       box-sizing: border-box;
@@ -195,6 +228,42 @@
       color: #526071;
       line-height: 1.5;
       font-size: 14px;
+    }
+
+    .module-card .module-desc {
+      margin-top: 10px;
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .home-faq {
+      width: 100%;
+      max-width: 960px;
+      margin: 28px auto 0;
+      padding: 20px;
+      border: 1px solid #dbe6f2;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+    }
+
+    .home-faq h2 {
+      margin: 0 0 8px;
+      font-size: 17px;
+      line-height: 1.35;
+      color: #0f172a;
+    }
+
+    .home-faq p {
+      margin: 0 0 16px;
+      color: #526071;
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .home-faq p:last-child {
+      margin-bottom: 0;
     }
 
     .user-code-card {
@@ -3310,30 +3379,42 @@
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
         <p class="eyebrow">GeoKit Lab</p>
-        <h1>空间工具实验室</h1>
-        <p class="intro">Geo Tool｜坐标处理、矿地快判、黄金成色计算</p>
+        <h1>坐标转KML与矿地快判工具</h1>
+        <p class="intro">坐标处理｜矿地快判｜黄金成色计算</p>
       </div>
 
       <div class="module-grid">
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
           <small class="module-tag">KML</small>
           <strong>坐标处理工具</strong>
-          <span>生成 KML</span>
+          <span>经纬度转换、图片坐标识别与 KML 生成</span>
+          <span class="module-desc">支持奥维地图与 Google Earth 坐标导入导出，适用于矿区边界整理、野外坐标处理与地图标绘。</span>
           <small class="module-action">进入</small>
         </button>
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
           <small class="module-tag">快判</small>
           <strong>矿地快判</strong>
-          <span>结构初筛</span>
+          <span>河道砂金、卫星图与矿石照片快速初筛</span>
+          <span class="module-desc">基于地形结构、沉积逻辑与图像特征进行矿地快速判断，适用于河道砂金、卫星图、矿石照片等场景。</span>
           <small class="module-action">进入</small>
         </button>
         <button id="homeGoldEntry" type="button" class="module-card gold-module" onclick="showPage('gold')">
           <small class="module-tag">成色</small>
           <strong>黄金成色计算器</strong>
-          <span>成色与总价</span>
+          <span>黄金纯度、K值、密度与参考价格计算</span>
+          <span class="module-desc">通过重量与排水差值计算黄金纯度、K值、密度与参考价格，适用于黄金回收与成色快速估算。</span>
           <small class="module-action">进入</small>
         </button>
       </div>
+
+      <section class="home-faq" aria-label="坐标处理与矿地分析常见问题">
+        <h2>什么是 KML 文件？</h2>
+        <p>KML 是 Google Earth 与奥维地图常用的地图标注格式，可用于显示边界、坐标点与区域范围。</p>
+        <h2>如何把图片坐标转换成 KML？</h2>
+        <p>GeoKit Lab 支持图片坐标识别，可自动提取经纬度并生成 KML 文件，适用于矿区边界整理和野外坐标处理。</p>
+        <h2>什么是 BFTM 坐标？</h2>
+        <p>BFTM 是布基纳法索常见矿业投影坐标系统，广泛用于矿权边界与测绘数据。</p>
+      </section>
     </section>
 
     <section id="coordinatePage" class="view">
@@ -3901,26 +3982,26 @@ Au值 = 纯度 × 10 后取整数</div>
     const PAGE_ROUTE_META = {
       home: {
         path: "/",
-        title: "GeoKit Lab｜空间工具实验室",
-        desc: "坐标处理、矿地快判、黄金成色计算。",
+        title: "GeoKit Lab｜坐标处理、KML生成、矿地快判工具平台",
+        desc: "GeoKit Lab 提供坐标转KML、经纬度转换、图片坐标识别、奥维地图坐标处理、矿地快判、黄金成色计算等工具，支持 Google Earth、BFTM 等多种坐标格式。",
         image: "https://geokitlab.com/share-home-og.jpg"
       },
       coordinate: {
-        path: "/tool",
-        title: "坐标处理工具｜GeoKit Lab",
-        desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
+        path: "/coordinate-tool",
+        title: "坐标转KML｜图片坐标识别工具 - GeoKit Lab",
+        desc: "GeoKit Lab 坐标处理工具支持经纬度转换、图片提取坐标、奥维地图坐标整理、Google Earth KML 生成与 BFTM 坐标处理。",
         image: "https://geokitlab.com/share-tool-og.jpg"
       },
       judge: {
-        path: "/judge",
-        title: "矿地快判｜GeoKit Lab",
-        desc: "上传矿石、河道或卫星图，快速进行结构初筛。",
+        path: "/mining-judge",
+        title: "矿地快判｜河道砂金与矿地分析工具 - GeoKit Lab",
+        desc: "GeoKit Lab 矿地快判用于河道砂金分析、卫星图结构初筛、矿石照片快判与矿地线索整理。",
         image: "https://geokitlab.com/share-judge-og.jpg"
       },
       gold: {
-        path: "/gold",
-        title: "黄金成色计算器｜GeoKit Lab",
-        desc: "输入黄金重量和排水差重，快速估算成色、K值和参考总价。",
+        path: "/gold-calculator",
+        title: "黄金成色计算器｜黄金K值与纯度计算 - GeoKit Lab",
+        desc: "GeoKit Lab 黄金成色计算器可通过重量与排水差值估算黄金纯度、K值、密度和参考价格。",
         image: "https://geokitlab.com/share-gold-og.jpg"
       }
     };
@@ -3976,16 +4057,16 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function resolvePageFromPath(pathname = location.pathname, hash = location.hash) {
-      if (pathname === "/tool" || pathname === "/coordinate" || pathname === "/convert" || hash === "#coordinate") {
+      if (pathname === "/coordinate-tool" || pathname === "/tool" || pathname === "/coordinate" || pathname === "/convert" || hash === "#coordinate") {
         return { pageName: "coordinate", focusTarget: "" };
       }
       if (pathname === "/ocr") {
         return { pageName: "coordinate", focusTarget: "upload" };
       }
-      if (pathname === "/judge" || hash === "#judge") {
+      if (pathname === "/mining-judge" || pathname === "/mining-analysis" || pathname === "/judge" || hash === "#judge") {
         return { pageName: "judge", focusTarget: "" };
       }
-      if (pathname === "/gold" || hash === "#gold") {
+      if (pathname === "/gold-calculator" || pathname === "/gold" || hash === "#gold") {
         return { pageName: "gold", focusTarget: "" };
       }
       return { pageName: "home", focusTarget: "" };
