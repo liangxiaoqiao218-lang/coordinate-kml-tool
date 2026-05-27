@@ -36,13 +36,17 @@
       font-family: Arial, "Microsoft YaHei", sans-serif;
       background: #eef3f8;
       color: #172033;
+      min-height: 100vh;
       padding-bottom: 28px;
+      display: flex;
+      flex-direction: column;
     }
 
     .page {
       width: min(1100px, 100%);
       margin: 0 auto;
       padding: 20px;
+      flex: 1 0 auto;
     }
 
     h1 {
@@ -3345,11 +3349,18 @@
     }
 
     .version-stamp {
-      margin: 72px auto 24px;
-      color: #b8c4d3;
+      flex: 0 0 auto;
+      margin: 20px auto 40px;
+      color: #9fb0c3;
       font-size: 11px;
+      line-height: 1.8;
       text-align: center;
+      letter-spacing: 0;
       user-select: text;
+    }
+
+    .version-stamp span {
+      display: block;
     }
 
     .social-share-fallback-image {
@@ -3862,7 +3873,7 @@ Au值 = 纯度 × 10 后取整数</div>
   </div>
 
   <script>
-    const APP_VERSION = "judge-mobile-state-20260506-v1";
+    const APP_VERSION = "geokitlab-web-20260527-v1";
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
@@ -4222,7 +4233,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function addVersionStamp() {
       const stamp = document.createElement("div");
       stamp.className = "version-stamp";
-      stamp.textContent = `版本：${APP_VERSION}`;
+      stamp.innerHTML = `<span>版本：${APP_VERSION}</span><span>&copy; 2026 GeoKit Lab</span>`;
       document.body.appendChild(stamp);
     }
 
