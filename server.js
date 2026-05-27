@@ -399,6 +399,21 @@ function getStructuredData(meta, canonicalPath) {
 app.use(express.json({ limit: "1mb" }));
 
 const appVersion = "2026-05-01-quota-contact-v2";
+const legacyRenderHost = ["coordinate-kml-tool", "onrender", "com"].join(".");
+const canonicalHost = "geokitlab.com";
+
+app.use((req, res, next) => {
+  const forwardedHost = req.get("x-forwarded-host") || "";
+  const hostHeader = forwardedHost.split(",")[0].trim() || req.get("host") || "";
+  const hostname = hostHeader.split(":")[0].toLowerCase();
+
+  if (hostname === legacyRenderHost || hostname === `www.${canonicalHost}`) {
+    const pathWithQuery = req.originalUrl && req.originalUrl.startsWith("/") ? req.originalUrl : `/${req.originalUrl || ""}`;
+    return res.redirect(301, `${shareMetaOrigin}${pathWithQuery}`);
+  }
+
+  return next();
+});
 
 app.use((req, res, next) => {
   const noCachePaths = new Set(["/", "/coordinate", "/coordinate-tool", "/tool", "/convert", "/ocr", "/mining", "/mining-judge", "/mining-analysis", "/judge", "/gold", "/gold-calculator", "/admin", "/index.html", "/admin.html"]);
@@ -466,8 +481,7 @@ function getProtectedEndpointType(pathname = "") {
 
 const allowedRequestOrigins = new Set([
   "https://geokitlab.com",
-  "https://www.geokitlab.com",
-  "https://coordinate-kml-tool.onrender.com"
+  "https://www.geokitlab.com"
 ]);
 
 function parseRequestOrigin(value) {
@@ -620,10 +634,11 @@ function getShareMeta(req) {
   const normalizedPath = req.path === "/index.html" ? "/" : req.path;
   const canonicalPath = getCanonicalPath(normalizedPath);
   const meta = shareMetaMap[normalizedPath] || shareMetaMap[canonicalPath] || shareMetaMap["/"];
+  const canonicalUrl = `${shareMetaOrigin}${canonicalPath === "/index.html" ? "/" : canonicalPath}`;
   return {
     ...meta,
-    url: `${shareMetaOrigin}${normalizedPath === "/index.html" ? "/" : normalizedPath}`,
-    canonicalUrl: `${shareMetaOrigin}${canonicalPath === "/index.html" ? "/" : canonicalPath}`,
+    url: canonicalUrl,
+    canonicalUrl,
     imageUrl: `${shareMetaOrigin}${meta.image}`,
     structuredData: JSON.stringify(getStructuredData(meta, canonicalPath))
   };
