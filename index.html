@@ -34,7 +34,9 @@
     body {
       margin: 0;
       font-family: Arial, "Microsoft YaHei", sans-serif;
-      background: #eef3f8;
+      background:
+        radial-gradient(circle at 18% 0%, rgba(37, 99, 235, 0.12), transparent 34%),
+        linear-gradient(180deg, #f3f8ff 0%, #eef4fa 48%, #f8fbff 100%);
       color: #172033;
       min-height: 100vh;
       padding-bottom: 28px;
@@ -70,11 +72,13 @@
 
     .home-view {
       display: none;
-      width: min(1080px, 100%);
-      min-height: 54vh;
+      width: min(360px, 100%);
+      max-width: 100%;
+      min-height: calc(100vh - 96px);
       margin: 0 auto;
-      place-content: start center;
+      place-content: start stretch;
       padding: 12px 0 0;
+      overflow-x: hidden;
     }
 
     .home-view.active {
@@ -82,34 +86,209 @@
     }
 
     .home-hero {
-      padding: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 4px 20px;
       border: 0;
       background: transparent;
       box-shadow: none;
-      text-align: center;
+      text-align: left;
     }
 
     .home-hero .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       margin: 0 0 8px;
-      color: #2563eb;
-      font-size: 13px;
+      color: #0f172a;
+      font-size: 20px;
       font-weight: 800;
       letter-spacing: 0;
     }
 
+    .brand-mark {
+      display: inline-grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 9px;
+      background: linear-gradient(145deg, #7fb4ff, #2563eb);
+      color: #ffffff;
+      box-shadow: 0 10px 20px rgba(37, 99, 235, 0.2);
+      font-size: 15px;
+      font-weight: 900;
+    }
+
     .home-hero h1 {
       max-width: 720px;
-      margin: 0 auto 6px;
-      font-size: 34px;
+      margin: 0;
+      font-size: 15px;
       line-height: 1.2;
+      color: #7b8797;
+      font-weight: 700;
     }
 
     .home-hero .intro {
       max-width: 680px;
-      margin: 0 auto;
+      margin: 0;
       padding-left: 0;
       border-left: 0;
       color: #526071;
+    }
+
+    .home-menu-button {
+      width: 48px;
+      min-height: 48px;
+      border: 1px solid rgba(210, 222, 238, 0.9);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.86);
+      box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
+      color: #0f172a;
+      font-size: 22px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .home-feature-card {
+      position: relative;
+      overflow: hidden;
+      min-height: 214px;
+      padding: 28px 26px;
+      border: 1px solid rgba(209, 224, 243, 0.92);
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at 84% 36%, rgba(37, 99, 235, 0.24), transparent 23%),
+        linear-gradient(135deg, #f5f9ff 0%, #eef6ff 58%, #ffffff 100%);
+      box-shadow: 0 24px 52px rgba(37, 99, 235, 0.12);
+    }
+
+    .home-feature-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(120deg, rgba(37, 99, 235, 0.06) 1px, transparent 1px),
+        linear-gradient(30deg, rgba(37, 99, 235, 0.045) 1px, transparent 1px);
+      background-size: 28px 28px, 34px 34px;
+      opacity: 0.45;
+      pointer-events: none;
+    }
+
+    .home-feature-copy {
+      position: relative;
+      z-index: 1;
+      max-width: 58%;
+    }
+
+    .home-feature-card h2 {
+      margin: 0 0 12px;
+      color: #0f172a;
+      font-size: 25px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .home-feature-card h2 span {
+      color: #2563eb;
+    }
+
+    .home-feature-card p {
+      margin: 0 0 24px;
+      color: #53647a;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .home-feature-button {
+      position: relative;
+      z-index: 1;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: auto;
+      min-height: 46px;
+      padding: 0 22px;
+      border: 0;
+      border-radius: 15px;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #ffffff;
+      box-shadow: 0 14px 28px rgba(37, 99, 235, 0.26);
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .home-feature-visual {
+      position: absolute;
+      right: 15px;
+      bottom: 22px;
+      z-index: 0;
+      width: 148px;
+      height: 134px;
+      pointer-events: none;
+    }
+
+    .terrain-stack {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: 122px;
+      height: 82px;
+      border-radius: 22px 22px 18px 18px;
+      background:
+        linear-gradient(180deg, rgba(134, 239, 172, 0.8), rgba(56, 189, 248, 0.9) 46%, #1d4ed8 47%, #1e40af 100%);
+      box-shadow: 0 18px 28px rgba(37, 99, 235, 0.2);
+      transform: skewY(-7deg) rotate(-1deg);
+    }
+
+    .terrain-stack::before {
+      content: "";
+      position: absolute;
+      inset: 12px 10px auto;
+      height: 36px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.55);
+      border-left-color: transparent;
+      border-right-color: transparent;
+    }
+
+    .map-pin {
+      position: absolute;
+      right: 43px;
+      top: 2px;
+      width: 48px;
+      height: 62px;
+      border-radius: 50% 50% 50% 6px;
+      background: linear-gradient(145deg, #60a5fa, #2563eb 62%, #1d4ed8);
+      box-shadow: 0 14px 22px rgba(37, 99, 235, 0.26);
+      transform: rotate(-45deg);
+    }
+
+    .map-pin::after {
+      content: "";
+      position: absolute;
+      inset: 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.88);
+    }
+
+    .home-dot {
+      position: absolute;
+      width: 9px;
+      height: 9px;
+      border: 2px solid rgba(37, 99, 235, 0.38);
+      border-radius: 999px;
+    }
+
+    .home-dot.one {
+      right: 18px;
+      top: 16px;
+    }
+
+    .home-dot.two {
+      left: 8px;
+      bottom: 28px;
     }
 
     .home-primary-entry {
@@ -166,21 +345,22 @@
     .module-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 18px;
+      gap: 14px;
       width: 100%;
-      max-width: 960px;
-      margin: 28px auto 0;
+      max-width: 430px;
+      margin: 16px auto 0;
     }
 
     .module-card {
-      min-height: 128px;
-      padding: 18px;
-      border: 1px solid #d6dfeb;
-      border-radius: 8px;
-      background: #ffffff;
+      min-width: 0;
+      min-height: 138px;
+      padding: 18px 14px 14px;
+      border: 1px solid rgba(216, 226, 240, 0.95);
+      border-radius: 19px;
+      background: rgba(255, 255, 255, 0.88);
       color: #172033;
       text-align: left;
-      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+      box-shadow: 0 16px 34px rgba(15, 23, 42, 0.06);
       cursor: pointer;
       position: relative;
       overflow: hidden;
@@ -193,13 +373,16 @@
 
     .module-card strong {
       display: block;
-      margin-bottom: 8px;
-      font-size: 20px;
+      margin-top: 16px;
+      margin-bottom: 0;
+      font-size: 16px;
       color: #0f172a;
+      line-height: 1.25;
+      word-break: keep-all;
     }
 
     .module-card span {
-      display: block;
+      display: none;
       color: #526071;
       line-height: 1.5;
       font-size: 14px;
@@ -210,6 +393,91 @@
       color: #475569;
       font-size: 13px;
       line-height: 1.55;
+    }
+
+    .home-card-icon {
+      display: grid;
+      width: 48px;
+      height: 48px;
+      place-items: center;
+      border-radius: 16px;
+      font-size: 23px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .primary-module .home-card-icon {
+      background: #eef5ff;
+      color: #2563eb;
+    }
+
+    .judge-module .home-card-icon {
+      background: #edf9f1;
+      color: #159447;
+    }
+
+    .gold-module .home-card-icon {
+      background: #fff5e8;
+      color: #ea6a12;
+    }
+
+    .home-capability-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0;
+      margin: 18px 0 0;
+      padding: 16px 10px;
+      border: 1px solid rgba(216, 226, 240, 0.92);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 16px 34px rgba(15, 23, 42, 0.05);
+    }
+
+    .home-capability-item {
+      display: grid;
+      place-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: #0f172a;
+      font-size: 13px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .home-capability-item + .home-capability-item {
+      border-left: 1px solid #e5edf6;
+    }
+
+    .home-capability-icon {
+      color: #2563eb;
+      font-size: 23px;
+      line-height: 1;
+    }
+
+    .home-bottom-nav {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin: 18px 0 0;
+      padding: 10px 8px;
+      border: 1px solid rgba(216, 226, 240, 0.92);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+    }
+
+    .home-bottom-nav button {
+      min-height: 42px;
+      padding: 6px;
+      border: 0;
+      background: transparent;
+      color: #8a96a8;
+      box-shadow: none;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .home-bottom-nav button.is-active {
+      color: #2563eb;
     }
 
     .product-faq {
@@ -3097,18 +3365,46 @@
       }
 
       .home-view {
-        width: 100%;
+        width: min(360px, calc(100vw - 28px));
+        max-width: calc(100vw - 28px);
         padding-top: 4px;
         min-height: auto;
       }
 
+      .home-feature-card {
+        width: 100%;
+        max-width: 100%;
+        min-height: 205px;
+        padding: 24px 24px;
+      }
+
+      .home-feature-copy {
+        max-width: 66%;
+      }
+
+      .home-feature-card h2 {
+        font-size: 24px;
+      }
+
+      .home-feature-card p {
+        max-width: 190px;
+        font-size: 14px;
+      }
+
+      .home-feature-visual {
+        right: -10px;
+        bottom: 20px;
+        width: 136px;
+        height: 126px;
+      }
+
       .home-hero {
-        padding: 0;
+        padding: 8px 2px 18px;
       }
 
       .home-hero h1 {
-        margin-bottom: 4px;
-        font-size: 25px;
+        margin-bottom: 0;
+        font-size: 15px;
       }
 
       .intro {
@@ -3192,27 +3488,51 @@
       .settings-grid,
       .gold-input-grid,
       .gold-result-main,
-      .module-grid,
       .support-actions {
         grid-template-columns: 1fr;
       }
 
-      .module-card {
+      .home-view .module-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        width: min(100%, calc(100vw - 28px));
+        max-width: calc(100vw - 28px);
+      }
+
+      .home-view .module-card {
         width: 100%;
-        min-height: 112px;
-        padding: 16px 18px;
+        min-height: 132px;
+        padding: 16px 10px 13px;
       }
 
-      .module-card strong {
-        font-size: 18px;
-      }
-
-      .module-card span {
+      .home-view .module-card strong {
         font-size: 14px;
-        line-height: 1.45;
+        line-height: 1.28;
+        word-break: keep-all;
       }
 
-      .module-action {
+      .home-view .home-card-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 15px;
+        font-size: 21px;
+      }
+
+      .home-capability-strip,
+      .home-bottom-nav {
+        width: min(100%, calc(100vw - 28px));
+        max-width: calc(100vw - 28px);
+      }
+
+      .home-capability-item {
+        font-size: 12px;
+      }
+
+      .home-view .module-card span:not(.home-card-icon) {
+        display: none;
+      }
+
+      .home-view .module-action {
         margin-top: 10px;
       }
 
@@ -3381,31 +3701,60 @@
   <main class="page">
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
-        <p class="eyebrow">GeoKit Lab</p>
-        <h1>矿业与空间工具平台</h1>
-        <p class="intro">坐标识别｜矿地快判｜黄金成色计算</p>
+        <div>
+          <p class="eyebrow"><span class="brand-mark">G</span>矿业空间实验室</p>
+          <h1>简单工具 · 高效处理</h1>
+        </div>
+        <span class="home-menu-button" aria-hidden="true">≡</span>
       </div>
+
+      <section class="home-feature-card" aria-label="坐标识别与 KML 工具">
+        <div class="home-feature-copy">
+          <h2>坐标识别与 <span>KML</span> 工具</h2>
+          <p>图片坐标识别 · 多格式转换 · KML 生成</p>
+          <button type="button" class="home-feature-button" onclick="showPage('coordinate')">立即使用 <span>→</span></button>
+        </div>
+        <div class="home-feature-visual" aria-hidden="true">
+          <span class="map-pin"></span>
+          <span class="terrain-stack"></span>
+          <span class="home-dot one"></span>
+          <span class="home-dot two"></span>
+        </div>
+      </section>
 
       <div class="module-grid">
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
-          <small class="module-tag">KML</small>
-          <strong>坐标与 KML 工具</strong>
-          <span>图片坐标识别、多格式转换、KML 生成</span>
-          <small class="module-action">进入</small>
+          <span class="home-card-icon" aria-hidden="true">⌖</span>
+          <strong>坐标转 KML</strong>
+          <span>坐标整理与导出</span>
+          <small class="module-action">→</small>
         </button>
         <button type="button" class="module-card judge-module" onclick="showPage('judge')">
-          <small class="module-tag">快判</small>
+          <span class="home-card-icon" aria-hidden="true">◇</span>
           <strong>矿地快判</strong>
-          <span>矿石、河道、卫星图快速结构分析</span>
-          <small class="module-action">进入</small>
+          <span>矿地结构初筛</span>
+          <small class="module-action">→</small>
         </button>
         <button id="homeGoldEntry" type="button" class="module-card gold-module" onclick="showPage('gold')">
-          <small class="module-tag">成色</small>
+          <span class="home-card-icon" aria-hidden="true">Au</span>
           <strong>黄金成色计算器</strong>
-          <span>吊水法纯度、K值、密度与参考价格计算</span>
-          <small class="module-action">进入</small>
+          <span>纯度与K值估算</span>
+          <small class="module-action">→</small>
         </button>
       </div>
+
+      <div class="home-capability-strip" aria-label="工具特性">
+        <div class="home-capability-item"><span class="home-capability-icon">ϟ</span><span>快速处理</span></div>
+        <div class="home-capability-item"><span class="home-capability-icon">□</span><span>数据安全</span></div>
+        <div class="home-capability-item"><span class="home-capability-icon">☁</span><span>云端计算</span></div>
+        <div class="home-capability-item"><span class="home-capability-icon">⌁</span><span>专业工具</span></div>
+      </div>
+
+      <nav class="home-bottom-nav" aria-label="首页底部导航">
+        <button type="button" class="is-active" onclick="showPage('home')">首页</button>
+        <button type="button" disabled>记录</button>
+        <button type="button" onclick="openAccountModal()">我的</button>
+      </nav>
     </section>
 
     <section id="coordinatePage" class="view">
