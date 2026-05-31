@@ -242,63 +242,63 @@ const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "https://www.go
 const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE_API_KEY || "").trim();
 const shareMetaMap = {
   "/": {
-    title: "GeoKit Lab｜矿业与空间工具平台",
-    desc: "GeoKit Lab 是面向矿业与空间数据处理的工具平台，提供坐标识别、KML生成、矿地快判和黄金成色计算等产品入口。",
+    title: "矿业空间实验室 | GeoKit Lab",
+    desc: "坐标处理、AI矿地判读、黄金成色计算，一站式矿业工具平台。",
     image: "/share-home-og.jpg"
   },
   "/coordinate": {
-    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
-    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
+    title: "矿业空间实验室｜坐标处理工具",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-coordinate-og.jpg"
   },
   "/coordinate-tool": {
-    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
-    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
+    title: "矿业空间实验室｜坐标处理工具",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool-og.jpg"
   },
   "/tool": {
-    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
-    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
+    title: "矿业空间实验室｜坐标处理工具",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool-og.jpg"
   },
   "/convert": {
-    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
-    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
+    title: "矿业空间实验室｜坐标处理工具",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-coordinate-og.jpg"
   },
   "/ocr": {
-    title: "图片坐标识别与KML生成工具｜GeoKit Lab",
-    desc: "GeoKit Lab 坐标工具支持图片坐标识别、手写坐标提取、经纬度转换、BFTM 坐标处理与 KML 生成，适用于奥维地图、Google Earth、矿区边界整理和野外坐标处理。",
+    title: "矿业空间实验室｜坐标处理工具",
+    desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-coordinate-og.jpg"
   },
   "/mining": {
-    title: "矿地快判｜矿石、河道、卫星图结构分析 - GeoKit Lab",
-    desc: "GeoKit Lab 矿地快判支持矿石照片、河道砂金、卫星图、老鼠洞等场景的快速初筛，基于地形结构、沉积逻辑和图像特征给出保守判断结果。",
+    title: "矿业空间实验室｜AI矿地判读",
+    desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
     image: "/share-judge-og.jpg"
   },
   "/mining-judge": {
-    title: "矿地快判｜矿石、河道、卫星图结构分析 - GeoKit Lab",
-    desc: "GeoKit Lab 矿地快判支持矿石照片、河道砂金、卫星图、老鼠洞等场景的快速初筛，基于地形结构、沉积逻辑和图像特征给出保守判断结果。",
+    title: "矿业空间实验室｜AI矿地判读",
+    desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
     image: "/share-judge-og.jpg"
   },
   "/mining-analysis": {
-    title: "矿地快判｜矿石、河道、卫星图结构分析 - GeoKit Lab",
-    desc: "GeoKit Lab 矿地快判支持矿石照片、河道砂金、卫星图、老鼠洞等场景的快速初筛，基于地形结构、沉积逻辑和图像特征给出保守判断结果。",
+    title: "矿业空间实验室｜AI矿地判读",
+    desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
     image: "/share-judge-og.jpg"
   },
   "/judge": {
-    title: "矿地快判｜矿石、河道、卫星图结构分析 - GeoKit Lab",
-    desc: "GeoKit Lab 矿地快判支持矿石照片、河道砂金、卫星图、老鼠洞等场景的快速初筛，基于地形结构、沉积逻辑和图像特征给出保守判断结果。",
+    title: "矿业空间实验室｜AI矿地判读",
+    desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
     image: "/share-judge-og.jpg"
   },
   "/gold-calculator": {
-    title: "黄金成色计算器｜吊水法纯度与K值计算 - GeoKit Lab",
-    desc: "GeoKit Lab 黄金成色计算器支持通过黄金重量与排水差值计算密度、纯度、K值、Au值和参考价格，适用于吊水法成色估算、黄金回收和交易前快速判断。",
+    title: "矿业空间实验室｜黄金成色计算器",
+    desc: "输入重量和排水差重，快速估算纯度、K值和参考价格。",
     image: "/share-gold-og.jpg"
   },
   "/gold": {
-    title: "黄金成色计算器｜吊水法纯度与K值计算 - GeoKit Lab",
-    desc: "GeoKit Lab 黄金成色计算器支持通过黄金重量与排水差值计算密度、纯度、K值、Au值和参考价格，适用于吊水法成色估算、黄金回收和交易前快速判断。",
+    title: "矿业空间实验室｜黄金成色计算器",
+    desc: "输入重量和排水差重，快速估算纯度、K值和参考价格。",
     image: "/share-gold-og.jpg"
   }
 };
