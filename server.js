@@ -3374,16 +3374,100 @@ function normalizeKyrgyzGkValue(value) {
     .replace(/,/g, ".");
 }
 
+function normalizeKyrgyzGkNorthingValue(value) {
+  const normalized = normalizeKyrgyzGkValue(value).replace(/[^\d.-]/g, "");
+
+  // Tesseract sometimes drops the leading 4 in Kyrgyz GK northing values
+  // such as 4607447, returning 607447. Only repair the narrow 60xxxx shape.
+  if (/^60\d{4}$/.test(normalized)) {
+    return `4${normalized}`;
+  }
+
+  return normalized;
+}
+
+function extractKyrgyzGkPairsFromLine(line) {
+  const pairs = [];
+  const pairPattern = /(?:^|[^\d])(13\d{5,7})\D+([46]\d{5,6})(?=$|[^\d])/g;
+  let match;
+
+  while ((match = pairPattern.exec(String(line || ""))) !== null) {
+    const x = normalizeKyrgyzGkValue(match[1]).replace(/[^\d.-]/g, "");
+    const y = normalizeKyrgyzGkNorthingValue(match[2]);
+
+    if (looksLikeKyrgyzGkPair(x, y)) {
+      pairs.push({ x, y });
+    }
+  }
+
+  return pairs;
+}
+
+function inferKyrgyzGkRowsByTableOrder(text) {
+  const source = normalizeText(text);
+  const tableRows = source
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => extractKyrgyzGkPairsFromLine(line).slice(0, 2))
+    .filter(pairs => pairs.length > 0);
+
+  if (tableRows.length < 20) {
+    return [];
+  }
+
+  const leftColumnCount = tableRows.length;
+  const dualColumnRows = tableRows.filter(pairs => pairs.length >= 2).length;
+  const rowsByPoint = new Map();
+
+  tableRows.forEach((pairs, index) => {
+    const leftPoint = index + 1;
+    rowsByPoint.set(leftPoint, {
+      point: leftPoint,
+      x: pairs[0].x,
+      y: pairs[0].y
+    });
+
+    if (pairs[1]) {
+      const rightPoint = leftColumnCount + index + 1;
+      rowsByPoint.set(rightPoint, {
+        point: rightPoint,
+        x: pairs[1].x,
+        y: pairs[1].y
+      });
+    }
+  });
+
+  const inferredRows = Array.from(rowsByPoint.values()).sort((a, b) => a.point - b.point);
+  const integrity = analyzeKyrgyzGkRows(inferredRows, "table-order-fallback");
+  const looksLikeTwoColumnTable = leftColumnCount >= 25
+    && leftColumnCount <= 40
+    && dualColumnRows >= Math.max(15, Math.floor(leftColumnCount * 0.65));
+  const plausibleTotal = inferredRows.length >= 50 && inferredRows.length <= 80;
+
+  if (
+    !looksLikeTwoColumnTable
+    || !plausibleTotal
+    || integrity.firstPoint !== 1
+    || !integrity.continuous
+    || integrity.abnormalPoints.length > 0
+  ) {
+    return [];
+  }
+
+  return inferredRows;
+}
+
 function extractKyrgyzGkRows(text) {
   const source = normalizeText(text);
-  const projectedPairCount = (source.match(/13\d{5,7}\s*[\|,;\s]+\s*4\d{6}/g) || []).length;
+  const projectedPairCount = (source.match(/13\d{5,7}\s*[\|,;\s]+\s*[46]\d{5,6}/g) || []).length;
 
   if (!hasKyrgyzGkContext(source) && !/^point\s*\|\s*X\s*\|\s*Y/im.test(source) && projectedPairCount < 8) {
     return [];
   }
 
   const rowsByPoint = new Map();
-  const rowPattern = /(?:^|[^\d])(\d{1,3})\s*[\|,;\s]+\s*(13\d{5,7})\s*[\|,;\s]+\s*(4\d{6})(?=$|[^\d])/g;
+  const rowPattern = /(?:^|[^\d])(\d{1,3})\s*[\|,;\s]+\s*(13\d{5,7})\s*[\|,;\s]+\s*([46]\d{5,6})(?=$|[^\d])/g;
 
   source
     .split(/\r?\n/)
@@ -3399,8 +3483,8 @@ function extractKyrgyzGkRows(text) {
 
       while ((match = rowPattern.exec(line)) !== null) {
         const point = Number(match[1]);
-        const x = normalizeKyrgyzGkValue(match[2]);
-        const y = normalizeKyrgyzGkValue(match[3]);
+        const x = normalizeKyrgyzGkValue(match[2]).replace(/[^\d.-]/g, "");
+        const y = normalizeKyrgyzGkNorthingValue(match[3]);
 
         if (!Number.isInteger(point) || point <= 0 || !looksLikeKyrgyzGkPair(x, y)) {
           continue;
@@ -3412,7 +3496,25 @@ function extractKyrgyzGkRows(text) {
       }
     });
 
-  return Array.from(rowsByPoint.values()).sort((a, b) => a.point - b.point);
+  const explicitRows = Array.from(rowsByPoint.values()).sort((a, b) => a.point - b.point);
+  const inferredRows = inferKyrgyzGkRowsByTableOrder(source);
+  const explicitIntegrity = analyzeKyrgyzGkRows(explicitRows);
+  const inferredIntegrity = analyzeKyrgyzGkRows(inferredRows, "table-order-fallback");
+
+  if (
+    inferredRows.length >= explicitRows.length
+    && inferredRows.length >= 50
+    && inferredIntegrity.firstPoint === 1
+    && inferredIntegrity.abnormalPoints.length === 0
+  ) {
+    return inferredRows;
+  }
+
+  if (explicitIntegrity.isComplete) {
+    return explicitRows;
+  }
+
+  return explicitRows;
 }
 
 function countKyrgyzGkCoordinatePairs(text) {
