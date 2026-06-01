@@ -3376,8 +3376,9 @@ function normalizeKyrgyzGkValue(value) {
 
 function extractKyrgyzGkRows(text) {
   const source = normalizeText(text);
+  const projectedPairCount = (source.match(/13\d{5,7}\s*[\|,;\s]+\s*4\d{6}/g) || []).length;
 
-  if (!hasKyrgyzGkContext(source) && !/^point\s*\|\s*X\s*\|\s*Y/im.test(source)) {
+  if (!hasKyrgyzGkContext(source) && !/^point\s*\|\s*X\s*\|\s*Y/im.test(source) && projectedPairCount < 8) {
     return [];
   }
 
@@ -7199,8 +7200,9 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
     uploadedFileCount: req.file ? 1 : 0
   });
 
+  let visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || req.query?.visitorId || "").trim();
+
   try {
-    const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
     const adminData = await readAdminData();
     const user = ensureUser(adminData, visitorId);
     const permissions = getEffectivePermissions(user, adminData.featureFlags);
@@ -7795,17 +7797,24 @@ Rules:
 
       const fallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
+      const fallbackKyrgyzGk = getKyrgyzGkInfo(fallback.rawText);
       if (fallbackCadastralGrid.isCadastralGrid) {
         fallback.coordinates = formatCadastralGridRows(fallbackCadastralGrid.rows);
         fallback.model = `${fallback.model || "local-ocr-fallback"}+cadastral-grid`;
         fallback.precisionMode = "cadastral-grid-num-xv-yv";
         fallback.warning = fallback.warning || "识别到矿权网格表，已提取 num / XV / YV；当前阶段不转换经纬度，也不生成 KML。";
         fallback.cadastralGrid = fallbackCadastralGrid;
+      } else if (fallbackKyrgyzGk.isKyrgyzGk) {
+        fallback.coordinates = formatKyrgyzGkRows(fallbackKyrgyzGk.rows);
+        fallback.model = `${fallback.model || "local-ocr-fallback"}+kyrgyz-gk`;
+        fallback.precisionMode = "kyrgyz-gk-point-x-y";
+        fallback.warning = fallback.warning || "识别到吉尔吉斯斯坦高斯克吕格平面坐标表，已保留 point / X / Y 并按点号排序；生成 KML 时会尝试转换为 WGS84，经纬度结果需结合原图人工核对。";
+        fallback.kyrgyzGk = fallbackKyrgyzGk;
       }
       let bftmLongTable = getBftmLongTableInfo(fallback.rawText, fallback.coordinates);
       let bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
 
-      if (!fallbackCadastralGrid.isCadastralGrid && bftmIncompleteWarning && aliyunApiKey && req.file) {
+      if (!fallbackCadastralGrid.isCadastralGrid && !fallbackKyrgyzGk.isKyrgyzGk && bftmIncompleteWarning && aliyunApiKey && req.file) {
         try {
           console.log("BFTM long table fallback is incomplete, retrying Aliyun visual table extraction once.");
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
