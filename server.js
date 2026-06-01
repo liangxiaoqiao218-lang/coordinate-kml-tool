@@ -3437,6 +3437,17 @@ function shouldCheckKyrgyzGkTable(rawText, coordinates) {
     || countKyrgyzGkCoordinatePairs(coordinates) >= 8;
 }
 
+function shouldUseKyrgyzGkPromptFirst(file, rawHint = "") {
+  const fileName = String(file?.originalname || "");
+  const decodedFileName = Buffer.from(fileName, "latin1").toString("utf8");
+  const hint = String(rawHint || "");
+  const combined = `${fileName}\n${decodedFileName}\n${hint}`;
+
+  return /吉尔吉斯|Kyrgyz|Kyrgyzstan|Киргиз|Кыргыз/i.test(combined)
+    || /№\s*точек|Координаты\s+угловых\s+точек|лицензионн(?:ой|ая|ую)|прямоугольн(?:ой|ая|ую)\s+систем/i.test(combined)
+    || /13\d{5,7}[\s|,;]+4\d{6}/.test(combined);
+}
+
 function formatKyrgyzGkRows(rows) {
   return ["point | X | Y", ...rows.map(row => `${row.point} | ${row.x} | ${row.y}`)].join("\n");
 }
@@ -7505,6 +7516,77 @@ Rules:
         }
       }
     ];
+
+    const useKyrgyzGkPromptFirst = shouldUseKyrgyzGkPromptFirst(req.file, req.body?.rawHint || req.body?.hint || "");
+
+    if (useKyrgyzGkPromptFirst) {
+      console.log("Kyrgyz GK pre-route matched", {
+        fileName: req.file.originalname || "",
+        mimetype: req.file.mimetype || "",
+        size: req.file.size || 0
+      });
+
+      try {
+        console.log("Kyrgyz GK direct prompt started", {
+          model: aliyunVisionModel,
+          timeoutMs: 80000
+        });
+        const kyrgyzDirectResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: kyrgyzGkTablePrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 2400,
+          timeoutMs: 80000
+        });
+        const kyrgyzDirectRawText = kyrgyzDirectResponse.choices?.[0]?.message?.content || "";
+        const kyrgyzDirectInfo = getKyrgyzGkInfo(kyrgyzDirectRawText);
+
+        if (kyrgyzDirectInfo.isKyrgyzGk) {
+          console.log(`Kyrgyz GK direct prompt success rows=${kyrgyzDirectInfo.rows.length}`);
+          const consumeResult = await consumeUsage(visitorId, "convert", req, {
+            note: "Coordinate recognition consumed after Kyrgyz GK direct prompt"
+          });
+          if (consumeResult.reason === "limit_exceeded") {
+            return res.status(403).json({
+              success: false,
+              reason: "limit_exceeded",
+              code: getQuotaExhaustedCode("convert"),
+              type: "convert",
+              quota: consumeResult.quota,
+              error: "CONVERT_QUOTA_EXHAUSTED",
+              rawText: "",
+              coordinates: ""
+            });
+          }
+          if (!consumeResult.success) {
+            return res.status(500).json({
+              success: false,
+              reason: consumeResult.reason || "db_error",
+              error: "CONVERT_QUOTA_CONSUME_FAILED",
+              rawText: "",
+              coordinates: ""
+            });
+          }
+
+          return res.json({
+            model: `${aliyunVisionModel}+kyrgyz-gk-direct`,
+            rawText: kyrgyzDirectRawText,
+            coordinates: formatKyrgyzGkRows(kyrgyzDirectInfo.rows),
+            precisionMode: "kyrgyz-gk-point-x-y",
+            warning: "已通过 Kyrgyz GK 专用视觉 prompt 读取吉尔吉斯斯坦高斯克吕格表格。经纬度结果需结合原图人工核对。",
+            kyrgyzGk: kyrgyzDirectInfo,
+            quota: consumeResult.quota
+          });
+        }
+
+        console.log("Kyrgyz GK direct prompt failed reason=no_parsable_rows", {
+          preview: kyrgyzDirectRawText.slice(0, 500)
+        });
+      } catch (kyrgyzDirectError) {
+        console.error("Kyrgyz GK direct prompt failed reason=", kyrgyzDirectError.message || kyrgyzDirectError);
+      }
+    }
 
     // Start table recognition with the visual model. OCR is only a retry/fallback because it can
     // lose table row relationships or return bbox metadata instead of coordinate pairs.
