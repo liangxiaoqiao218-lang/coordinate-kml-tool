@@ -9818,6 +9818,8 @@ ${placemarks}
           }
         }
 
+        // Coordinate recognition must follow COORDINATE_TYPE_REGISTRY.md.
+        // Newly verified types must be registered there without breaking stable paths.
         // Stable coordinate display path:
         // 1. Handwritten DMS: rawText -> recognizedLines -> groupEveryFourLinesWhenLikely(); keep original DMS display.
         // 2. Standard DMS tables: keep visual-model DMS table display; W/O/Ouest stays negative longitude internally.

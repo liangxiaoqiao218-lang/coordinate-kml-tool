@@ -7311,6 +7311,8 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
 
 /*
  * Coordinate recognition maintenance rules
+ * Follow COORDINATE_TYPE_REGISTRY.md for all coordinate-type changes.
+ * Newly verified types must be registered there without breaking stable paths.
  *
  * Core principle: coordinate tables must use visual understanding first, not OCR text first.
  * OCR returns text blocks and bbox/pixel positions, but it does not understand row relationships.
