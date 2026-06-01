@@ -8213,6 +8213,44 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return ["point | X | Y", ...rows.map(row => `${row.point} | ${row.x} | ${row.y}`)].join("\n");
     }
 
+    function analyzeKyrgyzGkRows(rows) {
+      const points = Array.isArray(rows)
+        ? rows
+          .map(row => Number(row?.point))
+          .filter(point => Number.isInteger(point) && point > 0)
+          .sort((a, b) => a - b)
+        : [];
+      const uniquePoints = Array.from(new Set(points));
+      const firstPoint = uniquePoints[0] || null;
+      const lastPoint = uniquePoints[uniquePoints.length - 1] || null;
+      const abnormalPoints = uniquePoints.filter(point => point > 200);
+      const missingPoints = [];
+
+      if (firstPoint === 1 && Number.isInteger(lastPoint)) {
+        for (let point = 1; point <= lastPoint; point += 1) {
+          if (!uniquePoints.includes(point)) {
+            missingPoints.push(point);
+          }
+        }
+      }
+
+      const startsAtOne = firstPoint === 1;
+      const continuous = startsAtOne && missingPoints.length === 0;
+      const isComplete = uniquePoints.length >= 3 && startsAtOne && continuous && abnormalPoints.length === 0;
+
+      return {
+        rowCount: uniquePoints.length,
+        firstPoint,
+        lastPoint,
+        startsAtOne,
+        continuous,
+        isComplete,
+        allowKml: isComplete,
+        missingPoints,
+        abnormalPoints
+      };
+    }
+
     function updateCadastralGridPanel() {
       const cadastralRows = extractCadastralGridRows(input.value);
       const kyrgyzRows = extractKyrgyzGkRows(input.value);
@@ -9540,7 +9578,13 @@ ${placemarks}
 
       if (hasKyrgyzGkRows(input.value)) {
         const rows = extractKyrgyzGkRows(input.value);
+        const integrity = analyzeKyrgyzGkRows(rows);
         let wgs84Pairs;
+
+        if (!integrity.allowKml) {
+          showMessage(`Kyrgyzstan GK 点号不连续或存在异常点号，需人工校正后再生成 KML。缺失点号：${integrity.missingPoints.slice(0, 30).join("、") || "未能确认"}。异常点号：${integrity.abnormalPoints.join("、") || "无"}。`, true, 9000);
+          return;
+        }
 
         try {
           wgs84Pairs = await buildKyrgyzGkWgs84PolygonRows(rows);
@@ -9758,6 +9802,9 @@ ${placemarks}
           : extractKyrgyzGkRows(data.rawText || data.coordinates);
         const kyrgyzGkText = formatKyrgyzGkRows(kyrgyzGkRows);
         const isKyrgyzGk = !isCadastralGrid && Boolean(data.kyrgyzGk?.isKyrgyzGk || kyrgyzGkRows.length > 0);
+        const kyrgyzGkIntegrity = isKyrgyzGk
+          ? (data.kyrgyzGk?.integrity || analyzeKyrgyzGkRows(kyrgyzGkRows))
+          : null;
 
         if (!isCadastralGrid && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
           const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
@@ -9840,7 +9887,11 @@ ${placemarks}
         if (isCadastralGrid) {
           showMessage(`已识别矿权网格表 ${cadastralGridRows.length} 行，已提取 num / XV / YV。已识别为马达加斯加矿权格网，生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isKyrgyzGk) {
-          showMessage(`已识别为吉尔吉斯斯坦高斯克吕格平面坐标 ${kyrgyzGkRows.length} 点，生成 KML 时会尝试转换为 WGS84，经纬度结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+          if (kyrgyzGkIntegrity && !kyrgyzGkIntegrity.allowKml) {
+            showMessage(`已识别为吉尔吉斯斯坦高斯克吕格平面坐标 ${kyrgyzGkRows.length} 点，但点号不连续或存在异常点号。该结果仅供人工核对，需校正后再生成 KML。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
+          } else {
+            showMessage(`已识别为吉尔吉斯斯坦高斯克吕格平面坐标 ${kyrgyzGkRows.length} 点，生成 KML 时会尝试转换为 WGS84，经纬度结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+          }
         } else if (data.bftmLongTable?.incomplete) {
           showMessage(`该图为 BFTM 坐标长表，建议只截取坐标表区域后重试，识别会更稳定。已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行，缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (hasProjectedCoordinateRows(finalCoordinates)) {

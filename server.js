@@ -3441,12 +3441,54 @@ function formatKyrgyzGkRows(rows) {
   return ["point | X | Y", ...rows.map(row => `${row.point} | ${row.x} | ${row.y}`)].join("\n");
 }
 
+function analyzeKyrgyzGkRows(rows, source = "vision") {
+  const points = Array.isArray(rows)
+    ? rows
+      .map(row => Number(row?.point))
+      .filter(point => Number.isInteger(point) && point > 0)
+      .sort((a, b) => a - b)
+    : [];
+  const uniquePoints = Array.from(new Set(points));
+  const firstPoint = uniquePoints[0] || null;
+  const lastPoint = uniquePoints[uniquePoints.length - 1] || null;
+  const abnormalPoints = uniquePoints.filter(point => point > 200);
+  const missingPoints = [];
+
+  if (firstPoint === 1 && Number.isInteger(lastPoint)) {
+    for (let point = 1; point <= lastPoint; point += 1) {
+      if (!uniquePoints.includes(point)) {
+        missingPoints.push(point);
+      }
+    }
+  }
+
+  const startsAtOne = firstPoint === 1;
+  const continuous = startsAtOne && missingPoints.length === 0;
+  const isComplete = uniquePoints.length >= 3 && startsAtOne && continuous && abnormalPoints.length === 0;
+
+  return {
+    source,
+    rowCount: uniquePoints.length,
+    firstPoint,
+    lastPoint,
+    startsAtOne,
+    continuous,
+    isComplete,
+    allowKml: isComplete,
+    missingPoints,
+    abnormalPoints
+  };
+}
+
 function getKyrgyzGkInfo(text) {
   const rows = extractKyrgyzGkRows(text);
+  const integrity = analyzeKyrgyzGkRows(rows);
+
   return {
     isKyrgyzGk: rows.length > 0,
     rows,
-    rowCount: rows.length
+    rowCount: rows.length,
+    integrity
   };
 }
 
@@ -7795,6 +7837,88 @@ Rules:
         throw error;
       }
 
+      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file) {
+        try {
+          console.log("Aliyun timed out; retrying Kyrgyzstan GK visual table extraction before local OCR fallback.");
+          const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+          const kyrgyzTimeoutRetryPrompt = `Read ONLY the Russian Kyrgyzstan / Soviet Gauss-Kruger coordinate table in the image.
+
+Target table:
+№ точек | X | Y
+
+Rules:
+- Ignore signatures, stamps, body paragraphs, page text, headings, and explanations.
+- Ignore map graphics and any non-table text.
+- Preserve all visible point numbers, especially 1 through 65 if present.
+- Read all table blocks, including left block, right block, and lower continuation rows.
+- Sort rows by numeric point number ascending.
+- Output only this exact format:
+point | X | Y
+
+Example:
+point | X | Y
+1 | 13261341 | 4607777
+2 | 13261396 | 4607769
+65 | 13261317 | 4607721
+
+If the table is not readable, output only: ${noCoordinatesText}`;
+          const retryResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: kyrgyzTimeoutRetryPrompt,
+            imageItems: [{
+              type: "image_url",
+              image_url: { url: imageDataUrl }
+            }],
+            temperature: 0,
+            maxTokens: 2400,
+            timeoutMs: 80000
+          });
+          const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
+          const retryKyrgyzGk = getKyrgyzGkInfo(retryRawText);
+
+          if (retryKyrgyzGk.isKyrgyzGk) {
+            const consumeResult = await consumeUsage(visitorId, "convert", req, {
+              note: "Coordinate recognition consumed after Kyrgyz GK timeout retry"
+            });
+            if (consumeResult.reason === "limit_exceeded") {
+              return res.status(403).json({
+                success: false,
+                reason: "limit_exceeded",
+                code: getQuotaExhaustedCode("convert"),
+                type: "convert",
+                quota: consumeResult.quota,
+                error: "CONVERT_QUOTA_EXHAUSTED",
+                rawText: "",
+                coordinates: ""
+              });
+            }
+            if (!consumeResult.success) {
+              return res.status(500).json({
+                success: false,
+                reason: consumeResult.reason || "db_error",
+                error: "CONVERT_QUOTA_CONSUME_FAILED",
+                rawText: "",
+                coordinates: ""
+              });
+            }
+
+            return res.json({
+              model: `${aliyunVisionModel}+kyrgyz-gk-timeout-retry`,
+              rawText: retryRawText,
+              coordinates: formatKyrgyzGkRows(retryKyrgyzGk.rows),
+              precisionMode: "kyrgyz-gk-point-x-y",
+              warning: "主视觉模型首次超时，已通过视觉模型重试读取吉尔吉斯斯坦高斯克吕格表格。经纬度结果需结合原图人工核对。",
+              kyrgyzGk: retryKyrgyzGk,
+              quota: consumeResult.quota
+            });
+          }
+
+          console.log("Kyrgyzstan GK timeout retry did not return parsable rows:", retryRawText.slice(0, 500));
+        } catch (retryError) {
+          console.error("Kyrgyzstan GK timeout visual retry failed:", retryError.message || retryError);
+        }
+      }
+
       const fallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
       const fallbackKyrgyzGk = getKyrgyzGkInfo(fallback.rawText);
@@ -7805,10 +7929,14 @@ Rules:
         fallback.warning = fallback.warning || "识别到矿权网格表，已提取 num / XV / YV；当前阶段不转换经纬度，也不生成 KML。";
         fallback.cadastralGrid = fallbackCadastralGrid;
       } else if (fallbackKyrgyzGk.isKyrgyzGk) {
+        fallbackKyrgyzGk.integrity = analyzeKyrgyzGkRows(fallbackKyrgyzGk.rows, "fallback-ocr");
         fallback.coordinates = formatKyrgyzGkRows(fallbackKyrgyzGk.rows);
         fallback.model = `${fallback.model || "local-ocr-fallback"}+kyrgyz-gk`;
         fallback.precisionMode = "kyrgyz-gk-point-x-y";
-        fallback.warning = fallback.warning || "识别到吉尔吉斯斯坦高斯克吕格平面坐标表，已保留 point / X / Y 并按点号排序；生成 KML 时会尝试转换为 WGS84，经纬度结果需结合原图人工核对。";
+        const integrityWarning = fallbackKyrgyzGk.integrity.isComplete
+          ? "备用 OCR 结果，仅供人工核对。建议使用视觉模型重试结果后再生成 KML。"
+          : `备用 OCR 结果，仅供人工核对。点号不连续或存在异常点号，需人工校正后再生成 KML。缺失点号：${fallbackKyrgyzGk.integrity.missingPoints.slice(0, 30).join("、") || "未能确认"}。异常点号：${fallbackKyrgyzGk.integrity.abnormalPoints.join("、") || "无"}。`;
+        fallback.warning = fallback.warning ? `${fallback.warning} ${integrityWarning}` : integrityWarning;
         fallback.kyrgyzGk = fallbackKyrgyzGk;
       }
       let bftmLongTable = getBftmLongTableInfo(fallback.rawText, fallback.coordinates);
