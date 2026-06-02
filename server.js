@@ -1958,6 +1958,42 @@ app.get("/api/gold-price", async (req, res) => {
   }
 });
 
+app.post("/api/gold-usage", async (req, res) => {
+  try {
+    const userId = String(
+      req.body?.visitorId ||
+      req.get("x-visitor-id") ||
+      req.query?.visitorId ||
+      "anonymous"
+    ).trim() || "anonymous";
+
+    await writeUsageLog({
+      userId,
+      req,
+      featureType: "gold",
+      consumeType: "none",
+      beforeBalance: null,
+      afterBalance: null,
+      success: true,
+      note: "Gold calculator result generated",
+      metadata: {
+        kind: "gold_calculation",
+        density: Number(req.body?.density || 0) || null,
+        purity: Number(req.body?.purity || 0) || null,
+        k_value: Number(req.body?.kValue || 0) || null
+      }
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Gold usage log failed:", error?.message || error);
+    res.status(500).json({
+      success: false,
+      error: "failed"
+    });
+  }
+});
+
 async function checkUsage(userId, type) {
   const featureType = normalizeUsageFeatureType(type);
   const rule = getUsageRule(featureType);

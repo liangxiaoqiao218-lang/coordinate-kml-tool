@@ -4193,6 +4193,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let currentGoldReferencePrice = null;
     let currentGoldPriceSource = "unavailable";
     let currentGoldPriceUpdatedAt = "";
+    let goldUsageLoggedThisSession = false;
     const visitorId = getOrCreateVisitorId();
     const userCode = getOrCreateUserCode();
     renderPricingConfigText();
@@ -7402,6 +7403,28 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
+    function recordGoldUsage(result) {
+      if (goldUsageLoggedThisSession || !result) {
+        return;
+      }
+
+      goldUsageLoggedThisSession = true;
+      fetch("/api/gold-usage", {
+        method: "POST",
+        headers: getSourceHeaders({
+          "Content-Type": "application/json",
+          "x-visitor-id": visitorId
+        }),
+        body: JSON.stringify({
+          visitorId,
+          userCode,
+          density: result.density,
+          purity: result.purity,
+          kValue: result.kValue
+        })
+      }).catch(error => console.warn("Gold usage log failed", error));
+    }
+
     function calculateGoldPurity() {
       updateGoldInputLabels();
       const result = getGoldCalculation();
@@ -7476,6 +7499,7 @@ K值 = ${formatGoldNumber(result.purity)} ÷ 100 × 24 = ${formatGoldNumber(resu
 Au值 = 纯度 × 10 后取整数
 Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       renderGoldQuoteResult(result);
+      recordGoldUsage(result);
       messageEl.textContent = "";
       messageEl.className = "message";
       return result;
