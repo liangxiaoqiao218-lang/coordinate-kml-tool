@@ -8808,6 +8808,30 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return getCoordinateGroups();
     }
 
+    function countCoordinatePairsInGroups(groups) {
+      return groups.reduce((total, group) => total + group.length, 0);
+    }
+
+    function applyAutoExportTypeForRecognizedCoordinates(text, options = {}) {
+      if (options.isCadastralGrid || options.isKyrgyzGk) {
+        exportType.value = "Polygon";
+        return false;
+      }
+
+      const pairCount = countCoordinatePairsInGroups(getCoordinateGroupsFromText(text));
+
+      if (pairCount === 1) {
+        exportType.value = "Point";
+        return true;
+      }
+
+      if (pairCount >= 2) {
+        exportType.value = "Polygon";
+      }
+
+      return false;
+    }
+
     async function swapLongitudeLatitude() {
       await loadUserConfig();
 
@@ -9902,6 +9926,10 @@ ${placemarks}
         } else {
           setInternalKmlSourceFromText(finalCoordinates);
         }
+        const autoSelectedPoint = applyAutoExportTypeForRecognizedCoordinates(finalCoordinates, {
+          isCadastralGrid,
+          isKyrgyzGk
+        });
         input.focus();
         coordinateUploadPanel?.classList.add("is-complete");
         trackEvent("image_recognize_success", {
@@ -9920,6 +9948,8 @@ ${placemarks}
           }
         } else if (data.bftmLongTable?.incomplete) {
           showMessage(`该图为 BFTM 坐标长表，建议只截取坐标表区域后重试，识别会更稳定。已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行，缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
+        } else if (autoSelectedPoint) {
+          showMessage("已自动识别为单点坐标，切换为 Point 模式", false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (hasProjectedCoordinateRows(finalCoordinates)) {
           showMessage("已识别到 X/Y 平面坐标，请先确认坐标系后再转换成经纬度。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (data.warning) {
