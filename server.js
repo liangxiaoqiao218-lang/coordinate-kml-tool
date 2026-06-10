@@ -1772,6 +1772,44 @@ function normalizeUsageLogForResponse(log = {}) {
   };
 }
 
+function detectAdminDeviceLabel(deviceInfo = "", userAgent = "") {
+  const text = `${deviceInfo || ""} ${userAgent || ""}`.toLowerCase();
+  if (/iphone|ipad|ios/.test(text)) return "iPhone";
+  if (/android/.test(text)) return "Android";
+  if (/macintosh|mac os|macos/.test(text)) return "Mac";
+  if (/windows|win32|win64/.test(text)) return "Windows";
+  return String(deviceInfo || "").trim() || "未知";
+}
+
+function getAdminActiveUsersDateRange(period = "today") {
+  const now = new Date();
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+  const start = new Date(todayStart);
+  const end = new Date(todayStart);
+
+  if (period === "yesterday") {
+    start.setDate(start.getDate() - 1);
+  } else {
+    end.setDate(end.getDate() + 1);
+  }
+
+  if (period === "yesterday") {
+    end.setTime(todayStart.getTime());
+  }
+
+  return { start, end };
+}
+
+function getAdminUserValueScore(totalUsageCount = 0) {
+  const count = Number(totalUsageCount || 0);
+  if (count >= 10) return 5;
+  if (count >= 5) return 4;
+  if (count >= 3) return 3;
+  if (count >= 2) return 2;
+  return 1;
+}
+
 async function writeSourceVisitLog(userId, req) {
   const sourceMeta = getSourceMetaFromReq(req);
   if (!sourceMeta?.from_source && !sourceMeta?.user_code) {
@@ -6514,6 +6552,191 @@ app.get("/api/admin/dashboard-stats", requireAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || "读取运营总览失败。"
+    });
+  }
+});
+
+app.get("/api/admin/active-users", requireAdmin, async (req, res) => {
+  try {
+    if (!requireSupabase(res)) {
+      return;
+    }
+
+    const period = String(req.query.period || "today") === "yesterday" ? "yesterday" : "today";
+    const { start, end } = getAdminActiveUsersDateRange(period);
+    const { data: logsData, error: logsError } = await supabase
+      .from("usage_logs")
+      .select("id,user_id,region,user_agent,device_info,feature_type,success,note,created_at")
+      .gte("created_at", start.toISOString())
+      .lt("created_at", end.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(5000);
+
+    if (logsError) {
+      if (logsError.code === "42P01") {
+        return res.json({
+          success: true,
+          setupRequired: true,
+          period,
+          users: []
+        });
+      }
+      throw logsError;
+    }
+
+    const logs = logsData || [];
+    const userMap = new Map();
+    const usageFeatures = new Set(["convert", "judge", "gold"]);
+
+    for (const log of logs) {
+      const userId = String(log.user_id || "").trim();
+      if (!userId) continue;
+
+      const sourceMeta = parseUsageSourceMetadata(log.note || "");
+      const userCode = sanitizeUserCode(sourceMeta?.user_code || "");
+      const createdAt = log.created_at || "";
+      const existing = userMap.get(userId) || {
+        userId,
+        userCode: userCode || "",
+        firstSource: "",
+        firstSourceAt: "",
+        latestSource: "",
+        latestSourceAt: "",
+        counts: { convert: 0, judge: 0, gold: 0 },
+        totalUsageCount: 0,
+        firstVisitedAt: createdAt,
+        lastVisitedAt: createdAt,
+        device: "",
+        region: "",
+        isVip: false
+      };
+
+      if (userCode && !existing.userCode) {
+        existing.userCode = userCode;
+      }
+
+      const fromSource = String(sourceMeta?.from_source || "").trim();
+      if (fromSource && (!existing.firstSourceAt || new Date(createdAt) < new Date(existing.firstSourceAt))) {
+        existing.firstSource = fromSource;
+        existing.firstSourceAt = createdAt;
+      }
+
+      if (fromSource && (!existing.latestSourceAt || new Date(createdAt) > new Date(existing.latestSourceAt))) {
+        existing.latestSource = fromSource;
+        existing.latestSourceAt = createdAt;
+      }
+
+      if (usageFeatures.has(log.feature_type) && log.success) {
+        existing.counts[log.feature_type] += 1;
+        existing.totalUsageCount += 1;
+      }
+
+      if (createdAt && (!existing.firstVisitedAt || new Date(createdAt) < new Date(existing.firstVisitedAt))) {
+        existing.firstVisitedAt = createdAt;
+      }
+
+      if (createdAt && (!existing.lastVisitedAt || new Date(createdAt) > new Date(existing.lastVisitedAt))) {
+        existing.lastVisitedAt = createdAt;
+        existing.device = detectAdminDeviceLabel(log.device_info, log.user_agent);
+        existing.region = String(log.region || "").trim() || existing.region;
+      } else {
+        existing.device = existing.device || detectAdminDeviceLabel(log.device_info, log.user_agent);
+        existing.region = existing.region || String(log.region || "").trim();
+      }
+
+      userMap.set(userId, existing);
+    }
+
+    const userIds = Array.from(userMap.keys());
+    if (userIds.length) {
+      const [{ data: usersData, error: usersError }, { data: firstLogsData, error: firstLogsError }] = await Promise.all([
+        supabase
+          .from("users")
+          .select("user_id,is_vip,region,device_info,user_agent")
+          .in("user_id", userIds),
+        supabase
+          .from("usage_logs")
+          .select("user_id,note,created_at")
+          .in("user_id", userIds)
+          .order("created_at", { ascending: true })
+          .limit(5000)
+      ]);
+
+      if (!usersError) {
+        for (const user of usersData || []) {
+          const userId = String(user.user_id || "").trim();
+          const item = userMap.get(userId);
+          if (!item) continue;
+          item.isVip = Boolean(user.is_vip);
+          item.region = item.region || String(user.region || "").trim();
+          item.device = item.device || detectAdminDeviceLabel(user.device_info, user.user_agent);
+        }
+      } else if (!["42P01", "42703"].includes(usersError.code)) {
+        throw usersError;
+      } else {
+        console.error("Read active users profile failed:", usersError);
+      }
+
+      if (!firstLogsError) {
+        for (const log of firstLogsData || []) {
+          const userId = String(log.user_id || "").trim();
+          const item = userMap.get(userId);
+          if (!item) continue;
+
+          const sourceMeta = parseUsageSourceMetadata(log.note || "");
+          if (!item.firstGlobalVisitedAt) {
+            item.firstGlobalVisitedAt = log.created_at || item.firstVisitedAt;
+          }
+          if (!item.firstGlobalSource && sourceMeta?.from_source) {
+            item.firstGlobalSource = String(sourceMeta.from_source || "").trim();
+            item.firstSource = item.firstGlobalSource;
+          }
+        }
+      } else if (!["42P01", "42703"].includes(firstLogsError.code)) {
+        throw firstLogsError;
+      } else {
+        console.error("Read active users first visit failed:", firstLogsError);
+      }
+    }
+
+    const users = Array.from(userMap.values())
+      .map(item => ({
+        userId: item.userId,
+        userCode: item.userCode || item.userId,
+        firstSource: item.firstSource || "未知",
+        latestSource: item.latestSource || item.firstSource || "未知",
+        counts: item.counts,
+        totalUsageCount: item.totalUsageCount,
+        valueScore: getAdminUserValueScore(item.totalUsageCount),
+        firstVisitedAt: item.firstGlobalVisitedAt || item.firstVisitedAt,
+        lastVisitedAt: item.lastVisitedAt,
+        isVip: Boolean(item.isVip),
+        device: item.device || "未知",
+        region: item.region || "未知"
+      }))
+      .sort((a, b) => {
+        return Number(b.valueScore || 0) - Number(a.valueScore || 0)
+          || Number(b.totalUsageCount || 0) - Number(a.totalUsageCount || 0)
+          || new Date(b.lastVisitedAt || 0) - new Date(a.lastVisitedAt || 0);
+      });
+
+    res.json({
+      success: true,
+      period,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      users
+    });
+  } catch (error) {
+    console.error("Read active users failed:", {
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint
+    });
+    res.status(500).json({
+      success: false,
+      error: error.message || "读取活跃用户失败。"
     });
   }
 });

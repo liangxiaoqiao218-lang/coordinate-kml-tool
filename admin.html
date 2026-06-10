@@ -137,6 +137,17 @@
       font-size: 25px;
     }
 
+    .card.clickable-card {
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+    }
+
+    .card.clickable-card:hover {
+      transform: translateY(-1px);
+      background: #1e293b;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+    }
+
     .dashboard-row {
       margin-top: 12px;
     }
@@ -469,6 +480,61 @@
       border-radius: 8px;
       background: #ffffff;
       box-shadow: 0 18px 50px rgba(15, 23, 42, 0.22);
+    }
+
+    .active-users-modal-card {
+      width: min(1080px, 100%);
+    }
+
+    .modal-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .modal-title-row h2 {
+      margin: 0;
+    }
+
+    .filter-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 0 12px;
+    }
+
+    .filter-tabs button {
+      min-height: 32px;
+      padding: 6px 10px;
+      border: 1px solid #d8e0ec;
+      background: #ffffff;
+      color: #334155;
+    }
+
+    .filter-tabs button.active {
+      border-color: #2563eb;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .active-users-table-scroll {
+      max-height: min(62vh, 620px);
+      overflow: auto;
+      border: 1px solid #d8e0ec;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .active-users-table-scroll table {
+      min-width: 960px;
+    }
+
+    .usage-counts {
+      display: grid;
+      gap: 2px;
+      line-height: 1.45;
     }
 
     .readonly-row {
@@ -1362,10 +1428,10 @@
           </div>
         </div>
         <div class="cards">
-          <div class="card"><span>今日活跃用户</span><strong id="dashTodayActive">0</strong></div>
-          <div class="card"><span>今日 矿地快判</span><strong id="dashTodayJudge">0</strong></div>
-          <div class="card"><span>今日坐标转换</span><strong id="dashTodayConvert">0</strong></div>
-          <div class="card"><span>今日黄金成色</span><strong id="dashTodayGold">0</strong></div>
+          <div class="card clickable-card" role="button" tabindex="0" onclick="openActiveUsersModal()" onkeydown="handleActiveUsersCardKey(event)"><span>今日活跃用户</span><strong id="dashTodayActive">0</strong></div>
+          <div class="card clickable-card" role="button" tabindex="0" onclick="openActiveUsersModal('judge')" onkeydown="handleActiveUsersCardKey(event, 'judge')"><span>今日 矿地快判</span><strong id="dashTodayJudge">0</strong></div>
+          <div class="card clickable-card" role="button" tabindex="0" onclick="openActiveUsersModal('convert')" onkeydown="handleActiveUsersCardKey(event, 'convert')"><span>今日坐标转换</span><strong id="dashTodayConvert">0</strong></div>
+          <div class="card clickable-card" role="button" tabindex="0" onclick="openActiveUsersModal('gold')" onkeydown="handleActiveUsersCardKey(event, 'gold')"><span>今日黄金成色</span><strong id="dashTodayGold">0</strong></div>
           <div class="card"><span>今日总使用</span><strong id="dashTodayTotal">0</strong></div>
           <div class="card"><span>今日失败</span><strong id="dashTodayFailed">0</strong></div>
         </div>
@@ -1877,6 +1943,42 @@
         <div id="quotaEditMessage" class="message"></div>
       </div>
     </div>
+    <div id="activeUsersModal" class="modal" role="dialog" aria-modal="true">
+      <div class="modal-card active-users-modal-card">
+        <div class="modal-title-row">
+          <h2 id="activeUsersModalTitle">今日活跃用户（0）</h2>
+          <button type="button" class="button-secondary" onclick="closeActiveUsersModal()">关闭</button>
+        </div>
+        <div class="filter-tabs" aria-label="活跃用户筛选">
+          <button type="button" class="active" data-active-user-filter="all" onclick="setActiveUsersFilter('all')">全部用户</button>
+          <button type="button" data-active-user-filter="convert" onclick="setActiveUsersFilter('convert')">坐标用户</button>
+          <button type="button" data-active-user-filter="judge" onclick="setActiveUsersFilter('judge')">快判用户</button>
+          <button type="button" data-active-user-filter="gold" onclick="setActiveUsersFilter('gold')">黄金用户</button>
+          <button type="button" data-active-user-filter="vip" onclick="setActiveUsersFilter('vip')">VIP用户</button>
+          <button type="button" data-active-user-filter="normal" onclick="setActiveUsersFilter('normal')">普通用户</button>
+        </div>
+        <div class="table-scroll active-users-table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>用户价值</th>
+                <th>用户码</th>
+                <th>首次来源</th>
+                <th>最近来源</th>
+                <th id="activeUsersUsageHeader">今日使用次数</th>
+                <th>首次访问时间</th>
+                <th id="activeUsersLastVisitHeader">最近访问时间</th>
+                <th>是否VIP</th>
+                <th>用户设备</th>
+                <th>地区</th>
+              </tr>
+            </thead>
+            <tbody id="activeUsersBody"></tbody>
+          </table>
+        </div>
+        <div id="activeUsersMessage" class="message"></div>
+      </div>
+    </div>
     <div id="adminToast" class="toast" role="status" aria-live="polite"></div>
   </main>
 
@@ -1892,6 +1994,8 @@
     let supabaseUserFilter = "all";
     let dashboardStats = null;
     let dashboardPeriod = "today";
+    let activeUsersRows = [];
+    let activeUsersFilter = "all";
     let usageSummaryPeriod = "today";
     let activeAdminModule = "dashboard";
     let quotaEditorDirty = false;
@@ -2298,6 +2402,167 @@
         button.classList.toggle("active", button.dataset.dashboardPeriod === dashboardPeriod);
       });
       renderDashboardStats(dashboardStats);
+    }
+
+    function handleActiveUsersCardKey(event, filter = "all") {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openActiveUsersModal(filter);
+      }
+    }
+
+    async function openActiveUsersModal(initialFilter = "all") {
+      const modal = document.getElementById("activeUsersModal");
+      if (!modal) return;
+      modal.classList.add("active");
+      activeUsersFilter = normalizeActiveUsersFilter(initialFilter);
+      syncActiveUsersFilterButtons();
+      renderActiveUsers([], true);
+      await loadActiveUsers();
+    }
+
+    function closeActiveUsersModal() {
+      document.getElementById("activeUsersModal")?.classList.remove("active");
+    }
+
+    async function loadActiveUsers() {
+      const period = dashboardPeriod === "yesterday" ? "yesterday" : "today";
+      setActiveUsersMessage("正在读取活跃用户...");
+      try {
+        const result = await adminFetch(`/api/admin/active-users?period=${encodeURIComponent(period)}`);
+        activeUsersRows = result.users || [];
+        renderActiveUsers(activeUsersRows);
+        setActiveUsersMessage(result.setupRequired ? "usage_logs 表未创建，暂无活跃用户。" : "");
+      } catch (error) {
+        activeUsersRows = [];
+        renderActiveUsers([]);
+        setActiveUsersMessage(error.message, true);
+      }
+    }
+
+    function setActiveUsersFilter(filter) {
+      activeUsersFilter = normalizeActiveUsersFilter(filter);
+      syncActiveUsersFilterButtons();
+      renderActiveUsers(activeUsersRows);
+    }
+
+    function normalizeActiveUsersFilter(filter) {
+      return ["convert", "judge", "gold", "vip", "normal"].includes(filter) ? filter : "all";
+    }
+
+    function syncActiveUsersFilterButtons() {
+      document.querySelectorAll("[data-active-user-filter]").forEach(button => {
+        button.classList.toggle("active", button.dataset.activeUserFilter === activeUsersFilter);
+      });
+    }
+
+    function setActiveUsersMessage(message, isError = false) {
+      const el = document.getElementById("activeUsersMessage");
+      if (!el) return;
+      el.textContent = message || "";
+      el.classList.toggle("error", Boolean(isError));
+    }
+
+    function renderActiveUsers(rows = [], isLoading = false) {
+      const periodLabel = getPeriodLabel(dashboardPeriod);
+      const title = document.getElementById("activeUsersModalTitle");
+      const body = document.getElementById("activeUsersBody");
+      const filteredRows = filterActiveUsersRows(rows);
+
+      if (title) {
+        title.textContent = `${periodLabel}活跃用户（${filteredRows.length}）`;
+      }
+      setDashboardText("activeUsersUsageHeader", `${periodLabel}使用次数`);
+      setDashboardText("activeUsersLastVisitHeader", `${periodLabel}最后访问时间`);
+
+      if (!body) return;
+      if (isLoading) {
+        body.innerHTML = `<tr><td colspan="10" class="muted">正在加载...</td></tr>`;
+        return;
+      }
+      if (!filteredRows.length) {
+        body.innerHTML = `<tr><td colspan="10" class="muted">暂无符合条件的活跃用户。</td></tr>`;
+        return;
+      }
+
+      body.innerHTML = filteredRows.map(user => {
+        const counts = user.counts || {};
+        return `
+          <tr>
+            <td>${escapeHtml(formatUserValueStars(user.valueScore))}</td>
+            <td>${escapeHtml(user.userCode || user.userId || "-")}</td>
+            <td>${escapeHtml(user.firstSource || "-")}</td>
+            <td>${escapeHtml(user.latestSource || "-")}</td>
+            <td>
+              <div class="usage-counts">
+                <span>坐标：${Number(counts.convert || 0).toLocaleString("zh-CN")}</span>
+                <span>快判：${Number(counts.judge || 0).toLocaleString("zh-CN")}</span>
+                <span>黄金：${Number(counts.gold || 0).toLocaleString("zh-CN")}</span>
+              </div>
+            </td>
+            <td>${escapeHtml(formatDateOnly(user.firstVisitedAt) || "-")}</td>
+            <td>${escapeHtml(formatRelativeVisitTime(user.lastVisitedAt) || "-")}</td>
+            <td>${user.isVip ? "VIP" : "普通"}</td>
+            <td>${escapeHtml(user.device || "未知")}</td>
+            <td>${escapeHtml(user.region || "未知")}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function filterActiveUsersRows(rows = []) {
+      if (activeUsersFilter === "vip") {
+        return rows.filter(user => Boolean(user.isVip));
+      }
+      if (activeUsersFilter === "normal") {
+        return rows.filter(user => !user.isVip);
+      }
+      if (activeUsersFilter === "all") {
+        return rows;
+      }
+      return rows.filter(user => Number(user.counts?.[activeUsersFilter] || 0) > 0);
+    }
+
+    function formatUserValueStars(score) {
+      const count = Math.max(1, Math.min(5, Number(score || 1)));
+      return "★".repeat(count);
+    }
+
+    function formatDateOnly(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function formatRelativeVisitTime(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const target = new Date(date);
+      target.setHours(0, 0, 0, 0);
+      const time = formatHourMinute(value);
+      if (target.getTime() === today.getTime()) {
+        return `今天 ${time}`;
+      }
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      if (target.getTime() === yesterday.getTime()) {
+        return `昨日 ${time}`;
+      }
+      return `${formatDateOnly(value)} ${time}`;
+    }
+
+    function formatHourMinute(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
     }
 
     function setUsageSummaryPeriod(period) {
