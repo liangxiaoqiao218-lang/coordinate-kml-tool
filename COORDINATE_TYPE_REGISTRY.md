@@ -108,3 +108,19 @@
 10. 禁止修改项：不允许进入 Madagascar cadastral grid；不允许进入 Kyrgyz GK；不允许进入 BFTM 特殊分支。
 11. 回归测试要求：普通小数经纬度仍走原普通 KML 路径；特殊表格坐标不会被 decimal 分支抢先覆盖。
 
+
+---
+
+## mgrs_utm_grid_reference
+
+1. 类型 ID：`mgrs_utm_grid_reference`
+2. 适用场景：MGRS / UTM Grid Reference 坐标文本、截图或批量列表，例如 `47RLH 24469 42832`、`47R LH 24469 42832`、`47RLH2446942832`。
+3. 典型样本文件名：MGRS 坐标表、UTM Grid Reference 坐标截图、缅甸/东南亚矿区 MGRS 点位列表。
+4. 触发关键词 / 版面特征：zone 1-60 + latitude band C-X（排除 I/O）+ 100km grid square 两字母（排除 I/O）+ 等长 easting/northing 数字；可带 A/B/C 点号标签。
+5. 识别主流程：在普通数字坐标、UTM 数字坐标、BFTM/X-Y 之前优先检测 MGRS；row type 固定为 `MGRS`；输出 `label | MGRS | WGS84 | KML`。
+6. fallback 逻辑：fallback OCR 也可检测 MGRS，但只能作为人工核对结果；不得覆盖更高可信的专用表格识别分支。
+7. 坐标转换规则：MGRS 先解析为 UTM easting/northing，再按 zone 与纬度带转换为 WGS84；最终 KML 坐标为 `longitude,latitude,0`。
+8. KML 生成规则：Point / LineString / Polygon 均使用转换后的 WGS84 坐标；Polygon 自动闭合。
+9. 失败保护规则：无效 zone、无效 band、I/O 字母、easting/northing 位数不等、紧凑数字奇数位、超过 5 位、转换纬度不在 band 范围内时必须拒绝。
+10. 禁止修改项：不允许把 MGRS 当普通小数坐标；不允许让普通 decimal / projected X-Y 分支抢先覆盖；不允许输出未知坐标类型。
+11. 回归测试要求：`47RLH 24469 42832` 应转换到约 `97.2636250946,24.7901938391`；完整 A-G 样本应识别 7 点并按输入顺序生成闭合 Polygon KML。

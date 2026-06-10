@@ -1,4 +1,4 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import express from "express";
 import multer from "multer";
 import { createClient } from "@supabase/supabase-js";
@@ -3679,6 +3679,192 @@ function getKyrgyzGkInfo(text) {
   };
 }
 
+const MGRS_BANDS = "CDEFGHJKLMNPQRSTUVWX";
+const MGRS_COLUMN_SETS = ["ABCDEFGH", "JKLMNPQR", "STUVWXYZ"];
+const MGRS_ROW_SETS = ["ABCDEFGHJKLMNPQRSTUV", "FGHJKLMNPQRSTUVABCDE"];
+
+function getMgrsBandRange(band) {
+  const index = MGRS_BANDS.indexOf(String(band || "").toUpperCase());
+
+  if (index < 0) {
+    return null;
+  }
+
+  const min = -80 + index * 8;
+  return {
+    min,
+    max: band === "X" ? 84 : min + 8
+  };
+}
+
+function utmToWgs84(zone, easting, northing, northernHemisphere = true) {
+  const a = 6378137;
+  const e = 0.08181919084262149;
+  const e1sq = 0.006739496742276434;
+  const k0 = 0.9996;
+  const x = Number(easting) - 500000;
+  let y = Number(northing);
+
+  if (!northernHemisphere) {
+    y -= 10000000;
+  }
+
+  const longOrigin = (Number(zone) - 1) * 6 - 180 + 3;
+  const m = y / k0;
+  const mu = m / (a * (1 - (e ** 2) / 4 - (3 * e ** 4) / 64 - (5 * e ** 6) / 256));
+  const e1 = (1 - Math.sqrt(1 - e ** 2)) / (1 + Math.sqrt(1 - e ** 2));
+  const j1 = (3 * e1 / 2) - (27 * e1 ** 3 / 32);
+  const j2 = (21 * e1 ** 2 / 16) - (55 * e1 ** 4 / 32);
+  const j3 = 151 * e1 ** 3 / 96;
+  const j4 = 1097 * e1 ** 4 / 512;
+  const fp = mu + j1 * Math.sin(2 * mu) + j2 * Math.sin(4 * mu) + j3 * Math.sin(6 * mu) + j4 * Math.sin(8 * mu);
+  const c1 = e1sq * Math.cos(fp) ** 2;
+  const t1 = Math.tan(fp) ** 2;
+  const n1 = a / Math.sqrt(1 - e ** 2 * Math.sin(fp) ** 2);
+  const r1 = a * (1 - e ** 2) / ((1 - e ** 2 * Math.sin(fp) ** 2) ** 1.5);
+  const d = x / (n1 * k0);
+  const q1 = n1 * Math.tan(fp) / r1;
+  const q2 = d ** 2 / 2;
+  const q3 = (5 + 3 * t1 + 10 * c1 - 4 * c1 ** 2 - 9 * e1sq) * d ** 4 / 24;
+  const q4 = (61 + 90 * t1 + 298 * c1 + 45 * t1 ** 2 - 252 * e1sq - 3 * c1 ** 2) * d ** 6 / 720;
+  const lat = fp - q1 * (q2 - q3 + q4);
+  const q5 = d;
+  const q6 = (1 + 2 * t1 + c1) * d ** 3 / 6;
+  const q7 = (5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * e1sq + 24 * t1 ** 2) * d ** 5 / 120;
+  const lon = (q5 - q6 + q7) / Math.cos(fp);
+
+  return {
+    lat: lat * 180 / Math.PI,
+    lon: longOrigin + lon * 180 / Math.PI
+  };
+}
+
+function parseMgrsMatch(match = {}) {
+  const zone = Number(match.zone);
+  const band = String(match.band || "").toUpperCase();
+  const gridSquare = String(match.grid || "").toUpperCase();
+  let eastingDigits = String(match.east || "");
+  let northingDigits = String(match.north || "");
+
+  if (match.digits) {
+    const digits = String(match.digits || "");
+    if (digits.length % 2 !== 0 || digits.length < 2 || digits.length > 10) {
+      return null;
+    }
+
+    eastingDigits = digits.slice(0, digits.length / 2);
+    northingDigits = digits.slice(digits.length / 2);
+  }
+
+  if (!Number.isInteger(zone) || zone < 1 || zone > 60 || !MGRS_BANDS.includes(band)) {
+    return null;
+  }
+
+  if (!/^[A-HJ-NP-Z]{2}$/.test(gridSquare) || /[IO]/.test(gridSquare)) {
+    return null;
+  }
+
+  if (!/^\d{1,5}$/.test(eastingDigits) || !/^\d{1,5}$/.test(northingDigits) || eastingDigits.length !== northingDigits.length) {
+    return null;
+  }
+
+  const columnSet = MGRS_COLUMN_SETS[(zone - 1) % 3];
+  const rowSet = MGRS_ROW_SETS[(zone - 1) % 2];
+  const columnIndex = columnSet.indexOf(gridSquare[0]);
+  const rowIndex = rowSet.indexOf(gridSquare[1]);
+
+  if (columnIndex < 0 || rowIndex < 0) {
+    return null;
+  }
+
+  const scale = 10 ** (5 - eastingDigits.length);
+  const easting = (columnIndex + 1) * 100000 + Number(eastingDigits) * scale;
+  const baseNorthing = rowIndex * 100000 + Number(northingDigits) * scale;
+  const range = getMgrsBandRange(band);
+  const northernHemisphere = band >= "N";
+  let northing = baseNorthing;
+  let converted = null;
+
+  for (let index = 0; index < 6; index += 1) {
+    converted = utmToWgs84(zone, easting, northing, northernHemisphere);
+    if (converted.lat >= range.min - 0.000001 && converted.lat < range.max + 0.000001) {
+      break;
+    }
+    northing += 2000000;
+  }
+
+  if (!converted || converted.lat < range.min - 0.01 || converted.lat > range.max + 0.01) {
+    return null;
+  }
+
+  return {
+    type: "MGRS",
+    label: match.label ? String(match.label).toUpperCase() : "",
+    raw: `${zone}${band}${gridSquare} ${eastingDigits} ${northingDigits}`,
+    zone,
+    band,
+    gridSquare,
+    eastingDigits,
+    northingDigits,
+    easting,
+    northing,
+    longitude: converted.lon,
+    latitude: converted.lat,
+    kmlCoordinate: `${converted.lon.toFixed(10)},${converted.lat.toFixed(10)},0`
+  };
+}
+
+function normalizeMgrsText(text) {
+  return String(text || "")
+    .toUpperCase()
+    .replace(/[，,]/g, ",")
+    .replace(/[：:]/g, ":")
+    .replace(/[。．]/g, ".")
+    .replace(/\s+/g, " ");
+}
+
+function extractMgrsRows(text) {
+  const value = normalizeMgrsText(text);
+  const rows = [];
+  const seen = new Set();
+  const separatedPattern = /\b(?:(?<label>[A-Z])[\.\)::\s|、]+)?(?<zone>[1-9]|[1-5]\d|60)\s*(?<band>[C-HJ-NP-X])\s*(?<grid>[A-HJ-NP-Z]{2})\s*(?<east>\d{1,5})(?!\d)\s*[,;\s]\s*(?<north>\d{1,5})(?!\d)\b/gi;
+  const compactPattern = /\b(?:(?<label>[A-Z])[\.\)::\s|、]+)?(?<zone>[1-9]|[1-5]\d|60)\s*(?<band>[C-HJ-NP-X])\s*(?<grid>[A-HJ-NP-Z]{2})\s*(?<digits>\d{2,10})(?!\d)(?!\s+\d)\b/gi;
+
+  for (const pattern of [separatedPattern, compactPattern]) {
+    for (const match of value.matchAll(pattern)) {
+      const row = parseMgrsMatch(match.groups || {});
+      if (!row) continue;
+      const key = `${row.zone}${row.band}${row.gridSquare}${row.eastingDigits}${row.northingDigits}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      row.order = rows.length;
+      rows.push(row);
+    }
+  }
+
+  return rows.sort((a, b) => {
+    if (a.label && b.label && a.label !== b.label) return a.label.localeCompare(b.label);
+    return a.order - b.order;
+  });
+}
+
+function formatMgrsRows(rows) {
+  return ["label | MGRS | WGS84 | KML", ...rows.map((row, index) => {
+    const label = row.label || String(index + 1);
+    return `${label} | ${row.raw} | ${row.latitude.toFixed(10)}, ${row.longitude.toFixed(10)} | ${row.kmlCoordinate}`;
+  })].join("\n");
+}
+
+function getMgrsInfo(text) {
+  const rows = extractMgrsRows(text);
+
+  return {
+    isMgrs: rows.length > 0,
+    rows,
+    rowCount: rows.length
+  };
+}
+
 function shouldCheckCadastralGridLayout(rawText, coordinates) {
   if (getCadastralGridInfo(rawText).isCadastralGrid || getCadastralGridInfo(coordinates).isCadastralGrid) {
     return false;
@@ -4362,6 +4548,11 @@ function extractCoordinateLines(text) {
   const cadastralGrid = getCadastralGridInfo(text);
   if (cadastralGrid.isCadastralGrid) {
     return formatCadastralGridRows(cadastralGrid.rows);
+  }
+
+  const mgrs = getMgrsInfo(text);
+  if (mgrs.isMgrs) {
+    return formatMgrsRows(mgrs.rows);
   }
 
   if (shouldUseStrictBftmValidation(text)) {
@@ -6697,6 +6888,7 @@ app.get("/api/admin/active-users", requireAdmin, async (req, res) => {
       } else {
         console.error("Read active users first visit failed:", firstLogsError);
       }
+
     }
 
     const users = Array.from(userMap.values())
@@ -7965,6 +8157,7 @@ Rules:
     let warning = extractRecognitionWarning(rawText);
     let usedModel = aliyunVisionModel;
     let cadastralGrid = getCadastralGridInfo(rawText);
+    let mgrs = getMgrsInfo(rawText);
     let kyrgyzGk = getKyrgyzGkInfo(rawText);
 
     if (cadastralGrid.isCadastralGrid) {
@@ -7973,13 +8166,19 @@ Rules:
       warning = warning || "识别到矿权网格表，已提取 num / XV / YV；当前阶段不转换经纬度，也不生成 KML。";
     }
 
-    if (!cadastralGrid.isCadastralGrid && kyrgyzGk.isKyrgyzGk) {
+    if (!cadastralGrid.isCadastralGrid && mgrs.isMgrs) {
+      coordinates = formatMgrsRows(mgrs.rows);
+      usedModel = `${usedModel}+mgrs`;
+      warning = warning || "识别到 MGRS / UTM Grid Reference，已转换为 WGS84 经纬度并可生成 KML。";
+    }
+
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && kyrgyzGk.isKyrgyzGk) {
       coordinates = formatKyrgyzGkRows(kyrgyzGk.rows);
       usedModel = `${usedModel}+kyrgyz-gk`;
       warning = warning || "识别到吉尔吉斯斯坦高斯克吕格平面坐标表，已保留 point / X / Y 并按点号排序；当前阶段需投影转换后才能生成 KML。";
     }
 
-    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
       try {
         console.log("Kyrgyzstan Gauss-Kruger table context detected, reading point/X/Y table.");
         const kyrgyzResponse = await callAliyunVision({
@@ -8007,7 +8206,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
       try {
         console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
         const layoutResponse = await callAliyunVision({
@@ -8048,7 +8247,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y result looks like column-paired output, retrying row-wise extraction.");
         const bftmRetryResponse = await callAliyunVision({
@@ -8085,7 +8284,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y OCR retry still invalid, using vision layout retry.");
         const bftmVisionRetryResponse = await callAliyunVision({
@@ -8122,7 +8321,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -8151,7 +8350,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
       const smoothedRawText = smoothDmsMinuteIslandsForLongTable(rawText);
 
       if (smoothedRawText !== rawText) {
@@ -8162,7 +8361,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -8185,7 +8384,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -8211,9 +8410,12 @@ Rules:
     console.log("坐标提取结果：");
     console.log(coordinates);
     cadastralGrid = getCadastralGridInfo(rawText);
+    mgrs = getMgrsInfo(rawText);
     kyrgyzGk = getKyrgyzGkInfo(rawText);
     if (cadastralGrid.isCadastralGrid) {
       coordinates = formatCadastralGridRows(cadastralGrid.rows);
+    } else if (mgrs.isMgrs) {
+      coordinates = formatMgrsRows(mgrs.rows);
     } else if (kyrgyzGk.isKyrgyzGk) {
       coordinates = formatKyrgyzGkRows(kyrgyzGk.rows);
     }
@@ -8256,11 +8458,14 @@ Rules:
       coordinates,
       precisionMode: cadastralGrid.isCadastralGrid
         ? "cadastral-grid-num-xv-yv"
+        : mgrs.isMgrs
+          ? "mgrs-utm-grid-reference"
         : kyrgyzGk.isKyrgyzGk
           ? "kyrgyz-gk-point-x-y"
           : "preserve-original-decimals-and-parse-dms",
       warning,
       cadastralGrid,
+      mgrs,
       kyrgyzGk,
       bftmLongTable,
       quota: consumeResult.quota
@@ -8366,6 +8571,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
 
       const fallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
+      const fallbackMgrs = getMgrsInfo(fallback.rawText);
       const fallbackKyrgyzGk = getKyrgyzGkInfo(fallback.rawText);
       if (fallbackCadastralGrid.isCadastralGrid) {
         fallback.coordinates = formatCadastralGridRows(fallbackCadastralGrid.rows);
@@ -8373,6 +8579,12 @@ If the table is not readable, output only: ${noCoordinatesText}`;
         fallback.precisionMode = "cadastral-grid-num-xv-yv";
         fallback.warning = fallback.warning || "识别到矿权网格表，已提取 num / XV / YV；当前阶段不转换经纬度，也不生成 KML。";
         fallback.cadastralGrid = fallbackCadastralGrid;
+      } else if (fallbackMgrs.isMgrs) {
+        fallback.coordinates = formatMgrsRows(fallbackMgrs.rows);
+        fallback.model = `${fallback.model || "local-ocr-fallback"}+mgrs`;
+        fallback.precisionMode = "mgrs-utm-grid-reference";
+        fallback.warning = fallback.warning || "备用 OCR 识别到 MGRS / UTM Grid Reference，已转换为 WGS84 经纬度；请人工核对后生成 KML。";
+        fallback.mgrs = fallbackMgrs;
       } else if (fallbackKyrgyzGk.isKyrgyzGk) {
         fallbackKyrgyzGk.integrity = analyzeKyrgyzGkRows(fallbackKyrgyzGk.rows, "fallback-ocr");
         fallback.coordinates = formatKyrgyzGkRows(fallbackKyrgyzGk.rows);
@@ -8387,7 +8599,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       let bftmLongTable = getBftmLongTableInfo(fallback.rawText, fallback.coordinates);
       let bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
 
-      if (!fallbackCadastralGrid.isCadastralGrid && !fallbackKyrgyzGk.isKyrgyzGk && bftmIncompleteWarning && aliyunApiKey && req.file) {
+      if (!fallbackCadastralGrid.isCadastralGrid && !fallbackMgrs.isMgrs && !fallbackKyrgyzGk.isKyrgyzGk && bftmIncompleteWarning && aliyunApiKey && req.file) {
         try {
           console.log("BFTM long table fallback is incomplete, retrying Aliyun visual table extraction once.");
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
@@ -8515,3 +8727,4 @@ app.listen(port, () => {
   console.log(`当前阿里云OCR模型：${aliyunOcrModel}`);
   console.log("坐标识别模式：阿里云优先 + DMS/X/Y 解析 + 备用OCR人工核对提示 + 后台统计。");
 });
+

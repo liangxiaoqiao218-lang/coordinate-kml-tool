@@ -7928,7 +7928,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     function extractProjectedCoordinateLines(text) {
-      if (hasCadastralGridRows(text)) {
+      if (hasCadastralGridRows(text) || hasMgrsRows(text)) {
         return "";
       }
 
@@ -8180,6 +8180,159 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return ["num | XV | YV", ...rows.map(row => `${row.num} | ${row.xv} | ${row.yv}`)].join("\n");
     }
 
+    const MGRS_BANDS = "CDEFGHJKLMNPQRSTUVWX";
+    const MGRS_COLUMN_SETS = ["ABCDEFGH", "JKLMNPQR", "STUVWXYZ"];
+    const MGRS_ROW_SETS = ["ABCDEFGHJKLMNPQRSTUV", "FGHJKLMNPQRSTUVABCDE"];
+
+    function getMgrsBandRange(band) {
+      const index = MGRS_BANDS.indexOf(String(band || "").toUpperCase());
+
+      if (index < 0) return null;
+
+      const min = -80 + index * 8;
+      return { min, max: band === "X" ? 84 : min + 8 };
+    }
+
+    function utmToWgs84FromMgrs(zone, easting, northing, northernHemisphere = true) {
+      const a = 6378137;
+      const e = 0.08181919084262149;
+      const e1sq = 0.006739496742276434;
+      const k0 = 0.9996;
+      const x = Number(easting) - 500000;
+      let y = Number(northing);
+
+      if (!northernHemisphere) y -= 10000000;
+
+      const longOrigin = (Number(zone) - 1) * 6 - 180 + 3;
+      const m = y / k0;
+      const mu = m / (a * (1 - (e ** 2) / 4 - (3 * e ** 4) / 64 - (5 * e ** 6) / 256));
+      const e1 = (1 - Math.sqrt(1 - e ** 2)) / (1 + Math.sqrt(1 - e ** 2));
+      const j1 = (3 * e1 / 2) - (27 * e1 ** 3 / 32);
+      const j2 = (21 * e1 ** 2 / 16) - (55 * e1 ** 4 / 32);
+      const j3 = 151 * e1 ** 3 / 96;
+      const j4 = 1097 * e1 ** 4 / 512;
+      const fp = mu + j1 * Math.sin(2 * mu) + j2 * Math.sin(4 * mu) + j3 * Math.sin(6 * mu) + j4 * Math.sin(8 * mu);
+      const c1 = e1sq * Math.cos(fp) ** 2;
+      const t1 = Math.tan(fp) ** 2;
+      const n1 = a / Math.sqrt(1 - e ** 2 * Math.sin(fp) ** 2);
+      const r1 = a * (1 - e ** 2) / ((1 - e ** 2 * Math.sin(fp) ** 2) ** 1.5);
+      const d = x / (n1 * k0);
+      const q1 = n1 * Math.tan(fp) / r1;
+      const q2 = d ** 2 / 2;
+      const q3 = (5 + 3 * t1 + 10 * c1 - 4 * c1 ** 2 - 9 * e1sq) * d ** 4 / 24;
+      const q4 = (61 + 90 * t1 + 298 * c1 + 45 * t1 ** 2 - 252 * e1sq - 3 * c1 ** 2) * d ** 6 / 720;
+      const lat = fp - q1 * (q2 - q3 + q4);
+      const q5 = d;
+      const q6 = (1 + 2 * t1 + c1) * d ** 3 / 6;
+      const q7 = (5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * e1sq + 24 * t1 ** 2) * d ** 5 / 120;
+      const lon = (q5 - q6 + q7) / Math.cos(fp);
+
+      return { lat: lat * 180 / Math.PI, lon: longOrigin + lon * 180 / Math.PI };
+    }
+
+    function parseMgrsMatch(match = {}) {
+      const zone = Number(match.zone);
+      const band = String(match.band || "").toUpperCase();
+      const gridSquare = String(match.grid || "").toUpperCase();
+      let eastingDigits = String(match.east || "");
+      let northingDigits = String(match.north || "");
+
+      if (match.digits) {
+        const digits = String(match.digits || "");
+        if (digits.length % 2 !== 0 || digits.length < 2 || digits.length > 10) return null;
+        eastingDigits = digits.slice(0, digits.length / 2);
+        northingDigits = digits.slice(digits.length / 2);
+      }
+
+      if (!Number.isInteger(zone) || zone < 1 || zone > 60 || !MGRS_BANDS.includes(band)) return null;
+      if (!/^[A-HJ-NP-Z]{2}$/.test(gridSquare) || /[IO]/.test(gridSquare)) return null;
+      if (!/^\d{1,5}$/.test(eastingDigits) || !/^\d{1,5}$/.test(northingDigits) || eastingDigits.length !== northingDigits.length) return null;
+
+      const columnSet = MGRS_COLUMN_SETS[(zone - 1) % 3];
+      const rowSet = MGRS_ROW_SETS[(zone - 1) % 2];
+      const columnIndex = columnSet.indexOf(gridSquare[0]);
+      const rowIndex = rowSet.indexOf(gridSquare[1]);
+
+      if (columnIndex < 0 || rowIndex < 0) return null;
+
+      const scale = 10 ** (5 - eastingDigits.length);
+      const easting = (columnIndex + 1) * 100000 + Number(eastingDigits) * scale;
+      const baseNorthing = rowIndex * 100000 + Number(northingDigits) * scale;
+      const range = getMgrsBandRange(band);
+      const northernHemisphere = band >= "N";
+      let northing = baseNorthing;
+      let converted = null;
+
+      for (let index = 0; index < 6; index += 1) {
+        converted = utmToWgs84FromMgrs(zone, easting, northing, northernHemisphere);
+        if (converted.lat >= range.min - 0.000001 && converted.lat < range.max + 0.000001) break;
+        northing += 2000000;
+      }
+
+      if (!converted || converted.lat < range.min - 0.01 || converted.lat > range.max + 0.01) return null;
+
+      return {
+        type: "MGRS",
+        label: match.label ? String(match.label).toUpperCase() : "",
+        raw: `${zone}${band}${gridSquare} ${eastingDigits} ${northingDigits}`,
+        zone,
+        band,
+        gridSquare,
+        eastingDigits,
+        northingDigits,
+        easting,
+        northing,
+        longitude: converted.lon,
+        latitude: converted.lat,
+        kmlCoordinate: `${converted.lon.toFixed(10)},${converted.lat.toFixed(10)},0`
+      };
+    }
+
+    function normalizeMgrsText(text) {
+      return String(text || "")
+        .toUpperCase()
+        .replace(/[，,]/g, ",")
+        .replace(/[：:]/g, ":")
+        .replace(/[。．]/g, ".")
+        .replace(/\s+/g, " ");
+    }
+
+    function extractMgrsRows(text) {
+      const value = normalizeMgrsText(text);
+      const rows = [];
+      const seen = new Set();
+      const separatedPattern = /\b(?:(?<label>[A-Z])[\.\)::\s|、]+)?(?<zone>[1-9]|[1-5]\d|60)\s*(?<band>[C-HJ-NP-X])\s*(?<grid>[A-HJ-NP-Z]{2})\s*(?<east>\d{1,5})(?!\d)\s*[,;\s]\s*(?<north>\d{1,5})(?!\d)\b/gi;
+      const compactPattern = /\b(?:(?<label>[A-Z])[\.\)::\s|、]+)?(?<zone>[1-9]|[1-5]\d|60)\s*(?<band>[C-HJ-NP-X])\s*(?<grid>[A-HJ-NP-Z]{2})\s*(?<digits>\d{2,10})(?!\d)(?!\s+\d)\b/gi;
+
+      for (const pattern of [separatedPattern, compactPattern]) {
+        for (const match of value.matchAll(pattern)) {
+          const row = parseMgrsMatch(match.groups || {});
+          if (!row) continue;
+          const key = `${row.zone}${row.band}${row.gridSquare}${row.eastingDigits}${row.northingDigits}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          row.order = rows.length;
+          rows.push(row);
+        }
+      }
+
+      return rows.sort((a, b) => {
+        if (a.label && b.label && a.label !== b.label) return a.label.localeCompare(b.label);
+        return a.order - b.order;
+      });
+    }
+
+    function hasMgrsRows(text) {
+      return extractMgrsRows(text).length > 0;
+    }
+
+    function formatMgrsRows(rows) {
+      return ["label | MGRS | WGS84 | KML", ...rows.map((row, index) => {
+        const label = row.label || String(index + 1);
+        return `${label} | ${row.raw} | ${row.latitude.toFixed(10)}, ${row.longitude.toFixed(10)} | ${row.kmlCoordinate}`;
+      })].join("\n");
+    }
+
     function hasKyrgyzGkContext(text) {
       const value = String(text || "");
       return /Координаты\s+угловых\s+точек|лицензионн(?:ой|ая|ую)|прямоугольн(?:ой|ая|ую)\s+систем|№\s*точек|N\s*o?\s*points?|Kyrgyzstan|Киргиз|Кыргыз|Pulkovo|Gauss|Гаусс|Крюгер/i.test(value)
@@ -8277,21 +8430,25 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
     function updateCadastralGridPanel() {
       const cadastralRows = extractCadastralGridRows(input.value);
+      const mgrsRows = extractMgrsRows(input.value);
       const kyrgyzRows = extractKyrgyzGkRows(input.value);
       const isCadastralGrid = cadastralRows.length > 0;
-      const isKyrgyzGk = !isCadastralGrid && kyrgyzRows.length > 0;
+      const isMgrs = !isCadastralGrid && mgrsRows.length > 0;
+      const isKyrgyzGk = !isCadastralGrid && !isMgrs && kyrgyzRows.length > 0;
 
       if (cadastralGridPanel) {
         cadastralGridPanel.classList.toggle("is-active", isCadastralGrid);
       }
 
       if (cadastralGridBadge) {
-        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid || isKyrgyzGk);
+        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid || isMgrs || isKyrgyzGk);
         cadastralGridBadge.textContent = isCadastralGrid
           ? `矿权网格模式 · ${cadastralRows.length} 格`
-          : isKyrgyzGk
-            ? `Kyrgyzstan GK 模式 · ${kyrgyzRows.length} 点`
-            : "矿权网格模式";
+          : isMgrs
+            ? `MGRS / UTM Grid Reference · ${mgrsRows.length} 点`
+            : isKyrgyzGk
+              ? `Kyrgyzstan GK 模式 · ${kyrgyzRows.length} 点`
+              : "矿权网格模式";
       }
     }
 
@@ -8813,7 +8970,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     function applyAutoExportTypeForRecognizedCoordinates(text, options = {}) {
-      if (options.isCadastralGrid || options.isKyrgyzGk) {
+      if (options.isCadastralGrid || options.isMgrs || options.isKyrgyzGk) {
         exportType.value = "Polygon";
         return false;
       }
@@ -8893,6 +9050,11 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
       if (hasCadastralGridRows(input.value)) {
         showMessage("识别到矿权网格表（num / XV / YV），当前阶段不做坐标格式转换。", true);
+        return;
+      }
+
+      if (hasMgrsRows(input.value)) {
+        showMessage("识别到 MGRS / UTM Grid Reference，已转换为 WGS84 用于 KML，不做普通坐标格式转换。", true);
         return;
       }
 
@@ -9260,6 +9422,11 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return;
       }
 
+      if (hasMgrsRows(input.value)) {
+        showMessage("识别到 MGRS / UTM Grid Reference，已转换为 WGS84 用于 KML，不做普通坐标标准化。", true);
+        return;
+      }
+
       const coordinateGroups = getKmlCoordinateGroups();
       const pairs = coordinateGroups.flat();
 
@@ -9624,6 +9791,72 @@ ${placemarks}
         return;
       }
 
+      if (hasMgrsRows(input.value)) {
+        const rows = extractMgrsRows(input.value);
+        const pairs = rows.map(row => ({
+          longitude: row.longitude,
+          latitude: row.latitude
+        }));
+        const selectedType = exportType.value;
+
+        if (selectedType === "Polygon" && pairs.length < 3) {
+          showMessage("MGRS / UTM Grid Reference 至少需要 3 个点才能生成 Polygon KML。", true);
+          return;
+        }
+
+        if (selectedType === "LineString" && pairs.length < 2) {
+          showMessage("MGRS / UTM Grid Reference 至少需要 2 个点才能生成 LineString KML。", true);
+          return;
+        }
+
+        const usageAllowed = await consumeUsage("convert");
+        if (!usageAllowed) {
+          return;
+        }
+
+        let placemarks = "";
+        let documentName = "MGRS / UTM Grid Reference";
+
+        if (selectedType === "Point") {
+          placemarks = buildPointKml(pairs);
+          documentName = "MGRS 点位导出";
+        } else if (selectedType === "LineString") {
+          placemarks = buildLineStringKml(pairs, 1);
+          documentName = "MGRS 线导出";
+        } else {
+          placemarks = buildPolygonKml(pairs, 1);
+          documentName = "MGRS Polygon 导出";
+        }
+
+        const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>${escapeXml(documentName)}</name>
+    <description>Generated by GeoKit Lab. Source: MGRS / UTM Grid Reference converted to WGS84.</description>
+${placemarks}
+  </Document>
+</kml>`;
+        const blob = new Blob([kml], {
+          type: "application/vnd.google-earth.kml+xml;charset=utf-8"
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = "mgrs-coordinates.kml";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        trackEvent("kml_download_click", {
+          exportType: `MGRS-${selectedType}`,
+          count: pairs.length,
+          convertedToWgs84: true
+        });
+        showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 MGRS / UTM Grid Reference 点。`);
+        return;
+      }
+
       if (hasKyrgyzGkRows(input.value)) {
         const rows = extractKyrgyzGkRows(input.value);
         const integrity = analyzeKyrgyzGkRows(rows);
@@ -9845,16 +10078,21 @@ ${placemarks}
           : extractCadastralGridRows(data.rawText || data.coordinates);
         const cadastralGridText = formatCadastralGridRows(cadastralGridRows);
         const isCadastralGrid = Boolean(data.cadastralGrid?.isCadastralGrid || cadastralGridRows.length > 0);
+        const mgrsRows = Array.isArray(data.mgrs?.rows) && data.mgrs.rows.length > 0
+          ? data.mgrs.rows
+          : extractMgrsRows(data.rawText || data.coordinates);
+        const mgrsText = formatMgrsRows(mgrsRows);
+        const isMgrs = !isCadastralGrid && Boolean(data.mgrs?.isMgrs || mgrsRows.length > 0);
         const kyrgyzGkRows = Array.isArray(data.kyrgyzGk?.rows) && data.kyrgyzGk.rows.length > 0
           ? data.kyrgyzGk.rows
           : extractKyrgyzGkRows(data.rawText || data.coordinates);
         const kyrgyzGkText = formatKyrgyzGkRows(kyrgyzGkRows);
-        const isKyrgyzGk = !isCadastralGrid && Boolean(data.kyrgyzGk?.isKyrgyzGk || kyrgyzGkRows.length > 0);
+        const isKyrgyzGk = !isCadastralGrid && !isMgrs && Boolean(data.kyrgyzGk?.isKyrgyzGk || kyrgyzGkRows.length > 0);
         const kyrgyzGkIntegrity = isKyrgyzGk
           ? (data.kyrgyzGk?.integrity || analyzeKyrgyzGkRows(kyrgyzGkRows))
           : null;
 
-        if (!isCadastralGrid && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
+        if (!isCadastralGrid && !isMgrs && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
           const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
 
           if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeLikelyUtm30Coordinate(firstProjectedPair[0], firstProjectedPair[1])) {
@@ -9873,11 +10111,14 @@ ${placemarks}
         // 2. Standard DMS tables: keep visual-model DMS table display; W/O/Ouest stays negative longitude internally.
         // 3. BFTM/X-Y: keep projected X,Y text and never let decimal extraction override it.
         // 4. Madagascar cadastral grid: display only num | XV | YV; KML later converts EPSG:29702 corners to WGS84.
-        // 5. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
-        // 6. Plain decimal lon/lat: use the ordinary polygon path only.
-        // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, or kyrgyzGkText.
+        // 5. MGRS / UTM Grid Reference: display raw MGRS plus WGS84/KML columns; KML uses converted WGS84.
+        // 6. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
+        // 7. Plain decimal lon/lat: use the ordinary polygon path only.
+        // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, mgrsText, or kyrgyzGkText.
         const finalCoordinates = isCadastralGrid
           ? (cadastralGridText || data.coordinates || "")
+          : isMgrs
+            ? (mgrsText || data.coordinates || "")
           : isKyrgyzGk
             ? (kyrgyzGkText || data.coordinates || "")
             : chooseBestCoordinateResult([
@@ -9891,6 +10132,7 @@ ${placemarks}
         appendDebug(`识别原文：\n${data.rawText || "无"}`);
         appendDebug(`平面坐标系判断：${detectedProjection || projectionType.value || "自动"}`);
         appendDebug(`矿权网格识别：${isCadastralGrid ? `已识别 ${cadastralGridRows.length} 行 num / XV / YV` : "无"}`);
+        appendDebug(`MGRS识别：${isMgrs ? `已识别 ${mgrsRows.length} 行 MGRS / UTM Grid Reference` : "无"}`);
         appendDebug(`Kyrgyzstan GK识别：${isKyrgyzGk ? `已识别 ${kyrgyzGkRows.length} 行 point / X / Y` : "无"}`);
         appendDebug(`原样坐标行：\n${recognizedLines || "无"}`);
         appendDebug(`X/Y平面坐标提取结果：\n${projectedLines || "无"}`);
@@ -9921,13 +10163,14 @@ ${placemarks}
         input.value = finalCoordinates;
         coordinateOrder.value = "auto";
         updateCadastralGridPanel();
-        if (isCadastralGrid || isKyrgyzGk) {
+        if (isCadastralGrid || isMgrs || isKyrgyzGk) {
           clearInternalKmlSource();
         } else {
           setInternalKmlSourceFromText(finalCoordinates);
         }
         const autoSelectedPoint = applyAutoExportTypeForRecognizedCoordinates(finalCoordinates, {
           isCadastralGrid,
+          isMgrs,
           isKyrgyzGk
         });
         input.focus();
@@ -9935,11 +10178,14 @@ ${placemarks}
         trackEvent("image_recognize_success", {
           rows: countCoordinateRows(finalCoordinates),
           cadastralGrid: isCadastralGrid,
+          mgrs: isMgrs,
           kyrgyzGk: isKyrgyzGk,
           projected: hasProjectedCoordinateRows(finalCoordinates)
         });
         if (isCadastralGrid) {
           showMessage(`已识别矿权网格表 ${cadastralGridRows.length} 行，已提取 num / XV / YV。已识别为马达加斯加矿权格网，生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+        } else if (isMgrs) {
+          showMessage(`已识别 ${mgrsRows.length} 个 MGRS / UTM Grid Reference 点，并转换为 WGS84 经纬度；生成 KML 时将使用 longitude,latitude,0。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isKyrgyzGk) {
           if (kyrgyzGkIntegrity && !kyrgyzGkIntegrity.allowKml) {
             showMessage(`已识别为吉尔吉斯斯坦高斯克吕格平面坐标 ${kyrgyzGkRows.length} 点，但点号不连续或存在异常点号。该结果仅供人工核对，需校正后再生成 KML。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
