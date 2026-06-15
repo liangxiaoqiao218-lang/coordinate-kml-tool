@@ -5109,6 +5109,7 @@ async function runLocalOcrFallback(imageBuffer, reason = "") {
 function normalizeJudgeOutput(text) {
   const raw = String(text || "").trim();
   const sectionNames = [
+    "对象类型",
     "场景分类",
     "结论",
     "等级",
@@ -5120,6 +5121,7 @@ function normalizeJudgeOutput(text) {
     "一句话总结"
   ];
   const defaults = {
+    "对象类型": "其它",
     "场景分类": "原矿石",
     "结论": "目前证据不足，不建议投入。",
     "等级": "D 排除或暂不投入",
@@ -5162,7 +5164,117 @@ function normalizeJudgeOutput(text) {
     .map(name => `【${name}】\n${values[name] || defaults[name]}`)
     .join("\n\n");
 
-  return protectNaturalGoldJudgeOutput(normalized);
+  const protectedObjectType = applyJudgeObjectTypeConsistencyProtection(normalized);
+  if (protectedObjectType.check.forcedDowngrade) {
+    return protectedObjectType.text;
+  }
+
+  const protectedNaturalGold = protectNaturalGoldJudgeOutput(normalized);
+  return applyJudgeObjectTypeConsistencyProtection(protectedNaturalGold).text;
+}
+
+function extractJudgeSection(text = "", sectionName = "") {
+  const source = String(text || "");
+  const escapedName = String(sectionName || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return source.match(new RegExp(`【${escapedName}】\\s*([\\s\\S]*?)(?=\\n【|\\n\\n【|$)`))?.[1]?.trim() || "";
+}
+
+function normalizeJudgeObjectType(value = "") {
+  const source = String(value || "");
+  if (/人工熔炼物|熔炼物|熔炼金属|熔煉|熔融|铸块|鑄塊|金豆/i.test(source)) return "人工熔炼物";
+  if (/金属块|金屬塊|金块|金塊|金粒|自然金|砂金/i.test(source)) return "金属块";
+  if (/矿石|礦石|岩石|原矿|原礦|矿化|礦化/i.test(source)) return "矿石";
+  if (/河道|河床|溪流|沟谷|溝谷|水系|河流|河漫滩|河漫灘/i.test(source)) return "河道";
+  if (/卫星|衛星|遥感|遙感|Google\s*Earth|航拍|俯视|俯視/i.test(source)) return "卫星图";
+  if (/地图|地圖|奥维|奧維|坐标|坐標|KML|截图|截圖/i.test(source)) return "地图截图";
+  if (/设备|設備|机器|機器|洗矿机|洗礦機|挖机|挖掘机|工具/i.test(source)) return "设备照片";
+  if (/地表|现场|現場|地貌|坡面|采坑|採坑|老鼠洞|矿区环境|礦區環境/i.test(source)) return "地表环境";
+  return "其它";
+}
+
+function inferJudgeObjectType(text = "") {
+  const objectSection = extractJudgeSection(text, "对象类型");
+  const normalizedObjectSection = objectSection ? normalizeJudgeObjectType(objectSection) : "";
+  if (normalizedObjectSection && normalizedObjectSection !== "其它") return normalizedObjectSection;
+  const sceneSection = extractJudgeSection(text, "场景分类");
+  if (/河道|河床|溪流|沟谷|溝谷|河流|河漫滩|河漫灘/i.test(sceneSection)) return "河道";
+  if (/卫星|衛星|遥感|遙感|Google\s*Earth|航拍|俯视|俯視/i.test(sceneSection)) return "卫星图";
+  if (/地图|地圖|奥维|奧維|坐标|坐標|KML|截图|截圖/i.test(sceneSection)) return "地图截图";
+  return normalizeJudgeObjectType(`${sceneSection}\n${text}`);
+}
+
+function extractJudgeSceneType(text = "") {
+  const sceneSection = extractJudgeSection(text, "场景分类");
+  return sceneSection.split(/[:：\n]/)[0]?.trim() || sceneSection.trim() || "未确定";
+}
+
+function stripNegatedJudgeClaims(text = "") {
+  return String(text || "")
+    .replace(/(?:不能|不可|不宜|无法|不要|禁止|未见|未发现|无明显|没有|并非|不是|不具备|缺少|需补充|需要补充|需检测|需要检测|仅凭图片不能)[^。\n；;]*(?:金块|金粒|自然金|砂金金块|熔炼|熔融|熔炼金属|熔炼物|金豆|矿体|矿化带|矿石|矿物)[^。\n；;]*/gi, "")
+    .replace(/(?:金块|金粒|自然金|砂金金块|熔炼|熔融|熔炼金属|熔炼物|金豆|矿体|矿化带|矿石|矿物)[^。\n；;]*(?:不能|不可|不宜|无法|不要|禁止|未见|未发现|无明显|没有|并非|不是|不具备|缺少|需补充|需要补充|需检测|需要检测|仅凭图片不能)[^。\n；;]*/gi, "");
+}
+
+function checkJudgeObjectTypeConsistency(text = "") {
+  const source = String(text || "");
+  const objectType = inferJudgeObjectType(source);
+  const sceneType = extractJudgeSceneType(source);
+  const sceneSection = extractJudgeSection(source, "场景分类");
+  const conclusionSection = extractJudgeSection(source, "结论");
+  const positiveJudgementText = stripNegatedJudgeClaims(`${sceneType}\n${sceneSection}\n${conclusionSection}`);
+  const hasNaturalGold = /自然金块|砂金金块|河道采挖自然金|金块|金粒/i.test(positiveJudgementText);
+  const hasSmelt = /熔炼金属|人工熔炼|熔炼金豆|熔炼物|熔煉|熔融/i.test(positiveJudgementText);
+  const hasMineralJudgement = /原矿石|矿化岩石|矿体|矿化带|矿石|矿物|黄铁矿|石英脉|裂隙控制|氧化带|自然金块|砂金金块|熔炼/i.test(positiveJudgementText);
+  let conflictReason = "";
+
+  if (/对象识别冲突|对象类型冲突/.test(source)) {
+    conflictReason = "object_type_conflict_already_downgraded";
+  } else if (objectType === "河道" && (hasNaturalGold || hasSmelt)) {
+    conflictReason = "object_river_conflicts_with_gold_or_smelt_scene";
+  } else if (objectType === "卫星图" && (hasNaturalGold || hasSmelt || hasMineralJudgement)) {
+    conflictReason = "object_satellite_conflicts_with_gold_smelt_or_mineral_scene";
+  } else if (objectType === "地图截图" && hasMineralJudgement) {
+    conflictReason = "object_map_conflicts_with_mineral_judgement";
+  } else if (objectType === "设备照片" && (hasNaturalGold || hasSmelt || hasMineralJudgement)) {
+    conflictReason = "object_equipment_conflicts_with_mineral_or_gold_judgement";
+  }
+
+  return {
+    objectType,
+    sceneType,
+    consistencyCheck: conflictReason ? "conflict" : "pass",
+    forcedDowngrade: Boolean(conflictReason),
+    conflictReason
+  };
+}
+
+function applyJudgeObjectTypeConsistencyProtection(text = "") {
+  const source = String(text || "");
+  const check = checkJudgeObjectTypeConsistency(source);
+
+  if (!check.forcedDowngrade) {
+    return { text: source, check };
+  }
+
+  const conflictConclusion = check.objectType === "设备照片"
+    ? "仅为设备或称重照片，不能判断矿体或矿化带，请补充矿石/河道/现场近景。"
+    : "对象识别冲突，请补充近景。";
+  const conflictRisk = check.objectType === "设备照片"
+    ? "1. 设备或称重照片只能说明拍摄对象/使用场景，不能直接判断矿体、矿化带或金块形态。\n2. 继续按矿体或矿物判断会造成误判。"
+    : "1. 远景、河道、卫星图或地图截图不能直接判断金块形态。\n2. 继续按金块判断会造成误判。";
+
+  const protectedText = source
+    .replace(/【对象类型】[\s\S]*?(?=\n\n【场景分类】|【场景分类】)/, `【对象类型】\n${check.objectType}`)
+    .replace(/【场景分类】[\s\S]*?(?=\n\n【结论】|【结论】)/, `【场景分类】\n${check.objectType}：对象类型与原场景判断冲突。`)
+    .replace(/【结论】[\s\S]*?(?=\n\n【等级】|【等级】)/, `【结论】\n${conflictConclusion}`)
+    .replace(/【等级】[\s\S]*?(?=\n\n【判读可信度】|【判读可信度】)/, "【等级】\nD 对象类型冲突，暂不判断。")
+    .replace(/【判读可信度】[\s\S]*?(?=\n\n【潜力评分】|【潜力评分】)/, "【判读可信度】\n低")
+    .replace(/【潜力评分】[\s\S]*?(?=\n\n【关键依据】|【关键依据】)/, "【潜力评分】\n0分")
+    .replace(/【关键依据】[\s\S]*?(?=\n\n【主要风险】|【主要风险】)/, `【关键依据】\n1. Stage 0 对象识别为${check.objectType}。\n2. 场景分类输出为${check.sceneType}，存在对象类型冲突。\n3. 当前图片不适合作为金块或矿物近景判断。`)
+    .replace(/【主要风险】[\s\S]*?(?=\n\n【下一步】|【下一步】)/, `【主要风险】\n${conflictRisk}`)
+    .replace(/【下一步】[\s\S]*?(?=\n\n【一句话总结】|【一句话总结】)/, "【下一步】\n1. 补充目标物近景照片。\n2. 同时补充现场环境图用于位置判断。")
+    .replace(/【一句话总结】[\s\S]*$/, "【一句话总结】\n对象识别冲突，请补充近景。");
+
+  return { text: protectedText, check };
 }
 
 function protectNaturalGoldJudgeOutput(text) {
@@ -7478,9 +7590,17 @@ B 可以观察
         url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`
       }
     }));
-    const prompt = `你是“砂金快判”风格的现场快判助手。第一步必须先做【场景分类】，再选择对应判读模式；不要把所有图片都套进原矿石逻辑。
+    const prompt = `你是“砂金快判”风格的现场快判助手。Stage 0 必须先做【对象类型】识别，再做【场景分类】，最后选择对应判读模式；不要把所有图片都套进原矿石逻辑。
 
 场景分类只能选一个：原矿石 / 矿化岩石 / 河道沉积 / 卫星图 / 老鼠洞 / 自然金块 / 砂金金块 / 人工熔炼金属 / 其他。
+
+【Stage 0 对象类型识别：必须先执行】
+对象类型只能选一个：金属块 / 矿石 / 河道 / 卫星图 / 地表环境 / 人工熔炼物 / 地图截图 / 设备照片 / 其它。
+先判断图片主体是什么，不要先判断有没有金。
+如果对象类型=河道：禁止输出自然金块、砂金金块、熔炼金属；只能按河道沉积或地貌环境判断。
+如果对象类型=卫星图：禁止输出金块、熔炼物；只能按卫星图/地貌/人工扰动判断。
+如果对象类型=地图截图：禁止输出矿物判断；只能说明这是地图/坐标/地貌参考图。
+如果对象类型与场景分类冲突，必须降级为D，可信度写低，结论写：对象识别冲突，请补充近景。
 
 【原矿石、矿化岩石模式：极度保守】
 任务不是寻找黄金，而是优先排除误判。大多数矿石/样本图默认按C或D处理；不要因为金黄色、金属反光、大面积发亮就提高评分。
@@ -7531,7 +7651,10 @@ B级：开始有点意思了。/ 至少不像典型误判。/ 可以继续补结
 A级：这个值得认真看。/ 已经不像普通误判。/ 可以继续验证。
 不要每次固定同一句，要根据图片内容和等级换一种短句表达。
 
-只输出下面9段，不要长篇解释：
+只输出下面10段，不要长篇解释：
+
+【对象类型】
+只写一个对象类型，并用一句话说明主体是什么。
 
 【场景分类】
 只写分类名，并用一句话说明为什么归为该类。
@@ -7630,6 +7753,14 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       });
     }
     const normalizedOutput = normalizeJudgeOutput(rawOutput);
+    const objectConsistency = checkJudgeObjectTypeConsistency(normalizedOutput);
+    console.log("AI判读对象一致性检查：", {
+      ObjectType: objectConsistency.objectType,
+      SceneType: objectConsistency.sceneType,
+      ConsistencyCheck: objectConsistency.consistencyCheck,
+      ForcedDowngrade: objectConsistency.forcedDowngrade,
+      conflictReason: objectConsistency.conflictReason || ""
+    });
     const record = {
       id: makeId("record"),
       user_id: visitorId,
@@ -7694,6 +7825,16 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       recordId: record.id,
       caseId,
       case_id: caseId,
+      objectType: objectConsistency.objectType,
+      sceneType: objectConsistency.sceneType,
+      consistencyCheck: objectConsistency.consistencyCheck,
+      forcedDowngrade: objectConsistency.forcedDowngrade,
+      debug: {
+        ObjectType: objectConsistency.objectType,
+        SceneType: objectConsistency.sceneType,
+        ConsistencyCheck: objectConsistency.consistencyCheck,
+        ForcedDowngrade: objectConsistency.forcedDowngrade
+      },
       quota: usageResult.quota
     };
 
