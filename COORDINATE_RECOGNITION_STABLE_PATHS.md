@@ -142,7 +142,7 @@ KML 逻辑：
 - 默认按 `lat, lon` 解释。
 - 支持纯坐标行、A/B/C 标签、换行、逗号和空格混合格式。
 - KML 必须写为 `longitude,latitude,0`。
-- Point / LineString / Polygon 均按输入顺序生成，Polygon 自动闭合。
+- 按点数自动推断 geometry：1 点为 Point，2 点为 LineString，3 点及以上为 Polygon，Polygon 自动闭合。
 - 优先级低于 DMS / MGRS / UTM / BFTM / Madagascar / Kyrgyzstan GK，且高于普通文本兜底。
 - 不做 UTM 猜测、不做 MGRS 解析、不做投影转换。
 - 如果存在经纬度反转风险，只输出 `possible swapped lat/lon` warning，不阻断结果。

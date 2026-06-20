@@ -3726,8 +3726,8 @@
         </select>
       </div>
       <div class="panel setting-panel">
-        <label for="exportType">导出类型</label>
-        <select id="exportType">
+        <label for="exportType">自动识别：Point / Line / Polygon</label>
+        <select id="exportType" disabled>
           <option value="Polygon" selected>面 Polygon（默认，矿区范围）</option>
           <option value="LineString">线 LineString</option>
           <option value="Point">点位 Point</option>
@@ -3774,7 +3774,7 @@
       </div>
       <div class="contact-card">
         <strong>发送建议：</strong><br />
-        建议让用户发送：原图 + 识别调试信息 + 需要导出的类型（Polygon/LineString/Point）
+        建议让用户发送：原图 + 识别调试信息；系统会按点数自动识别 Point / LineString / Polygon
       </div>
     </div>
     <section class="product-faq" aria-label="坐标与 KML 工具常见问题">
@@ -3784,7 +3784,7 @@
       </details>
       <details>
         <summary>如何把截图中的坐标生成 KML？</summary>
-        <p>上传坐标截图或粘贴坐标文本后，先核对识别结果，再选择 Polygon、LineString 或 Point 导出 KML 文件。</p>
+        <p>上传坐标截图或粘贴坐标文本后，先核对识别结果，系统会按点数自动识别 Point、LineString 或 Polygon 并导出 KML 文件。</p>
       </details>
       <details>
         <summary>什么是 BFTM 坐标？</summary>
@@ -4335,7 +4335,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const faqMap = {
         coordinate: [
           { q: "什么是图片坐标识别？", a: "图片坐标识别是从坐标截图、测绘表格或手写坐标中提取可编辑坐标文本，再整理为地图可用格式。" },
-          { q: "如何把截图中的坐标生成 KML？", a: "上传坐标截图或粘贴坐标文本后，先核对识别结果，再选择 Polygon、LineString 或 Point 导出 KML 文件。" },
+          { q: "如何把截图中的坐标生成 KML？", a: "上传坐标截图或粘贴坐标文本后，先核对识别结果，系统会按点数自动识别 Point、LineString 或 Polygon 并导出 KML 文件。" },
           { q: "什么是 BFTM 坐标？", a: "BFTM 是布基纳法索常见矿业投影坐标系统，广泛用于矿权边界与测绘数据，需要转换后才能在 WGS84 地图中使用。" },
           { q: "GeoKit Lab 与普通坐标工具有什么区别？", a: "GeoKit Lab 面向矿区边界、野外截图、投影坐标表和 KML 生成流程，重点处理真实项目中的复杂坐标格式。" }
         ],
@@ -9098,27 +9098,41 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return groups.reduce((total, group) => total + group.length, 0);
     }
 
+    function inferGeometry(pointsOrCount) {
+      const count = Array.isArray(pointsOrCount) ? pointsOrCount.length : Number(pointsOrCount) || 0;
+
+      if (count <= 1) return "Point";
+      if (count === 2) return "LineString";
+      return "Polygon";
+    }
+
+    function inferGeometryFromGroups(groups) {
+      return inferGeometry(countCoordinatePairsInGroups(groups));
+    }
+
     function applyAutoExportTypeForRecognizedCoordinates(text, options = {}) {
-      if (options.isCadastralGrid || options.isMgrs || options.isKyrgyzGk) {
+      if (options.isCadastralGrid || options.isKyrgyzGk) {
         exportType.value = "Polygon";
         return false;
       }
 
+      if (options.isMgrs) {
+        const mgrsRows = extractMgrsRows(text);
+        exportType.value = inferGeometry(mgrsRows);
+        return mgrsRows.length === 1;
+      }
+
       if (options.isChatCoordinates) {
         const chatRows = extractChatCoordinateRows(text);
-        exportType.value = chatRows.length === 1 ? "Point" : "Polygon";
+        exportType.value = inferGeometry(chatRows);
         return chatRows.length === 1;
       }
 
       const pairCount = countCoordinatePairsInGroups(getCoordinateGroupsFromText(text));
+      exportType.value = inferGeometry(pairCount);
 
       if (pairCount === 1) {
-        exportType.value = "Point";
         return true;
-      }
-
-      if (pairCount >= 2) {
-        exportType.value = "Polygon";
       }
 
       return false;
@@ -9669,14 +9683,15 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return warnings;
     }
 
-    function buildChatCoordinatesKml(pairs, selectedType) {
+    function buildChatCoordinatesKml(pairs, selectedType = "") {
+      const geometry = selectedType || inferGeometry(pairs);
       let placemarks = "";
       let documentName = "WGS84 Chat Coordinates";
 
-      if (selectedType === "Point") {
+      if (geometry === "Point") {
         placemarks = buildPointKml(pairs);
         documentName = "WGS84 Chat Coordinate Points";
-      } else if (selectedType === "LineString") {
+      } else if (geometry === "LineString") {
         placemarks = buildLineStringKml(pairs, 1);
         documentName = "WGS84 Chat Coordinate Line";
       } else {
@@ -9985,17 +10000,8 @@ ${placemarks}
           longitude: row.longitude,
           latitude: row.latitude
         }));
-        const selectedType = exportType.value;
-
-        if (selectedType === "Polygon" && pairs.length < 3) {
-          showMessage("MGRS / UTM Grid Reference 至少需要 3 个点才能生成 Polygon KML。", true);
-          return;
-        }
-
-        if (selectedType === "LineString" && pairs.length < 2) {
-          showMessage("MGRS / UTM Grid Reference 至少需要 2 个点才能生成 LineString KML。", true);
-          return;
-        }
+        const selectedType = inferGeometry(pairs);
+        exportType.value = selectedType;
 
         const usageAllowed = await consumeUsage("convert");
         if (!usageAllowed) {
@@ -10051,17 +10057,8 @@ ${placemarks}
           longitude: row.lon,
           latitude: row.lat
         }));
-        const selectedType = exportType.value;
-
-        if (selectedType === "Polygon" && pairs.length < 3) {
-          showMessage("WGS84 聊天坐标至少需要 3 个点才能生成 Polygon KML。", true);
-          return;
-        }
-
-        if (selectedType === "LineString" && pairs.length < 2) {
-          showMessage("WGS84 聊天坐标至少需要 2 个点才能生成 LineString KML。", true);
-          return;
-        }
+        const selectedType = inferGeometry(pairs);
+        exportType.value = selectedType;
 
         const usageAllowed = await consumeUsage("convert");
         if (!usageAllowed) {
@@ -10153,7 +10150,8 @@ ${placemarks}
 
       const coordinateGroups = getKmlCoordinateGroups();
       const pairs = coordinateGroups.flat();
-      const selectedType = exportType.value;
+      const selectedType = inferGeometry(pairs);
+      exportType.value = selectedType;
 
       if (pairs.length === 0) {
         if (hasProjectedCoordinateRows(input.value)) {
@@ -10165,21 +10163,7 @@ ${placemarks}
         return;
       }
 
-      const validGroups = selectedType === "Polygon"
-        ? coordinateGroups.filter(group => group.length >= 3)
-        : selectedType === "LineString"
-          ? coordinateGroups.filter(group => group.length >= 2)
-          : coordinateGroups;
-
-      if (selectedType === "LineString" && validGroups.length === 0) {
-        showMessage("生成线至少需要 2 组坐标。", true);
-        return;
-      }
-
-      if (selectedType === "Polygon" && validGroups.length === 0) {
-        showMessage("生成面至少需要 3 组坐标。", true);
-        return;
-      }
+      const validGroups = selectedType === "Point" ? coordinateGroups : [pairs];
 
       const usageAllowed = await consumeUsage("convert");
       if (!usageAllowed) {

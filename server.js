@@ -365,7 +365,7 @@ function getStructuredData(meta, canonicalPath) {
       buildSoftwareApplicationJsonLd(meta, canonicalUrl, "coordinate"),
       buildFaqJsonLd([
         { q: "什么是图片坐标识别？", a: "图片坐标识别是从坐标截图、测绘表格或手写坐标中提取可编辑坐标文本，再整理为地图可用格式。" },
-        { q: "如何把截图中的坐标生成 KML？", a: "上传坐标截图或粘贴坐标文本后，先核对识别结果，再选择 Polygon、LineString 或 Point 导出 KML 文件。" },
+        { q: "如何把截图中的坐标生成 KML？", a: "上传坐标截图或粘贴坐标文本后，先核对识别结果，系统会按点数自动识别 Point、LineString 或 Polygon 并导出 KML 文件。" },
         { q: "什么是 BFTM 坐标？", a: "BFTM 是布基纳法索常见矿业投影坐标系统，广泛用于矿权边界与测绘数据，需要转换后才能在 WGS84 地图中使用。" },
         { q: "GeoKit Lab 与普通坐标工具有什么区别？", a: "GeoKit Lab 面向矿区边界、野外截图、投影坐标表和 KML 生成流程，重点处理真实项目中的复杂坐标格式。" }
       ])
@@ -3960,15 +3960,36 @@ function getChatCoordinateWarnings(points) {
   return warnings;
 }
 
+function inferGeometry(points) {
+  const count = Array.isArray(points) ? points.length : 0;
+
+  if (count <= 1) return "Point";
+  if (count === 2) return "LineString";
+  return "Polygon";
+}
+
 function buildChatCoordinatesKml(points) {
-  const pointPlacemarks = points.map((point, index) => `    <Placemark>
-      <name>${escapeKmlText(`Point ${point.label || index + 1}`)}</name>
+  const geometry = inferGeometry(points);
+  let placemark = "";
+
+  if (geometry === "Point") {
+    const point = points[0];
+    placemark = `    <Placemark>
+      <name>${escapeKmlText(`Point ${point.label || 1}`)}</name>
       <Point>
         <coordinates>${point.kmlCoordinate}</coordinates>
       </Point>
-    </Placemark>`).join("\n");
-  const polygonPlacemark = points.length >= 3
-    ? `\n    <Placemark>
+    </Placemark>`;
+  } else if (geometry === "LineString") {
+    placemark = `    <Placemark>
+      <name>Chat Coordinates LineString</name>
+      <LineString>
+        <tessellate>1</tessellate>
+        <coordinates>${points.map(point => point.kmlCoordinate).join(" ")}</coordinates>
+      </LineString>
+    </Placemark>`;
+  } else {
+    placemark = `    <Placemark>
       <name>Chat Coordinates Polygon</name>
       <Polygon>
         <tessellate>1</tessellate>
@@ -3978,14 +3999,14 @@ function buildChatCoordinatesKml(points) {
           </LinearRing>
         </outerBoundaryIs>
       </Polygon>
-    </Placemark>`
-    : "";
+    </Placemark>`;
+  }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
     <name>WGS84 Chat Coordinates</name>
-${pointPlacemarks}${polygonPlacemark}
+${placemark}
   </Document>
 </kml>`;
 }
@@ -4041,7 +4062,7 @@ function getChatCoordinatesInfo(text) {
     isChatCoordinates: points.length > 0,
     type: "WGS84_CHAT_COORDINATES",
     points,
-    geometry: points.length >= 3 ? "Point + Polygon" : "Point",
+    geometry: inferGeometry(points),
     warning: warnings.includes("possible swapped lat/lon") ? "possible swapped lat/lon" : (warnings[0] || ""),
     warnings,
     kml: points.length > 0 ? buildChatCoordinatesKml(points) : ""
