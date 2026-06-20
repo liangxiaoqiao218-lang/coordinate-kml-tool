@@ -3726,11 +3726,12 @@
         </select>
       </div>
       <div class="panel setting-panel">
-        <label for="exportType">自动识别：Point / Line / Polygon</label>
+        <label for="exportType">导出类型</label>
         <select id="exportType" disabled>
-          <option value="Polygon" selected>面 Polygon（默认，矿区范围）</option>
-          <option value="LineString">线 LineString</option>
-          <option value="Point">点位 Point</option>
+          <option value="" selected>自动识别：等待坐标</option>
+          <option value="Point">自动识别：Point</option>
+          <option value="LineString">自动识别：LineString</option>
+          <option value="Polygon">自动识别：Polygon</option>
         </select>
       </div>
     </div>
@@ -10448,7 +10449,7 @@ ${placemarks}
         } else if (data.bftmLongTable?.incomplete) {
           showMessage(`该图为 BFTM 坐标长表，建议只截取坐标表区域后重试，识别会更稳定。已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行，缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (autoSelectedPoint) {
-          showMessage("已自动识别为单点坐标，切换为 Point 模式", false, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showMessage("已自动识别：Point，可直接生成单点 KML。", false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (hasProjectedCoordinateRows(finalCoordinates)) {
           showMessage("已识别到 X/Y 平面坐标，请先确认坐标系后再转换成经纬度。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (data.warning) {
