@@ -111,6 +111,22 @@
 
 ---
 
+## wgs84_chat_coordinates
+
+1. 类型 ID：`wgs84_chat_coordinates`
+2. 适用场景：聊天记录、复制文本、图片 OCR 后得到的 WGS84 小数经纬度列表，例如 `12.319572, -11.178174`、`A 12.319572, -11.178174`。
+3. 典型样本文件名：聊天坐标文本、复制粘贴坐标列表、OCR 小数经纬度结果。
+4. 触发关键词 / 版面特征：每行或每段包含一组小数坐标；可带 A/B/C 标签；数值符合 WGS84 范围；不包含 DMS、MGRS、UTM、BFTM 或特殊投影关键词。
+5. 识别主流程：按 `lat, lon` 解释；支持逗号、空格、换行、A/B/C 标签；输出 `label | WGS84 | KML`。
+6. fallback 逻辑：备用 OCR 可识别该类型，但不得覆盖 MGRS、DMS、BFTM、Madagascar、Kyrgyzstan GK 等更高优先级稳定路径。
+7. 坐标转换规则：不做投影转换；输入为 WGS84 decimal degrees；KML 写入时必须转换为 `longitude,latitude,0`。
+8. KML 生成规则：每个点生成 Point；选择 LineString 时按输入顺序连线；选择 Polygon 且点数 >= 3 时按输入顺序成面并自动闭合。
+9. 失败保护规则：纬度超出 `[-90,90]`、经度超出 `[-180,180]`、百万级 UTM 数字、明显特殊坐标格式均拒绝；如果存在经纬度反转风险，只返回 `possible swapped lat/lon` warning，不阻断生成。
+10. 禁止修改项：不允许自动猜 UTM；不允许引入 MGRS 解析；不允许投影转换；不允许把 `lat,lon` 直接按 `lon,lat` 显示；不允许影响 MGRS / BFTM / UTM 数字坐标优先级。
+11. 回归测试要求：三点样本 `12.319572,-11.178174`、`12.318957,-11.178055`、`12.318693,-11.177711` 应识别 3 点；Polygon KML 应按输入顺序闭合；KML 坐标必须为 `-11.178174,12.319572,0` 形式。
+
+---
+
 ## mgrs_utm_grid_reference
 
 1. 类型 ID：`mgrs_utm_grid_reference`

@@ -134,6 +134,19 @@ KML 逻辑：
 - 不进入矿权网格模式。
 - 不覆盖 BFTM / X-Y 或 Madagascar cadastral grid 的表格路径。
 
+## 7. WGS84 Chat Coordinates
+
+稳定方案：
+
+- 适用于聊天、复制文本、图片 OCR 中的 WGS84 小数经纬度列表。
+- 默认按 `lat, lon` 解释。
+- 支持纯坐标行、A/B/C 标签、换行、逗号和空格混合格式。
+- KML 必须写为 `longitude,latitude,0`。
+- Point / LineString / Polygon 均按输入顺序生成，Polygon 自动闭合。
+- 优先级低于 DMS / MGRS / UTM / BFTM / Madagascar / Kyrgyzstan GK，且高于普通文本兜底。
+- 不做 UTM 猜测、不做 MGRS 解析、不做投影转换。
+- 如果存在经纬度反转风险，只输出 `possible swapped lat/lon` warning，不阻断结果。
+
 ## 总维护原则
 
 1. 不再整体重构识别系统。

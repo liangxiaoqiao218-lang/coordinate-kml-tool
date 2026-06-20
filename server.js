@@ -3855,6 +3855,206 @@ function formatMgrsRows(rows) {
   })].join("\n");
 }
 
+function escapeKmlText(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function normalizeChatCoordinateText(text) {
+  return String(text || "")
+    .replace(/[，；;]/g, ",")
+    .replace(/[：:]/g, " ")
+    .replace(/[()（）\[\]{}]/g, " ");
+}
+
+function parseChatCoordinateLine(line, fallbackIndex = 1) {
+  const original = String(line || "").trim();
+
+  if (!original || /[°º'′″"]/.test(original) || /\b(?:UTM|BFTM|WGS\s*84|EPSG|MGRS)\b/i.test(original) || /\d\s*[NSEWO]\b/i.test(original)) {
+    return null;
+  }
+
+  const formattedMatch = original.match(/^\s*([^|]+)\|\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)/);
+  if (formattedMatch && !/^label$/i.test(String(formattedMatch[1]).trim())) {
+    const lat = Number(formattedMatch[2]);
+    const lon = Number(formattedMatch[3]);
+
+    if (
+      Number.isFinite(lat)
+      && Number.isFinite(lon)
+      && Math.abs(lat) <= 90
+      && Math.abs(lon) <= 180
+      && Math.abs(lat) < 100000
+      && Math.abs(lon) < 100000
+    ) {
+      const label = String(formattedMatch[1]).trim().toUpperCase() || String(fallbackIndex);
+      return {
+        label,
+        lat,
+        lon,
+        raw: original,
+        kmlCoordinate: `${lon},${lat},0`
+      };
+    }
+
+    return null;
+  }
+
+  const labelPrefixPattern = /^\s*(?:point|pt|点|点号)?\s*([A-Za-z])\s*(?:[\.\)、):：,，、\]\?\-]\s*|\s+)|^\s*(?:point|pt|点|点号)?\s*(\d{1,3})\s*(?:[\)、):：,，、\]\?\-]\s*|\s+)/i;
+  const labelMatch = original.match(labelPrefixPattern);
+  const labelValue = labelMatch ? (labelMatch[1] || labelMatch[2]) : "";
+  const label = labelValue ? String(labelValue).toUpperCase() : String(fallbackIndex);
+  const text = normalizeChatCoordinateText(original)
+    .replace(labelPrefixPattern, "")
+    .trim();
+  const numbers = text.match(/[-+]?\d+(?:\.\d+)?/g) || [];
+
+  if (numbers.length !== 2) {
+    return null;
+  }
+
+  const lat = Number(numbers[0]);
+  const lon = Number(numbers[1]);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return null;
+  }
+
+  if (Math.abs(lat) > 100000 || Math.abs(lon) > 100000 || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    return null;
+  }
+
+  return {
+    label,
+    lat,
+    lon,
+    raw: original,
+    kmlCoordinate: `${lon},${lat},0`
+  };
+}
+
+function getChatCoordinateWarnings(points) {
+  const warnings = [];
+
+  if (!Array.isArray(points) || points.length === 0) {
+    return warnings;
+  }
+
+  const latSigns = new Set(points.map(point => Math.sign(point.lat)).filter(Boolean));
+  const lonSigns = new Set(points.map(point => Math.sign(point.lon)).filter(Boolean));
+
+  if (latSigns.size > 1 || lonSigns.size > 1) {
+    warnings.push("hemisphere signs differ across points");
+  }
+
+  const swappedRiskCount = points.filter(point => Math.abs(point.lat) < Math.abs(point.lon) && Math.abs(point.lon) <= 90).length;
+
+  if (swappedRiskCount >= Math.max(1, Math.ceil(points.length * 0.7))) {
+    warnings.push("possible swapped lat/lon");
+  }
+
+  return warnings;
+}
+
+function buildChatCoordinatesKml(points) {
+  const pointPlacemarks = points.map((point, index) => `    <Placemark>
+      <name>${escapeKmlText(`Point ${point.label || index + 1}`)}</name>
+      <Point>
+        <coordinates>${point.kmlCoordinate}</coordinates>
+      </Point>
+    </Placemark>`).join("\n");
+  const polygonPlacemark = points.length >= 3
+    ? `\n    <Placemark>
+      <name>Chat Coordinates Polygon</name>
+      <Polygon>
+        <tessellate>1</tessellate>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>${[...points, points[0]].map(point => point.kmlCoordinate).join(" ")}</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>`
+    : "";
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>WGS84 Chat Coordinates</name>
+${pointPlacemarks}${polygonPlacemark}
+  </Document>
+</kml>`;
+}
+
+function getChatCoordinatesInfo(text) {
+  const points = [];
+  const seen = new Set();
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .flatMap(line => String(line || "").split(/(?=\b[A-Za-z]\s*[\.\)、):：]\s*[-+]?\d)/))
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  lines.forEach(line => {
+    const point = parseChatCoordinateLine(line, points.length + 1);
+
+    if (!point) {
+      return;
+    }
+
+    const key = `${point.lat}|${point.lon}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    points.push(point);
+  });
+
+  if (points.length === 0) {
+    const pairPattern = /([-+]?\d+(?:\.\d+)?)\s*[, ]\s*([-+]?\d+(?:\.\d+)?)/g;
+    let match;
+
+    while ((match = pairPattern.exec(String(text || ""))) !== null) {
+      const point = parseChatCoordinateLine(`${match[1]}, ${match[2]}`, points.length + 1);
+      if (!point) {
+        continue;
+      }
+
+      const key = `${point.lat}|${point.lon}`;
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      points.push(point);
+    }
+  }
+
+  const warnings = getChatCoordinateWarnings(points);
+
+  return {
+    isChatCoordinates: points.length > 0,
+    type: "WGS84_CHAT_COORDINATES",
+    points,
+    geometry: points.length >= 3 ? "Point + Polygon" : "Point",
+    warning: warnings.includes("possible swapped lat/lon") ? "possible swapped lat/lon" : (warnings[0] || ""),
+    warnings,
+    kml: points.length > 0 ? buildChatCoordinatesKml(points) : ""
+  };
+}
+
+function formatChatCoordinateRows(points) {
+  return ["label | WGS84 | KML", ...points.map((point, index) => {
+    const label = point.label || String(index + 1);
+    return `${label} | ${point.lat}, ${point.lon} | ${point.kmlCoordinate}`;
+  })].join("\n");
+}
+
 function getMgrsInfo(text) {
   const rows = extractMgrsRows(text);
 
@@ -4553,6 +4753,11 @@ function extractCoordinateLines(text) {
   const mgrs = getMgrsInfo(text);
   if (mgrs.isMgrs) {
     return formatMgrsRows(mgrs.rows);
+  }
+
+  const chatCoordinates = getChatCoordinatesInfo(text);
+  if (chatCoordinates.isChatCoordinates) {
+    return formatChatCoordinateRows(chatCoordinates.points);
   }
 
   if (shouldUseStrictBftmValidation(text)) {
@@ -7924,6 +8129,8 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
  *   Frontend KML uses inferred dx/dy, treats XV/YV as cell centers, and converts EPSG:29702 to WGS84.
  * - Kyrgyzstan Gauss-Kruger: detect Russian corner-point X/Y tables; preserve point | X | Y,
  *   sort by point number, and keep full X easting / Y northing for EPSG:28413 KML conversion.
+ * - WGS84 chat coordinates: parse copied chat/OCR decimal lists as lat,lon and write KML as
+ *   longitude,latitude,0. This sits below DMS/MGRS/special grids and above ordinary text fallback.
  * - Decimal lon/lat: plain decimal polygon path only; never enter cadastral grid mode.
  * - Multi-table and Point A-Z tables: visual understanding first so table boundaries and row order survive.
  * - OCR: use only for low-row-count retry or fallback, never as the main flow for table coordinates.
@@ -8299,6 +8506,7 @@ Rules:
     let usedModel = aliyunVisionModel;
     let cadastralGrid = getCadastralGridInfo(rawText);
     let mgrs = getMgrsInfo(rawText);
+    let chatCoordinates = getChatCoordinatesInfo(rawText);
     let kyrgyzGk = getKyrgyzGkInfo(rawText);
 
     if (cadastralGrid.isCadastralGrid) {
@@ -8313,13 +8521,19 @@ Rules:
       warning = warning || "识别到 MGRS / UTM Grid Reference，已转换为 WGS84 经纬度并可生成 KML。";
     }
 
-    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && kyrgyzGk.isKyrgyzGk) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && chatCoordinates.isChatCoordinates) {
+      coordinates = formatChatCoordinateRows(chatCoordinates.points);
+      usedModel = `${usedModel}+wgs84-chat-coordinates`;
+      warning = chatCoordinates.warning || warning || "识别到聊天坐标列表，已按 WGS84 lat,lon 解析并转换为 KML 使用的 longitude,latitude,0。";
+    }
+
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !chatCoordinates.isChatCoordinates && kyrgyzGk.isKyrgyzGk) {
       coordinates = formatKyrgyzGkRows(kyrgyzGk.rows);
       usedModel = `${usedModel}+kyrgyz-gk`;
       warning = warning || "识别到吉尔吉斯斯坦高斯克吕格平面坐标表，已保留 point / X / Y 并按点号排序；当前阶段需投影转换后才能生成 KML。";
     }
 
-    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
       try {
         console.log("Kyrgyzstan Gauss-Kruger table context detected, reading point/X/Y table.");
         const kyrgyzResponse = await callAliyunVision({
@@ -8347,7 +8561,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
       try {
         console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
         const layoutResponse = await callAliyunVision({
@@ -8388,7 +8602,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y result looks like column-paired output, retrying row-wise extraction.");
         const bftmRetryResponse = await callAliyunVision({
@@ -8425,7 +8639,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y OCR retry still invalid, using vision layout retry.");
         const bftmVisionRetryResponse = await callAliyunVision({
@@ -8462,7 +8676,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -8491,7 +8705,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
       const smoothedRawText = smoothDmsMinuteIslandsForLongTable(rawText);
 
       if (smoothedRawText !== rawText) {
@@ -8502,7 +8716,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -8525,7 +8739,7 @@ Rules:
       }
     }
 
-    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -8552,11 +8766,14 @@ Rules:
     console.log(coordinates);
     cadastralGrid = getCadastralGridInfo(rawText);
     mgrs = getMgrsInfo(rawText);
+    chatCoordinates = getChatCoordinatesInfo(rawText);
     kyrgyzGk = getKyrgyzGkInfo(rawText);
     if (cadastralGrid.isCadastralGrid) {
       coordinates = formatCadastralGridRows(cadastralGrid.rows);
     } else if (mgrs.isMgrs) {
       coordinates = formatMgrsRows(mgrs.rows);
+    } else if (chatCoordinates.isChatCoordinates) {
+      coordinates = formatChatCoordinateRows(chatCoordinates.points);
     } else if (kyrgyzGk.isKyrgyzGk) {
       coordinates = formatKyrgyzGkRows(kyrgyzGk.rows);
     }
@@ -8601,12 +8818,15 @@ Rules:
         ? "cadastral-grid-num-xv-yv"
         : mgrs.isMgrs
           ? "mgrs-utm-grid-reference"
+          : chatCoordinates.isChatCoordinates
+            ? "wgs84-chat-coordinates"
         : kyrgyzGk.isKyrgyzGk
-          ? "kyrgyz-gk-point-x-y"
-          : "preserve-original-decimals-and-parse-dms",
-      warning,
+            ? "kyrgyz-gk-point-x-y"
+            : "preserve-original-decimals-and-parse-dms",
+      warning: chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning,
       cadastralGrid,
       mgrs,
+      chatCoordinates,
       kyrgyzGk,
       bftmLongTable,
       quota: consumeResult.quota
@@ -8713,6 +8933,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       const fallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
       const fallbackMgrs = getMgrsInfo(fallback.rawText);
+      const fallbackChatCoordinates = getChatCoordinatesInfo(fallback.rawText);
       const fallbackKyrgyzGk = getKyrgyzGkInfo(fallback.rawText);
       if (fallbackCadastralGrid.isCadastralGrid) {
         fallback.coordinates = formatCadastralGridRows(fallbackCadastralGrid.rows);
@@ -8726,6 +8947,12 @@ If the table is not readable, output only: ${noCoordinatesText}`;
         fallback.precisionMode = "mgrs-utm-grid-reference";
         fallback.warning = fallback.warning || "备用 OCR 识别到 MGRS / UTM Grid Reference，已转换为 WGS84 经纬度；请人工核对后生成 KML。";
         fallback.mgrs = fallbackMgrs;
+      } else if (fallbackChatCoordinates.isChatCoordinates) {
+        fallback.coordinates = formatChatCoordinateRows(fallbackChatCoordinates.points);
+        fallback.model = `${fallback.model || "local-ocr-fallback"}+wgs84-chat-coordinates`;
+        fallback.precisionMode = "wgs84-chat-coordinates";
+        fallback.warning = fallbackChatCoordinates.warning || fallback.warning || "备用 OCR 识别到 WGS84 聊天坐标，已按 lat,lon 解析；请人工核对后生成 KML。";
+        fallback.chatCoordinates = fallbackChatCoordinates;
       } else if (fallbackKyrgyzGk.isKyrgyzGk) {
         fallbackKyrgyzGk.integrity = analyzeKyrgyzGkRows(fallbackKyrgyzGk.rows, "fallback-ocr");
         fallback.coordinates = formatKyrgyzGkRows(fallbackKyrgyzGk.rows);
@@ -8740,7 +8967,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       let bftmLongTable = getBftmLongTableInfo(fallback.rawText, fallback.coordinates);
       let bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
 
-      if (!fallbackCadastralGrid.isCadastralGrid && !fallbackMgrs.isMgrs && !fallbackKyrgyzGk.isKyrgyzGk && bftmIncompleteWarning && aliyunApiKey && req.file) {
+      if (!fallbackCadastralGrid.isCadastralGrid && !fallbackMgrs.isMgrs && !fallbackChatCoordinates.isChatCoordinates && !fallbackKyrgyzGk.isKyrgyzGk && bftmIncompleteWarning && aliyunApiKey && req.file) {
         try {
           console.log("BFTM long table fallback is incomplete, retrying Aliyun visual table extraction once.");
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
