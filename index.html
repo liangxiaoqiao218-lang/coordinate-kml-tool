@@ -10554,6 +10554,7 @@ ${placemarks}
         appendDebug(`平面坐标系判断：${detectedProjection || projectionType.value || "自动"}`);
         appendDebug(`矿权网格识别：${isCadastralGrid ? `已识别 ${cadastralGridRows.length} 行 num / XV / YV` : "无"}`);
         appendDebug(`MGRS识别：${isMgrs ? `已识别 ${mgrsRows.length} 行 MGRS / UTM Grid Reference` : "无"}`);
+        appendDebug(`Mozambique Geographic Table识别：${isMozambiqueGeographicTable ? `已识别 ${mozambiqueRows.length} 行 Latitude / Longitude` : "无"}`);
         appendDebug(`WGS84聊天坐标识别：${isChatCoordinates ? `已识别 ${chatRows.length} 行 lat / lon` : "无"}`);
         appendDebug(`Kyrgyzstan GK识别：${isKyrgyzGk ? `已识别 ${kyrgyzGkRows.length} 行 point / X / Y` : "无"}`);
         appendDebug(`原样坐标行：\n${recognizedLines || "无"}`);
