@@ -8334,6 +8334,98 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       })].join("\n");
     }
 
+    function hasMozambiqueGeographicTableContext(text) {
+      const value = String(text || "");
+      const hasPortugueseGeoTitle = /COORDENADAS\s+GEOGR[ÁA]FICAS/i.test(value);
+      const hasMozambiqueContext = /Datum\s*:?\s*Tete|Tete|Prov[íi]ncia|INAMI|MIREME|Ordem|Order/i.test(value);
+      const hasLatLonColumns = /Latitude/i.test(value) && /Longitude/i.test(value);
+
+      return hasLatLonColumns && (hasPortugueseGeoTitle || hasMozambiqueContext);
+    }
+
+    function parsePortugueseDecimalNumber(value) {
+      const parsed = Number(String(value || "").replace(/\s+/g, "").replace(",", "."));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function dmsColumnsToDecimal(degrees, minutes, seconds, options = {}) {
+      const deg = parsePortugueseDecimalNumber(degrees);
+      const min = parsePortugueseDecimalNumber(minutes);
+      const sec = parsePortugueseDecimalNumber(seconds);
+
+      if (![deg, min, sec].every(Number.isFinite)) {
+        return null;
+      }
+
+      if (Math.abs(deg) > (options.isLatitude ? 90 : 180) || min < 0 || min >= 60 || sec < 0 || sec >= 60) {
+        return null;
+      }
+
+      const sign = options.forcePositive ? 1 : (deg < 0 ? -1 : 1);
+      return sign * (Math.abs(deg) + (min / 60) + (sec / 3600));
+    }
+
+    function extractMozambiqueGeographicTableRows(text) {
+      const source = String(text || "");
+
+      if (!hasMozambiqueGeographicTableContext(source) && !/^order\s*\|\s*latitude\s*\|\s*longitude/im.test(source)) {
+        return [];
+      }
+
+      const rowsByOrder = new Map();
+      source
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .forEach(line => {
+          if (/COORDENADAS|GEOGR[ÁA]FICAS|Datum|Latitude|Longitude|Ordem|Order|Prov[íi]ncia|INAMI|MIREME/i.test(line)) {
+            return;
+          }
+
+          const numbers = line.match(/[-+]?\d+(?:[,.]\d+)?/g) || [];
+
+          if (numbers.length < 7) {
+            return;
+          }
+
+          const order = Number.parseInt(numbers[0], 10);
+          const latitude = dmsColumnsToDecimal(numbers[1], numbers[2], numbers[3], { isLatitude: true });
+          const longitude = dmsColumnsToDecimal(numbers[4], numbers[5], numbers[6], { isLatitude: false, forcePositive: true });
+
+          if (!Number.isInteger(order) || order <= 0 || latitude === null || longitude === null) {
+            return;
+          }
+
+          if (latitude > -10 || latitude < -27 || longitude < 30 || longitude > 42) {
+            return;
+          }
+
+          if (!rowsByOrder.has(order)) {
+            rowsByOrder.set(order, {
+              order,
+              latitude,
+              longitude,
+              latDeg: numbers[1],
+              latMin: numbers[2],
+              latSec: numbers[3],
+              lonDeg: numbers[4],
+              lonMin: numbers[5],
+              lonSec: numbers[6]
+            });
+          }
+        });
+
+      return Array.from(rowsByOrder.values()).sort((a, b) => a.order - b.order);
+    }
+
+    function hasMozambiqueGeographicTableRows(text) {
+      return extractMozambiqueGeographicTableRows(text).length > 0;
+    }
+
+    function formatMozambiqueGeographicRows(rows) {
+      return rows.map(row => `${Number(row.longitude).toFixed(6)},${Number(row.latitude).toFixed(6)}`).join("\n");
+    }
+
     function parseChatCoordinateLine(line, fallbackIndex = 1) {
       const original = String(line || "").trim();
 
@@ -8394,7 +8486,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     function extractChatCoordinateRows(text) {
       const value = String(text || "");
 
-      if (!value.trim() || hasMgrsRows(value) || hasCadastralGridRows(value) || hasKyrgyzGkRows(value)) {
+      if (!value.trim() || hasMgrsRows(value) || hasCadastralGridRows(value) || hasMozambiqueGeographicTableRows(value) || hasKyrgyzGkRows(value)) {
         return [];
       }
 
@@ -8541,19 +8633,25 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     function updateCadastralGridPanel() {
       const cadastralRows = extractCadastralGridRows(input.value);
       const mgrsRows = extractMgrsRows(input.value);
+      const mozambiqueRows = extractMozambiqueGeographicTableRows(input.value);
       const chatRows = extractChatCoordinateRows(input.value);
       const kyrgyzRows = extractKyrgyzGkRows(input.value);
       const isCadastralGrid = cadastralRows.length > 0;
       const isMgrs = !isCadastralGrid && mgrsRows.length > 0;
-      const isChatCoordinates = !isCadastralGrid && !isMgrs && chatRows.length > 0;
-      const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isChatCoordinates && kyrgyzRows.length > 0;
+      const isMozambiqueGeographicTable = !isCadastralGrid && !isMgrs && mozambiqueRows.length > 0;
+      const isChatCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && chatRows.length > 0;
+      const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isChatCoordinates && kyrgyzRows.length > 0;
 
       if (cadastralGridPanel) {
         cadastralGridPanel.classList.toggle("is-active", isCadastralGrid);
       }
 
       if (cadastralGridBadge) {
-        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid || isMgrs || isChatCoordinates || isKyrgyzGk);
+        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isChatCoordinates || isKyrgyzGk);
+        if (isMozambiqueGeographicTable) {
+          cadastralGridBadge.textContent = `Mozambique geographic table · ${mozambiqueRows.length} points`;
+          return;
+        }
         cadastralGridBadge.textContent = isCadastralGrid
           ? `矿权网格模式 · ${cadastralRows.length} 格`
           : isMgrs
@@ -10307,6 +10405,15 @@ ${placemarks}
           : extractMgrsRows(data.rawText || data.coordinates);
         const mgrsText = formatMgrsRows(mgrsRows);
         const isMgrs = !isCadastralGrid && Boolean(data.mgrs?.isMgrs || mgrsRows.length > 0);
+        const mozambiqueRows = Array.isArray(data.mozambiqueGeographicTable?.rows) && data.mozambiqueGeographicTable.rows.length > 0
+          ? data.mozambiqueGeographicTable.rows.map(row => ({
+            ...row,
+            latitude: Number(row.latitude),
+            longitude: Number(row.longitude)
+          })).filter(row => Number.isFinite(row.latitude) && Number.isFinite(row.longitude))
+          : extractMozambiqueGeographicTableRows(data.rawText || data.coordinates);
+        const mozambiqueText = formatMozambiqueGeographicRows(mozambiqueRows);
+        const isMozambiqueGeographicTable = !isCadastralGrid && !isMgrs && Boolean(data.mozambiqueGeographicTable?.isMozambiqueGeographicTable || mozambiqueRows.length > 0);
         const chatRows = Array.isArray(data.chatCoordinates?.points) && data.chatCoordinates.points.length > 0
           ? data.chatCoordinates.points.map((point, index) => {
             const lat = Number(point.lat);
@@ -10323,17 +10430,17 @@ ${placemarks}
           }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
           : extractChatCoordinateRows(data.rawText || data.coordinates);
         const chatText = formatChatCoordinateRows(chatRows);
-        const isChatCoordinates = !isCadastralGrid && !isMgrs && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
+        const isChatCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
         const kyrgyzGkRows = Array.isArray(data.kyrgyzGk?.rows) && data.kyrgyzGk.rows.length > 0
           ? data.kyrgyzGk.rows
           : extractKyrgyzGkRows(data.rawText || data.coordinates);
         const kyrgyzGkText = formatKyrgyzGkRows(kyrgyzGkRows);
-        const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isChatCoordinates && Boolean(data.kyrgyzGk?.isKyrgyzGk || kyrgyzGkRows.length > 0);
+        const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isChatCoordinates && Boolean(data.kyrgyzGk?.isKyrgyzGk || kyrgyzGkRows.length > 0);
         const kyrgyzGkIntegrity = isKyrgyzGk
           ? (data.kyrgyzGk?.integrity || analyzeKyrgyzGkRows(kyrgyzGkRows))
           : null;
 
-        if (!isCadastralGrid && !isMgrs && !isChatCoordinates && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
+        if (!isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isChatCoordinates && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
           const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
 
           if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeLikelyUtm30Coordinate(firstProjectedPair[0], firstProjectedPair[1])) {
@@ -10353,19 +10460,22 @@ ${placemarks}
         // 3. BFTM/X-Y: keep projected X,Y text and never let decimal extraction override it.
         // 4. Madagascar cadastral grid: display only num | XV | YV; KML later converts EPSG:29702 corners to WGS84.
         // 5. MGRS / UTM Grid Reference: display raw MGRS plus WGS84/KML columns; KML uses converted WGS84.
-        // 6. WGS84 chat coordinates: display label | WGS84 | KML; source is lat,lon and KML is lon,lat,0.
-        // 7. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
-        // 8. Plain decimal lon/lat: use the ordinary polygon path only.
-        // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, mgrsText, chatText, or kyrgyzGkText.
+        // 6. Mozambique Portuguese geographic tables: display WGS84 lon,lat parsed from Latitude/Longitude DMS columns.
+        // 7. WGS84 chat coordinates: display label | WGS84 | KML; source is lat,lon and KML is lon,lat,0.
+        // 8. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
+        // 9. Plain decimal lon/lat: use the ordinary polygon path only.
+        // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, mgrsText, mozambiqueText, chatText, or kyrgyzGkText.
         const finalCoordinates = isCadastralGrid
           ? (cadastralGridText || data.coordinates || "")
           : isMgrs
             ? (mgrsText || data.coordinates || "")
-            : isChatCoordinates
-              ? (chatText || data.coordinates || "")
-              : isKyrgyzGk
-                ? (kyrgyzGkText || data.coordinates || "")
-                : chooseBestCoordinateResult([
+            : isMozambiqueGeographicTable
+              ? (mozambiqueText || data.coordinates || "")
+              : isChatCoordinates
+                ? (chatText || data.coordinates || "")
+                : isKyrgyzGk
+                  ? (kyrgyzGkText || data.coordinates || "")
+                  : chooseBestCoordinateResult([
               recognizedLines,
               projectedLines,
               preservedCoordinates,
@@ -10408,7 +10518,7 @@ ${placemarks}
         input.value = finalCoordinates;
         coordinateOrder.value = "auto";
         updateCadastralGridPanel();
-        if (isCadastralGrid || isMgrs || isChatCoordinates || isKyrgyzGk) {
+        if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isChatCoordinates || isKyrgyzGk) {
           clearInternalKmlSource();
         } else {
           setInternalKmlSourceFromText(finalCoordinates);
@@ -10416,6 +10526,7 @@ ${placemarks}
         const autoSelectedPoint = applyAutoExportTypeForRecognizedCoordinates(finalCoordinates, {
           isCadastralGrid,
           isMgrs,
+          isMozambiqueGeographicTable,
           isChatCoordinates,
           isKyrgyzGk
         });
@@ -10425,6 +10536,7 @@ ${placemarks}
           rows: countCoordinateRows(finalCoordinates),
           cadastralGrid: isCadastralGrid,
           mgrs: isMgrs,
+          mozambiqueGeographicTable: isMozambiqueGeographicTable,
           chatCoordinates: isChatCoordinates,
           kyrgyzGk: isKyrgyzGk,
           projected: hasProjectedCoordinateRows(finalCoordinates)
@@ -10433,6 +10545,8 @@ ${placemarks}
           showMessage(`已识别矿权网格表 ${cadastralGridRows.length} 行，已提取 num / XV / YV。已识别为马达加斯加矿权格网，生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isMgrs) {
           showMessage(`已识别 ${mgrsRows.length} 个 MGRS / UTM Grid Reference 点，并转换为 WGS84 经纬度；生成 KML 时将使用 longitude,latitude,0。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+        } else if (isMozambiqueGeographicTable) {
+          showMessage(`已识别 Mozambique / Portuguese geographic table ${mozambiqueRows.length} 点，已按 Latitude 三列和 Longitude 三列解析为 WGS84 lon,lat。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isChatCoordinates) {
           const chatWarning = data.chatCoordinates?.warning || "";
           if (chatWarning === "possible swapped lat/lon") {

@@ -140,3 +140,18 @@
 9. 失败保护规则：无效 zone、无效 band、I/O 字母、easting/northing 位数不等、紧凑数字奇数位、超过 5 位、转换纬度不在 band 范围内时必须拒绝。
 10. 禁止修改项：不允许把 MGRS 当普通小数坐标；不允许让普通 decimal / projected X-Y 分支抢先覆盖；不允许输出未知坐标类型。
 11. 回归测试要求：`47RLH 24469 42832` 应转换到约 `97.2636250946,24.7901938391`；完整 A-G 样本应识别 7 点并按输入顺序生成闭合 Polygon KML。
+---
+
+## mozambique_geographic_table
+
+1. 类型 ID：`mozambique_geographic_table`
+2. 适用场景：Mozambique / Portuguese geographic DMS coordinate tables, especially tables headed `COORDENADAS GEOGRÁFICAS` with `Datum: Tete`.
+3. 典型样本文件名：`莫桑比克矿地.jpg`
+4. 触发关键词 / 版面特征：`COORDENADAS GEOGRÁFICAS`、`Datum: Tete`、`Latitude`、`Longitude`、`Ordem` / `Order`、`Província`、`INAMI`、`MIREME`；表格列为 `Order | Latitude(deg min sec) | Longitude(deg min sec)`。
+5. 识别主流程：优先按专用葡语地理坐标表解析，每行读取 7 列：`Order LatDeg LatMin LatSec LonDeg LonMin LonSec`；输出普通 WGS84 `lon,lat` 行。
+6. fallback 逻辑：备用 OCR 只有保留葡语表格上下文和行列数字时才可进入该类型；不得回落到普通 DMS fallback 并误配 `N/W`。
+7. 坐标转换规则：`LatDeg` 负号代表南纬，十进制度为负数；Mozambique / Tete `Longitude` 默认为东经正数；秒值支持 decimal comma，例如 `20,00` = `20.00`。
+8. KML 生成规则：输出已是 WGS84，经由普通 KML 路径生成；KML 坐标顺序必须为 `longitude,latitude,0`。
+9. 失败保护规则：解析结果必须落在 Mozambique 合理范围内（纬度约 `-27` 到 `-10`，经度约 `30E` 到 `42E`）；不满足时不接受该表格解析。
+10. 禁止修改项：不允许把 `LatDeg=-14` 当作 West；不允许把 `Longitude=32/33` 当作 North；不允许把该表格交给普通 DMS fallback 抢先解析。
+11. 回归测试要求：`-14 | 36 | 0,00` + `32 | 57 | 20,00` 必须输出 `32.955556,-14.600000`；不得出现 `11°N`、`14°W` 或纬经度错位；完整样本应识别 22 行并落在 Mozambique / Tete 附近。
