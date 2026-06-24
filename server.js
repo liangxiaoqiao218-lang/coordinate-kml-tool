@@ -3624,13 +3624,31 @@ function shouldUseKyrgyzGkPromptFirst(file, rawHint = "") {
     || /13\d{5,7}[\s|,;]+4\d{6}/.test(combined);
 }
 
-function shouldUseMozambiqueGeographicPromptFirst(file, rawHint = "") {
+function getUploadNameSearchText(file, rawHint = "") {
   const fileName = String(file?.originalname || "");
-  const decodedFileName = Buffer.from(fileName, "latin1").toString("utf8");
-  const hint = String(rawHint || "");
-  const combined = `${fileName}\n${decodedFileName}\n${hint}`;
+  const variants = new Set([fileName, String(rawHint || "")]);
 
-  return /莫桑比克|Mozambique|Tete|COORDENADAS\s+GEOGR[ÁA]FICAS|Datum\s*:?\s*Tete|INAMI|MIREME/i.test(combined)
+  try {
+    variants.add(Buffer.from(fileName, "latin1").toString("utf8"));
+  } catch {
+    // Keep the original name if the upload name is not latin1-mojibake.
+  }
+
+  for (const value of Array.from(variants)) {
+    try {
+      variants.add(decodeURIComponent(value));
+    } catch {
+      // Ignore non-URI file names.
+    }
+  }
+
+  return Array.from(variants).filter(Boolean).join("\n");
+}
+
+function shouldUseMozambiqueGeographicPromptFirst(file, rawHint = "") {
+  const combined = getUploadNameSearchText(file, rawHint);
+
+  return /莫桑比克|Mozambique|Mo[çc]ambique|Tete|COORDENADAS\s+GEOGR[ÁA]FICAS|Datum\s*:?\s*Tete|INAMI|MIREME/i.test(combined)
     && !/Kyrgyz|Kyrgyzstan|吉尔吉斯|Киргиз|Кыргыз/i.test(combined);
 }
 
@@ -3999,6 +4017,23 @@ function formatMozambiqueGeographicRows(rows) {
     const lon = Number(row.longitude).toFixed(6);
     return `${row.order} | ${lat} | ${lon} | ${lon},${lat},0`;
   })].join("\n");
+}
+
+function extractMozambiqueLonLatCoordinateRows(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(line))
+    .map((line, index) => {
+      const [lon, lat] = line.split(",").map(value => Number(value.trim()));
+      return { order: index + 1, longitude: lon, latitude: lat };
+    })
+    .filter(row => Number.isFinite(row.longitude)
+      && Number.isFinite(row.latitude)
+      && row.longitude >= 30
+      && row.longitude <= 42
+      && row.latitude <= -10
+      && row.latitude >= -27);
 }
 
 function getMozambiqueGeographicInfo(text) {
@@ -8651,6 +8686,13 @@ If the table is not readable, output only: ${noCoordinatesText}`;
 
     const useKyrgyzGkPromptFirst = shouldUseKyrgyzGkPromptFirst(req.file, req.body?.rawHint || req.body?.hint || "");
     const useMozambiqueGeographicPromptFirst = !useKyrgyzGkPromptFirst && shouldUseMozambiqueGeographicPromptFirst(req.file, req.body?.rawHint || req.body?.hint || "");
+    const mozambiqueDebug = {
+      mozambiquePreRouteMatched: useMozambiqueGeographicPromptFirst,
+      mozambiqueDirectStarted: false,
+      mozambiqueDirectSuccess: false,
+      mozambiqueRows: 0,
+      mozambiqueBypassChat: false
+    };
 
     if (useKyrgyzGkPromptFirst) {
       console.log("Kyrgyz GK pre-route matched", {
@@ -8729,6 +8771,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       });
 
       try {
+        mozambiqueDebug.mozambiqueDirectStarted = true;
         console.log("Mozambique geographic table direct prompt started", {
           model: aliyunVisionModel,
           timeoutMs: 60000
@@ -8743,35 +8786,18 @@ If the table is not readable, output only: ${noCoordinatesText}`;
         });
         const mozambiqueDirectRawText = mozambiqueDirectResponse.choices?.[0]?.message?.content || "";
         const mozambiqueDirectInfo = getMozambiqueGeographicInfo(mozambiqueDirectRawText);
-        const mozambiqueDirectCoordinateLines = String(mozambiqueDirectRawText || "")
-          .split(/\r?\n/)
-          .map(line => line.trim())
-          .filter(line => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(line))
-          .filter(line => {
-            const [lon, lat] = line.split(",").map(value => Number(value.trim()));
-            return Number.isFinite(lon)
-              && Number.isFinite(lat)
-              && lon >= 30
-              && lon <= 42
-              && lat <= -10
-              && lat >= -27;
-          });
-        const mozambiqueDirectCoordinateRows = mozambiqueDirectCoordinateLines.map((line, index) => {
-          const [lon, lat] = line.split(",").map(value => Number(value.trim()));
-          return {
-            order: index + 1,
-            longitude: lon,
-            latitude: lat
-          };
-        });
+        const mozambiqueDirectCoordinateRows = extractMozambiqueLonLatCoordinateRows(mozambiqueDirectRawText);
 
-        if (mozambiqueDirectInfo.isMozambiqueGeographicTable || mozambiqueDirectCoordinateLines.length >= 4) {
+        if (mozambiqueDirectInfo.isMozambiqueGeographicTable || mozambiqueDirectCoordinateRows.length >= 4) {
           const directRows = mozambiqueDirectInfo.isMozambiqueGeographicTable
             ? mozambiqueDirectInfo.rows
             : mozambiqueDirectCoordinateRows;
           const directCoordinates = formatMozambiqueGeographicRows(directRows);
 
-          if (directRows.length > 0 || mozambiqueDirectCoordinateLines.length >= 4) {
+          if (directRows.length > 0 || mozambiqueDirectCoordinateRows.length >= 4) {
+            mozambiqueDebug.mozambiqueDirectSuccess = true;
+            mozambiqueDebug.mozambiqueRows = directRows.length;
+            mozambiqueDebug.mozambiqueBypassChat = true;
             console.log(`Mozambique geographic table direct prompt success rows=${directRows.length || countCoordinateRows(directCoordinates)}`);
             const consumeResult = await consumeUsage(visitorId, "convert", req, {
               note: "Coordinate recognition consumed after Mozambique geographic direct prompt"
@@ -8809,6 +8835,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
                 rows: directRows,
                 rowCount: directRows.length
               },
+              mozambiqueDebug,
               quota: consumeResult.quota
             });
           }
@@ -8840,6 +8867,20 @@ If the table is not readable, output only: ${noCoordinatesText}`;
     let mozambiqueGeographicTable = getMozambiqueGeographicInfo(rawText);
     let chatCoordinates = getChatCoordinatesInfo(rawText);
     let kyrgyzGk = getKyrgyzGkInfo(rawText);
+    if (!mozambiqueGeographicTable.isMozambiqueGeographicTable && useMozambiqueGeographicPromptFirst) {
+      const mozambiqueCoordinateRows = extractMozambiqueLonLatCoordinateRows(rawText);
+      if (mozambiqueCoordinateRows.length >= 4) {
+        mozambiqueGeographicTable = {
+          isMozambiqueGeographicTable: true,
+          rows: mozambiqueCoordinateRows,
+          rowCount: mozambiqueCoordinateRows.length
+        };
+        chatCoordinates = getChatCoordinatesInfo(formatMozambiqueGeographicRows(mozambiqueCoordinateRows));
+        mozambiqueDebug.mozambiqueRows = mozambiqueCoordinateRows.length;
+        mozambiqueDebug.mozambiqueBypassChat = true;
+        console.log("Mozambique geographic table bypassed WGS84 chat from generic prompt rows=", mozambiqueCoordinateRows.length);
+      }
+    }
 
     if (cadastralGrid.isCadastralGrid) {
       coordinates = formatCadastralGridRows(cadastralGrid.rows);
@@ -8856,6 +8897,8 @@ If the table is not readable, output only: ${noCoordinatesText}`;
     if (!cadastralGrid.isCadastralGrid && !mgrs.isMgrs && mozambiqueGeographicTable.isMozambiqueGeographicTable) {
       coordinates = formatMozambiqueGeographicRows(mozambiqueGeographicTable.rows);
       usedModel = `${usedModel}+mozambique-geographic-table`;
+      mozambiqueDebug.mozambiqueRows = mozambiqueGeographicTable.rows.length;
+      mozambiqueDebug.mozambiqueBypassChat = true;
       warning = warning || "识别到葡语 COORDENADAS GEOGRÁFICAS 表格，已按 Latitude 三列 / Longitude 三列解析；纬度负号为南纬，经度按莫桑比克东经处理。";
     }
 
@@ -9105,7 +9148,22 @@ If the table is not readable, output only: ${noCoordinatesText}`;
     cadastralGrid = getCadastralGridInfo(rawText);
     mgrs = getMgrsInfo(rawText);
     mozambiqueGeographicTable = getMozambiqueGeographicInfo(rawText);
+    if (!mozambiqueGeographicTable.isMozambiqueGeographicTable && useMozambiqueGeographicPromptFirst) {
+      const mozambiqueCoordinateRows = extractMozambiqueLonLatCoordinateRows(rawText);
+      if (mozambiqueCoordinateRows.length >= 4) {
+        mozambiqueGeographicTable = {
+          isMozambiqueGeographicTable: true,
+          rows: mozambiqueCoordinateRows,
+          rowCount: mozambiqueCoordinateRows.length
+        };
+        mozambiqueDebug.mozambiqueRows = mozambiqueCoordinateRows.length;
+        mozambiqueDebug.mozambiqueBypassChat = true;
+      }
+    }
     chatCoordinates = getChatCoordinatesInfo(rawText);
+    if (mozambiqueGeographicTable.isMozambiqueGeographicTable) {
+      chatCoordinates = getChatCoordinatesInfo(formatMozambiqueGeographicRows(mozambiqueGeographicTable.rows));
+    }
     kyrgyzGk = getKyrgyzGkInfo(rawText);
     if (cadastralGrid.isCadastralGrid) {
       coordinates = formatCadastralGridRows(cadastralGrid.rows);
@@ -9170,6 +9228,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       cadastralGrid,
       mgrs,
       mozambiqueGeographicTable,
+      mozambiqueDebug,
       chatCoordinates,
       kyrgyzGk,
       bftmLongTable,
@@ -9277,8 +9336,20 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       const fallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
       const fallbackMgrs = getMgrsInfo(fallback.rawText);
-      const fallbackMozambiqueGeographicTable = getMozambiqueGeographicInfo(fallback.rawText);
-      const fallbackChatCoordinates = getChatCoordinatesInfo(fallback.rawText);
+      let fallbackMozambiqueGeographicTable = getMozambiqueGeographicInfo(fallback.rawText);
+      if (!fallbackMozambiqueGeographicTable.isMozambiqueGeographicTable && shouldUseMozambiqueGeographicPromptFirst(req.file, req.body?.rawHint || req.body?.hint || "")) {
+        const fallbackMozambiqueRows = extractMozambiqueLonLatCoordinateRows(fallback.rawText);
+        if (fallbackMozambiqueRows.length >= 4) {
+          fallbackMozambiqueGeographicTable = {
+            isMozambiqueGeographicTable: true,
+            rows: fallbackMozambiqueRows,
+            rowCount: fallbackMozambiqueRows.length
+          };
+        }
+      }
+      const fallbackChatCoordinates = fallbackMozambiqueGeographicTable.isMozambiqueGeographicTable
+        ? getChatCoordinatesInfo(formatMozambiqueGeographicRows(fallbackMozambiqueGeographicTable.rows))
+        : getChatCoordinatesInfo(fallback.rawText);
       const fallbackKyrgyzGk = getKyrgyzGkInfo(fallback.rawText);
       if (fallbackCadastralGrid.isCadastralGrid) {
         fallback.coordinates = formatCadastralGridRows(fallbackCadastralGrid.rows);
@@ -9298,6 +9369,13 @@ If the table is not readable, output only: ${noCoordinatesText}`;
         fallback.precisionMode = "mozambique-geographic-table";
         fallback.warning = fallback.warning || "备用 OCR 识别到葡语 COORDENADAS GEOGRÁFICAS 表格，已按 Latitude 三列 / Longitude 三列解析；请人工核对后生成 KML。";
         fallback.mozambiqueGeographicTable = fallbackMozambiqueGeographicTable;
+        fallback.mozambiqueDebug = {
+          mozambiquePreRouteMatched: shouldUseMozambiqueGeographicPromptFirst(req.file, req.body?.rawHint || req.body?.hint || ""),
+          mozambiqueDirectStarted: false,
+          mozambiqueDirectSuccess: false,
+          mozambiqueRows: fallbackMozambiqueGeographicTable.rows.length,
+          mozambiqueBypassChat: true
+        };
       } else if (fallbackChatCoordinates.isChatCoordinates) {
         fallback.coordinates = formatChatCoordinateRows(fallbackChatCoordinates.points);
         fallback.model = `${fallback.model || "local-ocr-fallback"}+wgs84-chat-coordinates`;

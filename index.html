@@ -10476,7 +10476,11 @@ ${placemarks}
           })).filter(row => Number.isFinite(row.latitude) && Number.isFinite(row.longitude))
           : extractMozambiqueGeographicTableRows(data.rawText || data.coordinates);
         const mozambiqueText = formatMozambiqueGeographicRows(mozambiqueRows);
-        const isMozambiqueGeographicTable = !isCadastralGrid && !isMgrs && Boolean(data.mozambiqueGeographicTable?.isMozambiqueGeographicTable || mozambiqueRows.length > 0);
+        const isMozambiqueGeographicTable = !isCadastralGrid && !isMgrs && Boolean(
+          data.precisionMode === "mozambique-geographic-table"
+          || data.mozambiqueGeographicTable?.isMozambiqueGeographicTable
+          || mozambiqueRows.length > 0
+        );
         const chatRows = Array.isArray(data.chatCoordinates?.points) && data.chatCoordinates.points.length > 0
           ? data.chatCoordinates.points.map((point, index) => {
             const lat = Number(point.lat);
