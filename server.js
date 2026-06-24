@@ -8691,6 +8691,33 @@ Output:
 32.955556,-14.600000
 
 If the table is not readable, output only: ${noCoordinatesText}`;
+    const mozambiqueGeographicTableTranscriptionPrompt = `Read ONLY the Portuguese geographic coordinate table in this image.
+
+Target table:
+COORDENADAS GEOGRÁFICAS
+Datum: Tete
+Order / Ordem | Latitude (degrees minutes seconds) | Longitude (degrees minutes seconds)
+
+This is a table transcription task. Do NOT convert to decimal degrees.
+Ignore signatures, stamps, body paragraphs, map graphics, area values, province text, barcode, and cadastral labels.
+
+For each visible row, output exactly 7 pipe-separated fields:
+Order | LatDeg | LatMin | LatSec | LonDeg | LonMin | LonSec
+
+Rules:
+- Preserve the printed row order from 1 to the final visible row.
+- Read horizontally across each row. Never borrow values from the row above or below.
+- Latitude degree may be negative, for example -14.
+- Keep decimal comma seconds exactly readable as 0,00 / 20,00 / 10,00.
+- Longitude degree values for Mozambique/Tete are positive 32 or 33.
+- Output only table rows, no explanation.
+
+Examples:
+1 | -14 | 36 | 0,00 | 32 | 57 | 20,00
+2 | -14 | 36 | 0,00 | 33 | 06 | 0,00
+3 | -14 | 39 | 20,00 | 33 | 06 | 0,00
+
+If the table is not readable, output only: ${noCoordinatesText}`;
     const imageItems = [
       {
         type: "image_url",
@@ -8708,6 +8735,28 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       mozambiqueDirectSuccess: false,
       mozambiqueRows: 0,
       mozambiqueBypassChat: false
+    };
+
+    const readMozambiqueRowsWithPrompt = async ({ promptText, promptName, timeoutMs = 60000 }) => {
+      console.log(`Mozambique geographic table ${promptName} prompt started`, {
+        model: aliyunVisionModel,
+        timeoutMs
+      });
+      const response = await callAliyunVision({
+        modelName: aliyunVisionModel,
+        prompt: promptText,
+        imageItems,
+        temperature: 0,
+        maxTokens: 2200,
+        timeoutMs
+      });
+      const rawText = response.choices?.[0]?.message?.content || "";
+      const tableInfo = getMozambiqueGeographicInfo(rawText);
+      const rows = tableInfo.isMozambiqueGeographicTable
+        ? tableInfo.rows
+        : extractMozambiqueLonLatCoordinateRows(rawText);
+
+      return { rawText, rows, tableInfo };
     };
 
     if (useKyrgyzGkPromptFirst) {
@@ -8788,29 +8837,36 @@ If the table is not readable, output only: ${noCoordinatesText}`;
 
       try {
         mozambiqueDebug.mozambiqueDirectStarted = true;
-        console.log("Mozambique geographic table direct prompt started", {
-          model: aliyunVisionModel,
+        let mozambiqueRead = await readMozambiqueRowsWithPrompt({
+          promptText: mozambiqueGeographicTablePrompt,
+          promptName: "decimal",
           timeoutMs: 60000
         });
-        const mozambiqueDirectResponse = await callAliyunVision({
-          modelName: aliyunVisionModel,
-          prompt: mozambiqueGeographicTablePrompt,
-          imageItems,
-          temperature: 0,
-          maxTokens: 1600,
-          timeoutMs: 60000
-        });
-        const mozambiqueDirectRawText = mozambiqueDirectResponse.choices?.[0]?.message?.content || "";
-        const mozambiqueDirectInfo = getMozambiqueGeographicInfo(mozambiqueDirectRawText);
-        const mozambiqueDirectCoordinateRows = extractMozambiqueLonLatCoordinateRows(mozambiqueDirectRawText);
 
-        if (mozambiqueDirectInfo.isMozambiqueGeographicTable || mozambiqueDirectCoordinateRows.length >= 4) {
-          const directRows = mozambiqueDirectInfo.isMozambiqueGeographicTable
-            ? mozambiqueDirectInfo.rows
-            : mozambiqueDirectCoordinateRows;
+        if (!mozambiqueRead.tableInfo.isMozambiqueGeographicTable || mozambiqueRead.rows.length < 20 || mozambiqueRead.rows.length > 22) {
+          console.log("Mozambique geographic table decimal prompt returned weak rows, retrying transcription", {
+            rows: mozambiqueRead.rows.length,
+            preview: mozambiqueRead.rawText.slice(0, 500)
+          });
+          const transcriptionRead = await readMozambiqueRowsWithPrompt({
+            promptText: mozambiqueGeographicTableTranscriptionPrompt,
+            promptName: "transcription",
+            timeoutMs: 80000
+          });
+
+          const transcriptionScore = Math.abs(transcriptionRead.rows.length - 22);
+          const decimalScore = Math.abs(mozambiqueRead.rows.length - 22);
+          if (transcriptionRead.rows.length >= 4
+            && (transcriptionScore < decimalScore || (transcriptionRead.tableInfo.isMozambiqueGeographicTable && transcriptionRead.rows.length >= 20))) {
+            mozambiqueRead = transcriptionRead;
+          }
+        }
+
+        if (mozambiqueRead.rows.length >= 4) {
+          const directRows = mozambiqueRead.rows;
           const directCoordinates = formatMozambiqueGeographicRows(directRows);
 
-          if (directRows.length > 0 || mozambiqueDirectCoordinateRows.length >= 4) {
+          if (directRows.length > 0) {
             mozambiqueDebug.mozambiqueDirectSuccess = true;
             mozambiqueDebug.mozambiqueRows = directRows.length;
             mozambiqueDebug.mozambiqueBypassChat = true;
@@ -8842,7 +8898,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
 
             return res.json({
               model: `${aliyunVisionModel}+mozambique-geographic-direct`,
-              rawText: mozambiqueDirectRawText,
+              rawText: mozambiqueRead.rawText,
               coordinates: directCoordinates,
               precisionMode: "mozambique-geographic-table",
               warning: "已通过 Mozambique / Portuguese geographic table 专用视觉 prompt 读取 Latitude / Longitude 三列表格；请结合原图核对。",
@@ -8858,7 +8914,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
         }
 
         console.log("Mozambique geographic table direct prompt failed reason=no_parsable_rows", {
-          preview: mozambiqueDirectRawText.slice(0, 500)
+          preview: mozambiqueRead.rawText.slice(0, 500)
         });
       } catch (mozambiqueDirectError) {
         console.error("Mozambique geographic table direct prompt failed reason=", mozambiqueDirectError.message || mozambiqueDirectError);
@@ -8890,24 +8946,19 @@ If the table is not readable, output only: ${noCoordinatesText}`;
           try {
             console.log("Mozambique geographic table late pre-route from generic decimal rows", {
               rows: mozambiqueCoordinateRows.length,
-              timeoutMs: 60000
+              timeoutMs: 80000
             });
-            const mozambiqueLateResponse = await callAliyunVision({
-              modelName: aliyunVisionModel,
-              prompt: mozambiqueGeographicTablePrompt,
-              imageItems,
-              temperature: 0,
-              maxTokens: 1600,
-              timeoutMs: 60000
+            const mozambiqueLateRead = await readMozambiqueRowsWithPrompt({
+              promptText: mozambiqueGeographicTableTranscriptionPrompt,
+              promptName: "late-transcription",
+              timeoutMs: 80000
             });
-            const mozambiqueLateRawText = mozambiqueLateResponse.choices?.[0]?.message?.content || "";
-            const mozambiqueLateInfo = getMozambiqueGeographicInfo(mozambiqueLateRawText);
-            const mozambiqueLateRows = mozambiqueLateInfo.isMozambiqueGeographicTable
-              ? mozambiqueLateInfo.rows
-              : extractMozambiqueLonLatCoordinateRows(mozambiqueLateRawText);
+            const mozambiqueLateRows = mozambiqueLateRead.rows;
+            const lateScore = Math.abs(mozambiqueLateRows.length - 22);
+            const genericScore = Math.abs(mozambiqueCoordinateRows.length - 22);
 
-            if (mozambiqueLateRows.length >= 4) {
-              rawText = mozambiqueLateRawText;
+            if (mozambiqueLateRows.length >= 4 && lateScore <= genericScore) {
+              rawText = mozambiqueLateRead.rawText;
               mozambiqueGeographicTable = {
                 isMozambiqueGeographicTable: true,
                 rows: mozambiqueLateRows,
