@@ -3867,6 +3867,10 @@ function formatMgrsRows(rows) {
 
 function hasMozambiqueGeographicTableContext(text) {
   const value = String(text || "");
+  if (/Mozambique\s+Geographic\s+Table|mozambique_geographic_table/i.test(value)) {
+    return true;
+  }
+
   const hasPortugueseGeoTitle = /COORDENADAS\s+GEOGR[ÁA]FICAS/i.test(value);
   const hasMozambiqueContext = /Datum\s*:?\s*Tete|Tete|Prov[íi]ncia|INAMI|MIREME|Ordem|Order/i.test(value);
   const hasLatLonColumns = /Latitude/i.test(value) && /Longitude/i.test(value);
@@ -3902,6 +3906,39 @@ function dmsColumnsToDecimal(degrees, minutes, seconds, options = {}) {
 
 function extractMozambiqueGeographicTableRows(text) {
   const source = String(text || "");
+
+  if (/Mozambique\s+Geographic\s+Table|mozambique_geographic_table/i.test(source)) {
+    const formattedRows = new Map();
+
+    source
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .forEach(line => {
+        const match = line.match(/^(\d{1,3})\s*\|\s*(-?\d+(?:\.\d+)?)\s*\|\s*(-?\d+(?:\.\d+)?)\s*\|/);
+        if (!match) {
+          return;
+        }
+
+        const order = Number(match[1]);
+        const latitude = Number(match[2]);
+        const longitude = Number(match[3]);
+
+        if (!Number.isInteger(order) || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+          return;
+        }
+
+        if (latitude > -10 || latitude < -27 || longitude < 30 || longitude > 42) {
+          return;
+        }
+
+        if (!formattedRows.has(order)) {
+          formattedRows.set(order, { order, latitude, longitude });
+        }
+      });
+
+    return Array.from(formattedRows.values()).sort((a, b) => a.order - b.order);
+  }
 
   if (!hasMozambiqueGeographicTableContext(source) && !/^order\s*\|\s*latitude\s*\|\s*longitude/im.test(source)) {
     return [];
@@ -3957,9 +3994,11 @@ function extractMozambiqueGeographicTableRows(text) {
 }
 
 function formatMozambiqueGeographicRows(rows) {
-  return rows
-    .map(row => `${row.longitude.toFixed(6)},${row.latitude.toFixed(6)}`)
-    .join("\n");
+  return ["Mozambique Geographic Table | order | lat | lon | KML", ...rows.map(row => {
+    const lat = Number(row.latitude).toFixed(6);
+    const lon = Number(row.longitude).toFixed(6);
+    return `${row.order} | ${lat} | ${lon} | ${lon},${lat},0`;
+  })].join("\n");
 }
 
 function getMozambiqueGeographicInfo(text) {
