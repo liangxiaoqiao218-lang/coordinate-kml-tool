@@ -8737,13 +8737,13 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       mozambiqueBypassChat: false
     };
 
-    const readMozambiqueRowsWithPrompt = async ({ promptText, promptName, timeoutMs = 60000 }) => {
+    const readMozambiqueRowsWithPrompt = async ({ promptText, promptName, timeoutMs = 60000, modelName = aliyunVisionModel }) => {
       console.log(`Mozambique geographic table ${promptName} prompt started`, {
-        model: aliyunVisionModel,
+        model: modelName,
         timeoutMs
       });
       const response = await callAliyunVision({
-        modelName: aliyunVisionModel,
+        modelName,
         prompt: promptText,
         imageItems,
         temperature: 0,
@@ -8851,7 +8851,8 @@ If the table is not readable, output only: ${noCoordinatesText}`;
           const transcriptionRead = await readMozambiqueRowsWithPrompt({
             promptText: mozambiqueGeographicTableTranscriptionPrompt,
             promptName: "transcription",
-            timeoutMs: 80000
+            timeoutMs: 80000,
+            modelName: aliyunOcrModel
           });
 
           const transcriptionScore = Math.abs(transcriptionRead.rows.length - 22);
@@ -8951,7 +8952,8 @@ If the table is not readable, output only: ${noCoordinatesText}`;
             const mozambiqueLateRead = await readMozambiqueRowsWithPrompt({
               promptText: mozambiqueGeographicTableTranscriptionPrompt,
               promptName: "late-transcription",
-              timeoutMs: 80000
+              timeoutMs: 80000,
+              modelName: aliyunOcrModel
             });
             const mozambiqueLateRows = mozambiqueLateRead.rows;
             const lateScore = Math.abs(mozambiqueLateRows.length - 22);
