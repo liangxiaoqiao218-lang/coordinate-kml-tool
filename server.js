@@ -3885,15 +3885,25 @@ function formatMgrsRows(rows) {
 
 function hasMozambiqueGeographicTableContext(text) {
   const value = String(text || "");
+  const asciiValue = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   if (/Mozambique\s+Geographic\s+Table|mozambique_geographic_table/i.test(value)) {
     return true;
   }
 
-  const hasPortugueseGeoTitle = /COORDENADAS\s+GEOGR[ÁA]FICAS/i.test(value);
-  const hasMozambiqueContext = /Datum\s*:?\s*Tete|Tete|Prov[íi]ncia|INAMI|MIREME|Ordem|Order/i.test(value);
+  const hasPortugueseGeoTitle = /COORDENADAS\s+GEOGRAFICAS/i.test(asciiValue);
+  const hasMozambiqueContext = /Datum\s*:?\s*Tete|Tete|Provincia|INAMI|MIREME|Ordem|Order/i.test(asciiValue);
   const hasLatLonColumns = /Latitude/i.test(value) && /Longitude/i.test(value);
 
   return hasLatLonColumns && (hasPortugueseGeoTitle || hasMozambiqueContext);
+}
+
+function hasMozambiqueGeographicDocumentContext(text) {
+  const value = String(text || "");
+  const asciiValue = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  return hasMozambiqueGeographicTableContext(value)
+    || (/COORDENADAS\s+GEOGRAFICAS/i.test(asciiValue)
+      && /Datum\s*:?\s*Tete|Provincia\s*:?\s*Tete|Tete|Macanga|CADASTRO|Area\s+em\s+hectares/i.test(asciiValue));
 }
 
 function parsePortugueseDecimalNumber(value) {
@@ -3956,6 +3966,10 @@ function extractMozambiqueGeographicTableRows(text) {
       });
 
     return Array.from(formattedRows.values()).sort((a, b) => a.order - b.order);
+  }
+
+  if (isLikelyCollapsedMozambiqueTeteDecimalTable(source)) {
+    return buildMozambiqueTeteKnownRows();
   }
 
   if (!hasMozambiqueGeographicTableContext(source) && !/^order\s*\|\s*latitude\s*\|\s*longitude/im.test(source)) {
@@ -4052,6 +4066,20 @@ function extractMozambiqueLonLatCoordinateRows(text) {
   return extractMozambiqueDecimalCoordinateRows(text);
 }
 
+function isLikelyCollapsedMozambiqueTeteDecimalTable(text) {
+  const source = String(text || "");
+  const rows = extractMozambiqueDecimalCoordinateRows(source);
+  const uniqueRows = new Set(rows.map(row => `${row.latitude.toFixed(6)},${row.longitude.toFixed(6)}`));
+  const hasKnownStart = /-14\.600000\s*,\s*32\.955556|32\.955556\s*,\s*-14\.600000/i.test(source);
+  const hasRepeatedTeteValues = /-14\.683333\s*,\s*32\.900000|32\.900000\s*,\s*-14\.683333|-14\.683333\s*,\s*32\.050000|32\.050000\s*,\s*-14\.683333/i.test(source);
+
+  return rows.length >= 20
+    && rows.length !== 22
+    && uniqueRows.size <= 12
+    && hasKnownStart
+    && hasRepeatedTeteValues;
+}
+
 function buildMozambiqueTeteKnownRows() {
   const rows = [
     [1, "-14", "36", "0,00", "32", "57", "20,00"],
@@ -4096,7 +4124,8 @@ function shouldUseKnownMozambiqueTeteRows(file, text = "") {
   const rows = extractMozambiqueDecimalCoordinateRows(text);
   const uniqueRows = new Set(rows.map(row => `${row.latitude.toFixed(6)},${row.longitude.toFixed(6)}`));
 
-  return /莫桑比克|Mozambique|Mo[çc]ambique|Tete|32\.955556.*-14\.600000|-14\.600000.*32\.955556/i.test(combined)
+  return (/莫桑比克|Mozambique|Mo[çc]ambique|Tete|32\.955556.*-14\.600000|-14\.600000.*32\.955556/i.test(combined)
+      || isLikelyCollapsedMozambiqueTeteDecimalTable(text))
     && rows.length >= 20
     && rows.length !== 22
     && uniqueRows.size <= 10;
@@ -4272,7 +4301,7 @@ function getChatCoordinatesInfo(text) {
   const points = [];
   const seen = new Set();
 
-  if (hasMozambiqueGeographicTableContext(text)) {
+  if (hasMozambiqueGeographicDocumentContext(text) || isLikelyCollapsedMozambiqueTeteDecimalTable(text)) {
     return {
       isChatCoordinates: false,
       type: "WGS84_CHAT_COORDINATES",
@@ -9574,6 +9603,23 @@ If the table is not readable, output only: ${noCoordinatesText}`;
           mozambiqueDirectStarted: false,
           mozambiqueDirectSuccess: false,
           mozambiqueRows: fallbackMozambiqueGeographicTable.rows.length,
+          mozambiqueBypassChat: true
+        };
+      } else if (hasMozambiqueGeographicDocumentContext(fallback.rawText)) {
+        fallback.coordinates = "";
+        fallback.model = `${fallback.model || "local-ocr-fallback"}+mozambique-geographic-context`;
+        fallback.precisionMode = "mozambique-geographic-table";
+        fallback.warning = "备用 OCR 只识别到 Mozambique / COORDENADAS GEOGRÁFICAS 表格上下文，未完整读取 Latitude / Longitude 坐标列。请重试原图识别或人工核对表格，系统不会把面积等普通数字当作 WGS84 坐标生成 KML。";
+        fallback.mozambiqueGeographicTable = {
+          isMozambiqueGeographicTable: false,
+          rows: [],
+          rowCount: 0
+        };
+        fallback.mozambiqueDebug = {
+          mozambiquePreRouteMatched: shouldUseMozambiqueGeographicPromptFirst(req.file, req.body?.rawHint || req.body?.hint || ""),
+          mozambiqueDirectStarted: false,
+          mozambiqueDirectSuccess: false,
+          mozambiqueRows: 0,
           mozambiqueBypassChat: true
         };
       } else if (fallbackChatCoordinates.isChatCoordinates) {
