@@ -8638,6 +8638,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         || hasMozambiqueGeographicDocumentContext(value)
         || isLikelyCollapsedMozambiqueTeteDecimalTable(value)
         || hasMozambiqueGeographicTableRows(value)
+        || extractWgs84TableCoordinateRows(value).length > 0
         || hasKyrgyzGkRows(value)) {
         return [];
       }
@@ -8685,6 +8686,118 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         const label = row.label || String(index + 1);
         return `${label} | ${row.lat}, ${row.lon} | ${row.kmlCoordinate || `${row.lon},${row.lat},0`}`;
       })].join("\n");
+    }
+
+    function hasLongitudeLatitudeHeaderContext(text) {
+      const value = String(text || "");
+      const normalized = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const lower = normalized.toLowerCase();
+      const lonTokens = [
+        "\u7ecf\u5ea6\u4e1c",
+        "\u4e1c\u7ecf",
+        "\u7ecf\u5ea6",
+        "longitude este",
+        "e longitude",
+        "east longitude",
+        "longitude",
+        "long",
+        "lon"
+      ];
+      const latTokens = [
+        "\u5317\u7eac",
+        "\u7eac\u5ea6",
+        "n latitude",
+        "north latitude",
+        "latitude",
+        "lat"
+      ];
+      const firstLongitudeIndex = Math.min(...lonTokens.map(token => {
+        const index = lower.indexOf(token.toLowerCase());
+        return index >= 0 ? index : Number.POSITIVE_INFINITY;
+      }));
+      const firstLatitudeIndex = Math.min(...latTokens.map(token => {
+        const index = lower.indexOf(token.toLowerCase());
+        return index >= 0 ? index : Number.POSITIVE_INFINITY;
+      }));
+
+      return Number.isFinite(firstLongitudeIndex)
+        && Number.isFinite(firstLatitudeIndex)
+        && firstLongitudeIndex < firstLatitudeIndex;
+    }
+
+    function parseLonLatTableCoordinateLine(line, fallbackIndex = 1) {
+      const original = String(line || "").trim();
+
+      if (!original || /[掳潞'鈥测€?]/.test(original) || /\b(?:UTM|BFTM|EPSG|MGRS)\b/i.test(original) || /\d\s*[NSEWO]\b/i.test(original)) {
+        return null;
+      }
+
+      if (/经度|纬度|Longitude|Latitude|Long|Lon|Lat|北纬|东经|Area|hectares|CADASTRO/i.test(original)) {
+        return null;
+      }
+
+      const labelPrefixPattern = /^\s*(?:point|pt|\u70b9|\u70b9\u53f7)?\s*([A-Za-z])\s*(?:[\.\)、):：,，、\]\?\-]\s*|\s+)|^\s*(?:point|pt|\u70b9|\u70b9\u53f7)?\s*(\d{1,3})\s*(?:[\)、):：,，、\]\?\-]\s*|\s+)/i;
+      const labelMatch = original.match(labelPrefixPattern);
+      const labelValue = labelMatch ? (labelMatch[1] || labelMatch[2]) : "";
+      const label = labelValue ? String(labelValue).toUpperCase() : String(fallbackIndex);
+      const body = normalizeChatCoordinateText(original).replace(labelPrefixPattern, "").trim();
+      const numbers = body.match(/[-+]?\d+(?:\.\d+)?/g) || [];
+
+      if (numbers.length !== 2) {
+        return null;
+      }
+
+      const lonText = numbers[0];
+      const latText = numbers[1];
+      const lon = Number(lonText);
+      const lat = Number(latText);
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+        return null;
+      }
+
+      return {
+        label,
+        lat,
+        lon,
+        latitude: latText,
+        longitude: lonText,
+        raw: original,
+        kmlCoordinate: `${lonText},${latText},0`
+      };
+    }
+
+    function extractWgs84TableCoordinateRows(text) {
+      const value = String(text || "");
+
+      if (!hasLongitudeLatitudeHeaderContext(value)
+        || hasMgrsRows(value)
+        || hasCadastralGridRows(value)
+        || hasMozambiqueGeographicDocumentContext(value)
+        || isLikelyCollapsedMozambiqueTeteDecimalTable(value)
+        || hasMozambiqueGeographicTableRows(value)
+        || hasKyrgyzGkRows(value)) {
+        return [];
+      }
+
+      const rows = [];
+      const seen = new Set();
+      value.split(/\r?\n/).forEach(line => {
+        const row = parseLonLatTableCoordinateLine(line, rows.length + 1);
+        if (!row) {
+          return;
+        }
+
+        const key = `${row.lat}|${row.lon}`;
+        if (seen.has(key)) {
+          return;
+        }
+
+        seen.add(key);
+        rows.push(row);
+      });
+
+      return rows;
     }
 
     function hasKyrgyzGkContext(text) {
@@ -8786,22 +8899,28 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       const cadastralRows = extractCadastralGridRows(input.value);
       const mgrsRows = extractMgrsRows(input.value);
       const mozambiqueRows = extractMozambiqueGeographicTableRows(input.value);
+      const wgs84TableRows = extractWgs84TableCoordinateRows(input.value);
       const chatRows = extractChatCoordinateRows(input.value);
       const kyrgyzRows = extractKyrgyzGkRows(input.value);
       const isCadastralGrid = cadastralRows.length > 0;
       const isMgrs = !isCadastralGrid && mgrsRows.length > 0;
       const isMozambiqueGeographicTable = !isCadastralGrid && !isMgrs && mozambiqueRows.length > 0;
-      const isChatCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && chatRows.length > 0;
-      const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isChatCoordinates && kyrgyzRows.length > 0;
+      const isWgs84TableCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && wgs84TableRows.length > 0;
+      const isChatCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && chatRows.length > 0;
+      const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && kyrgyzRows.length > 0;
 
       if (cadastralGridPanel) {
         cadastralGridPanel.classList.toggle("is-active", isCadastralGrid);
       }
 
       if (cadastralGridBadge) {
-        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isChatCoordinates || isKyrgyzGk);
+        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk);
         if (isMozambiqueGeographicTable) {
           cadastralGridBadge.textContent = `Mozambique geographic table · ${mozambiqueRows.length} points`;
+          return;
+        }
+        if (isWgs84TableCoordinates) {
+          cadastralGridBadge.textContent = `WGS84 表格坐标 · 经度/纬度 · ${wgs84TableRows.length} 点`;
           return;
         }
         cadastralGridBadge.textContent = isCadastralGrid
@@ -9395,6 +9514,12 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return mozambiqueRows.length === 1;
       }
 
+      if (options.isWgs84TableCoordinates) {
+        const wgs84TableRows = extractWgs84TableCoordinateRows(text);
+        exportType.value = inferGeometry(wgs84TableRows);
+        return wgs84TableRows.length === 1;
+      }
+
       if (options.isChatCoordinates) {
         const chatRows = extractChatCoordinateRows(text);
         exportType.value = inferGeometry(chatRows);
@@ -9956,27 +10081,28 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return warnings;
     }
 
-    function buildChatCoordinatesKml(pairs, selectedType = "") {
+    function buildChatCoordinatesKml(pairs, selectedType = "", options = {}) {
       const geometry = selectedType || inferGeometry(pairs);
       let placemarks = "";
-      let documentName = "WGS84 Chat Coordinates";
+      const sourceDescription = options.sourceDescription || "Source interpreted as WGS84 decimal degrees in lat,lon order. KML coordinates are written as longitude,latitude,0.";
+      let documentName = options.documentName || "WGS84 Chat Coordinates";
 
       if (geometry === "Point") {
         placemarks = buildPointKml(pairs);
-        documentName = "WGS84 Chat Coordinate Points";
+        documentName = options.documentName || "WGS84 Chat Coordinate Points";
       } else if (geometry === "LineString") {
         placemarks = buildLineStringKml(pairs, 1);
-        documentName = "WGS84 Chat Coordinate Line";
+        documentName = options.documentName || "WGS84 Chat Coordinate Line";
       } else {
         placemarks = buildPolygonKml(pairs, 1);
-        documentName = "WGS84 Chat Coordinate Polygon";
+        documentName = options.documentName || "WGS84 Chat Coordinate Polygon";
       }
 
       return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
     <name>${escapeXml(documentName)}</name>
-    <description>Generated by GeoKit Lab. Source interpreted as WGS84 decimal degrees in lat,lon order. KML coordinates are written as longitude,latitude,0.</description>
+    <description>Generated by GeoKit Lab. ${escapeXml(sourceDescription)}</description>
 ${placemarks}
   </Document>
 </kml>`;
@@ -10324,6 +10450,46 @@ ${placemarks}
         return;
       }
 
+      const wgs84TableRowsForExport = extractWgs84TableCoordinateRows(input.value);
+      if (wgs84TableRowsForExport.length > 0) {
+        const pairs = wgs84TableRowsForExport.map(row => normalizeKmlPair({
+          longitude: row.lon,
+          latitude: row.lat
+        }));
+        const selectedType = inferGeometry(pairs);
+        exportType.value = selectedType;
+
+        const usageAllowed = await consumeUsage("convert");
+        if (!usageAllowed) {
+          return;
+        }
+
+        const kml = buildChatCoordinatesKml(pairs, selectedType, {
+          documentName: "WGS84 Table Coordinates",
+          sourceDescription: "Source interpreted from longitude/latitude table headers in lon,lat order. KML coordinates are written as longitude,latitude,0."
+        });
+        const blob = new Blob([kml], {
+          type: "application/vnd.google-earth.kml+xml;charset=utf-8"
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = "wgs84-table-coordinates.kml";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        trackEvent("kml_download_click", {
+          exportType: `WGS84Table-${selectedType}`,
+          count: pairs.length,
+          coordinateOrder: "lonlat",
+          convertedToWgs84: false
+        });
+        showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 表格坐标点；已按经度/纬度顺序写入 longitude,latitude,0。`);
+        return;
+      }
+
       if (hasChatCoordinateRows(input.value)) {
         const rows = extractChatCoordinateRows(input.value);
         const pairs = rows.map(row => normalizeKmlPair({
@@ -10608,17 +10774,34 @@ ${placemarks}
           }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
           : extractChatCoordinateRows(data.rawText || data.coordinates);
         const chatText = formatChatCoordinateRows(chatRows);
-        const isChatCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
+        const wgs84TableRows = Array.isArray(data.wgs84TableCoordinates?.points) && data.wgs84TableCoordinates.points.length > 0
+          ? data.wgs84TableCoordinates.points.map((point, index) => {
+            const lat = Number(point.lat);
+            const lon = Number(point.lon);
+            return {
+              label: point.label || String(index + 1),
+              lat,
+              lon,
+              latitude: String(lat),
+              longitude: String(lon),
+              raw: point.raw || "",
+              kmlCoordinate: point.kmlCoordinate || `${lon},${lat},0`
+            };
+          }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
+          : extractWgs84TableCoordinateRows(data.rawText || data.coordinates);
+        const wgs84TableText = formatChatCoordinateRows(wgs84TableRows);
+        const isWgs84TableCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && Boolean(data.precisionMode === "wgs84-table-coordinates" || data.wgs84TableCoordinates?.isWgs84TableCoordinates || wgs84TableRows.length > 0);
+        const isChatCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
         const kyrgyzGkRows = Array.isArray(data.kyrgyzGk?.rows) && data.kyrgyzGk.rows.length > 0
           ? data.kyrgyzGk.rows
           : extractKyrgyzGkRows(data.rawText || data.coordinates);
         const kyrgyzGkText = formatKyrgyzGkRows(kyrgyzGkRows);
-        const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isChatCoordinates && Boolean(data.kyrgyzGk?.isKyrgyzGk || kyrgyzGkRows.length > 0);
+        const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && Boolean(data.kyrgyzGk?.isKyrgyzGk || kyrgyzGkRows.length > 0);
         const kyrgyzGkIntegrity = isKyrgyzGk
           ? (data.kyrgyzGk?.integrity || analyzeKyrgyzGkRows(kyrgyzGkRows))
           : null;
 
-        if (!isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isChatCoordinates && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
+        if (!isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
           const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
 
           if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeLikelyUtm30Coordinate(firstProjectedPair[0], firstProjectedPair[1])) {
@@ -10639,21 +10822,24 @@ ${placemarks}
         // 4. Madagascar cadastral grid: display only num | XV | YV; KML later converts EPSG:29702 corners to WGS84.
         // 5. MGRS / UTM Grid Reference: display raw MGRS plus WGS84/KML columns; KML uses converted WGS84.
         // 6. Mozambique Portuguese geographic tables: display WGS84 lon,lat parsed from Latitude/Longitude DMS columns.
-        // 7. WGS84 chat coordinates: display label | WGS84 | KML; source is lat,lon and KML is lon,lat,0.
-        // 8. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
-        // 9. Plain decimal lon/lat: use the ordinary polygon path only.
-        // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, mgrsText, mozambiqueText, chatText, or kyrgyzGkText.
+        // 7. WGS84 table coordinates: when headers say longitude/latitude, source is lon,lat and KML stays lon,lat,0.
+        // 8. WGS84 chat coordinates: display label | WGS84 | KML; source is lat,lon and KML is lon,lat,0.
+        // 9. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
+        // 10. Plain decimal lon/lat: use the ordinary polygon path only.
+        // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, mgrsText, mozambiqueText, wgs84TableText, chatText, or kyrgyzGkText.
         const finalCoordinates = isCadastralGrid
           ? (cadastralGridText || data.coordinates || "")
           : isMgrs
             ? (mgrsText || data.coordinates || "")
             : isMozambiqueGeographicTable
               ? (mozambiqueText || data.coordinates || "")
-              : isChatCoordinates
-                ? (chatText || data.coordinates || "")
-                : isKyrgyzGk
-                  ? (kyrgyzGkText || data.coordinates || "")
-                  : chooseBestCoordinateResult([
+              : isWgs84TableCoordinates
+                ? (wgs84TableText || data.coordinates || "")
+                : isChatCoordinates
+                  ? (chatText || data.coordinates || "")
+                  : isKyrgyzGk
+                    ? (kyrgyzGkText || data.coordinates || "")
+                    : chooseBestCoordinateResult([
               recognizedLines,
               projectedLines,
               preservedCoordinates,
@@ -10666,6 +10852,7 @@ ${placemarks}
         appendDebug(`矿权网格识别：${isCadastralGrid ? `已识别 ${cadastralGridRows.length} 行 num / XV / YV` : "无"}`);
         appendDebug(`MGRS识别：${isMgrs ? `已识别 ${mgrsRows.length} 行 MGRS / UTM Grid Reference` : "无"}`);
         appendDebug(`Mozambique Geographic Table识别：${isMozambiqueGeographicTable ? `已识别 ${mozambiqueRows.length} 行 Latitude / Longitude` : "无"}`);
+        appendDebug(`WGS84表格坐标识别：${isWgs84TableCoordinates ? `已识别 ${wgs84TableRows.length} 行 lon / lat` : "无"}`);
         appendDebug(`WGS84聊天坐标识别：${isChatCoordinates ? `已识别 ${chatRows.length} 行 lat / lon` : "无"}`);
         appendDebug(`Kyrgyzstan GK识别：${isKyrgyzGk ? `已识别 ${kyrgyzGkRows.length} 行 point / X / Y` : "无"}`);
         appendDebug(`原样坐标行：\n${recognizedLines || "无"}`);
@@ -10697,7 +10884,7 @@ ${placemarks}
         input.value = finalCoordinates;
         coordinateOrder.value = "auto";
         updateCadastralGridPanel();
-        if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isChatCoordinates || isKyrgyzGk) {
+        if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk) {
           clearInternalKmlSource();
         } else {
           setInternalKmlSourceFromText(finalCoordinates);
@@ -10706,6 +10893,7 @@ ${placemarks}
           isCadastralGrid,
           isMgrs,
           isMozambiqueGeographicTable,
+          isWgs84TableCoordinates,
           isChatCoordinates,
           isKyrgyzGk
         });
@@ -10716,6 +10904,7 @@ ${placemarks}
           cadastralGrid: isCadastralGrid,
           mgrs: isMgrs,
           mozambiqueGeographicTable: isMozambiqueGeographicTable,
+          wgs84TableCoordinates: isWgs84TableCoordinates,
           chatCoordinates: isChatCoordinates,
           kyrgyzGk: isKyrgyzGk,
           projected: hasProjectedCoordinateRows(finalCoordinates)
@@ -10726,6 +10915,8 @@ ${placemarks}
           showMessage(`已识别 ${mgrsRows.length} 个 MGRS / UTM Grid Reference 点，并转换为 WGS84 经纬度；生成 KML 时将使用 longitude,latitude,0。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isMozambiqueGeographicTable) {
           showMessage(`已识别 Mozambique / Portuguese geographic table ${mozambiqueRows.length} 点，已按 Latitude 三列和 Longitude 三列解析为 WGS84 lon,lat。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+        } else if (isWgs84TableCoordinates) {
+          showMessage(`已识别 ${wgs84TableRows.length} 个 WGS84 表格坐标点；已按经度/纬度顺序写入 longitude,latitude,0。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isChatCoordinates) {
           const chatWarning = data.chatCoordinates?.warning || "";
           if (chatWarning === "possible swapped lat/lon") {
