@@ -209,3 +209,25 @@ parserTrace:
 
 - Success must show `OCR -> DMS_GROUPED:accepted`.
 - `WGS84_CHAT:accepted` must not appear for this path.
+
+### DMS_LABEL_STRIP
+
+- DMS parsers must clean leading row labels before matching DMS tokens.
+- Supported labels include `1.`, `2)`, `3:`, `3：`, `A.`, and `Point 1:`.
+- Only the leading label may be removed; digits inside the coordinate body must never be changed or deleted.
+
+### DMS_QUOTE_TOLERANCE
+
+- DMS parsing must tolerate OCR quote variants including:
+  - `11°52"11.93"N`
+  - `11°52'11.93"N`
+  - `11°52′11.93″N`
+  - `11°52 11.93 N`
+- When the separator after minutes is mistakenly recognized as `"`, treat it as the minute separator `'` if a decimal seconds value and a direction follow.
+
+### DMS_GROUPED_OUTPUT_LOCK
+
+- Backend accepted mode must be `precisionMode=dms-grouped-coordinates`.
+- Frontend must not re-run fallback extraction over accepted grouped DMS output.
+- Frontend must not overwrite, reorder, or flatten grouped coordinates.
+- Multiple Mining Area groups must remain separate polygons, not one flattened Polygon.

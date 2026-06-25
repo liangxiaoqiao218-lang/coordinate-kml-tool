@@ -2876,6 +2876,18 @@ function normalizeText(text) {
     .replace(/\b0\b/g, "O");
 }
 
+function stripLeadingCoordinateLabel(line) {
+  return String(line || "")
+    .replace(/^\s*(?:point|pt|ponto|sommet|vertex)\s*[-#:]?\s*\d{1,3}\s*[\).:：-]?\s*/i, "")
+    .replace(/^\s*[A-Z]\s*[\).:：-]\s*/i, "")
+    .replace(/^\s*\d{1,3}\s*[\).:：-]\s*/, "");
+}
+
+function normalizeDmsLineForParsing(line) {
+  return stripLeadingCoordinateLabel(normalizeText(line))
+    .replace(/(\d{1,3}\s*°\s*\d{1,2})\s*"\s*(?=\d{1,2}(?:\.\d+)?\s*["']?\s*[NSEWO])/gi, "$1'");
+}
+
 function decimalFromDms(degrees, minutes, seconds, direction) {
   const deg = Number(degrees);
   const min = Number(minutes);
@@ -2946,7 +2958,7 @@ function parseCompactDmsToken(token, fallbackDirection) {
 }
 
 function getDmsTokensFromLine(line) {
-  return String(line || "").match(/[-+]?\d{1,3}\s*°\s*(?:\d{1,2}\s*'\s*\d{1,4}(?:\.\d+)?|\d{3,7}(?:\.\d+)?)\s*["']?\s*[NSEWO]?/gi) || [];
+  return normalizeDmsLineForParsing(line).match(/[-+]?\d{1,3}\s*°\s*(?:\d{1,2}\s*'\s*\d{1,4}(?:\.\d+)?|\d{1,2}\s+\d{1,4}(?:\.\d+)?|\d{3,7}(?:\.\d+)?)\s*["']?\s*[NSEWO]?/gi) || [];
 }
 
 function tokenHasDirection(token) {
@@ -3050,8 +3062,8 @@ function stripOcrBboxPrefix(line) {
 }
 
 function parseLooseDmsLine(line) {
-  const text = stripOcrBboxPrefix(line).trim();
-  const partPattern = /[-+]?\d{1,3}(?:(?:\s*\u00B0\s*|\s+)\d{1,2}(?:[\s.'\u2032]+\d{1,2}){1,2}(?:\.\d+)?|\.\d{1,2}\.\d{1,2}(?:\.\d+)?)\s*["\u2033]?\s*[NSEWO]/gi;
+  const text = normalizeDmsLineForParsing(stripOcrBboxPrefix(line)).trim();
+  const partPattern = /[-+]?\d{1,3}(?:(?:\s*\u00B0\s*|\s+)\d{1,2}(?:[\s.'"'\u2032]+\d{1,2}){1,2}(?:\.\d+)?|\.\d{1,2}\.\d{1,2}(?:\.\d+)?)\s*["\u2033]?\s*[NSEWO]/gi;
   const parts = text.match(partPattern) || [];
 
   if (parts.length < 2) {
@@ -5001,7 +5013,7 @@ function extractProjectedCoordinateLines(text) {
 }
 
 function parseDmsCoordinateLine(line) {
-  const cleanLine = stripOcrBboxPrefix(line);
+  const cleanLine = normalizeDmsLineForParsing(stripOcrBboxPrefix(line));
   const looseDmsPair = parseLooseDmsLine(cleanLine);
 
   if (looseDmsPair) {
