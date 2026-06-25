@@ -194,6 +194,13 @@ Priority:
 
 - DMS_GROUPED must run before WGS84 Chat Coordinates.
 
+Headerless grouping:
+
+- If OCR drops `Mining Area` titles, DMS_GROUPED must still detect grouped DMS when row numbers restart, such as `1,2,3,4,1,2,3,4`.
+- If OCR drops titles but preserves a blank line between DMS blocks, split groups at the blank line.
+- Repeated boundary points may be used only as a low-priority helper; number restart and blank-line grouping are preferred.
+- Accepted headerless grouped DMS traces should identify the reason, such as `OCR -> DMS_GROUPED(number_restart):accepted` or `OCR -> DMS_GROUPED(blank_line):accepted`.
+
 Forbidden behavior:
 
 - Do not convert DMS_GROUPED coordinates to decimal first and then hand them to the WGS84 Chat parser.
