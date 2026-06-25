@@ -167,15 +167,16 @@ KML 逻辑：
 
 The coordinate parser priority is frozen in this order:
 
-1. DMS
-2. BFTM / X-Y long tables
-3. MGRS / UTM Grid Reference
-4. Kyrgyzstan GK
-5. Madagascar cadastral
-6. Mozambique Geographic Table
-7. WGS84 table coordinates with longitude/latitude headers
-8. WGS84 Chat Coordinates
-9. fallback
+1. DMS_GROUPED / Mining Area grouped DMS
+2. DMS
+3. BFTM / X-Y long tables
+4. MGRS / UTM Grid Reference
+5. Kyrgyzstan GK
+6. Madagascar cadastral
+7. Mozambique Geographic Table
+8. WGS84 table coordinates with longitude/latitude headers
+9. WGS84 Chat Coordinates
+10. fallback
 
 Maintenance rules:
 
@@ -184,3 +185,27 @@ Maintenance rules:
 - The Chat parser must not capture BFTM, MGRS, DMS, longitude/latitude table coordinates, or Mozambique Geographic Table input.
 - Every new parser must write a clear `parserTrace` entry.
 - Before commit, run the coordinate parser conflict test set, including BFTM long table, longitude/latitude table, plain chat coordinates, DMS single point, and MGRS.
+
+## DMS_GROUPED / Mining Area grouped DMS
+
+Applies when an image or OCR text contains Mining Area / Mining Area Two / The coordinates are as follows / N W / degree-minute-second symbols, and the source contains multiple DMS coordinate groups.
+
+Priority:
+
+- DMS_GROUPED must run before WGS84 Chat Coordinates.
+
+Forbidden behavior:
+
+- Do not convert DMS_GROUPED coordinates to decimal first and then hand them to the WGS84 Chat parser.
+- Do not flatten multiple Mining Area sections into one Polygon.
+
+Output rules:
+
+- Each Mining Area must generate its own Polygon.
+- Preserve grouping such as Mining Area 1 / Mining Area 2.
+- KML coordinates must be written as `lon,lat,0`.
+
+parserTrace:
+
+- Success must show `OCR -> DMS_GROUPED:accepted`.
+- `WGS84_CHAT:accepted` must not appear for this path.

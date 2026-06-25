@@ -8110,6 +8110,12 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return Boolean(extractProjectedCoordinateLines(text).trim());
     }
 
+    function hasDmsGroupedContext(text) {
+      const value = String(text || "");
+      return /\bmining\s+area\b|\barea\s+(?:one|two|three|\d+)\b|the\s+coordinates\s+are\s+as\s+follows|coordinates?\s+are\s+as\s+follows/i.test(value)
+        || (/[掳潞'鈥测€?]/.test(value) && /\d\s*[NS]\b[\s\S]{0,120}\d\s*[EWO]\b|\d\s*[EWO]\b[\s\S]{0,120}\d\s*[NS]\b/i.test(value));
+    }
+
     function extractCadastralGridRows(text) {
       const source = String(text || "");
       const hasGridContext = /\bXV\b/i.test(source)
@@ -8633,6 +8639,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       const value = String(text || "");
 
       if (!value.trim()
+        || hasDmsGroupedContext(value)
         || hasMgrsRows(value)
         || hasCadastralGridRows(value)
         || hasProjectedCoordinateRows(value)
@@ -10604,7 +10611,9 @@ ${placemarks}
         return;
       }
 
-      const validGroups = selectedType === "Point" ? coordinateGroups : [pairs];
+      const validGroups = selectedType === "Point"
+        ? coordinateGroups
+        : (coordinateGroups.length > 1 ? coordinateGroups : [pairs]);
 
       const usageAllowed = await consumeUsage("convert");
       if (!usageAllowed) {

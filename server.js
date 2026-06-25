@@ -3153,6 +3153,14 @@ function looksLikeProjectedContext(text) {
     || /\bx\s*\(?m?\)?\b[\s\S]{0,80}\by\s*\(?m?\)?\b/i.test(value);
 }
 
+function hasDmsGroupedContext(text) {
+  const value = String(text || "");
+  const folded = foldSearchText(value);
+
+  return /\bmining\s+area\b|\barea\s+(?:one|two|three|\d+)\b|the\s+coordinates\s+are\s+as\s+follows|coordinates?\s+are\s+as\s+follows/i.test(folded)
+    || (/[°º'′″"]/.test(value) && /\d\s*[NS]\b[\s\S]{0,120}\d\s*[EWO]\b|\d\s*[EWO]\b[\s\S]{0,120}\d\s*[NS]\b/i.test(value));
+}
+
 function looksLikeCorrectionContext(text) {
   const value = foldSearchText(text);
 
@@ -4161,6 +4169,7 @@ function getWgs84ChatRejectionReason(text) {
   const value = String(text || "");
 
   if (!value.trim()) return "empty";
+  if (hasDmsGroupedContext(value)) return "dms_grouped_context_detected";
   if (/[°º'′″"]|\d\s*[NSEWO]\b/i.test(value)) return "dms_or_direction_detected";
   if (hasLongitudeLatitudeHeaderContext(value)) return "header_detected";
   if (/\b(?:BFTM|MGRS|UTM|EPSG)\b/i.test(value)) return "projected_or_grid_keyword_detected";
@@ -5115,6 +5124,54 @@ function splitGroupsByTableBoundaries(lines, sourceText) {
   return cleanCoordinateOutput(lines.join("\n"));
 }
 
+function extractDmsGroupedCoordinateLines(text) {
+  if (!hasDmsGroupedContext(text)) {
+    return "";
+  }
+
+  const sourceLines = normalizeText(text)
+    .split(/\r?\n/)
+    .map(line => line.trim());
+  const grouped = [];
+  let currentGroupHasCoordinates = false;
+
+  for (const line of sourceLines) {
+    if (!line) {
+      if (currentGroupHasCoordinates && grouped[grouped.length - 1] !== "") {
+        grouped.push("");
+        currentGroupHasCoordinates = false;
+      }
+      continue;
+    }
+
+    const isBoundary = /\bmining\s+area\b|\barea\s+(?:one|two|three|\d+)\b|the\s+coordinates\s+are\s+as\s+follows/i.test(foldSearchText(line));
+
+    if (isBoundary) {
+      if (currentGroupHasCoordinates && grouped[grouped.length - 1] !== "") {
+        grouped.push("");
+      }
+      currentGroupHasCoordinates = false;
+      continue;
+    }
+
+    const coordinate = parseDmsCoordinateLine(line) || decimalCoordinateFromLine(line);
+
+    if (!coordinate) {
+      continue;
+    }
+
+    grouped.push(coordinate);
+    currentGroupHasCoordinates = true;
+  }
+
+  const output = cleanCoordinateOutput(grouped.join("\n"));
+  const groups = output
+    .split(/\n\s*\n/)
+    .map(group => group.split(/\r?\n/).filter(Boolean));
+
+  return groups.length >= 2 && groups.every(group => group.length >= 3) ? output : "";
+}
+
 function fixLikelyLatLonOrder(firstText, secondText) {
   const first = Number(firstText);
   const second = Number(secondText);
@@ -5222,6 +5279,11 @@ function extractDmsCoordinateLines(text) {
 }
 
 function extractCoordinateLines(text) {
+  const dmsGroupedLines = extractDmsGroupedCoordinateLines(text);
+  if (dmsGroupedLines) {
+    return dmsGroupedLines;
+  }
+
   const dmsLines = extractDmsCoordinateLines(text);
 
   if (dmsLines.length > 0 && !getCadastralGridInfo(text).isCadastralGrid) {
@@ -8782,6 +8844,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 14. 如果同一张图片里有多块不同矿区/多组坐标，必须在不同组之间保留一个空行。每组内部仍然按原顺序逐行输出。
 15. 手写坐标如果出现多段明显分开的 1、2、3、4 编号，每一段就是一组坐标，段与段之间必须输出一个空行。
 16. 如果采用了手写、红色或框选修正，坐标行输出完成后，最后额外输出一行：识别提示：发现疑似人工修正，已按修正值识别，请核对。
+17. 如果原图是 Mining Area / The coordinates are as follows 等 DMS 坐标文本，必须保留原始 DMS 字符串，包括 ° ' " N S E W O。不要提前归一化为小数坐标。不同 Mining Area 之间必须保留一个空行。
 
 示例：
 09°01'13.67"W,11°43'16.45"N
@@ -9222,6 +9285,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
     let kyrgyzGk = getKyrgyzGkInfo(rawText);
     let bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     let bftmAccepted = hasBftmContext(rawText) && countValidBftmProjectedRows(coordinates) >= 4;
+    let dmsGroupedAccepted = Boolean(extractDmsGroupedCoordinateLines(rawText));
     if (!mozambiqueGeographicTable.isMozambiqueGeographicTable && (useMozambiqueGeographicPromptFirst || req.file)) {
       const mozambiqueCoordinateRows = extractMozambiqueLonLatCoordinateRows(rawText);
       if (mozambiqueCoordinateRows.length >= 4) {
@@ -9286,11 +9350,19 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       }
     }
 
-    if (!bftmAccepted) {
+    if (dmsGroupedAccepted) {
+      parserTrace.push("DMS_GROUPED:accepted");
+      usedModel = `${usedModel}+dms-grouped`;
+      warning = warning || "识别到分组 DMS 坐标上下文，已按矿区分组保留 Polygon，不交给 WGS84 Chat parser。";
+    }
+
+    if (!dmsGroupedAccepted && !bftmAccepted) {
       parserTrace.push("BFTM:rejected");
     }
 
-    if (bftmAccepted) {
+    if (dmsGroupedAccepted) {
+      // Keep grouped DMS/decimalized-DMS coordinates from extractCoordinateLines().
+    } else if (bftmAccepted) {
       parserTrace.push("BFTM:accepted");
       usedModel = `${usedModel}+bftm`;
       warning = warning || "识别到 BFTM / X-Y 平面坐标表，已保持投影坐标路径，不交给 WGS84 Chat parser。";
@@ -9330,7 +9402,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       parserTrace.push(chatCoordinates.rejected ? `WGS84_CHAT:rejected(${chatCoordinates.rejectionReason})` : "WGS84_CHAT:rejected");
     }
 
-    if (!bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
       try {
         console.log("Kyrgyzstan Gauss-Kruger table context detected, reading point/X/Y table.");
         const kyrgyzResponse = await callAliyunVision({
@@ -9358,7 +9430,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       }
     }
 
-    if (!bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
       try {
         console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
         const layoutResponse = await callAliyunVision({
@@ -9399,7 +9471,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       }
     }
 
-    if (!bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y result looks like column-paired output, retrying row-wise extraction.");
         const bftmRetryResponse = await callAliyunVision({
@@ -9436,7 +9508,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       }
     }
 
-    if (!bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y OCR retry still invalid, using vision layout retry.");
         const bftmVisionRetryResponse = await callAliyunVision({
@@ -9473,7 +9545,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       }
     }
 
-    if (!bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -9502,7 +9574,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       }
     }
 
-    if (!bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
+    if (!dmsGroupedAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
       const smoothedRawText = smoothDmsMinuteIslandsForLongTable(rawText);
 
       if (smoothedRawText !== rawText) {
@@ -9513,7 +9585,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       }
     }
 
-    if (!bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -9536,7 +9608,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       }
     }
 
-    if (!bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -9582,9 +9654,12 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       chatCoordinates = getChatCoordinatesInfo(formatMozambiqueGeographicRows(mozambiqueGeographicTable.rows));
     }
     kyrgyzGk = getKyrgyzGkInfo(rawText);
+    dmsGroupedAccepted = Boolean(extractDmsGroupedCoordinateLines(rawText));
     bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     bftmAccepted = hasBftmContext(rawText) && countValidBftmProjectedRows(coordinates) >= 4;
-    if (bftmAccepted) {
+    if (dmsGroupedAccepted) {
+      coordinates = extractDmsGroupedCoordinateLines(rawText);
+    } else if (bftmAccepted) {
       // Keep current BFTM projected coordinate rows; they are converted by the normal projected path.
     } else if (mgrs.isMgrs) {
       coordinates = formatMgrsRows(mgrs.rows);
@@ -9636,21 +9711,23 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       model: usedModel,
       rawText,
       coordinates,
-      precisionMode: bftmAccepted
-        ? "bftm-projected-x-y"
-        : mgrs.isMgrs
-          ? "mgrs-utm-grid-reference"
-          : kyrgyzGk.isKyrgyzGk
-            ? "kyrgyz-gk-point-x-y"
-            : cadastralGrid.isCadastralGrid
-              ? "cadastral-grid-num-xv-yv"
-              : mozambiqueGeographicTable.isMozambiqueGeographicTable
-                ? "mozambique-geographic-table"
-                : wgs84TableCoordinates.isWgs84TableCoordinates
-                  ? "wgs84-table-coordinates"
-                  : chatCoordinates.isChatCoordinates
-                    ? "wgs84-chat-coordinates"
-                    : "preserve-original-decimals-and-parse-dms",
+      precisionMode: dmsGroupedAccepted
+        ? "dms-grouped-coordinates"
+        : bftmAccepted
+          ? "bftm-projected-x-y"
+          : mgrs.isMgrs
+            ? "mgrs-utm-grid-reference"
+            : kyrgyzGk.isKyrgyzGk
+              ? "kyrgyz-gk-point-x-y"
+              : cadastralGrid.isCadastralGrid
+                ? "cadastral-grid-num-xv-yv"
+                : mozambiqueGeographicTable.isMozambiqueGeographicTable
+                  ? "mozambique-geographic-table"
+                  : wgs84TableCoordinates.isWgs84TableCoordinates
+                    ? "wgs84-table-coordinates"
+                    : chatCoordinates.isChatCoordinates
+                      ? "wgs84-chat-coordinates"
+                      : "preserve-original-decimals-and-parse-dms",
       warning: wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning),
       cadastralGrid,
       mgrs,
