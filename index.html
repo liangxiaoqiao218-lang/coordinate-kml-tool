@@ -8635,6 +8635,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       if (!value.trim()
         || hasMgrsRows(value)
         || hasCadastralGridRows(value)
+        || hasProjectedCoordinateRows(value)
+        || /\b(?:BFTM|MGRS|UTM|EPSG|SOMMETS?|X\s*\(?m?\)?|Y\s*\(?m?\)?|Coordonn[eé]es?|Geographic\s+Table|COORDENADAS\s+GEOGR[ÁA]FICAS|Longitude|Latitude|Long|Lon|Lat)\b|经度|纬度|东经|北纬/i.test(value)
         || hasMozambiqueGeographicDocumentContext(value)
         || isLikelyCollapsedMozambiqueTeteDecimalTable(value)
         || hasMozambiqueGeographicTableRows(value)

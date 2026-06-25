@@ -162,3 +162,25 @@ KML 逻辑：
 11. 不允许把 Kyrgyzstan GK 的 `point | X | Y` 降级为普通 `X,Y`。
 12. 不允许在 Kyrgyzstan GK 中交换 `X/Y` 或去掉 `13` 区号前缀。
 13. 所有新增坐标类型一旦真实测试成功，必须写入本稳定方案文档，记录适用场景、识别关键词、输出格式、转换坐标系、KML 逻辑、禁止改动点和回归测试样本。
+
+## Coordinate Parser Priority Freeze
+
+The coordinate parser priority is frozen in this order:
+
+1. DMS
+2. BFTM / X-Y long tables
+3. MGRS / UTM Grid Reference
+4. Kyrgyzstan GK
+5. Madagascar cadastral
+6. Mozambique Geographic Table
+7. WGS84 table coordinates with longitude/latitude headers
+8. WGS84 Chat Coordinates
+9. fallback
+
+Maintenance rules:
+
+- New parsers must not be inserted before existing stable parsers unless explicit regression tests prove no existing path is affected.
+- WGS84 Chat Coordinates must remain a low-priority fallback parser.
+- The Chat parser must not capture BFTM, MGRS, DMS, longitude/latitude table coordinates, or Mozambique Geographic Table input.
+- Every new parser must write a clear `parserTrace` entry.
+- Before commit, run the coordinate parser conflict test set, including BFTM long table, longitude/latitude table, plain chat coordinates, DMS single point, and MGRS.
