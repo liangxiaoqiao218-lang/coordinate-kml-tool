@@ -4228,6 +4228,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let recognitionStatusHideTimer = null;
     let internalNormalizedCoordinateGroups = null;
     let internalKmlSourceDirty = false;
+    let activeCoordinatePrecisionMode = "";
     const JUDGE_HISTORY_KEY = "judgeHistory";
     const OLD_JUDGE_HISTORY_KEYS = [
       "aiJudgeHistory",
@@ -4243,6 +4244,7 @@ Au值 = 纯度 × 10 后取整数</div>
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
     judgeImageInput.multiple = false;
     input.addEventListener("input", () => {
+      activeCoordinatePrecisionMode = "";
       internalKmlSourceDirty = true;
       updateCadastralGridPanel();
     });
@@ -8929,13 +8931,15 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       const mgrsRows = extractMgrsRows(input.value);
       const mozambiqueRows = extractMozambiqueGeographicTableRows(input.value);
       const wgs84TableRows = extractWgs84TableCoordinateRows(input.value);
-      const chatRows = extractChatCoordinateRows(input.value);
+      const dmsGroupedGroups = getActiveDmsGroupedCoordinateGroups(input.value);
+      const isDmsGrouped = dmsGroupedGroups.length > 1;
+      const chatRows = isDmsGrouped ? [] : extractChatCoordinateRows(input.value);
       const kyrgyzRows = extractKyrgyzGkRows(input.value);
-      const isCadastralGrid = cadastralRows.length > 0;
+      const isCadastralGrid = !isDmsGrouped && cadastralRows.length > 0;
       const isMgrs = !isCadastralGrid && mgrsRows.length > 0;
       const isMozambiqueGeographicTable = !isCadastralGrid && !isMgrs && mozambiqueRows.length > 0;
       const isWgs84TableCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && wgs84TableRows.length > 0;
-      const isChatCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && chatRows.length > 0;
+      const isChatCoordinates = !isDmsGrouped && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && chatRows.length > 0;
       const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && kyrgyzRows.length > 0;
 
       if (cadastralGridPanel) {
@@ -8943,7 +8947,11 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       }
 
       if (cadastralGridBadge) {
-        cadastralGridBadge.classList.toggle("is-active", isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk);
+        cadastralGridBadge.classList.toggle("is-active", isDmsGrouped || isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk);
+        if (isDmsGrouped) {
+          cadastralGridBadge.textContent = `DMS 分组坐标 · ${dmsGroupedGroups.length} 组`;
+          return;
+        }
         if (isMozambiqueGeographicTable) {
           cadastralGridBadge.textContent = `Mozambique geographic table · ${mozambiqueRows.length} points`;
           return;
@@ -9406,6 +9414,46 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return pairs;
     }
 
+    function getDelimitedCoordinateGroupsFromText(text) {
+      const lines = String(text || "").split(/\r?\n/);
+      const groups = [];
+      let currentGroup = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+          if (currentGroup.length > 0) {
+            groups.push(currentGroup);
+            currentGroup = [];
+          }
+          continue;
+        }
+
+        const pair = parseCoordinateLine(trimmed) || parseProjectedCoordinateLine(trimmed);
+
+        if (pair) {
+          currentGroup.push(normalizeKmlPair(pair));
+        }
+      }
+
+      if (currentGroup.length > 0) {
+        groups.push(currentGroup);
+      }
+
+      return groups.filter(group => group.length > 0);
+    }
+
+    function getActiveDmsGroupedCoordinateGroups(text = input.value) {
+      if (activeCoordinatePrecisionMode !== "dms-grouped-coordinates") {
+        return [];
+      }
+
+      const groups = getDelimitedCoordinateGroupsFromText(text);
+
+      return groups.length > 1 ? groups : [];
+    }
+
     function getCoordinatePairs() {
       return getCoordinatePairsFromText(input.value);
     }
@@ -9526,6 +9574,11 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     function applyAutoExportTypeForRecognizedCoordinates(text, options = {}) {
+      if (options.isDmsGrouped) {
+        exportType.value = "Polygon";
+        return false;
+      }
+
       if (options.isCadastralGrid || options.isKyrgyzGk) {
         exportType.value = "Polygon";
         return false;
@@ -10082,6 +10135,11 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     </Placemark>`;
     }
 
+    function buildNamedPolygonKml(pairs, placemarkName, groupIndex = 1) {
+      return buildPolygonKml(pairs, groupIndex)
+        .replace(/<name>[\s\S]*?<\/name>/, `<name>${escapeXml(placemarkName)}</name>`);
+    }
+
     function getChatCoordinateWarnings(pairs) {
       const points = Array.isArray(pairs)
         ? pairs.map(pair => ({
@@ -10519,6 +10577,47 @@ ${placemarks}
         return;
       }
 
+      const dmsGroupedGroupsForExport = getActiveDmsGroupedCoordinateGroups(input.value);
+      if (dmsGroupedGroupsForExport.length > 1) {
+        const pairs = dmsGroupedGroupsForExport.flat();
+
+        const usageAllowed = await consumeUsage("convert");
+        if (!usageAllowed) {
+          return;
+        }
+
+        const placemarks = dmsGroupedGroupsForExport
+          .map((group, index) => buildNamedPolygonKml(group, `Mining Area ${index + 1}`, index + 1))
+          .join("\n");
+        const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>DMS Grouped Coordinates</name>
+    <description>Generated by GeoKit Lab. Source: backend DMS grouped coordinates; KML coordinates are written as longitude,latitude,0.</description>
+${placemarks}
+  </Document>
+</kml>`;
+        const blob = new Blob([kml], {
+          type: "application/vnd.google-earth.kml+xml;charset=utf-8"
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = "dms-grouped-coordinates.kml";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        trackEvent("kml_download_click", {
+          exportType: "DMSGrouped-Polygon",
+          groups: dmsGroupedGroupsForExport.length,
+          count: pairs.length
+        });
+        showMessage(`已生成 ${dmsGroupedGroupsForExport.length} 个 Polygon KML，共 ${pairs.length} 个 DMS 分组坐标点。`);
+        return;
+      }
+
       if (hasChatCoordinateRows(input.value)) {
         const rows = extractChatCoordinateRows(input.value);
         const pairs = rows.map(row => normalizeKmlPair({
@@ -10761,6 +10860,7 @@ ${placemarks}
           return;
         }
 
+        activeCoordinatePrecisionMode = data.precisionMode || "";
         const preservedCoordinates = extractCoordinatesPreservePrecision(data.rawText);
         const dmsCoordinates = extractDmsCoordinates(data.rawText);
         const recognizedLines = extractRecognizedCoordinateLines(data.rawText);
@@ -10823,7 +10923,7 @@ ${placemarks}
           : extractWgs84TableCoordinateRows(data.rawText || data.coordinates);
         const wgs84TableText = formatChatCoordinateRows(wgs84TableRows);
         const isWgs84TableCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && Boolean(data.precisionMode === "wgs84-table-coordinates" || data.wgs84TableCoordinates?.isWgs84TableCoordinates || wgs84TableRows.length > 0);
-        const isChatCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
+        const isChatCoordinates = !isDmsGrouped && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
         const kyrgyzGkRows = Array.isArray(data.kyrgyzGk?.rows) && data.kyrgyzGk.rows.length > 0
           ? data.kyrgyzGk.rows
           : extractKyrgyzGkRows(data.rawText || data.coordinates);
@@ -10893,7 +10993,7 @@ ${placemarks}
         appendDebug(`X/Y平面坐标提取结果：\n${projectedLines || "无"}`);
         appendDebug(`后端坐标提取结果：\n${data.coordinates || "无"}`);
         appendDebug(`前端保精度提取结果：\n${preservedCoordinates || "无"}`);
-        appendDebug(`前端DMS兜底提取结果：\n${dmsCoordinates || "无"}`);
+        appendDebug(`前端DMS兜底提取结果：\n${isDmsGrouped ? "已使用后端分组结果，跳过本地兜底" : (dmsCoordinates || "无")}`);
         appendDebug(`精度模式：${data.precisionMode || "未知"}`);
         appendDebug(`识别提示：${data.warning || "无"}`);
         if (data.bftmLongTable?.isBftmLongTable) {
@@ -10918,7 +11018,9 @@ ${placemarks}
         input.value = finalCoordinates;
         coordinateOrder.value = "auto";
         updateCadastralGridPanel();
-        if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk) {
+        if (isDmsGrouped) {
+          setInternalKmlSourceFromGroups(getDelimitedCoordinateGroupsFromText(finalCoordinates));
+        } else if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk) {
           clearInternalKmlSource();
         } else {
           setInternalKmlSourceFromText(finalCoordinates);
@@ -10929,6 +11031,7 @@ ${placemarks}
           isMozambiqueGeographicTable,
           isWgs84TableCoordinates,
           isChatCoordinates,
+          isDmsGrouped,
           isKyrgyzGk
         });
         input.focus();
