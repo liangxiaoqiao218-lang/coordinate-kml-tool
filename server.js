@@ -5209,6 +5209,42 @@ function getDmsGroupedCoordinateInfo(text) {
   };
 }
 
+function countDmsGroupedLonLatOrderLines(text) {
+  return normalizeText(text)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => {
+      const tokens = getDmsTokensFromLine(line);
+
+      if (tokens.length < 2) {
+        return false;
+      }
+
+      const first = parseCompactDmsToken(tokens[0], "");
+      const second = parseCompactDmsToken(tokens[1], "");
+
+      return ["E", "W", "O"].includes(first?.direction) && ["N", "S"].includes(second?.direction);
+    })
+    .length;
+}
+
+function shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo) {
+  if (!dmsGroupedInfo?.output) {
+    return false;
+  }
+
+  const groupedRows = countCoordinateRows(dmsGroupedInfo.output);
+
+  if (groupedRows < 4) {
+    return false;
+  }
+
+  const lonLatOrderLines = countDmsGroupedLonLatOrderLines(rawText);
+
+  return lonLatOrderLines >= Math.max(2, Math.ceil(groupedRows * 0.5));
+}
+
 function extractDmsGroupedCoordinateLines(text) {
   return getDmsGroupedCoordinateInfo(text).output;
 }
@@ -9033,6 +9069,38 @@ Rules:
 只转写表格，不要整理成最终坐标。每一行必须保留 POINT 标签。
 禁止输出 08°16'00"W,10°52'15"N 这种逗号坐标行。
 如果看见 Point A-Z，必须按 A-Z 原顺序逐行读取，不要跳行、串行、用上一行或下一行的值。`;
+    const dmsGroupedDirectPrompt = `Read ONLY the Mining Area coordinate paragraphs in this image.
+This is a literal transcription task, NOT a coordinate formatting task.
+
+Target context may include:
+- Mining Area 1
+- Mining Area Two
+- The coordinates are as follows
+- numbered DMS coordinate lines such as 1. 11°52'25.72"N, 08°53'13.39"W
+
+Critical rules:
+- Preserve the visible coordinate order exactly as printed on each line.
+- If the image shows latitude N first and longitude W second, output N first and W second.
+- Do NOT reorder into longitude,latitude.
+- Do NOT convert DMS to decimal degrees.
+- Do NOT borrow numbers from examples or other lines.
+- Do NOT change N to W, W to N, E to N, or N to E.
+- Keep every visible Mining Area as a separate group with one blank line between groups.
+- Keep row labels 1. 2. 3. 4. when visible.
+- Ignore body paragraphs, prices, certificate numbers, phone UI, page title, and background text.
+
+Output only the coordinate groups. No explanation.
+
+Valid output shape:
+Mining Area 1:
+1. 11°52'25.72"N, 08°53'13.39"W
+2. 11°52'21.27"N, 08°53'11.78"W
+
+Mining Area 2:
+1. 11°52'11.93"N, 08°53'32.66"W
+2. 11°52'17.21"N, 08°53'33.18"W
+
+If no Mining Area DMS coordinate groups are readable, output only: ${noCoordinatesText}`;
     const mozambiqueGeographicTablePrompt = `Read ONLY the Portuguese geographic coordinate table in this image.
 
 Target table:
@@ -9338,6 +9406,42 @@ If the table is not readable, output only: ${noCoordinatesText}`;
     let dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     let dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     let dmsAccepted = !dmsGroupedAccepted && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
+    if (dmsGroupedAccepted && shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo)) {
+      try {
+        parserTrace.push("DMS_GROUPED:retry_vision");
+        console.log("DMS grouped direct prompt started because generic output appears reordered", {
+          rows: countCoordinateRows(dmsGroupedInfo.output),
+          lonLatOrderLines: countDmsGroupedLonLatOrderLines(rawText),
+          timeoutMs: 60000
+        });
+        const dmsGroupedRetryResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: dmsGroupedDirectPrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 1600,
+          timeoutMs: 60000
+        });
+        const dmsGroupedRetryRawText = dmsGroupedRetryResponse.choices?.[0]?.message?.content || "";
+        const dmsGroupedRetryInfo = getDmsGroupedCoordinateInfo(dmsGroupedRetryRawText);
+
+        if (dmsGroupedRetryInfo.output && countCoordinateRows(dmsGroupedRetryInfo.output) >= countCoordinateRows(dmsGroupedInfo.output)) {
+          rawText = dmsGroupedRetryRawText;
+          coordinates = dmsGroupedRetryInfo.output;
+          dmsGroupedInfo = dmsGroupedRetryInfo;
+          dmsGroupedAccepted = true;
+          dmsAccepted = false;
+          usedModel = `${aliyunVisionModel}+dms-grouped-direct`;
+          console.log("DMS grouped direct prompt success rows=", countCoordinateRows(dmsGroupedInfo.output));
+        } else {
+          console.log("DMS grouped direct prompt did not improve result", {
+            preview: dmsGroupedRetryRawText.slice(0, 500)
+          });
+        }
+      } catch (dmsGroupedRetryError) {
+        console.error("DMS grouped direct prompt failed:", dmsGroupedRetryError.message || dmsGroupedRetryError);
+      }
+    }
     if (!mozambiqueGeographicTable.isMozambiqueGeographicTable && (useMozambiqueGeographicPromptFirst || req.file)) {
       const mozambiqueCoordinateRows = extractMozambiqueLonLatCoordinateRows(rawText);
       if (mozambiqueCoordinateRows.length >= 4) {
