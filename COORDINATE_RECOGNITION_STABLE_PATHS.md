@@ -238,3 +238,120 @@ parserTrace:
 - Frontend must not re-run fallback extraction over accepted grouped DMS output.
 - Frontend must not overwrite, reorder, or flatten grouped coordinates.
 - Multiple Mining Area groups must remain separate polygons, not one flattened Polygon.
+
+## Coordinate Engine V1 Stable
+
+Baseline commit:
+
+- `66dc438`
+
+Coordinate Engine V1 is the frozen baseline for production coordinate recognition. This section is the operating policy for all future coordinate parser work.
+
+### Parser Priority Chain
+
+The parser priority chain is frozen in this exact order:
+
+1. `DMS_GROUPED`
+2. `DMS`
+3. `BFTM / X-Y`
+4. `MGRS`
+5. `Kyrgyzstan GK`
+6. `Madagascar cadastral`
+7. `Mozambique Geographic Table`
+8. `WGS84 Table` with longitude/latitude headers
+9. `WGS84 Chat Coordinates`
+10. `Fallback`
+
+Freeze rules:
+
+- Existing parser behavior must not be changed casually.
+- New coordinate types must not modify or weaken any existing stable parser.
+- New coordinate types must be added as independent parsers or independent vision retry paths.
+- A new parser may not be inserted before an existing parser unless the full regression suite proves that no stable path is affected.
+- `WGS84 Chat Coordinates` must remain a low-priority fallback for unstructured coordinate text only.
+
+### Vision Retry Framework
+
+Vision Retry is a permanent Coordinate Engine architecture layer.
+
+Current stable retry paths:
+
+- `DMS_GROUPED Retry`
+- `WGS84_TABLE Retry`
+- `MGRS Retry`
+
+Maintenance rules:
+
+- If a new parser needs better image understanding, add a parser-specific Vision Retry.
+- Do not broaden the generic OCR prompt to fix a specific coordinate type.
+- Vision Retry output must preserve the source coordinate structure expected by that parser.
+- Vision Retry must write explicit `parserTrace` entries, such as `OCR -> MGRS:retry_vision -> MGRS:accepted`.
+
+### Regression Policy
+
+Regression samples are stored under:
+
+```text
+regression-samples/
+├── BFTM/
+├── RC2/
+├── DMS_GROUPED/
+├── DMS/
+├── MGRS/
+├── CHAT/
+├── Kyrgyz_GK/
+├── Madagascar/
+└── Mozambique/
+```
+
+Each sample directory should preserve:
+
+- Original image.
+- OCR raw text.
+- Expected `parserTrace`.
+- Expected `precisionMode`.
+- Expected geometry.
+- `expected.kml` or key expected coordinates.
+- Notes about which fallback must not capture the sample.
+
+Before any coordinate parser commit, the regression suite must verify:
+
+- BFTM long table remains `BFTM:accepted`.
+- RC2 longitude/latitude table remains `WGS84_TABLE:accepted`.
+- DMS grouped samples remain grouped and are not flattened.
+- DMS single point remains DMS.
+- MGRS remains MGRS and is not captured by chat coordinates.
+- Plain chat coordinates still enter `WGS84_CHAT:accepted`.
+- Kyrgyzstan GK, Madagascar cadastral, and Mozambique Geographic Table keep their registered precision modes and KML behavior.
+
+Any regression failure blocks the commit.
+
+### Coordinate Engine Freeze Policy
+
+For any future coordinate recognition change, all three items are mandatory:
+
+1. Code change for the specific parser or retry path.
+2. Matching regression sample or expected-result update.
+3. Documentation update in this stable-path document and, when applicable, `COORDINATE_TYPE_REGISTRY.md`.
+
+Real-world failure handling rule:
+
+- Any real business recognition failure must be added to `regression-samples/` before code is changed.
+- The fix must target only the corresponding parser or Vision Retry path.
+- After the fix, the full Coordinate Engine regression suite must pass before commit.
+- If any existing coordinate type regresses, the commit is blocked.
+
+Git policy for coordinate recognition changes:
+
+- Every coordinate recognition commit must include the parser or Vision Retry change, the matching regression sample, and the stable documentation update.
+- These three items are mandatory; missing any one of them blocks the commit.
+
+Forbidden changes:
+
+- Do not let a fallback parser override a high-confidence parser.
+- Do not let `WGS84 Chat Coordinates` capture structured tables.
+- Do not flatten grouped polygon outputs.
+- Do not change projection assumptions for registered projected systems without a dedicated regression proof.
+- Do not change parser priority without documenting the reason and passing the full regression suite.
+
+Coordinate Engine V1 is frozen and may now enter real sample accumulation.
