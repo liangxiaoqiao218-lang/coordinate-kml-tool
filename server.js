@@ -4401,6 +4401,93 @@ function getWgs84TableCoordinatesInfo(text) {
   };
 }
 
+function getDecimalPairRowsForWgs84TableRetry(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map(line => String(line || "").trim())
+    .filter(Boolean)
+    .map(line => {
+      const normalized = normalizeChatCoordinateText(line);
+      const numbers = normalized.match(/[-+]?\d+(?:\.\d+)?/g) || [];
+
+      if (numbers.length !== 2) {
+        return null;
+      }
+
+      const first = Number(numbers[0]);
+      const second = Number(numbers[1]);
+
+      if (
+        !Number.isFinite(first)
+        || !Number.isFinite(second)
+        || Math.abs(first) > 180
+        || Math.abs(second) > 90
+        || Math.abs(first) > 100000
+        || Math.abs(second) > 100000
+      ) {
+        return null;
+      }
+
+      return {
+        first,
+        second,
+        raw: line
+      };
+    })
+    .filter(Boolean);
+}
+
+function shouldRetryWgs84TableVisualRead(rawText, chatCoordinates, reqFile) {
+  if (!reqFile || !chatCoordinates?.isChatCoordinates) {
+    return false;
+  }
+
+  if (hasLongitudeLatitudeHeaderContext(rawText) || getWgs84ChatRejectionReason(rawText)) {
+    return false;
+  }
+
+  const rows = getDecimalPairRowsForWgs84TableRetry(rawText);
+
+  if (rows.length < 4) {
+    return false;
+  }
+
+  const positiveRows = rows.filter(row => row.first > 0 && row.second > 0);
+  const lonLatLikeRows = rows.filter(row => row.first > row.second && row.first <= 180 && row.second <= 90);
+
+  return positiveRows.length >= Math.ceil(rows.length * 0.8)
+    && lonLatLikeRows.length >= Math.ceil(rows.length * 0.8);
+}
+
+function isLikelyBftmProjectedOnlyOutput(text, reqFile) {
+  if (!reqFile) {
+    return false;
+  }
+
+  const rowCount = countCoordinateRows(text);
+
+  if (rowCount < 4) {
+    return false;
+  }
+
+  return countValidBftmProjectedRows(text) === rowCount
+    && !hasBftmColumnPairError(text)
+    && !hasBftmBboxPollution(text);
+}
+
+function shouldRetryMgrsVisualRead(rawText, reqFile, rawHint = "") {
+  if (!reqFile || getMgrsInfo(rawText).isMgrs) {
+    return false;
+  }
+
+  const uploadText = getUploadNameSearchText(reqFile, rawHint);
+  const text = `${uploadText}\n${rawText || ""}`;
+  const hasMgrsCue = /MGRS|UTM\s*Grid|Grid\s+Reference|Map\s*Ref|47R\s*LH|47RLH|缅甸|Myanmar|Lamu\s+Ga\s+Madi/i.test(text);
+  const noUsefulCoordinates = countCoordinateRows(rawText) < 2 || String(rawText || "").includes(noCoordinatesText);
+
+  return hasMgrsCue && noUsefulCoordinates;
+}
+
 function getChatCoordinateWarnings(points) {
   const warnings = [];
 
@@ -9039,6 +9126,31 @@ point | X | Y
 65 | 13261317 | 4607721
 
 If the table is not readable, output only: ${noCoordinatesText}`;
+    const mgrsDirectPrompt = `Read ONLY the MGRS / UTM Grid Reference table in this image.
+
+Target examples:
+- A. 47RLH 24469 42832
+- B. 47RLH 24257 42938
+- C. 47RLH 24123 42905
+- D. 47RLH 24124 43163
+- 47R LH 24469 42832
+- 47RLH2446942832
+
+Critical rules:
+- Focus on the table or caption containing Map Ref / MGRS / UTM Grid Reference values.
+- Preserve visible point labels such as A, B, C, D, E, F, G.
+- Output one row per visible MGRS point.
+- Output only rows in this exact format:
+label | MGRS
+- Do NOT convert to latitude/longitude.
+- Do NOT read area, acre, scale, phone UI, handwriting notes, or map labels.
+- Do NOT output explanations or markdown.
+
+Example:
+A | 47RLH 24469 42832
+B | 47RLH 24257 42938
+
+If no MGRS / UTM Grid Reference table is readable, output only: ${noCoordinatesText}`;
     const pointAzDmsRetryPrompt = `You are reading a mining coordinate table from an image.
 Focus ONLY on the printed coordinate table headed Point / Nord / Est, Point / Latitude / Longitude, or Point / N / E.
 Ignore the map, phone UI, page text, watermarks, captions, and all non-table content.
@@ -9157,6 +9269,36 @@ Examples:
 3 | -14 | 39 | 20,00 | 33 | 06 | 0,00
 
 If the table is not readable, output only: ${noCoordinatesText}`;
+    const wgs84LonLatTableDirectPrompt = `Read ONLY WGS84 decimal coordinate tables in this image where the visible column headers mean longitude first and latitude second.
+
+Target header examples:
+- 经度东 / 北纬
+- 东经 / 北纬
+- 经度 / 纬度
+- Longitude / Latitude
+- Lon / Lat
+- East Longitude / North Latitude
+
+This is a table transcription task, NOT a coordinate guessing task.
+
+Critical rules:
+- Only accept a real table if the image visibly shows a longitude/east header before a latitude/north header.
+- Preserve the visible row label if present, such as A, B, C, D, 1, 2.
+- The first numeric column is longitude.
+- The second numeric column is latitude.
+- Do NOT swap columns.
+- Do NOT treat the first column as latitude.
+- Do NOT convert to DMS.
+- Do NOT output explanations or markdown.
+- Do NOT read body text, dates, prices, phone UI, QR codes, table sizes, or paragraph numbers.
+
+Output format must be exactly:
+WGS84 Longitude Latitude Table
+label | longitude | latitude
+A | 16.0320 | 3.7638
+B | 16.0407 | 3.7634
+
+If no longitude/latitude decimal table is visible, output only: ${noCoordinatesText}`;
     const imageItems = [
       {
         type: "image_url",
@@ -9402,7 +9544,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
     let chatCoordinates = getChatCoordinatesInfo(rawText);
     let kyrgyzGk = getKyrgyzGkInfo(rawText);
     let bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
-    let bftmAccepted = hasBftmContext(rawText) && countValidBftmProjectedRows(coordinates) >= 4;
+    let bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
     let dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     let dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     let dmsAccepted = !dmsGroupedAccepted && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
@@ -9503,6 +9645,99 @@ If the table is not readable, output only: ${noCoordinatesText}`;
         mozambiqueDebug.mozambiqueRows = mozambiqueGeographicTable.rows.length;
         mozambiqueDebug.mozambiqueBypassChat = true;
         console.log("Mozambique geographic table bypassed WGS84 chat from generic prompt rows=", mozambiqueGeographicTable.rows.length);
+      }
+    }
+
+    if (
+      !dmsGroupedAccepted
+      && !dmsAccepted
+      && !bftmAccepted
+      && !cadastralGrid.isCadastralGrid
+      && !mgrs.isMgrs
+      && !mozambiqueGeographicTable.isMozambiqueGeographicTable
+      && !wgs84TableCoordinates.isWgs84TableCoordinates
+      && shouldRetryWgs84TableVisualRead(rawText, chatCoordinates, req.file)
+    ) {
+      try {
+        parserTrace.push("WGS84_TABLE:retry_vision");
+        console.log("WGS84 lon/lat table direct prompt started because generic output only returned bare decimals", {
+          decimalRows: getDecimalPairRowsForWgs84TableRetry(rawText).length,
+          timeoutMs: 60000
+        });
+        const wgs84TableRetryResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: wgs84LonLatTableDirectPrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 1800,
+          timeoutMs: 60000
+        });
+        const wgs84TableRetryRawText = wgs84TableRetryResponse.choices?.[0]?.message?.content || "";
+        const wgs84TableRetryInfo = getWgs84TableCoordinatesInfo(wgs84TableRetryRawText);
+
+        if (
+          wgs84TableRetryInfo.isWgs84TableCoordinates
+          && wgs84TableRetryInfo.points.length >= Math.min(4, chatCoordinates.points?.length || 0)
+        ) {
+          rawText = wgs84TableRetryRawText;
+          wgs84TableCoordinates = wgs84TableRetryInfo;
+          chatCoordinates = getChatCoordinatesInfo(rawText);
+          coordinates = formatChatCoordinateRows(wgs84TableCoordinates.points);
+          usedModel = `${aliyunVisionModel}+wgs84-lonlat-table-direct`;
+          console.log("WGS84 lon/lat table direct prompt success rows=", wgs84TableCoordinates.points.length);
+        } else {
+          console.log("WGS84 lon/lat table direct prompt did not return a parsable table", {
+            preview: wgs84TableRetryRawText.slice(0, 500)
+          });
+        }
+      } catch (wgs84TableRetryError) {
+        console.error("WGS84 lon/lat table direct prompt failed:", wgs84TableRetryError.message || wgs84TableRetryError);
+      }
+    }
+
+    if (
+      !dmsGroupedAccepted
+      && !dmsAccepted
+      && !bftmAccepted
+      && !cadastralGrid.isCadastralGrid
+      && !mgrs.isMgrs
+      && !mozambiqueGeographicTable.isMozambiqueGeographicTable
+      && !wgs84TableCoordinates.isWgs84TableCoordinates
+      && !chatCoordinates.isChatCoordinates
+      && shouldRetryMgrsVisualRead(rawText, req.file, req.body?.rawHint || req.body?.hint || "")
+    ) {
+      try {
+        parserTrace.push("MGRS:retry_vision");
+        console.log("MGRS direct prompt started because generic output did not read the map reference table", {
+          fileName: req.file?.originalname || "",
+          model: aliyunOcrModel,
+          timeoutMs: 60000
+        });
+        const mgrsRetryResponse = await callAliyunVision({
+          modelName: aliyunOcrModel,
+          prompt: mgrsDirectPrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 1600,
+          timeoutMs: 60000
+        });
+        const mgrsRetryRawText = mgrsRetryResponse.choices?.[0]?.message?.content || "";
+        const mgrsRetryInfo = getMgrsInfo(mgrsRetryRawText);
+
+        if (mgrsRetryInfo.isMgrs) {
+          rawText = mgrsRetryRawText;
+          mgrs = mgrsRetryInfo;
+          coordinates = formatMgrsRows(mgrs.rows);
+          chatCoordinates = getChatCoordinatesInfo(rawText);
+          usedModel = `${aliyunOcrModel}+mgrs-direct`;
+          console.log("MGRS direct prompt success rows=", mgrs.rows.length);
+        } else {
+          console.log("MGRS direct prompt did not return parsable rows", {
+            preview: mgrsRetryRawText.slice(0, 500)
+          });
+        }
+      } catch (mgrsRetryError) {
+        console.error("MGRS direct prompt failed:", mgrsRetryError.message || mgrsRetryError);
       }
     }
 
@@ -9818,7 +10053,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
     dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     dmsAccepted = !dmsGroupedAccepted && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
     bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
-    bftmAccepted = hasBftmContext(rawText) && countValidBftmProjectedRows(coordinates) >= 4;
+    bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
     if (dmsGroupedAccepted) {
       coordinates = dmsGroupedInfo.output;
     } else if (dmsAccepted) {
