@@ -8600,6 +8600,13 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       })].join("\n");
     }
 
+    function normalizeChatCoordinateText(text) {
+      return String(text || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/[，、;；]/g, ",")
+        .trim();
+    }
+
     function parseChatCoordinateLine(line, fallbackIndex = 1) {
       const original = String(line || "").trim();
 
