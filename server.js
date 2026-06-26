@@ -3677,6 +3677,13 @@ function shouldUseMozambiqueGeographicPromptFirst(file, rawHint = "") {
     && !/Kyrgyz|Kyrgyzstan|吉尔吉斯|Киргиз|Кыргыз/i.test(combined);
 }
 
+function shouldRetryWgs84TableOnTimeout(file, rawHint = "") {
+  const combined = getUploadNameSearchText(file, rawHint);
+
+  return /刚果|Congo|RC\s*2|RC2|经度|纬度|经度东|东经|北纬|Longitude|Latitude|\bLon\b|\bLat\b/i.test(combined)
+    && !/Kyrgyz|Kyrgyzstan|吉尔吉斯|Киргиз|Кыргыз|莫桑比克|Mozambique|Mo[çc]ambique|Tete|BFTM|MGRS|UTM|COORDENADAS\s+GEOGR[ÁA]FICAS/i.test(combined);
+}
+
 function formatKyrgyzGkRows(rows) {
   return ["point | X | Y", ...rows.map(row => `${row.point} | ${row.x} | ${row.y}`)].join("\n");
 }
@@ -10235,6 +10242,102 @@ If the table is not readable, output only: ${noCoordinatesText}`;
           console.log("Kyrgyzstan GK timeout retry did not return parsable rows:", retryRawText.slice(0, 500));
         } catch (retryError) {
           console.error("Kyrgyzstan GK timeout visual retry failed:", retryError.message || retryError);
+        }
+      }
+
+      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file && shouldRetryWgs84TableOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")) {
+        try {
+          console.log("Aliyun timed out; retrying WGS84 longitude/latitude table visual extraction before local OCR fallback.", {
+            fileName: req.file?.originalname || "",
+            timeoutMs: 80000
+          });
+          const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+          const wgs84TableTimeoutRetryPrompt = `Read ONLY WGS84 decimal coordinate tables in this image where the visible column headers mean longitude first and latitude second.
+
+Target header examples:
+- 经度东 / 北纬
+- 东经 / 北纬
+- 经度 / 纬度
+- Longitude / Latitude
+- Lon / Lat
+- East Longitude / North Latitude
+
+This is a table transcription task, NOT a coordinate guessing task.
+
+Critical rules:
+- Only accept a real table if the image visibly shows a longitude/east header before a latitude/north header.
+- Preserve the visible row label if present, such as A, B, C, D, E, F, G, O, 1, 2.
+- The first numeric column is longitude.
+- The second numeric column is latitude.
+- Do NOT swap columns.
+- Do NOT treat the first numeric column as latitude.
+- Do NOT convert to DMS.
+- Do NOT read body text, dates, prices, phone UI, QR codes, table sizes, or paragraph numbers.
+- Do NOT output explanations or markdown.
+
+Output format must be exactly:
+WGS84 Longitude Latitude Table
+label | longitude | latitude
+A | 16.0320 | 3.7638
+B | 16.0407 | 3.7634
+
+If no longitude/latitude decimal table is visible, output only: ${noCoordinatesText}`;
+          const retryResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: wgs84TableTimeoutRetryPrompt,
+            imageItems: [{
+              type: "image_url",
+              image_url: { url: imageDataUrl }
+            }],
+            temperature: 0,
+            maxTokens: 1800,
+            timeoutMs: 80000
+          });
+          const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
+          const retryWgs84Table = getWgs84TableCoordinatesInfo(retryRawText);
+
+          if (retryWgs84Table.isWgs84TableCoordinates) {
+            const consumeResult = await consumeUsage(visitorId, "convert", req, {
+              note: "Coordinate recognition consumed after WGS84 table timeout retry"
+            });
+            if (consumeResult.reason === "limit_exceeded") {
+              return res.status(403).json({
+                success: false,
+                reason: "limit_exceeded",
+                code: getQuotaExhaustedCode("convert"),
+                type: "convert",
+                quota: consumeResult.quota,
+                error: "CONVERT_QUOTA_EXHAUSTED",
+                rawText: "",
+                coordinates: ""
+              });
+            }
+            if (!consumeResult.success) {
+              return res.status(500).json({
+                success: false,
+                reason: consumeResult.reason || "db_error",
+                error: "CONVERT_QUOTA_CONSUME_FAILED",
+                rawText: "",
+                coordinates: ""
+              });
+            }
+
+            return res.json({
+              model: `${aliyunVisionModel}+wgs84-table-timeout-retry`,
+              rawText: retryRawText,
+              coordinates: formatChatCoordinateRows(retryWgs84Table.points),
+              precisionMode: "wgs84-table-coordinates",
+              warning: "主视觉模型首次超时，已通过 WGS84 经度/纬度表格专用视觉重试读取；已按 longitude,latitude,0 生成 KML 坐标。",
+              wgs84TableCoordinates: retryWgs84Table,
+              chatCoordinates: getChatCoordinatesInfo(retryRawText),
+              parserTrace: ["OCR", "WGS84_TABLE:timeout_retry", "BFTM:rejected", "WGS84_TABLE:accepted"],
+              quota: consumeResult.quota
+            });
+          }
+
+          console.log("WGS84 lon/lat table timeout retry did not return parsable rows:", retryRawText.slice(0, 500));
+        } catch (retryError) {
+          console.error("WGS84 lon/lat table timeout visual retry failed:", retryError.message || retryError);
         }
       }
 
