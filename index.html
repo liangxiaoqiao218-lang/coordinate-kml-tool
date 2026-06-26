@@ -8756,6 +8756,10 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         && firstLongitudeIndex < firstLatitudeIndex;
     }
 
+    function hasFormattedWgs84KmlTableContext(text) {
+      return /^label\s*\|\s*WGS84\s*\|\s*KML\b/im.test(String(text || ""));
+    }
+
     function parseLonLatTableCoordinateLine(line, fallbackIndex = 1) {
       const original = String(line || "").trim();
 
@@ -8768,6 +8772,27 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       }
 
       const labelPrefixPattern = /^\s*(?:point|pt|\u70b9|\u70b9\u53f7)?\s*([A-Za-z])\s*(?:[\.\)、):：,，、\]\?\-]\s*|\s+)|^\s*(?:point|pt|\u70b9|\u70b9\u53f7)?\s*(\d{1,3})\s*(?:[\)、):：,，、\]\?\-]\s*|\s+)/i;
+      const formattedWgs84KmlMatch = original.match(/^\s*([A-Za-z0-9_-]+)\s*\|\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\|\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:\s*,\s*0)?\s*$/);
+      if (formattedWgs84KmlMatch) {
+        const label = formattedWgs84KmlMatch[1];
+        const lonText = formattedWgs84KmlMatch[4];
+        const latText = formattedWgs84KmlMatch[5];
+        const lon = Number(lonText);
+        const lat = Number(latText);
+
+        if (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+          return {
+            label,
+            lat,
+            lon,
+            latitude: latText,
+            longitude: lonText,
+            raw: original,
+            kmlCoordinate: `${lonText},${latText},0`
+          };
+        }
+      }
+
       const labelMatch = original.match(labelPrefixPattern);
       const labelValue = labelMatch ? (labelMatch[1] || labelMatch[2]) : "";
       const label = labelValue ? String(labelValue).toUpperCase() : String(fallbackIndex);
@@ -8800,8 +8825,9 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
     function extractWgs84TableCoordinateRows(text) {
       const value = String(text || "");
+      const hasFormattedTable = hasFormattedWgs84KmlTableContext(value);
 
-      if (!hasLongitudeLatitudeHeaderContext(value)
+      if ((!hasFormattedTable && !hasLongitudeLatitudeHeaderContext(value))
         || hasMgrsRows(value)
         || hasCadastralGridRows(value)
         || hasMozambiqueGeographicDocumentContext(value)
