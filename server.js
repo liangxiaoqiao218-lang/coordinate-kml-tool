@@ -4355,9 +4355,10 @@ function parseLonLatTableCoordinateLine(line, fallbackIndex = 1) {
   };
 }
 
-function getWgs84TableCoordinatesInfo(text) {
+function getWgs84TableCoordinatesInfo(text, options = {}) {
   const points = [];
   const seen = new Set();
+  const preserveDuplicatePoints = options?.preserveDuplicatePoints === true;
 
   if (!hasLongitudeLatitudeHeaderContext(text)) {
     return {
@@ -4384,11 +4385,13 @@ function getWgs84TableCoordinatesInfo(text) {
       }
 
       const key = `${point.lat}|${point.lon}`;
-      if (seen.has(key)) {
+      if (!preserveDuplicatePoints && seen.has(key)) {
         return;
       }
 
-      seen.add(key);
+      if (!preserveDuplicatePoints) {
+        seen.add(key);
+      }
       points.push(point);
     });
 
@@ -9680,7 +9683,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           timeoutMs: 60000
         });
         const wgs84TableRetryRawText = wgs84TableRetryResponse.choices?.[0]?.message?.content || "";
-        const wgs84TableRetryInfo = getWgs84TableCoordinatesInfo(wgs84TableRetryRawText);
+        const wgs84TableRetryInfo = getWgs84TableCoordinatesInfo(wgs84TableRetryRawText, {
+          preserveDuplicatePoints: true
+        });
 
         if (
           wgs84TableRetryInfo.isWgs84TableCoordinates
@@ -10050,7 +10055,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         mozambiqueDebug.mozambiqueBypassChat = true;
       }
     }
-    wgs84TableCoordinates = getWgs84TableCoordinatesInfo(rawText);
+    wgs84TableCoordinates = getWgs84TableCoordinatesInfo(rawText, {
+      preserveDuplicatePoints: /\+wgs84-lonlat-table-direct|\+wgs84-table-timeout-retry/.test(usedModel)
+    });
     chatCoordinates = getChatCoordinatesInfo(rawText);
     if (mozambiqueGeographicTable.isMozambiqueGeographicTable) {
       chatCoordinates = getChatCoordinatesInfo(formatMozambiqueGeographicRows(mozambiqueGeographicTable.rows));
@@ -10294,7 +10301,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             timeoutMs: 80000
           });
           const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
-          const retryWgs84Table = getWgs84TableCoordinatesInfo(retryRawText);
+          const retryWgs84Table = getWgs84TableCoordinatesInfo(retryRawText, {
+            preserveDuplicatePoints: true
+          });
 
           if (retryWgs84Table.isWgs84TableCoordinates) {
             const consumeResult = await consumeUsage(visitorId, "convert", req, {
