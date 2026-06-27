@@ -10575,6 +10575,47 @@ ${placemarks}
         return;
       }
 
+      if (activeCoordinatePrecisionMode === "french-perimeter-dms-prose") {
+        const frenchPerimeterRowsForExport = extractWgs84TableCoordinateRows(input.value);
+        if (frenchPerimeterRowsForExport.length > 0) {
+          const pairs = frenchPerimeterRowsForExport.map(row => normalizeKmlPair({
+            longitude: row.lon,
+            latitude: row.lat
+          }));
+          const selectedType = inferGeometry(pairs);
+          exportType.value = selectedType;
+
+          const usageAllowed = await consumeUsage("convert");
+          if (!usageAllowed) {
+            return;
+          }
+
+          const kml = buildChatCoordinatesKml(pairs, selectedType, {
+            documentName: "French Perimeter DMS",
+            sourceDescription: "Source interpreted from French perimeter DMS prose. Ouest is negative longitude and Nord is positive latitude. KML coordinates are written as longitude,latitude,0."
+          });
+          const blob = new Blob([kml], {
+            type: "application/vnd.google-earth.kml+xml;charset=utf-8"
+          });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+
+          link.href = url;
+          link.download = "french-perimeter-dms.kml";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          trackEvent("kml_download_click", {
+            exportType: `FrenchPerimeterDMS-${selectedType}`,
+            count: pairs.length,
+            convertedToWgs84: false
+          });
+          showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 French perimeter DMS 点；KML 已按 longitude,latitude,0 写入。`);
+          return;
+        }
+      }
+
       const wgs84TableRowsForExport = extractWgs84TableCoordinateRows(input.value);
       if (wgs84TableRowsForExport.length > 0) {
         const pairs = wgs84TableRowsForExport.map(row => normalizeKmlPair({
