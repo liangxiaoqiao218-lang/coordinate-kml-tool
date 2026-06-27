@@ -10986,6 +10986,10 @@ ${placemarks}
           }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
           : (isDmsGrouped ? [] : extractChatCoordinateRows(data.rawText || data.coordinates));
         const chatText = formatChatCoordinateRows(chatRows);
+        const frenchPerimeterFormattedSource = isFrenchPerimeterDms
+          ? (data.coordinates || "")
+          : "";
+        const wgs84TableFallbackSource = frenchPerimeterFormattedSource || data.rawText || data.coordinates;
         const wgs84TableRows = Array.isArray(data.wgs84TableCoordinates?.points) && data.wgs84TableCoordinates.points.length > 0
           ? data.wgs84TableCoordinates.points.map((point, index) => {
             const lat = Number(point.lat);
@@ -11000,7 +11004,7 @@ ${placemarks}
               kmlCoordinate: point.kmlCoordinate || `${lon},${lat},0`
             };
           }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
-          : extractWgs84TableCoordinateRows(data.rawText || data.coordinates);
+          : extractWgs84TableCoordinateRows(wgs84TableFallbackSource);
         const wgs84TableText = formatChatCoordinateRows(wgs84TableRows);
         const isWgs84TableCoordinates = !isFrenchPerimeterDms && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && Boolean(data.precisionMode === "wgs84-table-coordinates" || data.wgs84TableCoordinates?.isWgs84TableCoordinates || wgs84TableRows.length > 0);
         const isChatCoordinates = !isFrenchPerimeterDms && !isDmsGrouped && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
