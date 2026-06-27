@@ -8966,13 +8966,14 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       const wgs84TableRows = extractWgs84TableCoordinateRows(input.value);
       const dmsGroupedGroups = getActiveDmsGroupedCoordinateGroups(input.value);
       const isDmsGrouped = dmsGroupedGroups.length > 1;
+      const isFrenchPerimeterDms = activeCoordinatePrecisionMode === "french-perimeter-dms-prose";
       const chatRows = isDmsGrouped ? [] : extractChatCoordinateRows(input.value);
       const kyrgyzRows = extractKyrgyzGkRows(input.value);
       const isCadastralGrid = !isDmsGrouped && cadastralRows.length > 0;
       const isMgrs = !isCadastralGrid && mgrsRows.length > 0;
       const isMozambiqueGeographicTable = !isCadastralGrid && !isMgrs && mozambiqueRows.length > 0;
-      const isWgs84TableCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && wgs84TableRows.length > 0;
-      const isChatCoordinates = !isDmsGrouped && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && chatRows.length > 0;
+      const isWgs84TableCoordinates = !isFrenchPerimeterDms && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && wgs84TableRows.length > 0;
+      const isChatCoordinates = !isFrenchPerimeterDms && !isDmsGrouped && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && chatRows.length > 0;
       const isKyrgyzGk = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && kyrgyzRows.length > 0;
 
       if (cadastralGridPanel) {
@@ -8980,13 +8981,17 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       }
 
       if (cadastralGridBadge) {
-        cadastralGridBadge.classList.toggle("is-active", isDmsGrouped || isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk);
+        cadastralGridBadge.classList.toggle("is-active", isDmsGrouped || isFrenchPerimeterDms || isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk);
         if (isDmsGrouped) {
           cadastralGridBadge.textContent = `DMS 分组坐标 · ${dmsGroupedGroups.length} 组`;
           return;
         }
         if (isMozambiqueGeographicTable) {
           cadastralGridBadge.textContent = `Mozambique geographic table · ${mozambiqueRows.length} points`;
+          return;
+        }
+        if (isFrenchPerimeterDms) {
+          cadastralGridBadge.textContent = `French perimeter DMS · ${wgs84TableRows.length} points`;
           return;
         }
         if (isWgs84TableCoordinates) {
@@ -10923,6 +10928,7 @@ ${placemarks}
           || mozambiqueRows.length > 0
         );
         const isDmsGrouped = data.precisionMode === "dms-grouped-coordinates";
+        const isFrenchPerimeterDms = data.precisionMode === "french-perimeter-dms-prose";
         const chatRows = !isDmsGrouped && Array.isArray(data.chatCoordinates?.points) && data.chatCoordinates.points.length > 0
           ? data.chatCoordinates.points.map((point, index) => {
             const lat = Number(point.lat);
@@ -10955,8 +10961,8 @@ ${placemarks}
           }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
           : extractWgs84TableCoordinateRows(data.rawText || data.coordinates);
         const wgs84TableText = formatChatCoordinateRows(wgs84TableRows);
-        const isWgs84TableCoordinates = !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && Boolean(data.precisionMode === "wgs84-table-coordinates" || data.wgs84TableCoordinates?.isWgs84TableCoordinates || wgs84TableRows.length > 0);
-        const isChatCoordinates = !isDmsGrouped && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
+        const isWgs84TableCoordinates = !isFrenchPerimeterDms && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && Boolean(data.precisionMode === "wgs84-table-coordinates" || data.wgs84TableCoordinates?.isWgs84TableCoordinates || wgs84TableRows.length > 0);
+        const isChatCoordinates = !isFrenchPerimeterDms && !isDmsGrouped && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
         const kyrgyzGkRows = Array.isArray(data.kyrgyzGk?.rows) && data.kyrgyzGk.rows.length > 0
           ? data.kyrgyzGk.rows
           : extractKyrgyzGkRows(data.rawText || data.coordinates);
@@ -10994,6 +11000,8 @@ ${placemarks}
         // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, mgrsText, mozambiqueText, wgs84TableText, chatText, or kyrgyzGkText.
         const finalCoordinates = isDmsGrouped
           ? (data.coordinates || dmsCoordinates || "")
+          : isFrenchPerimeterDms
+            ? (wgs84TableText || data.coordinates || "")
           : isCadastralGrid
           ? (cadastralGridText || data.coordinates || "")
           : isMgrs
@@ -11053,7 +11061,7 @@ ${placemarks}
         updateCadastralGridPanel();
         if (isDmsGrouped) {
           setInternalKmlSourceFromGroups(getDelimitedCoordinateGroupsFromText(finalCoordinates));
-        } else if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk) {
+        } else if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isFrenchPerimeterDms || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk) {
           clearInternalKmlSource();
         } else {
           setInternalKmlSourceFromText(finalCoordinates);
@@ -11062,6 +11070,7 @@ ${placemarks}
           isCadastralGrid,
           isMgrs,
           isMozambiqueGeographicTable,
+          isFrenchPerimeterDms,
           isWgs84TableCoordinates,
           isChatCoordinates,
           isDmsGrouped,
@@ -11074,6 +11083,7 @@ ${placemarks}
           cadastralGrid: isCadastralGrid,
           mgrs: isMgrs,
           mozambiqueGeographicTable: isMozambiqueGeographicTable,
+          frenchPerimeterDms: isFrenchPerimeterDms,
           wgs84TableCoordinates: isWgs84TableCoordinates,
           chatCoordinates: isChatCoordinates,
           kyrgyzGk: isKyrgyzGk,

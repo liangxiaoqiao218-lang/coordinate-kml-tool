@@ -239,6 +239,60 @@ parserTrace:
 - Frontend must not overwrite, reorder, or flatten grouped coordinates.
 - Multiple Mining Area groups must remain separate polygons, not one flattened Polygon.
 
+## French Perimeter DMS Prose
+
+Type id:
+
+- `french_perimeter_dms_prose`
+
+Applicable scene:
+
+- French prose-style perimeter descriptions, especially permit text headed by `Coordonnees du perimetre` / `Coordonnees du périmètre`.
+- Boundary text describing intersections of `meridien` / `méridien` and `parallele` / `parallèle`.
+- Point labels such as `Point A`, `Point B`, `Point C`, `Point D`.
+- Direction words `Ouest` and `Nord`.
+- Degree/minute/second wording or symbols in prose, such as `8°50'00" Ouest` and `12°04'00" Nord`.
+
+Parser priority:
+
+- Runs after `DMS_GROUPED`.
+- Runs before ordinary `DMS` and before `WGS84 Chat Coordinates`.
+
+Recognition and conversion rules:
+
+- Extract one point per `Point X` block.
+- Read the longitude from the `Ouest` / west DMS value and make it negative.
+- Read the latitude from the `Nord` / north DMS value and make it positive.
+- KML output must be `longitude,latitude,0`.
+- Geometry is inferred from point count: 1 point = Point, 2 points = LineString, 3+ points = Polygon with automatic closure.
+
+Vision retry:
+
+- If generic OCR returns no useful coordinates for a French perimeter image, use the parser-specific `FRENCH_PERIMETER_DMS Retry`.
+- Do not broaden the generic OCR prompt for this type.
+- Retry output must preserve `Point X | longitude Ouest | latitude Nord`, not decimal coordinates.
+
+Forbidden behavior:
+
+- Do not let `WGS84 Chat Coordinates` capture French perimeter prose.
+- Do not parse unrelated payment amounts, article numbers, dates, or document text as coordinates.
+- Do not change BFTM, MGRS, DMS_GROUPED, WGS84_TABLE, Madagascar, Kyrgyz GK, or Mozambique parser behavior for this type.
+
+Parser trace:
+
+- Success must include `OCR -> FRENCH_PERIMETER_DMS:accepted`.
+- Vision retry success should include `OCR -> FRENCH_PERIMETER_DMS:retry_vision -> FRENCH_PERIMETER_DMS:accepted`.
+
+Regression requirement:
+
+- The failing sample `模糊坐标.jpg` is tracked under `regression-samples/FRENCH_PERIMETER_DMS/`.
+- Expected precision mode: `french-perimeter-dms-prose`.
+- Expected key KML points:
+  - `Point A`: `-8.833333333333334,12.066666666666666,0`
+  - `Point B`: `-8.75,12.066666666666666,0`
+  - `Point C`: `-8.75,12.036666666666667,0`
+  - `Point D`: `-8.833333333333334,12.036666666666667,0`
+
 ## Coordinate Engine V1 Stable
 
 Baseline commit:
@@ -252,15 +306,16 @@ Coordinate Engine V1 is the frozen baseline for production coordinate recognitio
 The parser priority chain is frozen in this exact order:
 
 1. `DMS_GROUPED`
-2. `DMS`
-3. `BFTM / X-Y`
-4. `MGRS`
-5. `Kyrgyzstan GK`
-6. `Madagascar cadastral`
-7. `Mozambique Geographic Table`
-8. `WGS84 Table` with longitude/latitude headers
-9. `WGS84 Chat Coordinates`
-10. `Fallback`
+2. `french_perimeter_dms_prose`
+3. `DMS`
+4. `BFTM / X-Y`
+5. `MGRS`
+6. `Kyrgyzstan GK`
+7. `Madagascar cadastral`
+8. `Mozambique Geographic Table`
+9. `WGS84 Table` with longitude/latitude headers
+10. `WGS84 Chat Coordinates`
+11. `Fallback`
 
 Freeze rules:
 
@@ -277,6 +332,7 @@ Vision Retry is a permanent Coordinate Engine architecture layer.
 Current stable retry paths:
 
 - `DMS_GROUPED Retry`
+- `FRENCH_PERIMETER_DMS Retry`
 - `WGS84_TABLE Retry`
 - `MGRS Retry`
 
@@ -296,6 +352,7 @@ regression-samples/
 ├── BFTM/
 ├── RC2/
 ├── DMS_GROUPED/
+├── FRENCH_PERIMETER_DMS/
 ├── DMS/
 ├── MGRS/
 ├── CHAT/
@@ -319,6 +376,7 @@ Before any coordinate parser commit, the regression suite must verify:
 - BFTM long table remains `BFTM:accepted`.
 - RC2 longitude/latitude table remains `WGS84_TABLE:accepted`.
 - DMS grouped samples remain grouped and are not flattened.
+- French perimeter DMS prose remains `FRENCH_PERIMETER_DMS:accepted` and is never captured by WGS84 Chat.
 - DMS single point remains DMS.
 - MGRS remains MGRS and is not captured by chat coordinates.
 - Plain chat coordinates still enter `WGS84_CHAT:accepted`.

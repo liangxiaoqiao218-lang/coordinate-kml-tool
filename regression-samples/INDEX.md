@@ -11,15 +11,16 @@ This directory is the fixed regression sample library for GeoKit Lab Coordinate 
 Current stable coordinate types:
 
 1. `DMS_GROUPED`
-2. `DMS`
-3. `BFTM / X-Y`
-4. `MGRS`
-5. `Kyrgyzstan GK`
-6. `Madagascar cadastral`
-7. `Mozambique Geographic Table`
-8. `WGS84 Table` with longitude/latitude headers
-9. `WGS84 Chat Coordinates`
-10. `Fallback`
+2. `french_perimeter_dms_prose`
+3. `DMS`
+4. `BFTM / X-Y`
+5. `MGRS`
+6. `Kyrgyzstan GK`
+7. `Madagascar cadastral`
+8. `Mozambique Geographic Table`
+9. `WGS84 Table` with longitude/latitude headers
+10. `WGS84 Chat Coordinates`
+11. `Fallback`
 
 ## Directory Guide
 
@@ -28,6 +29,7 @@ Current stable coordinate types:
 | `BFTM/` | Burkina Faso BFTM / X-Y long table samples | 0 |
 | `RC2/` | Longitude-east / north-latitude table samples | 0 |
 | `DMS_GROUPED/` | Mining Area grouped DMS samples | 0 |
+| `FRENCH_PERIMETER_DMS/` | French prose perimeter DMS samples | 1 |
 | `DMS/` | Standard and single-point DMS samples | 0 |
 | `MGRS/` | MGRS / UTM Grid Reference samples | 0 |
 | `CHAT/` | Plain WGS84 chat coordinate samples | 0 |

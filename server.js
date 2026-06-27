@@ -3178,6 +3178,27 @@ function hasDmsGroupedContext(text) {
     || (/[°º'′″"]/.test(value) && /\d\s*[NS]\b[\s\S]{0,120}\d\s*[EWO]\b|\d\s*[EWO]\b[\s\S]{0,120}\d\s*[NS]\b/i.test(value));
 }
 
+function hasFrenchPerimeterDmsContext(text) {
+  const value = String(text || "");
+  const folded = foldSearchText(value);
+  const directPointRows = value
+    .split(/\r?\n/)
+    .filter(line => /\bPoint\s+[A-Z]\b/i.test(line)
+      && /\b(?:Ouest|West|O)\b/i.test(line)
+      && /\b(?:Nord|North|N)\b/i.test(line));
+
+  if (directPointRows.length >= 1) {
+    return true;
+  }
+
+  return /coordonnees?\s+du\s+perimetre|coordonnees?\s+du\s+p[eé]rimetre|perimetre|p[eé]rimetre/.test(folded)
+    && /meridien|m[eé]ridien/.test(folded)
+    && /parallele|parall[eè]le/.test(folded)
+    && /ouest/.test(folded)
+    && /nord/.test(folded)
+    && /\bpoint\s+[a-z]\b/i.test(folded);
+}
+
 function looksLikeCorrectionContext(text) {
   const value = foldSearchText(text);
 
@@ -5154,6 +5175,197 @@ function parseDmsCoordinateLine(line) {
   }
 
   return `${longitude.value},${latitude.value}`;
+}
+
+function getFrenchDmsParts(text) {
+  const source = normalizeText(text)
+    .replace(/掳/g, "°")
+    .replace(/Ouest/gi, "O")
+    .replace(/West/gi, "W")
+    .replace(/Nord/gi, "N")
+    .replace(/North/gi, "N")
+    .replace(/Sud|South/gi, "S")
+    .replace(/Est|East/gi, "E")
+    .replace(/\bdegr[eé]s?\b/gi, "°")
+    .replace(/\bminutes?\b/gi, "'")
+    .replace(/\bsecondes?\b/gi, "\"");
+  const segmentParts = source
+    .split(/[|\r\n;；]+/)
+    .map(segment => segment.trim())
+    .filter(Boolean)
+    .map(segment => {
+      const directionMatch = segment.match(/\b([NSEWO])\b/i) || segment.match(/([NSEWO])\s*$/i);
+      const numbers = segment.match(/[-+]?\d+(?:[.,]\d+)?/g) || [];
+
+      if (!directionMatch || numbers.length < 3) {
+        return null;
+      }
+
+      const direction = directionMatch[1].toUpperCase();
+      const value = decimalFromDms(numbers[0], numbers[1], numbers[2].replace(",", "."), direction);
+
+      if (value === null) {
+        return null;
+      }
+
+      return {
+        value,
+        direction,
+        axis: ["N", "S"].includes(direction) ? "lat" : "lon"
+      };
+    })
+    .filter(Boolean);
+
+  if (segmentParts.length > 0) {
+    return segmentParts;
+  }
+
+  const pattern = /([-+]?\d{1,3})[^\dNSEWO]+(\d{1,2})[^\dNSEWO]+(\d{1,2}(?:[.,]\d+)?)[^\dNSEWO]*([NSEWO])/gi;
+  const parts = [];
+  let match;
+
+  while ((match = pattern.exec(source)) !== null) {
+    const direction = match[4].toUpperCase();
+    const value = decimalFromDms(match[1], match[2], match[3].replace(",", "."), direction);
+
+    if (value !== null) {
+      parts.push({
+        value,
+        direction,
+        axis: ["N", "S"].includes(direction) ? "lat" : "lon"
+      });
+    }
+  }
+
+  return parts;
+}
+
+function makeFrenchPerimeterPoint(label, text) {
+  const parts = getFrenchDmsParts(text);
+  const latitude = parts.find(part => part.axis === "lat");
+  const longitude = parts.find(part => part.axis === "lon");
+
+  if (!latitude || !longitude) {
+    return null;
+  }
+
+  const lat = Number(latitude.value);
+  const lon = Number(longitude.value);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    return null;
+  }
+
+  return makeWgs84Point({
+    label,
+    lat,
+    lon,
+    raw: text
+  });
+}
+
+function getFrenchPerimeterDmsInfo(text) {
+  const source = String(text || "");
+
+  if (!hasFrenchPerimeterDmsContext(source)) {
+    return {
+      isFrenchPerimeterDms: false,
+      points: [],
+      rowCount: 0
+    };
+  }
+
+  const normalized = normalizeText(source);
+  const pointRegex = /\bPoint\s+([A-Z])\b\s*[:：]?/gi;
+  const markers = [];
+  let match;
+
+  while ((match = pointRegex.exec(normalized)) !== null) {
+    markers.push({
+      label: match[1].toUpperCase(),
+      index: match.index,
+      end: pointRegex.lastIndex
+    });
+  }
+
+  const pointsByLabel = new Map();
+
+  for (let index = 0; index < markers.length; index += 1) {
+    const marker = markers[index];
+    const next = markers[index + 1];
+    const block = normalized.slice(marker.end, next ? next.index : normalized.length);
+    const point = makeFrenchPerimeterPoint(marker.label, block);
+
+    if (point && !pointsByLabel.has(point.label)) {
+      pointsByLabel.set(point.label, point);
+    }
+  }
+
+  const points = Array.from(pointsByLabel.values())
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  if (points.length === 0) {
+    return {
+      isFrenchPerimeterDms: false,
+      points: [],
+      rowCount: 0
+    };
+  }
+
+  return {
+    isFrenchPerimeterDms: true,
+    points,
+    rowCount: points.length,
+    geometry: inferGeometry(points),
+    kml: buildChatCoordinatesKml(points)
+  };
+}
+
+function formatFrenchPerimeterDmsRows(points) {
+  return ["label | WGS84 | KML", ...points.map(point => `${point.label} | ${point.lat}, ${point.lon} | ${point.kmlCoordinate}`)].join("\n");
+}
+
+function looksLikeConvertedFrenchPerimeterDecimalOutput(text) {
+  const value = String(text || "");
+  const coordinateLines = value
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => /^[-+]?\d{1,3}(?:\.\d+)?\s*,\s*[-+]?\d{1,3}(?:\.\d+)?$/.test(line));
+  const pairs = coordinateLines.map(line => line.split(",").map(part => Number(part.trim())));
+  const looksLikeWestNorthBoundary = pairs.length >= 3
+    && pairs.length <= 6
+    && pairs.every(pair => Number.isFinite(pair[0]) && Number.isFinite(pair[1]) && pair[0] < 0 && pair[1] > 0);
+  const hasStructuredHeader = /longitude|latitude|经度|纬度|WGS84\s+Longitude\s+Latitude\s+Table/i.test(value);
+
+  return coordinateLines.length >= 3
+    && coordinateLines.length <= 6
+    && !hasStructuredHeader
+    && (/人工修正|修正值|correction|corrected/i.test(value) || looksLikeWestNorthBoundary);
+}
+
+function shouldRetryFrenchPerimeterDmsVisualRead(rawText, coordinates, reqFile, warningText = "") {
+  if (!reqFile) {
+    return false;
+  }
+
+  if (getFrenchPerimeterDmsInfo(rawText).isFrenchPerimeterDms) {
+    return false;
+  }
+
+  const text = String(rawText || "");
+  const context = `${text}\n${warningText || ""}`;
+  const noUsefulCoordinates = countCoordinateRows(coordinates) < 2 || text.includes(noCoordinatesText);
+  const isSmallDocumentImage = Number(reqFile.size || 0) > 0 && Number(reqFile.size || 0) <= 250000;
+  const hasFrenchPerimeterTerms = /coordonn[ée]es?\s+du\s+p[ée]rim[èe]tre|meridien|m[eé]ridien|parallele|parall[eè]le|ouest|nord/i.test(context);
+
+  if (isSmallDocumentImage && looksLikeConvertedFrenchPerimeterDecimalOutput(context)) {
+    return true;
+  }
+
+  return noUsefulCoordinates && (
+    hasFrenchPerimeterTerms
+    || (isSmallDocumentImage && context.includes(noCoordinatesText))
+  );
 }
 
 function projectedCoordinateFromLine(line) {
@@ -9223,6 +9435,30 @@ Mining Area 2:
 2. 11°52'17.21"N, 08°53'33.18"W
 
 If no Mining Area DMS coordinate groups are readable, output only: ${noCoordinatesText}`;
+    const frenchPerimeterDmsPrompt = `Read ONLY French prose boundary coordinates in the image.
+This is a literal French perimeter DMS extraction task.
+
+Target context may include:
+- Coordonnées du périmètre
+- Point A / Point B / Point C / Point D
+- méridien ... Ouest
+- parallèle ... Nord
+- intersection du méridien / du parallèle
+
+Critical rules:
+- Do NOT read tables unless they are part of the French perimeter prose.
+- Do NOT convert to decimal degrees.
+- Do NOT reorder into latitude,longitude or longitude,latitude prose.
+- Keep each boundary point label.
+- For each point, output the longitude DMS with Ouest/West and the latitude DMS with Nord/North.
+- Ouest means west longitude; Nord means north latitude.
+- Ignore article text, prices, dates, signatures, phone UI, and page footer.
+
+Output only rows in this exact shape:
+Point A | 8°50'00" Ouest | 12°04'00" Nord
+Point B | 8°45'00" Ouest | 12°04'00" Nord
+
+If no French perimeter DMS boundary coordinates are readable, output only: ${noCoordinatesText}`;
     const mozambiqueGeographicTablePrompt = `Read ONLY the Portuguese geographic coordinate table in this image.
 
 Target table:
@@ -9557,7 +9793,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
     let dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     let dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
-    let dmsAccepted = !dmsGroupedAccepted && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
+    let frenchPerimeterDms = getFrenchPerimeterDmsInfo(rawText);
+    let dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
     if (dmsGroupedAccepted && shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo)) {
       try {
         parserTrace.push("DMS_GROUPED:retry_vision");
@@ -9592,6 +9829,49 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       } catch (dmsGroupedRetryError) {
         console.error("DMS grouped direct prompt failed:", dmsGroupedRetryError.message || dmsGroupedRetryError);
+      }
+    }
+    if (
+      !dmsGroupedAccepted
+      && !bftmAccepted
+      && !cadastralGrid.isCadastralGrid
+      && !mgrs.isMgrs
+      && !mozambiqueGeographicTable.isMozambiqueGeographicTable
+      && !wgs84TableCoordinates.isWgs84TableCoordinates
+      && !kyrgyzGk.isKyrgyzGk
+      && shouldRetryFrenchPerimeterDmsVisualRead(rawText, coordinates, req.file, warning)
+    ) {
+      try {
+        parserTrace.push("FRENCH_PERIMETER_DMS:retry_vision");
+        console.log("French perimeter DMS direct prompt started", {
+          timeoutMs: 60000
+        });
+        const frenchPerimeterResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: frenchPerimeterDmsPrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 1400,
+          timeoutMs: 60000
+        });
+        const frenchPerimeterRawText = frenchPerimeterResponse.choices?.[0]?.message?.content || "";
+        const frenchPerimeterRetryInfo = getFrenchPerimeterDmsInfo(frenchPerimeterRawText);
+
+        if (frenchPerimeterRetryInfo.isFrenchPerimeterDms) {
+          rawText = frenchPerimeterRawText;
+          frenchPerimeterDms = frenchPerimeterRetryInfo;
+          coordinates = formatFrenchPerimeterDmsRows(frenchPerimeterDms.points);
+          dmsAccepted = false;
+          chatCoordinates = getChatCoordinatesInfo("");
+          usedModel = `${aliyunVisionModel}+french-perimeter-dms-direct`;
+          console.log("French perimeter DMS direct prompt success rows=", frenchPerimeterDms.points.length);
+        } else {
+          console.log("French perimeter DMS direct prompt did not return parsable rows", {
+            preview: frenchPerimeterRawText.slice(0, 500)
+          });
+        }
+      } catch (frenchPerimeterError) {
+        console.error("French perimeter DMS direct prompt failed:", frenchPerimeterError.message || frenchPerimeterError);
       }
     }
     if (!mozambiqueGeographicTable.isMozambiqueGeographicTable && (useMozambiqueGeographicPromptFirst || req.file)) {
@@ -9661,6 +9941,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     if (
       !dmsGroupedAccepted
       && !dmsAccepted
+      && !frenchPerimeterDms.isFrenchPerimeterDms
       && !bftmAccepted
       && !cadastralGrid.isCadastralGrid
       && !mgrs.isMgrs
@@ -9710,6 +9991,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     if (
       !dmsGroupedAccepted
       && !dmsAccepted
+      && !frenchPerimeterDms.isFrenchPerimeterDms
       && !bftmAccepted
       && !cadastralGrid.isCadastralGrid
       && !mgrs.isMgrs
@@ -9761,12 +10043,17 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push("DMS:accepted");
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !bftmAccepted) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted) {
       parserTrace.push("BFTM:rejected");
     }
 
     if (dmsGroupedAccepted) {
       // Keep grouped DMS/decimalized-DMS coordinates from extractCoordinateLines().
+    } else if (frenchPerimeterDms.isFrenchPerimeterDms) {
+      coordinates = formatFrenchPerimeterDmsRows(frenchPerimeterDms.points);
+      usedModel = `${usedModel}+french-perimeter-dms`;
+      parserTrace.push("FRENCH_PERIMETER_DMS:accepted");
+      warning = "识别到法语正文式边界 DMS 坐标，已按 Point / méridien / parallèle / Ouest / Nord 独立解析，不交给 WGS84 Chat parser。";
     } else if (dmsAccepted) {
       // Keep normal DMS coordinates; do not hand them to WGS84 Chat fallback.
     } else if (bftmAccepted) {
@@ -9809,7 +10096,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push(chatCoordinates.rejected ? `WGS84_CHAT:rejected(${chatCoordinates.rejectionReason})` : "WGS84_CHAT:rejected");
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
       try {
         console.log("Kyrgyzstan Gauss-Kruger table context detected, reading point/X/Y table.");
         const kyrgyzResponse = await callAliyunVision({
@@ -9837,7 +10124,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
       try {
         console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
         const layoutResponse = await callAliyunVision({
@@ -9878,7 +10165,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y result looks like column-paired output, retrying row-wise extraction.");
         const bftmRetryResponse = await callAliyunVision({
@@ -9915,7 +10202,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y OCR retry still invalid, using vision layout retry.");
         const bftmVisionRetryResponse = await callAliyunVision({
@@ -9952,7 +10239,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -9981,7 +10268,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
       const smoothedRawText = smoothDmsMinuteIslandsForLongTable(rawText);
 
       if (smoothedRawText !== rawText) {
@@ -9992,7 +10279,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -10015,7 +10302,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -10058,18 +10345,22 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     wgs84TableCoordinates = getWgs84TableCoordinatesInfo(rawText, {
       preserveDuplicatePoints: /\+wgs84-lonlat-table-direct|\+wgs84-table-timeout-retry/.test(usedModel)
     });
-    chatCoordinates = getChatCoordinatesInfo(rawText);
+    frenchPerimeterDms = getFrenchPerimeterDmsInfo(rawText);
+    chatCoordinates = frenchPerimeterDms.isFrenchPerimeterDms ? getChatCoordinatesInfo("") : getChatCoordinatesInfo(rawText);
     if (mozambiqueGeographicTable.isMozambiqueGeographicTable) {
       chatCoordinates = getChatCoordinatesInfo(formatMozambiqueGeographicRows(mozambiqueGeographicTable.rows));
     }
     kyrgyzGk = getKyrgyzGkInfo(rawText);
     dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
-    dmsAccepted = !dmsGroupedAccepted && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
+    dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
     bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
     if (dmsGroupedAccepted) {
       coordinates = dmsGroupedInfo.output;
+    } else if (frenchPerimeterDms.isFrenchPerimeterDms) {
+      coordinates = formatFrenchPerimeterDmsRows(frenchPerimeterDms.points);
+      warning = "识别到法语正文式边界 DMS 坐标，已按 Point / méridien / parallèle / Ouest / Nord 独立解析，不交给 WGS84 Chat parser。";
     } else if (dmsAccepted) {
       // Keep normal DMS coordinates; they have already been parsed before fallback.
     } else if (bftmAccepted) {
@@ -10126,26 +10417,29 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       coordinates,
       precisionMode: dmsGroupedAccepted
         ? "dms-grouped-coordinates"
-        : bftmAccepted
-          ? "bftm-projected-x-y"
-          : mgrs.isMgrs
-            ? "mgrs-utm-grid-reference"
-            : kyrgyzGk.isKyrgyzGk
-              ? "kyrgyz-gk-point-x-y"
-              : cadastralGrid.isCadastralGrid
-                ? "cadastral-grid-num-xv-yv"
-                : mozambiqueGeographicTable.isMozambiqueGeographicTable
-                  ? "mozambique-geographic-table"
-                  : wgs84TableCoordinates.isWgs84TableCoordinates
-                    ? "wgs84-table-coordinates"
-                    : chatCoordinates.isChatCoordinates
-                      ? "wgs84-chat-coordinates"
-                      : "preserve-original-decimals-and-parse-dms",
+        : frenchPerimeterDms.isFrenchPerimeterDms
+          ? "french-perimeter-dms-prose"
+          : bftmAccepted
+            ? "bftm-projected-x-y"
+            : mgrs.isMgrs
+              ? "mgrs-utm-grid-reference"
+              : kyrgyzGk.isKyrgyzGk
+                ? "kyrgyz-gk-point-x-y"
+                : cadastralGrid.isCadastralGrid
+                  ? "cadastral-grid-num-xv-yv"
+                  : mozambiqueGeographicTable.isMozambiqueGeographicTable
+                    ? "mozambique-geographic-table"
+                    : wgs84TableCoordinates.isWgs84TableCoordinates
+                      ? "wgs84-table-coordinates"
+                      : chatCoordinates.isChatCoordinates
+                        ? "wgs84-chat-coordinates"
+                        : "preserve-original-decimals-and-parse-dms",
       warning: wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning),
       cadastralGrid,
       mgrs,
       mozambiqueGeographicTable,
       mozambiqueDebug,
+      frenchPerimeterDms,
       wgs84TableCoordinates,
       chatCoordinates,
       kyrgyzGk,
