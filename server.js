@@ -10673,6 +10673,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         ? getWgs84TableCoordinatesInfo(formatMozambiqueGeographicRows(fallbackMozambiqueGeographicTable.rows))
         : getWgs84TableCoordinatesInfo(fallback.rawText);
       const fallbackKyrgyzGk = getKyrgyzGkInfo(fallback.rawText);
+      const fallbackBftmLongTable = getBftmLongTableInfo(fallback.rawText, fallback.coordinates);
+      const fallbackBftmAccepted = (hasBftmContext(fallback.rawText) || isLikelyBftmProjectedOnlyOutput(fallback.coordinates, req.file))
+        && countValidBftmProjectedRows(fallback.coordinates) >= 4;
       if (fallbackCadastralGrid.isCadastralGrid) {
         fallback.coordinates = formatCadastralGridRows(fallbackCadastralGrid.rows);
         fallback.model = `${fallback.model || "local-ocr-fallback"}+cadastral-grid`;
@@ -10715,6 +10718,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           mozambiqueRows: 0,
           mozambiqueBypassChat: true
         };
+      } else if (fallbackBftmAccepted) {
+        fallback.model = `${fallback.model || "local-ocr-fallback"}+bftm`;
+        fallback.precisionMode = "bftm-projected-x-y";
+        fallback.warning = fallback.warning || "备用 OCR 识别到 BFTM / X-Y 平面坐标表，已保持投影坐标路径；请人工核对后生成 KML。";
+        fallback.parserTrace = ["OCR", "BFTM:accepted"];
+        fallback.bftmLongTable = fallbackBftmLongTable;
       } else if (fallbackWgs84TableCoordinates.isWgs84TableCoordinates) {
         fallback.coordinates = formatChatCoordinateRows(fallbackWgs84TableCoordinates.points);
         fallback.model = `${fallback.model || "local-ocr-fallback"}+wgs84-table-coordinates`;
