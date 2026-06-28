@@ -10785,6 +10785,92 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       }
 
+      const fallbackDmsGroupedInfo = getDmsGroupedCoordinateInfo(fallback.rawText);
+      const fallbackFrenchPerimeterDms = getFrenchPerimeterDmsInfo(fallback.rawText);
+      const fallbackHasStableCoordinateResult = fallbackCadastralGrid.isCadastralGrid
+        || fallbackMgrs.isMgrs
+        || fallbackMozambiqueGeographicTable.isMozambiqueGeographicTable
+        || fallbackWgs84TableCoordinates.isWgs84TableCoordinates
+        || fallbackChatCoordinates.isChatCoordinates
+        || fallbackKyrgyzGk.isKyrgyzGk
+        || fallbackBftmAccepted
+        || Boolean(fallbackDmsGroupedInfo.output)
+        || fallbackFrenchPerimeterDms.isFrenchPerimeterDms
+        || countDmsCoordinateRows(fallback.rawText) > 0
+        || countDmsCoordinateRows(fallback.coordinates) > 0;
+
+      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file && !fallbackHasStableCoordinateResult) {
+        try {
+          console.log("Fallback OCR produced no stable coordinates after timeout; running WGS84 table timeout rescue.", {
+            fileName: req.file?.originalname || "",
+            timeoutMs: 80000
+          });
+          const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+          const wgs84TableTimeoutRescuePrompt = `Read ONLY WGS84 decimal coordinate tables in this image where the visible column headers mean longitude first and latitude second.
+
+Target header examples:
+- 经度东 / 北纬
+- 东经 / 北纬
+- 经度 / 纬度
+- Longitude / Latitude
+- Lon / Lat
+- East Longitude / North Latitude
+
+This is a strict rescue step after OCR failed. It is NOT a coordinate guessing task.
+
+Critical rules:
+- Only output coordinates if the image clearly shows a table with longitude/east column before latitude/north column.
+- Preserve every visible table row in order, including duplicate boundary points.
+- Preserve the visible row label if present, such as A, B, C, D, E, F, G, O, 1, 2.
+- The first numeric column is longitude.
+- The second numeric column is latitude.
+- Do NOT swap columns.
+- Do NOT treat the first numeric column as latitude.
+- Do NOT read body text, dates, prices, phone UI, QR codes, table sizes, or paragraph numbers.
+- Do NOT output explanations or markdown.
+
+Output format must be exactly:
+WGS84 Longitude Latitude Table
+label | longitude | latitude
+A | 16.0320 | 3.7638
+B | 16.0407 | 3.7634
+
+If no clear longitude/latitude decimal table is visible, output only: ${noCoordinatesText}`;
+          const rescueResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: wgs84TableTimeoutRescuePrompt,
+            imageItems: [{
+              type: "image_url",
+              image_url: { url: imageDataUrl }
+            }],
+            temperature: 0,
+            maxTokens: 1800,
+            timeoutMs: 80000
+          });
+          const rescueRawText = rescueResponse.choices?.[0]?.message?.content || "";
+          const rescueWgs84Table = getWgs84TableCoordinatesInfo(rescueRawText, {
+            preserveDuplicatePoints: true
+          });
+
+          if (rescueWgs84Table.isWgs84TableCoordinates) {
+            fallback.rawText = rescueRawText;
+            fallback.coordinates = formatChatCoordinateRows(rescueWgs84Table.points);
+            fallback.model = `${aliyunVisionModel}+wgs84-table-timeout-rescue`;
+            fallback.precisionMode = "wgs84-table-coordinates";
+            fallback.warning = "主视觉模型首次超时，备用 OCR 未得到稳定坐标；已通过 WGS84 经度/纬度表格专用视觉救援读取。请结合原图人工核对。";
+            fallback.wgs84TableCoordinates = rescueWgs84Table;
+            fallback.chatCoordinates = getChatCoordinatesInfo("");
+            fallback.parserTrace = ["OCR", "WGS84_TABLE:timeout_rescue", "BFTM:rejected", "WGS84_TABLE:accepted"];
+            delete fallback.bftmLongTable;
+            bftmIncompleteWarning = "";
+          } else {
+            console.log("WGS84 table timeout rescue did not return parsable rows:", rescueRawText.slice(0, 500));
+          }
+        } catch (rescueError) {
+          console.error("WGS84 table timeout rescue failed:", rescueError.message || rescueError);
+        }
+      }
+
       if (bftmIncompleteWarning) {
         fallback.warning = fallback.warning ? `${fallback.warning} ${bftmIncompleteWarning}` : bftmIncompleteWarning;
         fallback.bftmLongTable = bftmLongTable;
