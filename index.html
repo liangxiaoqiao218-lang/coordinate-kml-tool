@@ -8830,9 +8830,10 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       };
     }
 
-    function extractWgs84TableCoordinateRows(text) {
+    function extractWgs84TableCoordinateRows(text, options = {}) {
       const value = String(text || "");
       const hasFormattedTable = hasFormattedWgs84KmlTableContext(value);
+      const preserveDuplicatePoints = options.preserveDuplicatePoints === true;
 
       if ((!hasFormattedTable && !hasLongitudeLatitudeHeaderContext(value))
         || hasMgrsRows(value)
@@ -8853,15 +8854,47 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         }
 
         const key = `${row.lat}|${row.lon}`;
-        if (seen.has(key)) {
-          return;
-        }
+        if (!preserveDuplicatePoints) {
+          if (seen.has(key)) {
+            return;
+          }
 
-        seen.add(key);
+          seen.add(key);
+        }
         rows.push(row);
       });
 
       return rows;
+    }
+
+    function splitWgs84TableRowsIntoGroups(rows) {
+      const sourceRows = Array.isArray(rows) ? rows : [];
+      const groups = [];
+      let currentGroup = [];
+      let currentLabels = new Set();
+
+      sourceRows.forEach((row, index) => {
+        const label = String(row?.label || "").trim().toUpperCase();
+        const isRepeatedLabel = Boolean(label) && currentLabels.has(label);
+        const hasMoreRows = index < sourceRows.length - 1;
+
+        if (currentGroup.length >= 3 && isRepeatedLabel && hasMoreRows) {
+          groups.push(currentGroup);
+          currentGroup = [];
+          currentLabels = new Set();
+        }
+
+        currentGroup.push(row);
+        if (label) {
+          currentLabels.add(label);
+        }
+      });
+
+      if (currentGroup.length > 0) {
+        groups.push(currentGroup);
+      }
+
+      return groups;
     }
 
     function hasKyrgyzGkContext(text) {
@@ -8963,7 +8996,9 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       const cadastralRows = extractCadastralGridRows(input.value);
       const mgrsRows = extractMgrsRows(input.value);
       const mozambiqueRows = extractMozambiqueGeographicTableRows(input.value);
-      const wgs84TableRows = extractWgs84TableCoordinateRows(input.value);
+      const wgs84TableRows = extractWgs84TableCoordinateRows(input.value, {
+        preserveDuplicatePoints: true
+      });
       const dmsGroupedGroups = getActiveDmsGroupedCoordinateGroups(input.value);
       const isDmsGrouped = dmsGroupedGroups.length > 1;
       const isFrenchPerimeterDms = activeCoordinatePrecisionMode === "french-perimeter-dms-prose";
@@ -9556,7 +9591,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
       return {
         longitude: trimNumber(longitude),
-        latitude: trimNumber(latitude)
+        latitude: trimNumber(latitude),
+        kmlCoordinate: pair.kmlCoordinate
       };
     }
 
@@ -9635,7 +9671,9 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       }
 
       if (options.isWgs84TableCoordinates) {
-        const wgs84TableRows = extractWgs84TableCoordinateRows(text);
+        const wgs84TableRows = extractWgs84TableCoordinateRows(text, {
+          preserveDuplicatePoints: true
+        });
         exportType.value = inferGeometry(wgs84TableRows);
         return wgs84TableRows.length === 1;
       }
@@ -10034,7 +10072,9 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
     function formatKmlCoordinates(pairs) {
       return pairs
-        .map(pair => `${escapeXml(pair.longitude)},${escapeXml(pair.latitude)},0`)
+        .map(pair => pair.kmlCoordinate
+          ? escapeXml(pair.kmlCoordinate)
+          : `${escapeXml(pair.longitude)},${escapeXml(pair.latitude)},0`)
         .join(" ");
     }
 
@@ -10616,12 +10656,19 @@ ${placemarks}
         }
       }
 
-      const wgs84TableRowsForExport = extractWgs84TableCoordinateRows(input.value);
+      const wgs84TableRowsForExport = extractWgs84TableCoordinateRows(input.value, {
+        preserveDuplicatePoints: true
+      });
       if (wgs84TableRowsForExport.length > 0) {
-        const pairs = wgs84TableRowsForExport.map(row => normalizeKmlPair({
-          longitude: row.lon,
-          latitude: row.lat
-        }));
+        const rowGroups = splitWgs84TableRowsIntoGroups(wgs84TableRowsForExport);
+        const pairGroups = rowGroups
+          .map(group => group.map(row => normalizeKmlPair({
+            longitude: row.lon,
+            latitude: row.lat,
+            kmlCoordinate: row.kmlCoordinate
+          })))
+          .filter(group => group.length > 0);
+        const pairs = pairGroups.flat();
         const selectedType = inferGeometry(pairs);
         exportType.value = selectedType;
 
@@ -10630,10 +10677,40 @@ ${placemarks}
           return;
         }
 
-        const kml = buildChatCoordinatesKml(pairs, selectedType, {
-          documentName: "WGS84 Table Coordinates",
-          sourceDescription: "Source interpreted from longitude/latitude table headers in lon,lat order. KML coordinates are written as longitude,latitude,0."
-        });
+        let kml = "";
+        if (pairGroups.length > 1) {
+          const placemarks = pairGroups
+            .map((group, index) => buildNamedPolygonKml(group, `WGS84 Table Area ${index + 1}`, index + 1))
+            .join("\n");
+          const coordinateText = pairGroups
+            .map(group => formatKmlCoordinates(getClosedPolygonPairs(group)))
+            .join("\n");
+
+          console.log("FINAL KML COORDINATES");
+          console.log(coordinateText);
+
+          kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>WGS84 Table Coordinates</name>
+    <description>Generated by GeoKit Lab. Source interpreted from longitude/latitude table headers in lon,lat order. KML coordinates are written as longitude,latitude,0.</description>
+${placemarks}
+  </Document>
+</kml>`;
+        } else {
+          const coordinatePairsForLog = selectedType === "Polygon"
+            ? getClosedPolygonPairs(pairs)
+            : pairs;
+          const coordinateText = formatKmlCoordinates(coordinatePairsForLog);
+
+          console.log("FINAL KML COORDINATES");
+          console.log(coordinateText);
+
+          kml = buildChatCoordinatesKml(pairs, selectedType, {
+            documentName: "WGS84 Table Coordinates",
+            sourceDescription: "Source interpreted from longitude/latitude table headers in lon,lat order. KML coordinates are written as longitude,latitude,0."
+          });
+        }
         const blob = new Blob([kml], {
           type: "application/vnd.google-earth.kml+xml;charset=utf-8"
         });
@@ -10647,7 +10724,7 @@ ${placemarks}
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
         trackEvent("kml_download_click", {
-          exportType: `WGS84Table-${selectedType}`,
+          exportType: pairGroups.length > 1 ? `WGS84Table-MultiPolygon-${pairGroups.length}` : `WGS84Table-${selectedType}`,
           count: pairs.length,
           coordinateOrder: "lonlat",
           convertedToWgs84: false
@@ -11004,7 +11081,9 @@ ${placemarks}
               kmlCoordinate: point.kmlCoordinate || `${lon},${lat},0`
             };
           }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
-          : extractWgs84TableCoordinateRows(wgs84TableFallbackSource);
+          : extractWgs84TableCoordinateRows(wgs84TableFallbackSource, {
+            preserveDuplicatePoints: true
+          });
         const wgs84TableText = formatChatCoordinateRows(wgs84TableRows);
         const isWgs84TableCoordinates = !isFrenchPerimeterDms && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && Boolean(data.precisionMode === "wgs84-table-coordinates" || data.wgs84TableCoordinates?.isWgs84TableCoordinates || wgs84TableRows.length > 0);
         const isChatCoordinates = !isFrenchPerimeterDms && !isDmsGrouped && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
