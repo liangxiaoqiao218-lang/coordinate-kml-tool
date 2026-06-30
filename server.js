@@ -4847,18 +4847,37 @@ function repairBftmYToken(token) {
     return digits;
   }
 
-  for (let start = 1; start < digits.length - 5; start += 1) {
-    const candidate = digits.slice(start);
+  return "";
+}
 
-    if (isBftmYValue(candidate)) {
-      return candidate;
-    }
+function repairBftmYTokenWithTableContext(token, previousY = "", nextY = "") {
+  const digits = String(token || "").replace(/\D/g, "");
+
+  if (digits.length <= 7 || isBftmYValue(digits)) {
+    return repairBftmYToken(digits);
   }
 
-  for (let end = digits.length - 1; end >= 7; end -= 1) {
-    const candidate = digits.slice(0, end);
+  const neighborValues = [previousY, nextY]
+    .map(value => Number(String(value || "").replace(/\D/g, "")))
+    .filter(value => Number.isFinite(value) && isBftmYValue(value));
 
-    if (isBftmYValue(candidate)) {
+  if (neighborValues.length === 0) {
+    return "";
+  }
+
+  for (let index = 1; index < digits.length - 1; index += 1) {
+    const candidate = `${digits.slice(0, index)}${digits.slice(index + 1)}`;
+    const candidateNumber = Number(candidate);
+
+    if (!isBftmYValue(candidateNumber)) {
+      continue;
+    }
+
+    const closeToNeighbor = neighborValues.length >= 2
+      ? candidateNumber >= Math.min(...neighborValues) - 1000 && candidateNumber <= Math.max(...neighborValues) + 1000
+      : neighborValues.some(value => Math.abs(value - candidateNumber) <= 3000);
+
+    if (closeToNeighbor) {
       return candidate;
     }
   }
@@ -4907,6 +4926,87 @@ function extractBftmRowPair(line, previousX = "") {
   }
 
   return { rowNumber, x, y };
+}
+
+function normalizeBftmProjectedCoordinateText(text) {
+  const rows = getCoordinateRows(text);
+
+  if (rows.length < 4) {
+    return {
+      text: String(text || ""),
+      changed: false,
+      rowCount: 0
+    };
+  }
+
+  const parsedRows = [];
+  let previousX = "";
+
+  for (const row of rows) {
+    const pair = extractBftmRowPair(row, previousX);
+
+    if (pair) {
+      parsedRows.push({
+        pair,
+        rawYToken: ""
+      });
+      previousX = pair.x;
+      continue;
+    }
+
+    const numbers = extractNumbersWithThousands(row);
+    const x = numbers.find(value => isBftmXValue(value));
+    const rawYToken = x ? numbers.slice(numbers.indexOf(x) + 1).find(value => /^\d{8,}$/.test(String(value || "").replace(/\D/g, ""))) : "";
+
+    parsedRows.push({
+      pair: x && rawYToken ? { x, y: "" } : null,
+      rawYToken
+    });
+    previousX = x || previousX;
+  }
+
+  const validRows = parsedRows.filter(row => row.pair?.x && row.pair?.y).length;
+
+  if (validRows < 4) {
+    return {
+      text: String(text || ""),
+      changed: false,
+      rowCount: 0
+    };
+  }
+
+  const repairedRows = parsedRows.map((row, index) => {
+    if (row.pair?.x && row.pair?.y) {
+      return row.pair;
+    }
+
+    if (!row.pair?.x || !row.rawYToken) {
+      return null;
+    }
+
+    const previousY = parsedRows.slice(0, index).reverse().find(item => item.pair?.y)?.pair?.y || "";
+    const nextY = parsedRows.slice(index + 1).find(item => item.pair?.y)?.pair?.y || "";
+    const y = repairBftmYTokenWithTableContext(row.rawYToken, previousY, nextY);
+
+    return y ? { x: row.pair.x, y } : null;
+  });
+
+  if (repairedRows.some(row => !row)) {
+    return {
+      text: String(text || ""),
+      changed: false,
+      rowCount: 0
+    };
+  }
+
+  const normalizedText = repairedRows.map(row => `${row.x},${row.y}`).join("\n");
+  const currentText = rows.join("\n");
+
+  return {
+    text: normalizedText,
+    changed: normalizedText !== currentText,
+    rowCount: repairedRows.length
+  };
 }
 
 function extractBftmLongTableCoordinateLines(text) {
@@ -9846,6 +9946,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
     let rawText = response.choices?.[0]?.message?.content || "";
     let coordinates = extractCoordinateLines(rawText);
+    const initialBftmCoordinateRepair = normalizeBftmProjectedCoordinateText(coordinates);
+    if (initialBftmCoordinateRepair.changed && initialBftmCoordinateRepair.rowCount >= 4) {
+      coordinates = initialBftmCoordinateRepair.text;
+      console.log("BFTM projected coordinate OCR digit repair applied rows=", initialBftmCoordinateRepair.rowCount);
+    }
     let warning = extractRecognitionWarning(rawText);
     let usedModel = aliyunVisionModel;
     const parserTrace = ["OCR"];
@@ -10438,6 +10543,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
+    const finalBftmCoordinateRepair = normalizeBftmProjectedCoordinateText(coordinates);
+    if (finalBftmCoordinateRepair.changed && finalBftmCoordinateRepair.rowCount >= 4) {
+      coordinates = finalBftmCoordinateRepair.text;
+      console.log("BFTM projected coordinate OCR digit repair applied before final classification rows=", finalBftmCoordinateRepair.rowCount);
+    }
     bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
     if (dmsGroupedAccepted) {
