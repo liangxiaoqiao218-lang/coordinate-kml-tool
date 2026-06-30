@@ -12,15 +12,16 @@ Current stable coordinate types:
 
 1. `DMS_GROUPED`
 2. `french_perimeter_dms_prose`
-3. `DMS`
-4. `BFTM / X-Y`
-5. `MGRS`
-6. `Kyrgyzstan GK`
-7. `Madagascar cadastral`
-8. `Mozambique Geographic Table`
-9. `WGS84 Table` with longitude/latitude headers
-10. `WGS84 Chat Coordinates`
-11. `Fallback`
+3. `point-az-dms-table`
+4. `DMS`
+5. `BFTM / X-Y`
+6. `MGRS`
+7. `Kyrgyzstan GK`
+8. `Madagascar cadastral`
+9. `Mozambique Geographic Table`
+10. `WGS84 Table` with longitude/latitude headers
+11. `WGS84 Chat Coordinates`
+12. `Fallback`
 
 ## Directory Guide
 
@@ -30,6 +31,7 @@ Current stable coordinate types:
 | `RC2/` | Longitude-east / north-latitude table samples | 0 |
 | `DMS_GROUPED/` | Mining Area grouped DMS samples | 0 |
 | `FRENCH_PERIMETER_DMS/` | French prose perimeter DMS samples | 1 |
+| `POINT_AZ_DMS_TABLE/` | Point A-Z / Nord / Est long DMS table samples | 1 |
 | `DMS/` | Standard and single-point DMS samples | 0 |
 | `MGRS/` | MGRS / UTM Grid Reference samples | 0 |
 | `CHAT/` | Plain WGS84 chat coordinate samples | 0 |

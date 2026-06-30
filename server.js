@@ -9795,6 +9795,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     let frenchPerimeterDms = getFrenchPerimeterDmsInfo(rawText);
     let dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
+    let pointAzDmsTableAccepted = false;
     if (dmsGroupedAccepted && shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo)) {
       try {
         parserTrace.push("DMS_GROUPED:retry_vision");
@@ -10039,6 +10040,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push(dmsGroupedInfo.reason ? `DMS_GROUPED(${dmsGroupedInfo.reason}):accepted` : "DMS_GROUPED:accepted");
       usedModel = `${usedModel}+dms-grouped`;
       warning = warning || "识别到分组 DMS 坐标上下文，已按矿区分组保留 Polygon，不交给 WGS84 Chat parser。";
+    } else if (pointAzDmsTableAccepted) {
+      parserTrace.push("POINT_AZ_DMS_TABLE:accepted");
+      warning = warning || "识别到 Point / Nord / Est 长表，已用专用视觉重读按表格行保留 A-Z 点位。";
     } else if (dmsAccepted) {
       parserTrace.push("DMS:accepted");
     }
@@ -10054,6 +10058,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       usedModel = `${usedModel}+french-perimeter-dms`;
       parserTrace.push("FRENCH_PERIMETER_DMS:accepted");
       warning = "识别到法语正文式边界 DMS 坐标，已按 Point / méridien / parallèle / Ouest / Nord 独立解析，不交给 WGS84 Chat parser。";
+    } else if (pointAzDmsTableAccepted) {
+      // Keep Point A-Z table coordinates from the dedicated visual row read.
     } else if (dmsAccepted) {
       // Keep normal DMS coordinates; do not hand them to WGS84 Chat fallback.
     } else if (bftmAccepted) {
@@ -10239,7 +10245,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -10259,7 +10265,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           rawText = pointAzDisplayText;
           coordinates = pointAzRetryCoordinates;
           usedModel = `${aliyunVisionModel}+point-az-dms-retry`;
-          warning = extractRecognitionWarning(pointAzRetryRawText) || warning;
+          pointAzDmsTableAccepted = true;
+          const dmsTraceIndex = parserTrace.indexOf("DMS:accepted");
+          if (dmsTraceIndex >= 0) {
+            parserTrace.splice(dmsTraceIndex, 1);
+          }
+          if (!parserTrace.includes("POINT_AZ_DMS_TABLE:accepted")) {
+            parserTrace.push("POINT_AZ_DMS_TABLE:accepted");
+          }
+          warning = "识别到 Point / Nord / Est 长表，已用专用视觉重读按表格行保留 A-Z 点位。";
         } else if (pointAzTableRows.length < 12) {
           console.log("Point A-Z / long DMS retry did not return enough labeled rows:", pointAzRetryRawText.slice(0, 1000));
         }
@@ -10419,9 +10433,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         ? "dms-grouped-coordinates"
         : frenchPerimeterDms.isFrenchPerimeterDms
           ? "french-perimeter-dms-prose"
-          : bftmAccepted
-            ? "bftm-projected-x-y"
-            : mgrs.isMgrs
+          : pointAzDmsTableAccepted
+            ? "point-az-dms-table"
+            : bftmAccepted
+              ? "bftm-projected-x-y"
+              : mgrs.isMgrs
               ? "mgrs-utm-grid-reference"
               : kyrgyzGk.isKyrgyzGk
                 ? "kyrgyz-gk-point-x-y"

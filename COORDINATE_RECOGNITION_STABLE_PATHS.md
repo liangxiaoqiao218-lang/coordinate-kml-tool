@@ -168,15 +168,16 @@ KML 逻辑：
 The coordinate parser priority is frozen in this order:
 
 1. DMS_GROUPED / Mining Area grouped DMS
-2. DMS
-3. BFTM / X-Y long tables
-4. MGRS / UTM Grid Reference
-5. Kyrgyzstan GK
-6. Madagascar cadastral
-7. Mozambique Geographic Table
-8. WGS84 table coordinates with longitude/latitude headers
-9. WGS84 Chat Coordinates
-10. fallback
+2. Point A-Z DMS table
+3. DMS
+4. BFTM / X-Y long tables
+5. MGRS / UTM Grid Reference
+6. Kyrgyzstan GK
+7. Madagascar cadastral
+8. Mozambique Geographic Table
+9. WGS84 table coordinates with longitude/latitude headers
+10. WGS84 Chat Coordinates
+11. fallback
 
 Maintenance rules:
 
@@ -307,15 +308,16 @@ The parser priority chain is frozen in this exact order:
 
 1. `DMS_GROUPED`
 2. `french_perimeter_dms_prose`
-3. `DMS`
-4. `BFTM / X-Y`
-5. `MGRS`
-6. `Kyrgyzstan GK`
-7. `Madagascar cadastral`
-8. `Mozambique Geographic Table`
-9. `WGS84 Table` with longitude/latitude headers
-10. `WGS84 Chat Coordinates`
-11. `Fallback`
+3. `point-az-dms-table`
+4. `DMS`
+5. `BFTM / X-Y`
+6. `MGRS`
+7. `Kyrgyzstan GK`
+8. `Madagascar cadastral`
+9. `Mozambique Geographic Table`
+10. `WGS84 Table` with longitude/latitude headers
+11. `WGS84 Chat Coordinates`
+12. `Fallback`
 
 Freeze rules:
 
@@ -333,6 +335,7 @@ Current stable retry paths:
 
 - `DMS_GROUPED Retry`
 - `FRENCH_PERIMETER_DMS Retry`
+- `POINT_AZ_DMS_TABLE Retry`
 - `WGS84_TABLE Retry`
 - `MGRS Retry`
 
@@ -377,6 +380,7 @@ Before any coordinate parser commit, the regression suite must verify:
 - RC2 longitude/latitude table remains `WGS84_TABLE:accepted`.
 - DMS grouped samples remain grouped and are not flattened.
 - French perimeter DMS prose remains `FRENCH_PERIMETER_DMS:accepted` and is never captured by WGS84 Chat.
+- Point A-Z DMS long tables remain `POINT_AZ_DMS_TABLE:accepted` and are not captured by ordinary DMS.
 - DMS single point remains DMS.
 - MGRS remains MGRS and is not captured by chat coordinates.
 - Plain chat coordinates still enter `WGS84_CHAT:accepted`.
@@ -413,3 +417,46 @@ Forbidden changes:
 - Do not change parser priority without documenting the reason and passing the full regression suite.
 
 Coordinate Engine V1 is frozen and may now enter real sample accumulation.
+
+## Point A-Z DMS Table
+
+Type id:
+
+- `point-az-dms-table`
+
+Applicable scene:
+
+- Point A-Z long boundary tables with `Point / Nord / Est` columns.
+- French or English table headers such as `Point`, `Nord`, `Est`, `North`, or `East`.
+- One point per row, normally preserving labels from `Point A` through `Point Z`.
+
+Parser priority:
+
+- The dedicated Point A-Z DMS table retry runs before ordinary DMS is allowed to finalize this long-table case.
+- Ordinary DMS must not capture this type when the source is a clear Point / Nord / Est table.
+
+Recognition and conversion rules:
+
+- Use the parser-specific visual retry to reread the table row by row.
+- Preserve A-Z row order.
+- Keep every table row as one boundary point.
+- Interpret the `Nord` column as latitude.
+- Interpret the longitude column according to its direction marker; west values must remain negative.
+- KML coordinates must be written as `longitude,latitude,0`.
+
+Output contract:
+
+- `precisionMode = point-az-dms-table`
+- `parserTrace = OCR -> POINT_AZ_DMS_TABLE:accepted`
+
+Regression requirement:
+
+- Sample directory: `regression-samples/POINT_AZ_DMS_TABLE/`
+- Expected point count: 26 points, A-Z.
+- Expected first coordinate: `-8.266666666666667,10.870833333333334`
+- Expected last coordinate: `-8.254444444444445,10.870833333333334`
+
+Forbidden behavior:
+
+- Do not let ordinary DMS finalize this long-table case before the Point A-Z retry has a chance to correct row alignment.
+- Do not change WGS84 Table, WGS84 Chat, BFTM, MGRS, Kyrgyz GK, Madagascar, Mozambique, French perimeter DMS, or DMS_GROUPED behavior for this type.
