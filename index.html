@@ -11095,6 +11095,7 @@ ${placemarks}
         const kyrgyzGkIntegrity = isKyrgyzGk
           ? (data.kyrgyzGk?.integrity || analyzeKyrgyzGkRows(kyrgyzGkRows))
           : null;
+        const isBftmProjected = data.precisionMode === "bftm-projected-x-y";
 
         if (!isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
           const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
@@ -11138,6 +11139,8 @@ ${placemarks}
                   ? (chatText || data.coordinates || "")
                   : isKyrgyzGk
                     ? (kyrgyzGkText || data.coordinates || "")
+                    : isBftmProjected
+                      ? (data.coordinates || projectedLines || "")
                     : chooseBestCoordinateResult([
               recognizedLines,
               projectedLines,
