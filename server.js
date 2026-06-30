@@ -5267,6 +5267,14 @@ function makeFrenchPerimeterPoint(label, text) {
 function getFrenchPerimeterDmsInfo(text) {
   const source = String(text || "");
 
+  if (looksLikePointAzDmsTable(source)) {
+    return {
+      isFrenchPerimeterDms: false,
+      points: [],
+      rowCount: 0
+    };
+  }
+
   if (!hasFrenchPerimeterDmsContext(source)) {
     return {
       isFrenchPerimeterDms: false,
@@ -5345,6 +5353,10 @@ function looksLikeConvertedFrenchPerimeterDecimalOutput(text) {
 
 function shouldRetryFrenchPerimeterDmsVisualRead(rawText, coordinates, reqFile, warningText = "") {
   if (!reqFile) {
+    return false;
+  }
+
+  if (looksLikePointAzDmsTable(rawText) || looksLikePointAzDmsTable(coordinates)) {
     return false;
   }
 
@@ -5842,6 +5854,60 @@ function shouldRetryPointAzDmsLongTable(rawText, coordinates) {
   // first. Direct coordinate-only output is too easy for the model to guess or
   // shift by one table row, even when it returns many rows.
   return dmsRows >= 20 || duplicateRows > 0 || (coordinateRows >= 15 && coordinateRows < 24);
+}
+
+function looksLikePointAzDmsTable(text) {
+  const source = String(text || "");
+
+  if (!source.trim()) {
+    return false;
+  }
+
+  const normalized = normalizeText(source);
+  const hasFrenchDirections = /\bnord\b/i.test(normalized) && /\b(?:est|ouest)\b/i.test(normalized);
+  const hasTableHeader = /\bpoint\b/i.test(normalized) && /\bnord\b/i.test(normalized) && /\b(?:est|ouest)\b/i.test(normalized);
+
+  if (!hasFrenchDirections && !hasTableHeader) {
+    return false;
+  }
+
+  const labels = [];
+
+  for (const line of normalized.split(/\r?\n/)) {
+    const label = extractPointTableLabel(line);
+
+    if (!/^[A-Z]$/.test(label)) {
+      continue;
+    }
+
+    const parts = getLooseDmsPartsFromLine(line);
+
+    if (parts.length >= 2) {
+      labels.push(label);
+    }
+  }
+
+  const uniqueLabels = Array.from(new Set(labels));
+  const hasAbcSequence = ["A", "B", "C"].every(label => uniqueLabels.includes(label));
+  const ordered = uniqueLabels
+    .map(label => label.charCodeAt(0) - 64)
+    .sort((a, b) => a - b);
+  let longestRun = 0;
+  let currentRun = 0;
+  let previous = 0;
+
+  for (const order of ordered) {
+    if (order === previous + 1) {
+      currentRun += 1;
+    } else {
+      currentRun = 1;
+    }
+
+    longestRun = Math.max(longestRun, currentRun);
+    previous = order;
+  }
+
+  return hasAbcSequence && uniqueLabels.length >= 8 && longestRun >= 6;
 }
 
 function shouldAcceptPointAzDmsRetry(currentCoordinates, retryCoordinates) {
@@ -9866,6 +9932,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           chatCoordinates = getChatCoordinatesInfo("");
           usedModel = `${aliyunVisionModel}+french-perimeter-dms-direct`;
           console.log("French perimeter DMS direct prompt success rows=", frenchPerimeterDms.points.length);
+        } else if (looksLikePointAzDmsTable(frenchPerimeterRawText)) {
+          rawText = frenchPerimeterRawText;
+          coordinates = extractPointDmsTableCoordinateRows(frenchPerimeterRawText).join("\n") || coordinates;
+          console.log("French perimeter DMS direct prompt returned Point A-Z table; deferring to Point A-Z parser.");
         } else {
           console.log("French perimeter DMS direct prompt did not return parsable rows", {
             preview: frenchPerimeterRawText.slice(0, 500)
