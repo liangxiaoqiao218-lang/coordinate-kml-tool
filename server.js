@@ -4501,9 +4501,51 @@ function isLikelyBftmProjectedOnlyOutput(text, reqFile) {
     return false;
   }
 
+  if (looksLikeLikelyUtm30ProjectedOnlyOutput(text)) {
+    return false;
+  }
+
   return countValidBftmProjectedRows(text) === rowCount
     && !hasBftmColumnPairError(text)
     && !hasBftmBboxPollution(text);
+}
+
+function looksLikeLikelyUtm30ProjectedOnlyOutput(text) {
+  const rows = getCoordinateRows(text);
+
+  if (rows.length < 4) {
+    return false;
+  }
+
+  let projectedRowCount = 0;
+  let likelyUtm30Rows = 0;
+
+  for (const row of rows) {
+    const tablePair = extractProjectedNumberPair(row);
+    const numbers = tablePair || extractNumbersWithThousands(row).filter(value => Math.abs(Number(value)) >= 10000);
+
+    if (numbers.length < 2) {
+      continue;
+    }
+
+    projectedRowCount += 1;
+
+    const easting = Number(numbers[0]);
+    const northing = Number(numbers[1]);
+
+    if (
+      Number.isFinite(easting)
+      && Number.isFinite(northing)
+      && easting >= 700000
+      && easting <= 850000
+      && northing >= 1000000
+      && northing <= 1400000
+    ) {
+      likelyUtm30Rows += 1;
+    }
+  }
+
+  return projectedRowCount >= 4 && likelyUtm30Rows === projectedRowCount;
 }
 
 function shouldRetryMgrsVisualRead(rawText, reqFile, rawHint = "") {
