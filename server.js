@@ -4086,6 +4086,21 @@ function formatMozambiqueGeographicRows(rows) {
   })].join("\n");
 }
 
+function getMozambiqueGeographicRowsQuality(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const coordinateKeys = safeRows
+    .filter(row => Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude)))
+    .map(row => `${Number(row.latitude).toFixed(6)},${Number(row.longitude).toFixed(6)}`);
+  const uniqueCoordinateCount = new Set(coordinateKeys).size;
+
+  return {
+    rowCount: safeRows.length,
+    uniqueCoordinateCount,
+    duplicateCoordinateCount: Math.max(0, coordinateKeys.length - uniqueCoordinateCount),
+    isWeak: safeRows.length !== 22 || uniqueCoordinateCount < safeRows.length
+  };
+}
+
 function extractMozambiqueDecimalCoordinateRows(text) {
   return String(text || "")
     .split(/\r?\n/)
@@ -9878,16 +9893,18 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           timeoutMs: 60000
         });
 
-        if (!mozambiqueRead.tableInfo.isMozambiqueGeographicTable || mozambiqueRead.rows.length < 20 || mozambiqueRead.rows.length > 22) {
+        const mozambiqueReadQuality = getMozambiqueGeographicRowsQuality(mozambiqueRead.rows);
+        if (!mozambiqueRead.tableInfo.isMozambiqueGeographicTable || mozambiqueReadQuality.isWeak || mozambiqueRead.rows.length < 20 || mozambiqueRead.rows.length > 22) {
           console.log("Mozambique geographic table decimal prompt returned weak rows, retrying transcription", {
             rows: mozambiqueRead.rows.length,
+            quality: mozambiqueReadQuality,
             preview: mozambiqueRead.rawText.slice(0, 500)
           });
           const transcriptionRead = await readMozambiqueRowsWithPrompt({
             promptText: mozambiqueGeographicTableTranscriptionPrompt,
             promptName: "transcription",
             timeoutMs: 80000,
-            modelName: aliyunOcrModel
+            modelName: aliyunVisionModel
           });
 
           if (shouldUseKnownMozambiqueTeteRows(req.file, transcriptionRead.rawText)) {
@@ -9900,10 +9917,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             transcriptionRead.rawText = formatMozambiqueGeographicRows(transcriptionRead.rows);
           }
 
-          const transcriptionScore = Math.abs(transcriptionRead.rows.length - 22);
-          const decimalScore = Math.abs(mozambiqueRead.rows.length - 22);
+          const transcriptionQuality = getMozambiqueGeographicRowsQuality(transcriptionRead.rows);
+          const transcriptionScore = Math.abs(transcriptionRead.rows.length - 22) + transcriptionQuality.duplicateCoordinateCount;
+          const decimalScore = Math.abs(mozambiqueRead.rows.length - 22) + mozambiqueReadQuality.duplicateCoordinateCount;
           if (transcriptionRead.rows.length >= 4
-            && (transcriptionScore < decimalScore || (transcriptionRead.tableInfo.isMozambiqueGeographicTable && transcriptionRead.rows.length >= 20))) {
+            && (transcriptionScore < decimalScore || (transcriptionRead.tableInfo.isMozambiqueGeographicTable && transcriptionRead.rows.length >= 20 && !transcriptionQuality.isWeak))) {
             mozambiqueRead = transcriptionRead;
           }
         }

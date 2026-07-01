@@ -294,6 +294,55 @@ Regression requirement:
   - `Point C`: `-8.75,12.036666666666667,0`
   - `Point D`: `-8.833333333333334,12.036666666666667,0`
 
+## Mozambique Geographic Table
+
+Type id:
+
+- `mozambique_geographic_table`
+
+Applicable scene:
+
+- Portuguese geographic coordinate tables headed by `COORDENADAS GEOGRAFICAS` / `COORDENADAS GEOGRÁFICAS`.
+- Typical context includes `Datum: Tete`, `Latitude`, `Longitude`, `Ordem` / `Order`, `INAMI`, or `MIREME`.
+- The table has one row per point and separate DMS columns:
+  `Order | LatDeg | LatMin | LatSec | LonDeg | LonMin | LonSec`.
+
+Stable path:
+
+1. Mozambique pre-route detects the Portuguese geographic table context.
+2. Run the Mozambique decimal prompt.
+3. Apply the Mozambique quality gate.
+4. If the first pass is weak, run the Mozambique DMS transcription prompt.
+5. Parse DMS columns with latitude negative for south and longitude positive for Mozambique east longitude.
+6. Format as `Mozambique Geographic Table | order | lat | lon | KML`.
+
+Quality gate:
+
+- Expected row count is 22 for the current Tete sample.
+- A result with duplicated coordinate pairs is weak even if it has 22 rows.
+- Weak decimal output must not be accepted just because the row count is close.
+- Weak output must trigger the Mozambique-specific DMS transcription retry.
+- The retry is still part of the Mozambique parser path; it must not broaden generic OCR behavior.
+
+Forbidden behavior:
+
+- Do not let WGS84 Chat Coordinates capture Mozambique table output.
+- Do not let ordinary DMS fallback parse this table before the Mozambique parser.
+- Do not treat `-14` latitude degrees as west longitude.
+- Do not treat `32` / `33` longitude degrees as north latitude.
+- Do not accept repeated back-half rows such as many identical `32.925000` values as a complete table.
+- Do not change BFTM, WGS84 Table, French perimeter DMS, Point A-Z, MGRS, Kyrgyz GK, Madagascar, Chat, or DMS_GROUPED for this type.
+
+Expected output:
+
+- `precisionMode = mozambique-geographic-table`
+- First rows:
+  - `1 | -14.600000 | 32.955556 | 32.955556,-14.600000,0`
+  - `2 | -14.600000 | 33.100000 | 33.100000,-14.600000,0`
+  - `3 | -14.655556 | 33.100000 | 33.100000,-14.655556,0`
+- Last row:
+  - `22 | -14.633333 | 32.955556 | 32.955556,-14.633333,0`
+
 ## Coordinate Engine V1 Stable
 
 Baseline commit:
