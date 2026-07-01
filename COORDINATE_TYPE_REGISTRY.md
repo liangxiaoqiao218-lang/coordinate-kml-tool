@@ -1,157 +1,565 @@
 # Coordinate Type Registry
 
-本文件是 GeoKit Lab 坐标类型规则库，用于长期固化已经真实验证成功的坐标识别路径。
+Status: Coordinate Engine type registry
+Purpose: This is the single registry for Coordinate Engine coordinate types.
 
-## 维护原则
+This registry records the stable contract for every coordinate type. It does not
+define parser implementation. Parser routing, development rules, and release
+gates are governed by:
 
-1. 后续任何新增坐标类型，真实测试成功后，必须加入本规则库。
-2. 修某一类型时，只允许改该类型分支。
-3. 不允许为了修新类型，破坏已通过类型。
-4. 每次修改坐标识别，必须至少检查相关稳定路径是否受影响。
-5. 表格类坐标优先视觉模型，不优先 OCR bbox。
-6. fallback 只能兜底，不能覆盖高可信主识别结果。
-7. fallback 残缺结果不能直接生成 KML。
+- `COORDINATE_ENGINE_ARCHITECTURE.md`
+- `COORDINATE_RECOGNITION_STABLE_PATHS.md`
+- `COORDINATE_ENGINE_REGRESSION_SPEC.md`
+- `COORDINATE_ENGINE_AUDIT_2026-07-01.md`
 
----
+## Global Rules
 
-## handwritten_dms
+1. Every coordinate type must have one Type ID.
+2. Every structured coordinate type must have a dedicated Intent, Vision path,
+   Parser, Quality Gate, Export rule, and Regression Sample.
+3. Parsers do not guess coordinate type. Intent decides ownership first.
+4. Quality Gate failure must not fall through to another parser. It can only
+   retry the same type or return unstable/no KML.
+5. `wgs84-chat-coordinates` is fallback only. It can run only when
+   Intent=Unknown and no structured type is detected.
+6. Structured coordinate types must not be handled by Chat.
+7. Frontend export must use backend accepted `data.coordinates` as the single
+   source of truth after a structured type is accepted.
+8. Do not change a stable type to fix a new type unless the full regression
+   matrix passes.
+9. Every new type must add or update regression samples before release.
+10. Vision-dependent types require 20-run stability validation before being
+    considered Frozen.
 
-1. 类型 ID：`handwritten_dms`
-2. 适用场景：手写或截图形式的 DMS 坐标。
-3. 典型样本文件名：手写 DMS 坐标图、野外手写坐标截图。
-4. 触发关键词 / 版面特征：DMS 符号、N/S/E/W/O 方向、多行手写坐标、每 4 行构成一个点。
-5. 识别主流程：`recognizedLines` 优先；`recognizedLines` 来自 `rawText`；`groupEveryFourLinesWhenLikely()` 每 4 行自动分组；工作区优先显示原图 DMS 格式；KML 内部再转十进制度。
-6. fallback 逻辑：OCR 仅作为 fallback，不得覆盖高可信 `recognizedLines`。
-7. 坐标转换规则：显示层保留 DMS，KML 生成时内部转换为十进制度。
-8. KML 生成规则：由 DMS 解析结果生成普通 WGS84 KML。
-9. 失败保护规则：无法形成有效点时不生成 KML；不允许用残缺 OCR 行硬拼 polygon。
-10. 禁止修改项：不允许新显示层覆盖 `recognizedLines`；不允许把手写 DMS 重建为不同显示格式后再写入工作区。
-11. 回归测试要求：工作区仍显示原始 DMS 风格；每 4 行分组正常；KML 输出 WGS84 经纬度。
+## Required Registry Fields
 
----
+Each type is recorded with:
 
-## standard_dms_table
+- Type ID
+- Intent
+- Dedicated Vision
+- Dedicated Parser
+- Quality Gate
+- Export
+- Regression Sample
+- Stable Since commit
+- Status
+- Known Issues
 
-1. 类型 ID：`standard_dms_table`
-2. 适用场景：标准 DMS 表格，尤其包含法语字段的坐标表。
-3. 典型样本文件名：标准 DMS 表、Latitude nord / Longitude ouest 坐标表。
-4. 触发关键词 / 版面特征：`Latitude nord`、`Longitude ouest`、`W` / `O` / `Ouest`、表格行列结构。
-5. 识别主流程：视觉模型优先读取表格；保留表格行关系；显示原始 DMS；`W` / `O` / `Ouest` = 负经度。
-6. fallback 逻辑：OCR 只作为低置信兜底，不得破坏表格行关系。
-7. 坐标转换规则：显示层保留 DMS，KML 内部将西经转换为负经度。
-8. KML 生成规则：按表格行顺序生成普通 WGS84 KML。
-9. 失败保护规则：表格行关系不完整时，不强行生成 polygon。
-10. 禁止修改项：不允许按每 4 行硬拆标准表格；不允许 OCR bbox 优先于视觉表格识别。
-11. 回归测试要求：`Latitude nord / Longitude ouest` 表格仍显示原始 DMS；`O / Ouest` 仍按西经处理。
+Status values:
 
----
-
-## bftm_xy
-
-1. 类型 ID：`bftm_xy`
-2. 适用场景：Burkina Faso BFTM / X-Y 平面坐标表。
-3. 典型样本文件名：BFTM 坐标表、SOMMETS X Y 表。
-4. 触发关键词 / 版面特征：`BFTM`、`SOMMETS`、`X`、`Y`、`ITRF 2008`、`Projection BFTM`。
-5. 识别主流程：视觉模型优先读取 `SOMMETS | X | Y`；保持 X/Y 的表格行关系；保留平面坐标文本。
-6. fallback 逻辑：OCR 只作为 fallback，且必须通过 X/Y 合理性校验。
-7. 坐标转换规则：当前显示层保留 X/Y 平面坐标，不允许当作普通经纬度。
-8. KML 生成规则：未明确转换坐标系前，不直接写入 Google Earth 经纬度 KML。
-9. 失败保护规则：拦截 `X,X` / `Y,Y` / bbox 污染；行关系异常时不生成 KML。
-10. 禁止修改项：不允许普通 decimal 分支抢先覆盖；不允许 OCR bbox 当主结果。
-11. 回归测试要求：`SOMMETS | X | Y` 行关系保持；`X,X` / `Y,Y` 污染仍被拦截。
+- `Frozen`: stable path, must not be changed without full regression.
+- `Beta`: usable but still needs stronger regression or stability evidence.
+- `Pending`: known type, but sample or stability evidence is incomplete.
+- `Unstable`: known current production risk; do not extend by patching shared
+  parser paths.
 
 ---
 
-## madagascar_cadastral_grid
+## bftm-projected-x-y
 
-1. 类型 ID：`madagascar_cadastral_grid`
-2. 适用场景：Madagascar 矿权网格 / Liste_Carrés / cadastral grid 图。
-3. 典型样本文件名：`马达加斯加坐标.png`
-4. 触发关键词 / 版面特征：`Liste_Carrés`、`cadastral grid`、`grille cadastrale`、`carreau`、`num`、`XV`、`YV`、右侧矿权网格表。
-5. 识别主流程：优先识别 `Liste_Carrés` 表格区域；忽略地图中央大号 DMS 标注；输出 `num | XV | YV`；推断 dx/dy；XV/YV 按单格中心点处理。
-6. fallback 逻辑：fallback 不能把中央 DMS 覆盖为主结果，不能把 XV/YV 当普通 polygon 点。
-7. 坐标转换规则：EPSG:29702 转 WGS84；XV/YV 为中心点，单格四角为中心点 +/- dx/2、dy/2。
-8. KML 生成规则：每个 num 生成一个 polygon；KML 输出 `longitude,latitude,0`。
-9. 失败保护规则：投影转换失败时不生成 KML；转换结果必须落在 Madagascar 合理范围内。
-10. 禁止修改项：不允许把 XV/YV 直接当 WGS84；不允许改成左下角假设；不允许 DMS 覆盖 cadastral grid。
-11. 回归测试要求：`num | XV | YV` 保持；Grid 280 四角按中心点模式生成；KML 经纬度落在 Madagascar 图示区域附近。
-
----
-
-## kyrgyzstan_gk
-
-1. 类型 ID：`kyrgyzstan_gk`
-2. 适用场景：Kyrgyzstan / Soviet Gauss-Kruger 俄文矿权角点表。
-3. 典型样本文件名：`吉尔吉斯斯坦矿地坐标.png`
-4. 触发关键词 / 版面特征：`№ точек`、`Координаты угловых точек`、`лицензионной площади`、`прямоугольной системе координат`、`Kyrgyzstan`、`Киргиз`、`Кыргыз`、俄文双列表格、`13xxxxxx` + `46xxxxx` 坐标组合。
-5. 识别主流程：命中 Kyrgyz GK 预判后直接走专用视觉 prompt；输出 `point | X | Y`；保留点号；按 point 升序排序；X 使用完整 easting，例如 `13261341`；Y 使用 northing，例如 `4607777`；不交换 X/Y；不去掉 13 区号。
-6. fallback 逻辑：主视觉超时时，先 visual retry；fallback OCR 只有在保留左右双列表格结构时，才允许按行序恢复点号；左列恢复 `1-33`；右列恢复 `34-65`；常见 OCR 错误 `607447` 可修复为 `4607447`；恢复后必须通过连续性检查；恢复后必须落在 Kyrgyzstan 范围。
-7. 坐标转换规则：EPSG:28413 转 WGS84；X 是完整 easting，保留 13 区号；Y 是 northing。
-8. KML 生成规则：按 point 升序生成 polygon；polygon 自动闭合；KML 输出 `longitude,latitude,0`。
-9. 失败保护规则：fallback 残缺点号不能直接生成 KML；点号不连续不能生成 KML；异常大点号不能生成 KML；转换后不在 Kyrgyzstan 范围内不能生成 KML。
-10. 禁止修改项：不允许 fallback 残缺点号直接生成 KML；不允许 `513` / `520` 这类异常点号进入最终结果；不允许交换 X/Y；不允许去掉 13 区号。
-11. 回归测试要求：原图 direct prompt 成功时识别 `1-65`；fallback OCR 保留双列表格时可恢复 `1-65`；`513` / `520` 不进入最终结果；点 60 可修复为 `13260521,4607447`；EPSG:28413 转换结果落在 Kyrgyzstan `72E-78E / 39N-43N` 范围。
-
----
-
-## decimal_latlon
-
-1. 类型 ID：`decimal_latlon`
-2. 适用场景：普通小数经纬度 polygon、点、线。
-3. 典型样本文件名：普通经纬度坐标文本或截图。
-4. 触发关键词 / 版面特征：十进制度经纬度；数值范围符合 WGS84 经纬度；不包含特殊投影/网格表关键词。
-5. 识别主流程：普通 polygon 路径；不进入矿权网格模式；不进入 GK / BFTM 特殊分支。
-6. fallback 逻辑：OCR fallback 只用于提取普通经纬度文本，不允许覆盖更高优先级的特殊坐标类型。
-7. 坐标转换规则：已是 WGS84 经纬度时不再投影转换。
-8. KML 生成规则：按普通 KML polygon / line / point 逻辑输出。
-9. 失败保护规则：坐标范围异常时不生成 KML；点数不足时不生成 polygon。
-10. 禁止修改项：不允许进入 Madagascar cadastral grid；不允许进入 Kyrgyz GK；不允许进入 BFTM 特殊分支。
-11. 回归测试要求：普通小数经纬度仍走原普通 KML 路径；特殊表格坐标不会被 decimal 分支抢先覆盖。
-
+- Type ID: `bftm-projected-x-y`
+- Legacy aliases: `bftm_xy`, `bftm`
+- Intent:
+  - Burkina Faso projected coordinate table.
+  - Keywords: `BFTM`, `Projection BFTM`, `Coordonnees en BFTM (XY)`,
+    `SOMMETS`, `X(m)`, `Y(m)`, `ITRF 2008`.
+  - Numeric pattern: projected X around Burkina easting range and Y around
+    Burkina northing range.
+- Dedicated Vision:
+  - BFTM / X-Y table extraction.
+  - Preserve row relationship between summit/label, X, and Y.
+- Dedicated Parser:
+  - BFTM projected X/Y parser.
+  - Must not treat values as WGS84 decimal degrees.
+- Quality Gate:
+  - Requires valid projected X/Y rows.
+  - Rejects bbox pollution, X/X or Y/Y duplication, and non-BFTM UTM tables.
+  - OCR digit repair is allowed only inside confirmed BFTM long-table context
+    and only when the repaired Y enters legal range and is consistent with
+    neighboring rows.
+- Export:
+  - Convert from BFTM projected coordinates to WGS84 KML when export is
+    requested.
+  - KML order must be `longitude,latitude,0`.
+  - Frontend must use backend accepted `data.coordinates`.
+- Regression Sample:
+  - `regression-samples/BFTM/`
+  - Known samples:
+    - `D:/about-west-africa-business/test-materials/布基纳法索02.jpg`
+    - `长坐标.png` path pending formal record.
+- Stable Since commit:
+  - `5fcc3eb` promoted BFTM fallback OCR to projected mode.
+  - `9f77985` repaired OCR digit duplication in BFTM projected tables.
+  - `9d7a514` preserved backend BFTM coordinates in frontend workspace.
+- Status: Frozen
+- Known Issues:
+  - Must not capture ordinary UTM30 X/Y tables.
+  - Must not expose repaired backend coordinates and raw OCR coordinates as two
+    competing frontend data sources.
 
 ---
 
-## wgs84_chat_coordinates
+## utm30n-projected-x-y
 
-1. 类型 ID：`wgs84_chat_coordinates`
-2. 适用场景：聊天记录、复制文本、图片 OCR 后得到的 WGS84 小数经纬度列表，例如 `12.319572, -11.178174`、`A 12.319572, -11.178174`。
-3. 典型样本文件名：聊天坐标文本、复制粘贴坐标列表、OCR 小数经纬度结果。
-4. 触发关键词 / 版面特征：每行或每段包含一组小数坐标；可带 A/B/C 标签；数值符合 WGS84 范围；不包含 DMS、MGRS、UTM、BFTM 或特殊投影关键词。
-5. 识别主流程：按 `lat, lon` 解释；支持逗号、空格、换行、A/B/C 标签；输出 `label | WGS84 | KML`。
-6. fallback 逻辑：备用 OCR 可识别该类型，但不得覆盖 MGRS、DMS、BFTM、Madagascar、Kyrgyzstan GK 等更高优先级稳定路径。
-7. 坐标转换规则：不做投影转换；输入为 WGS84 decimal degrees；KML 写入时必须转换为 `longitude,latitude,0`。
-8. KML 生成规则：按解析后的点数自动推断 geometry；1 点生成 Point，2 点生成 LineString，3 点及以上生成 Polygon 并自动闭合。
-9. 失败保护规则：纬度超出 `[-90,90]`、经度超出 `[-180,180]`、百万级 UTM 数字、明显特殊坐标格式均拒绝；如果存在经纬度反转风险，只返回 `possible swapped lat/lon` warning，不阻断生成。
-10. 禁止修改项：不允许自动猜 UTM；不允许引入 MGRS 解析；不允许投影转换；不允许把 `lat,lon` 直接按 `lon,lat` 显示；不允许影响 MGRS / BFTM / UTM 数字坐标优先级。
-11. 回归测试要求：单点样本应自动生成 Point；两点样本应自动生成 LineString；三点样本 `12.319572,-11.178174`、`12.318957,-11.178055`、`12.318693,-11.177711` 应识别 3 点并自动生成闭合 Polygon；KML 坐标必须为 `-11.178174,12.319572,0` 形式。
+- Type ID: `utm30n-projected-x-y`
+- Legacy aliases: UTM numeric X/Y, projected X/Y.
+- Intent:
+  - Burkina Faso or West Africa UTM Zone 30N projected X/Y table.
+  - Keywords: `UTM`, `X`, `Y`, `Sommet(s)`, projected coordinate values.
+  - No explicit BFTM keyword or BFTM projection reference.
+- Dedicated Vision:
+  - UTM / X-Y table extraction.
+- Dedicated Parser:
+  - UTM Zone 30N projected coordinate parser.
+- Quality Gate:
+  - Must be recognized as UTM30N or user-selected/system-detected UTM30N.
+  - Must not be promoted to BFTM without BFTM intent evidence.
+- Export:
+  - Convert UTM30N projected X/Y to WGS84 KML.
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - Sample: `D:/about-west-africa-business/test-materials/布基纳法索03.png`
+  - Expected first row: `727250,1219700`
+  - Expected last row: `729200,1219500`
+- Stable Since commit:
+  - `9042a88` avoided classifying UTM30 projected tables as BFTM.
+- Status: Frozen
+- Known Issues:
+  - Must remain separate from `bftm-projected-x-y`.
 
 ---
 
-## mgrs_utm_grid_reference
+## wgs84-table-coordinates
 
-1. 类型 ID：`mgrs_utm_grid_reference`
-2. 适用场景：MGRS / UTM Grid Reference 坐标文本、截图或批量列表，例如 `47RLH 24469 42832`、`47R LH 24469 42832`、`47RLH2446942832`。
-3. 典型样本文件名：MGRS 坐标表、UTM Grid Reference 坐标截图、缅甸/东南亚矿区 MGRS 点位列表。
-4. 触发关键词 / 版面特征：zone 1-60 + latitude band C-X（排除 I/O）+ 100km grid square 两字母（排除 I/O）+ 等长 easting/northing 数字；可带 A/B/C 点号标签。
-5. 识别主流程：在普通数字坐标、UTM 数字坐标、BFTM/X-Y 之前优先检测 MGRS；row type 固定为 `MGRS`；输出 `label | MGRS | WGS84 | KML`。
-6. fallback 逻辑：fallback OCR 也可检测 MGRS，但只能作为人工核对结果；不得覆盖更高可信的专用表格识别分支。
-7. 坐标转换规则：MGRS 先解析为 UTM easting/northing，再按 zone 与纬度带转换为 WGS84；最终 KML 坐标为 `longitude,latitude,0`。
-8. KML 生成规则：Point / LineString / Polygon 均使用转换后的 WGS84 坐标；Polygon 自动闭合。
-9. 失败保护规则：无效 zone、无效 band、I/O 字母、easting/northing 位数不等、紧凑数字奇数位、超过 5 位、转换纬度不在 band 范围内时必须拒绝。
-10. 禁止修改项：不允许把 MGRS 当普通小数坐标；不允许让普通 decimal / projected X-Y 分支抢先覆盖；不允许输出未知坐标类型。
-11. 回归测试要求：`47RLH 24469 42832` 应转换到约 `97.2636250946,24.7901938391`；完整 A-G 样本应识别 7 点并按输入顺序生成闭合 Polygon KML。
+- Type ID: `wgs84-table-coordinates`
+- Legacy aliases: WGS84 Longitude/Latitude table, lon/lat table, RC2.
+- Intent:
+  - Structured WGS84 table with explicit longitude/latitude headers.
+  - Keywords: `longitude`, `latitude`, `lon`, `lat`, `经度`, `纬度`,
+    `经度东`, `北纬`, `Longitude Latitude Table`.
+  - Coordinate order is determined by table headers.
+- Dedicated Vision:
+  - WGS84 table vision retry / timeout rescue for clear lon/lat tables.
+  - Preserve labels and duplicate boundary points when table represents mining
+    polygon boundaries.
+- Dedicated Parser:
+  - WGS84 table parser.
+  - Parses `label | longitude | latitude` or formatted
+    `label | WGS84 | KML`.
+- Quality Gate:
+  - Requires valid WGS84 ranges.
+  - Header order must be respected.
+  - Duplicate boundary points must be preserved when enabled by table path.
+  - Chat must not accept this type.
+- Export:
+  - Use backend KML column directly when available.
+  - Do not rebuild KML from display-only `WGS84` column.
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - `regression-samples/RC2/`
+  - Known samples:
+    - `D:/about-west-africa-business/test-materials/刚果，两个坐标在同一张图.jpg`
+    - `D:/about-west-africa-business/test-materials/微信图片_20260503091216_182_19.jpg`
+  - Expected rows: 11.
+  - Expected first KML: `16.0320,3.7638,0`.
+  - Must preserve F/G duplicate and second group B.
+- Stable Since commit:
+  - `6d0b30b` preserved WGS84 table duplicate boundary points.
+  - `d478523` rescued WGS84 table extraction after vision timeout.
+- Status: Frozen
+- Known Issues:
+  - Frontend must not reparse this as Chat or use the human-readable WGS84
+    column for export.
+
 ---
 
-## mozambique_geographic_table
+## wgs84-chat-coordinates
 
-1. 类型 ID：`mozambique_geographic_table`
-2. 适用场景：Mozambique / Portuguese geographic DMS coordinate tables, especially tables headed `COORDENADAS GEOGRÁFICAS` with `Datum: Tete`.
-3. 典型样本文件名：`莫桑比克矿地.jpg`
-4. 触发关键词 / 版面特征：`COORDENADAS GEOGRÁFICAS`、`Datum: Tete`、`Latitude`、`Longitude`、`Ordem` / `Order`、`Província`、`INAMI`、`MIREME`；表格列为 `Order | Latitude(deg min sec) | Longitude(deg min sec)`。
-5. 识别主流程：优先按专用葡语地理坐标表解析，每行读取 7 列：`Order LatDeg LatMin LatSec LonDeg LonMin LonSec`；输出普通 WGS84 `lon,lat` 行。
-6. fallback 逻辑：备用 OCR 只有保留葡语表格上下文和行列数字时才可进入该类型；不得回落到普通 DMS fallback 并误配 `N/W`；一旦命中 Mozambique geographic table，必须绕过 WGS84 Chat Coordinates，不能让 chat parser 重新解释或去重该表格。
-7. 坐标转换规则：`LatDeg` 负号代表南纬，十进制度为负数；Mozambique / Tete `Longitude` 默认为东经正数；秒值支持 decimal comma，例如 `20,00` = `20.00`。
-8. KML 生成规则：输出已是 WGS84，经由普通 KML 路径生成；KML 坐标顺序必须为 `longitude,latitude,0`。
-9. 失败保护规则：解析结果必须落在 Mozambique 合理范围内（纬度约 `-27` 到 `-10`，经度约 `30E` 到 `42E`）；不满足时不接受该表格解析。
-10. 禁止修改项：不允许把 `LatDeg=-14` 当作 West；不允许把 `Longitude=32/33` 当作 North；不允许把该表格交给普通 DMS fallback 抢先解析；不允许 `wgs84_chat_coordinates` 接管、压缩或去重 Mozambique 表格结果。
-11. 回归测试要求：`-14 | 36 | 0,00` + `32 | 57 | 20,00` 必须输出 `32.955556,-14.600000`；不得出现 `11°N`、`14°W` 或纬经度错位；完整样本应识别 22 行并落在 Mozambique / Tete 附近。
+- Type ID: `wgs84-chat-coordinates`
+- Legacy aliases: `wgs84_chat_coordinates`, `decimal_latlon`, chat coordinates.
+- Intent:
+  - Unstructured user text or chat paste with decimal WGS84 coordinates.
+  - Examples: `12.319572, -11.178174`, `A 12.319572, -11.178174`.
+  - Intent must be Unknown; no structured coordinate type may be detected.
+- Dedicated Vision:
+  - None by default.
+  - Text normalization only.
+- Dedicated Parser:
+  - Chat decimal coordinate parser.
+  - Default input order is `lat,lon` when no table header says otherwise.
+- Quality Gate:
+  - Latitude must be within `[-90, 90]`.
+  - Longitude must be within `[-180, 180]`.
+  - Rejects UTM-scale numbers and structured table contexts.
+  - Emits swapped-coordinate warning when needed, but does not auto-project.
+- Export:
+  - Automatic geometry inference:
+    - 1 point -> Point
+    - 2 points -> LineString
+    - 3+ points -> Polygon with closure
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - `regression-samples/CHAT/`
+  - Text sample: `12.319572, -11.178174`
+  - Expected KML: `-11.178174,12.319572,0`
+- Stable Since commit:
+  - `f67181c` added WGS84 Chat parser v1.
+  - Later parser-priority fixes restrict it to fallback-only behavior.
+- Status: Frozen
+- Known Issues:
+  - Fallback only. Must never process structured coordinate documents.
+
+---
+
+## dms-coordinates
+
+- Type ID: `dms-coordinates`
+- Legacy aliases: `handwritten_dms`, `standard_dms_table`, ordinary DMS.
+- Intent:
+  - Ordinary DMS point/line/polygon text or image.
+  - Keywords and symbols: degrees/minutes/seconds, `N`, `S`, `E`, `W`,
+    `O`, `Ouest`, `Nord`.
+- Dedicated Vision:
+  - Ordinary DMS extraction.
+  - Preserve original DMS format where possible.
+- Dedicated Parser:
+  - DMS parser.
+  - Supports label stripping before matching:
+    - `1.`
+    - `2)`
+    - `3:`
+    - `A.`
+    - `Point 1:`
+  - Supports quote tolerance:
+    - `11°52"11.93"N`
+    - `11°52'11.93"N`
+    - `11°52′11.93″N`
+    - `11°52 11.93 N`
+- Quality Gate:
+  - DMS values must be within valid range.
+  - Direction must be applied correctly.
+  - Must not flatten grouped DMS documents.
+- Export:
+  - Convert DMS to WGS84 decimal KML.
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - `regression-samples/DMS/`
+  - Known text sample: `13°01'21.53"N 10°13'26.62"W`
+  - Expected KML: `-10.22406111111111,13.022647222222224,0`
+- Stable Since commit:
+  - DMS path predates current freeze.
+  - Label stripping and quote tolerance stabilized during DMS_GROUPED work.
+- Status: Frozen
+- Known Issues:
+  - Needs formal image fixture for ordinary DMS single-point regression.
+
+---
+
+## dms-grouped-coordinates
+
+- Type ID: `dms-grouped-coordinates`
+- Legacy aliases: DMS_GROUPED, Mining Area grouped DMS.
+- Intent:
+  - Multiple DMS polygons in one image or OCR text.
+  - Keywords: `Mining Area`, `Mining Area Two`, `The coordinates are as follows`.
+  - Also supports headerless grouping when numbered DMS rows restart or blank
+    lines separate DMS blocks.
+- Dedicated Vision:
+  - DMS_GROUPED visual retry.
+  - Must preserve original `N,W` order and grouped sections.
+- Dedicated Parser:
+  - Grouped DMS parser.
+  - Must remove line labels before DMS matching.
+  - Must preserve groups.
+- Quality Gate:
+  - Requires group-level valid DMS coordinates.
+  - Headerless grouping must not split a single ordinary DMS polygon.
+  - Must not enter WGS84 Chat.
+- Export:
+  - MultiPolygon / multiple Placemark Polygons.
+  - Frontend must not flatten to one 8-point polygon.
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - `regression-samples/DMS_GROUPED/`
+  - Sample: `D:/about-west-africa-business/test-materials/两块矿地.jpg`
+  - Expected: 2 groups x 4 points.
+- Stable Since commit:
+  - `a43ef7a` preserved grouped DMS parsing.
+  - `5d988f3` normalized grouped DMS parsing.
+  - `c21e6f6` supported headerless grouped DMS detection.
+  - `c3356aa` preserved grouped DMS state in frontend export.
+  - `396fc1f` retried grouped DMS vision extraction.
+- Status: Frozen
+- Known Issues:
+  - Frontend must not show `local-ocr-dms-fallback` after grouped backend
+    acceptance.
+
+---
+
+## mgrs-utm-grid-reference
+
+- Type ID: `mgrs-utm-grid-reference`
+- Legacy aliases: `mgrs_utm_grid_reference`, `mgrs`.
+- Intent:
+  - MGRS / UTM Grid Reference coordinates.
+  - Examples:
+    - `47RLH 24469 42832`
+    - `47R LH 24469 42832`
+    - `47RLH2446942832`
+- Dedicated Vision:
+  - MGRS visual retry.
+- Dedicated Parser:
+  - MGRS parser.
+  - Validates:
+    - zone 1-60
+    - latitude band C-X excluding I/O
+    - 100km grid square excluding I/O
+    - easting/northing 1-5 digits and equal precision
+    - compact digits even length
+- Quality Gate:
+  - Converted latitude must match latitude band range.
+  - Invalid MGRS must not fall into ordinary numeric or Chat parser.
+- Export:
+  - Convert MGRS -> UTM -> WGS84.
+  - Point / LineString / Polygon supported.
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - `regression-samples/MGRS/`
+  - Known sample: `缅甸坐标.jpg` path pending formal record.
+  - Expected C point: `47RLH 24123 42905`.
+  - Expected A-G count: 7.
+- Stable Since commit:
+  - `1ec741e` added MGRS UTM grid reference coordinate parsing.
+- Status: Frozen
+- Known Issues:
+  - One visual run previously missed F point, but parser passed when rawText
+    contained F. This is a vision intermittency risk, not a parser defect.
+
+---
+
+## kyrgyz-gk-point-x-y
+
+- Type ID: `kyrgyz-gk-point-x-y`
+- Legacy aliases: `kyrgyzstan_gk`, Kyrgyz GK.
+- Intent:
+  - Kyrgyzstan / Soviet Gauss-Kruger mining coordinate table.
+  - Russian/Kyrgyz table with point number, X, Y.
+  - Numeric pattern: easting like `13261341`, northing like `4607777`.
+- Dedicated Vision:
+  - Kyrgyz GK visual prompt.
+  - Fallback table-row reconstruction only when dual-column table structure is
+    preserved.
+- Dedicated Parser:
+  - Kyrgyz GK point/X/Y parser.
+  - Keeps full easting including zone prefix.
+  - Does not swap X/Y.
+- Quality Gate:
+  - Point numbers must be continuous.
+  - Reject abnormal labels such as `513` / `520`.
+  - EPSG:28413 conversion must land in Kyrgyzstan bounds.
+- Export:
+  - EPSG:28413 -> WGS84.
+  - Polygon auto-closed.
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - `regression-samples/Kyrgyz_GK/`
+  - Known sample: `吉尔吉斯斯坦矿地坐标.png` path pending formal record.
+  - Expected points: 1-65.
+- Stable Since commit:
+  - Kyrgyz GK fallback recovery and row-order repair were stabilized before the
+    Coordinate Engine freeze.
+- Status: Frozen
+- Known Issues:
+  - Needs formal sample path and expected full KML snapshot.
+
+---
+
+## madagascar-cadastral-grid
+
+- Type ID: `madagascar-cadastral-grid`
+- Legacy aliases: `madagascar_cadastral_grid`, cadastral grid.
+- Intent:
+  - Madagascar cadastral grid image/table.
+  - Keywords: `Liste_Carres`, `Liste_Carrés`, `num`, `XV`, `YV`, cadastral
+    grid table.
+- Dedicated Vision:
+  - Madagascar cadastral table extraction.
+  - Must focus on the table and ignore central map DMS labels.
+- Dedicated Parser:
+  - `num | XV | YV` parser.
+  - XV/YV are grid cell center values.
+- Quality Gate:
+  - Expected stable sample has 32 rows.
+  - EPSG:29702 conversion must land in Madagascar.
+  - Reject direct WGS84 interpretation of XV/YV.
+- Export:
+  - EPSG:29702 -> WGS84.
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - `regression-samples/Madagascar/`
+  - Current status: stable original sample missing.
+- Stable Since commit:
+  - Stable path predates current freeze.
+- Status: Pending
+- Known Issues:
+  - Marked Pending stable sample.
+  - Current available sample does not reliably read the right-side table.
+  - Do not modify parser until a stable original sample is recovered.
+
+---
+
+## mozambique-geographic-table
+
+- Type ID: `mozambique-geographic-table`
+- Legacy aliases: `mozambique_geographic_table`, Portuguese geographic DMS table.
+- Intent:
+  - Mozambique Portuguese geographic DMS coordinate table.
+  - Keywords: `COORDENADAS GEOGRAFICAS`, `COORDENADAS GEOGRÁFICAS`,
+    `Datum: Tete`, `Latitude`, `Longitude`, `Ordem`, `Order`, `INAMI`,
+    `MIREME`, `Provincia`, `Província`.
+- Dedicated Vision:
+  - Mozambique-specific table reading.
+  - Reads:
+    - `Order`
+    - Latitude degree/minute/second
+    - Longitude degree/minute/second
+  - Must not invent rows outside the visible table.
+- Dedicated Parser:
+  - Mozambique geographic DMS table parser.
+  - `LatDeg` negative means south latitude.
+  - Longitude in Mozambique / Tete defaults east and positive.
+  - Decimal comma seconds are supported.
+- Quality Gate:
+  - Known sample must output exactly 22 rows, order 1-22.
+  - Reject non-22 rows, rows=0, massive duplicate rows, and out-of-Mozambique
+    coordinates.
+  - If unstable, return no KML and do not fall through to Chat.
+- Export:
+  - WGS84 table KML.
+  - KML order must be `longitude,latitude,0`.
+  - Frontend must use backend accepted `data.coordinates`.
+- Regression Sample:
+  - `regression-samples/Mozambique/`
+  - Known sample: `莫桑比克矿地.jpg` path pending formal record.
+  - Expected:
+    - row 1: `32.955556,-14.600000,0`
+    - row 2: `33.100000,-14.600000,0`
+    - row 3: `33.100000,-14.655556,0`
+    - row 22: `32.955556,-14.633333,0`
+- Stable Since commit:
+  - Not frozen.
+  - `c30c600` improved retry quality gate, but 20-run stability was not
+    achieved.
+- Status: Unstable
+- Known Issues:
+  - Needs V1.5 Intent Router or deterministic table reading.
+  - Current visual transcription may return rows=0 intermittently.
+  - Chat takeover and 36-row false acceptance must remain blocked.
+
+---
+
+## french-perimeter-dms-prose
+
+- Type ID: `french-perimeter-dms-prose`
+- Legacy aliases: French perimeter DMS.
+- Intent:
+  - French prose-style perimeter boundary descriptions.
+  - Keywords: `Coordonnees du perimetre`, `Coordonnées du périmètre`,
+    `meridien`, `méridien`, `parallele`, `parallèle`, `Ouest`, `Nord`,
+    `Point A`, `Point B`.
+  - Prose description, not A-Z tabular Point/Nord/Est table.
+- Dedicated Vision:
+  - French perimeter DMS prose retry.
+- Dedicated Parser:
+  - French perimeter prose parser.
+  - Converts Ouest to negative longitude and Nord to positive latitude.
+- Quality Gate:
+  - Requires coherent Point A-D style perimeter.
+  - Must reject Point A-Z table intent.
+- Export:
+  - Polygon KML from backend formatted coordinates.
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - `regression-samples/FRENCH_PERIMETER_DMS/`
+  - Sample: `D:/about-west-africa-business/test-materials/模糊坐标.jpg`
+  - Expected:
+    - `-8.833333333333334,12.066666666666666,0`
+    - `-8.75,12.066666666666666,0`
+    - `-8.75,12.036666666666667,0`
+    - `-8.833333333333334,12.036666666666667,0`
+- Stable Since commit:
+  - `42497ec` added French perimeter DMS prose parser.
+  - `7e7f92f` exported French perimeter DMS as polygon KML.
+  - `53faa63` used formatted coordinates for French DMS frontend.
+- Status: Frozen
+- Known Issues:
+  - Must not capture `point-az-dms-table`.
+
+---
+
+## point-az-dms-table
+
+- Type ID: `point-az-dms-table`
+- Legacy aliases: Point A-Z DMS Table.
+- Intent:
+  - Structured table with Point A-Z and columns such as `Nord` and `Est` /
+    `Ouest`.
+  - Continuous Point A, Point B, Point C... labels.
+  - Table form has priority over French prose DMS.
+- Dedicated Vision:
+  - Point A-Z DMS table prompt.
+- Dedicated Parser:
+  - Point A-Z DMS table parser.
+  - Preserves A-Z order.
+- Quality Gate:
+  - Known stable sample expects 26 points A-Z.
+  - Reject if French prose parser captured the sample.
+- Export:
+  - Polygon KML.
+  - KML order must be `longitude,latitude,0`.
+- Regression Sample:
+  - `regression-samples/POINT_AZ_DMS_TABLE/`
+  - Sample:
+    `D:/about-west-africa-business/test-materials/微信图片_20260427122118_114_19.jpg`
+  - Expected first KML:
+    `-8.266666666666667,10.870833333333334,0`
+  - Expected last KML:
+    `-8.254444444444445,10.870833333333334,0`
+- Stable Since commit:
+  - `d1787a5` added Point AZ DMS table parser.
+  - `1780aea` prevented French DMS parser from capturing Point AZ tables.
+- Status: Frozen
+- Known Issues:
+  - Requires French parser exclusion to remain active.
+
+---
+
+## Legacy Type Mapping
+
+These older names remain documented for historical compatibility. They should
+map to the canonical Type IDs above.
+
+| Legacy name | Canonical Type ID |
+|---|---|
+| `handwritten_dms` | `dms-coordinates` |
+| `standard_dms_table` | `dms-coordinates` |
+| `decimal_latlon` | `wgs84-chat-coordinates` when Intent=Unknown |
+| `wgs84_chat_coordinates` | `wgs84-chat-coordinates` |
+| `bftm_xy` | `bftm-projected-x-y` |
+| `mgrs_utm_grid_reference` | `mgrs-utm-grid-reference` |
+| `mgrs` | `mgrs-utm-grid-reference` |
+| `kyrgyzstan_gk` | `kyrgyz-gk-point-x-y` |
+| `madagascar_cadastral_grid` | `madagascar-cadastral-grid` |
+| `mozambique_geographic_table` | `mozambique-geographic-table` |
+
+## Registry Maintenance Checklist
+
+Before changing this registry:
+
+- Confirm whether the change is a new type, alias, status change, or known
+  issue update.
+- Confirm the matching regression sample directory exists.
+- Confirm Stable Paths and Architecture documents do not conflict.
+- Do not mark a type `Frozen` unless regression and stability evidence exists.
+- Do not remove legacy aliases without a migration note.
