@@ -1,0 +1,13 @@
+{
+  "typeId": "point-az-dms-table",
+  "sampleName": "Point A-Z Nord/Est DMS table",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/微信图片_20260427122118_114_19.jpg",
+  "expectedPrecisionMode": "point-az-dms-table",
+  "expectedParserTrace": ["OCR", "POINT_AZ_DMS_TABLE:accepted"],
+  "expectedPointCount": 26,
+  "expectedFirstKml": "-8.266666666666667,10.870833333333334,0",
+  "expectedLastKml": "-8.254444444444445,10.870833333333334,0",
+  "status": "active",
+  "notes": "Point A-Z table must not be captured by French perimeter DMS prose parser."
+}

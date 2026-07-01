@@ -1,0 +1,13 @@
+{
+  "typeId": "kyrgyz-gk-point-x-y",
+  "sampleName": "Kyrgyzstan GK point X/Y table",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/吉尔吉斯斯坦矿地坐标.png",
+  "expectedPrecisionMode": "kyrgyz-gk-point-x-y",
+  "expectedParserTrace": ["OCR", "KYRGYZ_GK:accepted"],
+  "expectedPointCount": 65,
+  "expectedFirstKml": "EPSG28413:point-1-within-kyrgyzstan",
+  "expectedLastKml": "EPSG28413:point-65-within-kyrgyzstan",
+  "status": "active",
+  "notes": "Expected source points are 1-65, no 513/520, and EPSG:28413 conversion must land in Kyrgyzstan."
+}

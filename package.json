@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "regression": "node scripts/coordinate-regression-runner.js",
     "start": "node server.js"
   },
   "dependencies": {

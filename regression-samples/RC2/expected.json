@@ -1,0 +1,13 @@
+{
+  "typeId": "wgs84-table-coordinates",
+  "sampleName": "RC2 WGS84 longitude latitude table",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/刚果，两个坐标在同一张图.jpg",
+  "expectedPrecisionMode": "wgs84-table-coordinates",
+  "expectedParserTrace": ["OCR", "WGS84_TABLE:retry_vision", "BFTM:rejected", "WGS84_TABLE:accepted"],
+  "expectedPointCount": 11,
+  "expectedFirstKml": "16.0320,3.7638,0",
+  "expectedLastKml": "16.0348,3.7351,0",
+  "status": "active",
+  "notes": "Must preserve F/G duplicate boundary point and second group B; frontend export must use KML column."
+}

@@ -1,0 +1,13 @@
+{
+  "typeId": "dms-grouped-coordinates",
+  "sampleName": "Two mining areas grouped DMS",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/两块矿地.jpg",
+  "expectedPrecisionMode": "dms-grouped-coordinates",
+  "expectedParserTrace": ["OCR", "DMS_GROUPED:retry_vision", "DMS_GROUPED:accepted"],
+  "expectedPointCount": 8,
+  "expectedFirstKml": "-8.88705278,11.87381111,0",
+  "expectedLastKml": "-8.89821111,11.86879167,0",
+  "status": "active",
+  "notes": "Expected export is two Polygon placemarks, four points per mining area, not one flattened polygon."
+}

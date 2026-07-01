@@ -1,0 +1,13 @@
+{
+  "typeId": "french-perimeter-dms-prose",
+  "sampleName": "French perimeter prose DMS",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/模糊坐标.jpg",
+  "expectedPrecisionMode": "french-perimeter-dms-prose",
+  "expectedParserTrace": ["OCR", "FRENCH_PERIMETER_DMS:retry_vision", "FRENCH_PERIMETER_DMS:accepted"],
+  "expectedPointCount": 4,
+  "expectedFirstKml": "-8.833333333333334,12.066666666666666,0",
+  "expectedLastKml": "-8.833333333333334,12.036666666666667,0",
+  "status": "active",
+  "notes": "French prose parser must not capture Point A-Z DMS tables."
+}

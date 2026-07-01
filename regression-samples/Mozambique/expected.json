@@ -1,0 +1,13 @@
+{
+  "typeId": "mozambique-geographic-table",
+  "sampleName": "Mozambique Portuguese geographic DMS table",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/莫桑比克矿地.jpg",
+  "expectedPrecisionMode": "mozambique-geographic-table",
+  "expectedParserTrace": ["OCR", "BFTM:rejected", "MOZAMBIQUE_GEOGRAPHIC:accepted"],
+  "expectedPointCount": 22,
+  "expectedFirstKml": "32.955556,-14.600000,0",
+  "expectedLastKml": "32.955556,-14.633333,0",
+  "status": "unstable",
+  "notes": "Known unstable: Chat and 36-row false results must stay blocked, but vision may still return rows=0."
+}

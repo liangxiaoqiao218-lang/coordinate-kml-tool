@@ -1,0 +1,13 @@
+{
+  "typeId": "utm30n-projected-x-y",
+  "sampleName": "Burkina UTM30 projected X/Y table",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/布基纳法索03.png",
+  "expectedPrecisionMode": "utm30n-projected-x-y",
+  "expectedParserTrace": ["OCR", "UTM30_XY:accepted"],
+  "expectedPointCount": 8,
+  "expectedFirstKml": "PROJECTED:727250,1219700",
+  "expectedLastKml": "PROJECTED:729200,1219500",
+  "status": "active",
+  "notes": "Must not be promoted to BFTM without explicit BFTM intent evidence."
+}

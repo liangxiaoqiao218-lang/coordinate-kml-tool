@@ -70,6 +70,7 @@ Every regression sample must define the following fields.
 ```yaml
 id: unique_sample_id
 fileName: sample_image_or_text_name
+inputType: image | text
 samplePath: path_or_external_location
 coordinateType: coordinate_type_id
 expectedPrecisionMode: expected_precision_mode
@@ -90,6 +91,7 @@ notes: human_readable_context
 ### Required Fields
 
 - `fileName`
+- `inputType`
 - `coordinateType`
 - `expectedPrecisionMode`
 - `expectedParserTrace`
@@ -110,6 +112,22 @@ notes: human_readable_context
 - `expectedGroups`
 - `forbiddenPrecisionModes`
 - `forbiddenParserTraceEntries`
+
+### Text Fixture Limitation in V1 Runner
+
+The V1 Regression Runner can call the image upload endpoint
+`/api/recognize-coordinates` for `inputType: image` samples.
+
+For `inputType: text` samples, V1 does not execute real parser logic yet because
+there is no dedicated text parser endpoint. These samples must be reported as:
+
+```text
+SKIPPED_TEXT - text fixture requires text parser endpoint
+```
+
+`SKIPPED_TEXT` is not a PASS and does not count as a FAIL. It exists to keep
+text fixtures visible in the matrix until a text parser endpoint or local parser
+harness is added.
 
 ## 3. Required Validation Checks
 
@@ -244,6 +262,7 @@ total: 12
 pass: 10
 fail: 1
 unstable: 1
+skippedText: 0
 blocked: 0
 
 Failed:
@@ -353,4 +372,3 @@ No Regression PASS
 -> No Merge
 -> No Deploy
 ```
-

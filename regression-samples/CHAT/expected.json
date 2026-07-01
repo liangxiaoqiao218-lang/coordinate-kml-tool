@@ -1,0 +1,13 @@
+{
+  "typeId": "wgs84-chat-coordinates",
+  "sampleName": "Plain chat WGS84 decimal coordinate",
+  "inputType": "text",
+  "inputFile": "TEXT:12.319572, -11.178174",
+  "expectedPrecisionMode": "wgs84-chat-coordinates",
+  "expectedParserTrace": ["TEXT", "WGS84_CHAT:accepted"],
+  "expectedPointCount": 1,
+  "expectedFirstKml": "-11.178174,12.319572,0",
+  "expectedLastKml": "-11.178174,12.319572,0",
+  "status": "active",
+  "notes": "Chat coordinates are fallback only and must not process structured coordinate tables."
+}

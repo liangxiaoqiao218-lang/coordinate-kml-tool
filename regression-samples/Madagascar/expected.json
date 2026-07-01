@@ -1,0 +1,13 @@
+{
+  "typeId": "madagascar-cadastral-grid",
+  "sampleName": "Madagascar cadastral grid",
+  "inputType": "image",
+  "inputFile": "PENDING:stable-original-sample-missing",
+  "expectedPrecisionMode": "cadastral-grid-num-xv-yv",
+  "expectedParserTrace": ["OCR", "MADAGASCAR_CADASTRAL:accepted"],
+  "expectedPointCount": 32,
+  "expectedFirstKml": "PENDING:expected-first-kml",
+  "expectedLastKml": "PENDING:expected-last-kml",
+  "status": "pending",
+  "notes": "Stable original sample is missing; current available sample does not reliably read the right-side table."
+}

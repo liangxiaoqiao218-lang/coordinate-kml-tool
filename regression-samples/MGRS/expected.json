@@ -1,0 +1,13 @@
+{
+  "typeId": "mgrs-utm-grid-reference",
+  "sampleName": "MGRS A-G UTM grid reference",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/缅甸坐标.jpg",
+  "expectedPrecisionMode": "mgrs-utm-grid-reference",
+  "expectedParserTrace": ["OCR", "MGRS:retry_vision", "BFTM:rejected", "MGRS:accepted"],
+  "expectedPointCount": 7,
+  "expectedFirstKml": "97.2636250946,24.7901938391,0",
+  "expectedLastKml": "97.2651119873,24.7906625174,0",
+  "status": "active",
+  "notes": "C point must be 47RLH 24123 42905; a prior missing F was a vision miss, not parser filtering."
+}

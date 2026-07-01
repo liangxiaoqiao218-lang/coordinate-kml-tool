@@ -1,0 +1,13 @@
+{
+  "typeId": "bftm-projected-x-y",
+  "sampleName": "BFTM long projected X/Y table",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/布基纳法索02.jpg",
+  "expectedPrecisionMode": "bftm-projected-x-y",
+  "expectedParserTrace": ["OCR", "BFTM:accepted"],
+  "expectedPointCount": 20,
+  "expectedFirstKml": "PROJECTED:655000,1333600",
+  "expectedLastKml": "PROJECTED:655000,1356200",
+  "status": "active",
+  "notes": "Expected source rows include BFTM OCR digit repair, including 653700,1335600 and 653100,1336400 before projection export."
+}

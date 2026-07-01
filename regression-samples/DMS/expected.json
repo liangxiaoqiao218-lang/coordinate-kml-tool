@@ -1,0 +1,13 @@
+{
+  "typeId": "dms-coordinates",
+  "sampleName": "Single ordinary DMS point",
+  "inputType": "text",
+  "inputFile": "TEXT:13°01'21.53\"N 10°13'26.62\"W",
+  "expectedPrecisionMode": "dms-coordinates",
+  "expectedParserTrace": ["TEXT", "DMS:accepted"],
+  "expectedPointCount": 1,
+  "expectedFirstKml": "-10.22406111111111,13.022647222222224,0",
+  "expectedLastKml": "-10.22406111111111,13.022647222222224,0",
+  "status": "active",
+  "notes": "Formal image fixture is still needed; this text fixture locks the ordinary DMS conversion contract."
+}
