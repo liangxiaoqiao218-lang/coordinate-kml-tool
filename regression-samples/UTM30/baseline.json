@@ -1,0 +1,14 @@
+{
+  "typeId": "utm30n-projected-x-y",
+  "status": "locked",
+  "baselineCommit": "cc58e8b5af255d6f7244bb50da38bce5b787bf6b",
+  "precisionMode": "utm30n-projected-x-y",
+  "parserTraceAlias": ["OCR", "UTM30_XY:accepted"],
+  "pointCount": 8,
+  "geometry": "Polygon",
+  "firstCoordinate": "727250,1219700",
+  "lastCoordinate": "729200,1219500",
+  "coordinateSummaryHash": "eb3ea44f2558f0b5b926c8c1bbe7934bcff3449556e01a40dd65e1bbeada157e",
+  "kmlCoordinateHash": "eb3ea44f2558f0b5b926c8c1bbe7934bcff3449556e01a40dd65e1bbeada157e",
+  "notes": "Locked baseline for Burkina UTM30 projected X/Y table. Coordinates remain projected source rows; export uses projection=utm30n."
+}

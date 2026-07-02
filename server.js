@@ -4581,6 +4581,71 @@ function looksLikeLikelyUtm30ProjectedOnlyOutput(text) {
   return projectedRowCount >= 4 && likelyUtm30Rows === projectedRowCount;
 }
 
+function getUtm30ProjectedXyInfo(rawText, coordinates) {
+  const coordinateText = String(coordinates || "");
+  const rows = getCoordinateRows(coordinateText);
+
+  if (rows.length < 3) {
+    return {
+      isUtm30ProjectedXy: false,
+      rowCount: rows.length,
+      projection: ""
+    };
+  }
+
+  if (
+    hasBftmContext(rawText)
+    || countDmsCoordinateRows(rawText) > 0
+    || getMgrsInfo(rawText).isMgrs
+    || getMgrsInfo(coordinateText).isMgrs
+  ) {
+    return {
+      isUtm30ProjectedXy: false,
+      rowCount: rows.length,
+      projection: ""
+    };
+  }
+
+  let projectedRowCount = 0;
+  let utm30RowCount = 0;
+
+  for (const row of rows) {
+    const tablePair = extractProjectedNumberPair(row);
+    const numbers = tablePair || extractNumbersWithThousands(row).filter(value => Math.abs(Number(value)) >= 10000);
+
+    if (numbers.length < 2) {
+      continue;
+    }
+
+    projectedRowCount += 1;
+
+    const easting = Number(numbers[0]);
+    const northing = Number(numbers[1]);
+
+    if (
+      Number.isFinite(easting)
+      && Number.isFinite(northing)
+      && easting >= 100000
+      && easting <= 900000
+      && northing >= 0
+      && northing <= 2500000
+    ) {
+      utm30RowCount += 1;
+    }
+  }
+
+  const isUtm30ProjectedXy = projectedRowCount >= 3
+    && utm30RowCount === projectedRowCount
+    && !hasBftmColumnPairError(coordinateText)
+    && !hasBftmBboxPollution(coordinateText);
+
+  return {
+    isUtm30ProjectedXy,
+    rowCount: projectedRowCount,
+    projection: isUtm30ProjectedXy ? "utm30n" : ""
+  };
+}
+
 function shouldRetryMgrsVisualRead(rawText, reqFile, rawHint = "") {
   if (!reqFile || getMgrsInfo(rawText).isMgrs) {
     return false;
@@ -10060,6 +10125,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let kyrgyzGk = getKyrgyzGkInfo(rawText);
     let bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     let bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
+    let utm30ProjectedXy = getUtm30ProjectedXyInfo(rawText, coordinates);
+    let utm30Accepted = !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
     let dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     let dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     let frenchPerimeterDms = getFrenchPerimeterDmsInfo(rawText);
@@ -10320,7 +10387,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push("DMS:accepted");
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted) {
       parserTrace.push("BFTM:rejected");
     }
 
@@ -10339,6 +10406,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push("BFTM:accepted");
       usedModel = `${usedModel}+bftm`;
       warning = warning || "识别到 BFTM / X-Y 平面坐标表，已保持投影坐标路径，不交给 WGS84 Chat parser。";
+    } else if (utm30Accepted) {
+      parserTrace.push("UTM30_XY:accepted");
+      usedModel = `${usedModel}+utm30n-projected-x-y`;
+      warning = warning || "识别到 UTM30 / X-Y 平面坐标表，已保持投影坐标路径，不交给 WGS84 Chat parser。";
     } else if (mgrs.isMgrs) {
       coordinates = formatMgrsRows(mgrs.rows);
       usedModel = `${usedModel}+mgrs`;
@@ -10375,7 +10446,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push(chatCoordinates.rejected ? `WGS84_CHAT:rejected(${chatCoordinates.rejectionReason})` : "WGS84_CHAT:rejected");
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
       try {
         console.log("Kyrgyzstan Gauss-Kruger table context detected, reading point/X/Y table.");
         const kyrgyzResponse = await callAliyunVision({
@@ -10403,7 +10474,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
       try {
         console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
         const layoutResponse = await callAliyunVision({
@@ -10444,7 +10515,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y result looks like column-paired output, retrying row-wise extraction.");
         const bftmRetryResponse = await callAliyunVision({
@@ -10481,7 +10552,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
       try {
         console.log("BFTM/X-Y OCR retry still invalid, using vision layout retry.");
         const bftmVisionRetryResponse = await callAliyunVision({
@@ -10518,7 +10589,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -10555,7 +10626,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
       const smoothedRawText = smoothDmsMinuteIslandsForLongTable(rawText);
 
       if (smoothedRawText !== rawText) {
@@ -10566,7 +10637,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -10589,7 +10660,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -10648,6 +10719,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     }
     bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
+    utm30ProjectedXy = getUtm30ProjectedXyInfo(rawText, coordinates);
+    utm30Accepted = !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
+    if (utm30Accepted && !parserTrace.includes("UTM30_XY:accepted")) {
+      parserTrace.push("UTM30_XY:accepted");
+    }
     if (dmsGroupedAccepted) {
       coordinates = dmsGroupedInfo.output;
     } else if (frenchPerimeterDms.isFrenchPerimeterDms) {
@@ -10657,6 +10733,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       // Keep normal DMS coordinates; they have already been parsed before fallback.
     } else if (bftmAccepted) {
       // Keep current BFTM projected coordinate rows; they are converted by the normal projected path.
+    } else if (utm30Accepted) {
+      warning = warning || "识别到 UTM30 / X-Y 平面坐标表，已保持投影坐标路径，不交给 WGS84 Chat parser。";
     } else if (mgrs.isMgrs) {
       coordinates = formatMgrsRows(mgrs.rows);
     } else if (kyrgyzGk.isKyrgyzGk) {
@@ -10715,6 +10793,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             ? "point-az-dms-table"
             : bftmAccepted
               ? "bftm-projected-x-y"
+              : utm30Accepted
+                ? "utm30n-projected-x-y"
               : mgrs.isMgrs
               ? "mgrs-utm-grid-reference"
               : kyrgyzGk.isKyrgyzGk
@@ -10729,6 +10809,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                         ? "wgs84-chat-coordinates"
                         : "preserve-original-decimals-and-parse-dms",
       warning: wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning),
+      projection: utm30Accepted ? "utm30n" : undefined,
+      pointCount: utm30Accepted ? countCoordinateRows(coordinates) : undefined,
       cadastralGrid,
       mgrs,
       mozambiqueGeographicTable,
