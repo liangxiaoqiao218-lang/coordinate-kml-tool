@@ -1,0 +1,14 @@
+{
+  "typeId": "dms-grouped-coordinates",
+  "status": "locked",
+  "baselineCommit": "39e4929ab177b004e853498be9d94c3901e5b7a2",
+  "precisionMode": "dms-grouped-coordinates",
+  "parserTraceAlias": ["OCR", "DMS_GROUPED:accepted"],
+  "pointCount": 8,
+  "geometry": "Polygon",
+  "firstCoordinate": "-8.887052777777777,11.873811111111111",
+  "lastCoordinate": "-8.898211111111111,11.868791666666667",
+  "coordinateSummaryHash": "327611fcfbd6dd7f5074a869dc37035bb41de80134c8af4ff8e45c5ab232a050",
+  "kmlCoordinateHash": "327611fcfbd6dd7f5074a869dc37035bb41de80134c8af4ff8e45c5ab232a050",
+  "notes": "Locked baseline for grouped DMS mining area sample. The source output preserves two groups separated by a blank line: 4 points for Mining Area 1 and 4 points for Mining Area 2."
+}
