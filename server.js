@@ -2490,6 +2490,24 @@ function normalizeIp(ip) {
   return cleanIp;
 }
 
+function isLoopbackIp(ip) {
+  const cleanIp = normalizeIp(ip).toLowerCase();
+  return cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost";
+}
+
+function getRegressionTestMode(req) {
+  const requested = /^(1|true|yes)$/i.test(String(req.get?.("x-regression-test") || "").trim());
+  const enabled = /^(1|true|yes)$/i.test(String(process.env.ENABLE_REGRESSION_TEST_MODE || "").trim());
+  const production = String(process.env.NODE_ENV || "").trim().toLowerCase() === "production";
+  const local = [req.ip, req.socket?.remoteAddress, req.connection?.remoteAddress].some(isLoopbackIp);
+  const active = requested && enabled && local && !production;
+  const rejectReason = requested && enabled && (!local || production)
+    ? "Regression test mode is only available from localhost in non-production environments."
+    : "";
+
+  return { requested, enabled, local, production, active, rejectReason };
+}
+
 function isPrivateIp(ip) {
   const cleanIp = normalizeIp(ip);
 
@@ -9344,8 +9362,19 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
   });
 
   let visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || req.query?.visitorId || "").trim();
+  const regressionTestMode = getRegressionTestMode(req);
 
   try {
+    if (regressionTestMode.rejectReason) {
+      return res.status(403).json({
+        success: false,
+        reason: "regression_test_forbidden",
+        error: regressionTestMode.rejectReason,
+        rawText: "",
+        coordinates: ""
+      });
+    }
+
     const adminData = await readAdminData();
     const user = ensureUser(adminData, visitorId);
     const permissions = getEffectivePermissions(user, adminData.featureFlags);
@@ -9381,32 +9410,41 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
       });
     }
 
-    await updateSupabaseUserVisitMeta(visitorId, req);
+    const consumeCoordinateUsage = async (metadata = {}) => {
+      if (regressionTestMode.active) {
+        return { success: true, reason: "regression_test", skipped: true };
+      }
+      return consumeUsage(visitorId, "convert", req, metadata);
+    };
 
-    const usageStatus = await checkUsage(visitorId, "convert");
+    if (!regressionTestMode.active) {
+      await updateSupabaseUserVisitMeta(visitorId, req);
 
-    if (!usageStatus.allowed && usageStatus.reason === "limit_exceeded") {
-      return res.status(403).json({
-        success: false,
-        reason: "limit_exceeded",
-        code: getQuotaExhaustedCode("convert"),
-        type: "convert",
-        quota: usageStatus.quota,
-        error: "今日免费坐标次数已用完，请购买次数或联系人工开通。",
-        rawText: "",
-        coordinates: ""
-      });
-    }
+      const usageStatus = await checkUsage(visitorId, "convert");
 
-    if (!usageStatus.allowed) {
-      return res.status(500).json({
-        success: false,
-        reason: usageStatus.reason || "db_error",
-        quota: usageStatus.quota,
-        error: "读取坐标识别次数失败，请稍后重试。",
-        rawText: "",
-        coordinates: ""
-      });
+      if (!usageStatus.allowed && usageStatus.reason === "limit_exceeded") {
+        return res.status(403).json({
+          success: false,
+          reason: "limit_exceeded",
+          code: getQuotaExhaustedCode("convert"),
+          type: "convert",
+          quota: usageStatus.quota,
+          error: "今日免费坐标次数已用完，请购买次数或联系人工开通。",
+          rawText: "",
+          coordinates: ""
+        });
+      }
+
+      if (!usageStatus.allowed) {
+        return res.status(500).json({
+          success: false,
+          reason: usageStatus.reason || "db_error",
+          quota: usageStatus.quota,
+          error: "读取坐标识别次数失败，请稍后重试。",
+          rawText: "",
+          coordinates: ""
+        });
+      }
     }
 
     if (!aliyunApiKey) {
@@ -9834,7 +9872,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
         if (kyrgyzDirectInfo.isKyrgyzGk) {
           console.log(`Kyrgyz GK direct prompt success rows=${kyrgyzDirectInfo.rows.length}`);
-          const consumeResult = await consumeUsage(visitorId, "convert", req, {
+          const consumeResult = await consumeCoordinateUsage({
             note: "Coordinate recognition consumed after Kyrgyz GK direct prompt"
           });
           if (consumeResult.reason === "limit_exceeded") {
@@ -9945,7 +9983,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             mozambiqueDebug.mozambiqueRows = directRows.length;
             mozambiqueDebug.mozambiqueBypassChat = true;
             console.log(`Mozambique geographic table direct prompt success rows=${directRows.length || countCoordinateRows(directCoordinates)}`);
-            const consumeResult = await consumeUsage(visitorId, "convert", req, {
+            const consumeResult = await consumeCoordinateUsage({
               note: "Coordinate recognition consumed after Mozambique geographic direct prompt"
             });
             if (consumeResult.reason === "limit_exceeded") {
@@ -10640,7 +10678,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       warning = warning ? `${warning} ${bftmIncompleteWarning}` : bftmIncompleteWarning;
     }
 
-    const consumeResult = await consumeUsage(visitorId, "convert", req, {
+    const consumeResult = await consumeCoordinateUsage({
       note: "Coordinate recognition consumed"
     });
     if (consumeResult.reason === "limit_exceeded") {
@@ -10760,7 +10798,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
           const retryKyrgyzGk = getKyrgyzGkInfo(retryRawText);
 
           if (retryKyrgyzGk.isKyrgyzGk) {
-            const consumeResult = await consumeUsage(visitorId, "convert", req, {
+            const consumeResult = await consumeCoordinateUsage({
               note: "Coordinate recognition consumed after Kyrgyz GK timeout retry"
             });
             if (consumeResult.reason === "limit_exceeded") {
@@ -10856,7 +10894,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
 
           if (retryWgs84Table.isWgs84TableCoordinates) {
-            const consumeResult = await consumeUsage(visitorId, "convert", req, {
+            const consumeResult = await consumeCoordinateUsage({
               note: "Coordinate recognition consumed after WGS84 table timeout retry"
             });
             if (consumeResult.reason === "limit_exceeded") {
@@ -11132,7 +11170,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         fallback.bftmLongTable = bftmLongTable;
       }
 
-      const consumeResult = await consumeUsage(visitorId, "convert", req, {
+      const consumeResult = await consumeCoordinateUsage({
         note: "Coordinate recognition consumed after fallback"
       });
       if (consumeResult.reason === "limit_exceeded") {

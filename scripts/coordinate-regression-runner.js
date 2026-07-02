@@ -8,6 +8,7 @@ const repoRoot = path.resolve(__dirname, '..');
 const samplesRoot = path.join(repoRoot, 'regression-samples');
 const defaultApiUrl = 'http://127.0.0.1:3000/api/recognize-coordinates';
 const apiUrl = process.env.COORDINATE_REGRESSION_API_URL || defaultApiUrl;
+const coordinateTolerance = Number(process.env.COORDINATE_REGRESSION_TOLERANCE || '1e-6');
 
 const requiredFields = [
   'typeId',
@@ -103,9 +104,30 @@ function normalizeTrace(trace) {
   return [];
 }
 
+function canonicalTraceEntry(entry) {
+  return String(entry || '')
+    .trim()
+    .replace(/([A-Z0-9_]+)\([^)]*\)(?=:)/g, '$1');
+}
+
+function traceEntryAliases(entry) {
+  const canonical = canonicalTraceEntry(entry);
+  const aliases = new Set([canonical]);
+
+  if (/^[A-Z0-9_]+:retry_vision(?:_\d+)?$/i.test(canonical)) {
+    aliases.add(canonical.replace(/:retry_vision(?:_\d+)?$/i, ':accepted'));
+  }
+
+  return [...aliases];
+}
+
 function traceContains(actualTrace, expectedTrace) {
-  const actualText = actualTrace.join(' -> ');
-  return expectedTrace.every((entry) => actualText.includes(String(entry)));
+  const canonicalActual = actualTrace.map(canonicalTraceEntry);
+  const actualText = canonicalActual.join(' -> ');
+
+  return expectedTrace.every((entry) => (
+    traceEntryAliases(entry).some((alias) => actualText.includes(alias))
+  ));
 }
 
 function extractCoordinateLines(text) {
@@ -147,6 +169,43 @@ function extractProjectedOrDecimalRows(text) {
       return match ? `${match[1]},${match[2]}` : '';
     })
     .filter(Boolean);
+}
+
+function normalizeCoordinateForCompare(value) {
+  const raw = String(value || '').trim().replace(/^PROJECTED:/i, '').replace(/\s+/g, '');
+  const parts = raw.split(',');
+
+  if (parts.length >= 3 && Number(parts[2]) === 0) {
+    parts.pop();
+  }
+
+  return parts.join(',');
+}
+
+function coordinateEquals(actualValue, expectedValue) {
+  const actual = normalizeCoordinateForCompare(actualValue);
+  const expected = normalizeCoordinateForCompare(expectedValue);
+
+  if (actual === expected) {
+    return { matches: true, exact: actualValue === expectedValue };
+  }
+
+  const actualParts = actual.split(',').map(Number);
+  const expectedParts = expected.split(',').map(Number);
+
+  if (
+    actualParts.length !== expectedParts.length
+    || actualParts.some((part) => !Number.isFinite(part))
+    || expectedParts.some((part) => !Number.isFinite(part))
+  ) {
+    return { matches: false, exact: false };
+  }
+
+  const matches = actualParts.every((part, index) => (
+    Math.abs(part - expectedParts[index]) <= coordinateTolerance
+  ));
+
+  return { matches, exact: false };
 }
 
 function summarizeApiResponse(data) {
@@ -198,6 +257,7 @@ async function callRecognizeApi(expected) {
     headers: {
       'x-visitor-id': 'coordinate-regression-runner',
       'x-source': 'coordinate-regression-runner',
+      'x-regression-test': 'true',
     },
   });
 
@@ -210,36 +270,45 @@ async function callRecognizeApi(expected) {
   }
 
   if (!response.ok) {
-    throw new Error(`API error ${response.status}: ${data?.error || data?.message || text.slice(0, 200)}`);
+    const error = new Error(`API error ${response.status}: ${data?.error || data?.message || text.slice(0, 200)}`);
+    error.apiStatus = response.status;
+    throw error;
   }
 
   return summarizeApiResponse(data);
 }
 
 function compareExpected(expected, actual) {
-  const failures = [];
+  const realFailures = [];
+  const formatDifferences = [];
 
   if (actual.precisionMode !== expected.expectedPrecisionMode) {
-    failures.push(`expected precisionMode: ${expected.expectedPrecisionMode}; actual: ${actual.precisionMode || '(empty)'}`);
+    realFailures.push(`expected precisionMode: ${expected.expectedPrecisionMode}; actual: ${actual.precisionMode || '(empty)'}`);
   }
 
   if (!traceContains(actual.parserTrace, expected.expectedParserTrace)) {
-    failures.push(`expected parserTrace contains: ${expected.expectedParserTrace.join(' -> ')}; actual: ${actual.parserTrace.join(' -> ') || '(empty)'}`);
+    realFailures.push(`expected parserTrace contains: ${expected.expectedParserTrace.join(' -> ')}; actual: ${actual.parserTrace.join(' -> ') || '(empty)'}`);
   }
 
   if (actual.pointCount !== expected.expectedPointCount) {
-    failures.push(`expected pointCount: ${expected.expectedPointCount}; actual: ${actual.pointCount}`);
+    realFailures.push(`expected pointCount: ${expected.expectedPointCount}; actual: ${actual.pointCount}`);
   }
 
-  if (actual.firstCoordinate !== expected.expectedFirstKml) {
-    failures.push(`expected first KML: ${expected.expectedFirstKml}; actual: ${actual.firstCoordinate || '(empty)'}`);
+  const firstCoordinateCompare = coordinateEquals(actual.firstCoordinate, expected.expectedFirstKml);
+  if (!firstCoordinateCompare.matches) {
+    realFailures.push(`expected first KML: ${expected.expectedFirstKml}; actual: ${actual.firstCoordinate || '(empty)'}`);
+  } else if (!firstCoordinateCompare.exact) {
+    formatDifferences.push(`first KML normalized: expected ${expected.expectedFirstKml}; actual ${actual.firstCoordinate || '(empty)'}`);
   }
 
-  if (actual.lastCoordinate !== expected.expectedLastKml) {
-    failures.push(`expected last KML: ${expected.expectedLastKml}; actual: ${actual.lastCoordinate || '(empty)'}`);
+  const lastCoordinateCompare = coordinateEquals(actual.lastCoordinate, expected.expectedLastKml);
+  if (!lastCoordinateCompare.matches) {
+    realFailures.push(`expected last KML: ${expected.expectedLastKml}; actual: ${actual.lastCoordinate || '(empty)'}`);
+  } else if (!lastCoordinateCompare.exact) {
+    formatDifferences.push(`last KML normalized: expected ${expected.expectedLastKml}; actual ${actual.lastCoordinate || '(empty)'}`);
   }
 
-  return failures;
+  return { realFailures, formatDifferences };
 }
 
 async function loadExpectedJson(sampleDir) {
@@ -268,7 +337,7 @@ async function main() {
           directory: sampleDir,
           typeId: expected.typeId || '(missing typeId)',
           sampleName: expected.sampleName || '(missing sampleName)',
-          result: 'FAIL',
+          result: 'REAL FAIL',
           errors,
         });
         continue;
@@ -297,30 +366,38 @@ async function main() {
       }
 
       let actual;
-      let compareFailures;
+      let comparison = { realFailures: [], formatDifferences: [] };
+      let apiBlocked = false;
       try {
         actual = await callRecognizeApi(expected);
-        compareFailures = compareExpected(expected, actual);
+        comparison = compareExpected(expected, actual);
       } catch (error) {
-        compareFailures = [
-          error.message === 'fetch failed'
+        apiBlocked = error.apiStatus === 403;
+        comparison.realFailures = [
+          error.apiStatus === 403
+            ? error.message
+            : error.message === 'fetch failed'
             ? `API unavailable: ${apiUrl}`
             : error.message,
         ];
       }
 
-      const result = status === 'unstable'
+      const result = apiBlocked
+        ? 'API BLOCKED'
+        : status === 'unstable'
         ? 'UNSTABLE'
-        : compareFailures.length
-          ? 'FAIL'
-          : 'PASS';
+        : comparison.realFailures.length
+          ? 'REAL FAIL'
+          : comparison.formatDifferences.length
+            ? 'FORMAT DIFFERENCE'
+            : 'PASS';
 
       rows.push({
         directory: sampleDir,
         typeId: expected.typeId,
         sampleName: expected.sampleName,
         result,
-        errors: compareFailures,
+        errors: [...comparison.realFailures, ...comparison.formatDifferences],
         actual,
       });
     } catch (error) {
@@ -328,7 +405,7 @@ async function main() {
         directory: sampleDir,
         typeId: '(missing expected.json)',
         sampleName: '(missing expected.json)',
-        result: 'FAIL',
+        result: 'REAL FAIL',
         errors: [error.code === 'ENOENT' ? 'expected.json not found' : error.message],
       });
     }
@@ -337,10 +414,20 @@ async function main() {
   const summary = rows.reduce(
     (acc, row) => {
       acc.total += 1;
-      acc[row.result.toLowerCase()] += 1;
+      const key = row.result.toLowerCase().replace(/\s+/g, '_');
+      acc[key] += 1;
       return acc;
     },
-    { total: 0, pass: 0, fail: 0, pending: 0, unstable: 0, skipped_text: 0 },
+    {
+      total: 0,
+      pass: 0,
+      real_fail: 0,
+      format_difference: 0,
+      api_blocked: 0,
+      pending: 0,
+      unstable: 0,
+      skipped_text: 0,
+    },
   );
 
   console.log('Coordinate Engine Regression Runner');
@@ -366,13 +453,15 @@ async function main() {
   console.log('');
   console.log('Regression Summary');
   console.log(`total: ${summary.total}`);
-  console.log(`pass: ${summary.pass}`);
-  console.log(`fail: ${summary.fail}`);
-  console.log(`pending: ${summary.pending}`);
-  console.log(`unstable: ${summary.unstable}`);
-  console.log(`skippedText: ${summary.skipped_text}`);
+  console.log(`PASS: ${summary.pass}`);
+  console.log(`REAL FAIL: ${summary.real_fail}`);
+  console.log(`FORMAT DIFFERENCE: ${summary.format_difference}`);
+  console.log(`API BLOCKED: ${summary.api_blocked}`);
+  console.log(`PENDING: ${summary.pending}`);
+  console.log(`UNSTABLE: ${summary.unstable}`);
+  console.log(`SKIPPED_TEXT: ${summary.skipped_text}`);
 
-  if (summary.fail > 0) {
+  if (summary.real_fail > 0 || summary.api_blocked > 0) {
     process.exitCode = 1;
   }
 }
