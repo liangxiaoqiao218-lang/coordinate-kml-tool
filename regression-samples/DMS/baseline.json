@@ -1,0 +1,14 @@
+{
+  "typeId": "dms-coordinates",
+  "status": "locked",
+  "baselineCommit": "701719f9a881cca22055f4d9b648092a0d2583d2",
+  "precisionMode": "dms-coordinates",
+  "parserTraceAlias": ["TEXT", "DMS:accepted"],
+  "pointCount": 1,
+  "geometry": "Point",
+  "firstCoordinate": "-10.22406111111111,13.022647222222224",
+  "lastCoordinate": "-10.22406111111111,13.022647222222224",
+  "coordinateSummaryHash": "29674176c30720c8322bfd6e5ec79acb3d234e377a736eb37242430f2e7d6c0d",
+  "kmlCoordinateHash": "29674176c30720c8322bfd6e5ec79acb3d234e377a736eb37242430f2e7d6c0d",
+  "notes": "Locked text fixture baseline for ordinary single-point DMS parsing. Text regression endpoint is localhost-only and requires ENABLE_REGRESSION_TEST_MODE=true."
+}

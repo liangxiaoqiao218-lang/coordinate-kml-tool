@@ -1,0 +1,14 @@
+{
+  "typeId": "wgs84-chat-coordinates",
+  "status": "locked",
+  "baselineCommit": "701719f9a881cca22055f4d9b648092a0d2583d2",
+  "precisionMode": "wgs84-chat-coordinates",
+  "parserTraceAlias": ["TEXT", "WGS84_CHAT:accepted"],
+  "pointCount": 1,
+  "geometry": "Point",
+  "firstCoordinate": "-11.178174,12.319572,0",
+  "lastCoordinate": "-11.178174,12.319572,0",
+  "coordinateSummaryHash": "2d828486cbaa183c47fb51d87f6e6528060976afb64d2b3c09ef741b091e3289",
+  "kmlCoordinateHash": "2d828486cbaa183c47fb51d87f6e6528060976afb64d2b3c09ef741b091e3289",
+  "notes": "Locked text fixture baseline for fallback-only WGS84 Chat coordinates. Text regression endpoint is localhost-only and requires ENABLE_REGRESSION_TEST_MODE=true."
+}

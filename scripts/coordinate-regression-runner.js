@@ -8,7 +8,9 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const samplesRoot = path.join(repoRoot, 'regression-samples');
 const defaultApiUrl = 'http://127.0.0.1:3000/api/recognize-coordinates';
+const defaultTextApiUrl = 'http://127.0.0.1:3000/api/regression/parse-coordinate-text';
 const apiUrl = process.env.COORDINATE_REGRESSION_API_URL || defaultApiUrl;
+const textApiUrl = process.env.COORDINATE_REGRESSION_TEXT_API_URL || defaultTextApiUrl;
 const coordinateTolerance = Number(process.env.COORDINATE_REGRESSION_TOLERANCE || '1e-6');
 
 const requiredFields = [
@@ -284,7 +286,36 @@ function summarizeApiResponse(data) {
 
 async function callRecognizeApi(expected) {
   if (String(expected.inputType || '').trim().toLowerCase() === 'text') {
-    throw new Error('TEXT_FIXTURE_REQUIRES_TEXT_ENDPOINT');
+    const textFixture = String(expected.inputFile || '').startsWith('TEXT:')
+      ? String(expected.inputFile || '').slice('TEXT:'.length)
+      : String(expected.inputFile || '');
+
+    const response = await fetch(textApiUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-visitor-id': 'coordinate-regression-runner',
+        'x-source': 'coordinate-regression-runner',
+        'x-regression-test': 'true',
+      },
+      body: JSON.stringify({ text: textFixture }),
+    });
+
+    const responseText = await response.text();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      throw new Error(`Text API returned non-JSON response (${response.status}): ${responseText.slice(0, 200)}`);
+    }
+
+    if (!response.ok) {
+      const error = new Error(`Text API error ${response.status}: ${data?.error || data?.message || responseText.slice(0, 200)}`);
+      error.apiStatus = response.status;
+      throw error;
+    }
+
+    return summarizeApiResponse(data);
   }
 
   const inputFile = resolveInputFile(expected.inputFile);
@@ -512,17 +543,6 @@ async function main() {
           sampleName: expected.sampleName,
           result: 'PENDING',
           errors: [],
-        });
-        continue;
-      }
-
-      if (String(expected.inputType || '').trim().toLowerCase() === 'text') {
-        rows.push({
-          directory: sampleDir,
-          typeId: expected.typeId,
-          sampleName: expected.sampleName,
-          result: 'SKIPPED_TEXT',
-          errors: ['text fixture requires text parser endpoint'],
         });
         continue;
       }

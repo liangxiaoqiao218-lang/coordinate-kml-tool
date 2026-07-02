@@ -4816,6 +4816,40 @@ function formatChatCoordinateRows(points) {
   })].join("\n");
 }
 
+function buildRegressionTextCoordinateResult(text) {
+  const value = String(text || "").trim();
+
+  const dmsLines = extractDmsCoordinateLines(value);
+  if (dmsLines.length > 0) {
+    return {
+      precisionMode: "dms-coordinates",
+      parserTrace: ["TEXT", "DMS:accepted"],
+      coordinates: dmsLines.join("\n"),
+      pointCount: dmsLines.length,
+      geometry: inferGeometry(dmsLines)
+    };
+  }
+
+  const chatCoordinates = getChatCoordinatesInfo(value);
+  if (chatCoordinates.isChatCoordinates) {
+    return {
+      precisionMode: "wgs84-chat-coordinates",
+      parserTrace: ["TEXT", "WGS84_CHAT:accepted"],
+      coordinates: formatChatCoordinateRows(chatCoordinates.points),
+      pointCount: chatCoordinates.points.length,
+      geometry: chatCoordinates.geometry
+    };
+  }
+
+  return {
+    precisionMode: "preserve-original-decimals-and-parse-dms",
+    parserTrace: ["TEXT", "FALLBACK:no_coordinates"],
+    coordinates: "",
+    pointCount: 0,
+    geometry: ""
+  };
+}
+
 function getMgrsInfo(text) {
   const rows = extractMgrsRows(text);
 
@@ -9371,6 +9405,44 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       requestId: error.requestId || undefined
     });
   }
+});
+
+app.post("/api/regression/parse-coordinate-text", (req, res) => {
+  const regressionTestMode = getRegressionTestMode(req);
+
+  if (regressionTestMode.rejectReason) {
+    return res.status(403).json({
+      success: false,
+      reason: "regression_test_forbidden",
+      error: regressionTestMode.rejectReason,
+      coordinates: ""
+    });
+  }
+
+  if (!regressionTestMode.active) {
+    return res.status(403).json({
+      success: false,
+      reason: "regression_test_required",
+      error: "Regression text parsing is only available from localhost when ENABLE_REGRESSION_TEST_MODE=true and X-Regression-Test=true.",
+      coordinates: ""
+    });
+  }
+
+  const text = String(req.body?.text || "").trim();
+  if (!text) {
+    return res.status(400).json({
+      success: false,
+      reason: "missing_text",
+      error: "Missing text fixture.",
+      coordinates: ""
+    });
+  }
+
+  return res.json({
+    success: true,
+    rawText: text,
+    ...buildRegressionTextCoordinateResult(text)
+  });
 });
 
 /*
