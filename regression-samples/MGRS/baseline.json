@@ -1,0 +1,14 @@
+{
+  "typeId": "mgrs-utm-grid-reference",
+  "status": "locked",
+  "baselineCommit": "47b4bee9a6212280157dfa692e1ff173af9b6645",
+  "precisionMode": "mgrs-utm-grid-reference",
+  "parserTraceAlias": ["OCR", "MGRS:retry_vision", "BFTM:rejected", "MGRS:accepted"],
+  "pointCount": 7,
+  "geometry": "Polygon",
+  "firstCoordinate": "97.2636250945,24.7901938386,0",
+  "lastCoordinate": "97.2651119873,24.7906625168,0",
+  "coordinateSummaryHash": "9dd1cf60a9bf0ecffd27c6db2814d4aa14f6c0621688b8b4b6d09033034c55a7",
+  "kmlCoordinateHash": "9dd1cf60a9bf0ecffd27c6db2814d4aa14f6c0621688b8b4b6d09033034c55a7",
+  "notes": "Locked baseline for MGRS A-G sample. Coordinate tolerance allows minor floating point differences from the earlier expected values."
+}

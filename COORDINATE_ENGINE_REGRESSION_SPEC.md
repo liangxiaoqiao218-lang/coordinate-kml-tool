@@ -192,7 +192,98 @@ Export validation must catch:
 - frontend fallback overwriting backend coordinates
 - export from display-only WGS84 text instead of KML coordinate rows
 
-## 4. 20-Run Stability Verification
+## 4. Baseline Lock
+
+Regression samples may include a locked baseline file:
+
+```text
+regression-samples/<TYPE>/baseline.json
+```
+
+`baseline.json` is the canonical comparison source once a sample has been
+reviewed and frozen. `expected.json` remains the sample metadata and input
+fixture descriptor, but `baseline.json` decides whether the current run is a
+stable match or a baseline change.
+
+### Baseline Fields
+
+```json
+{
+  "typeId": "wgs84-table-coordinates",
+  "precisionMode": "wgs84-table-coordinates",
+  "parserTraceAlias": ["OCR", "WGS84_TABLE:accepted"],
+  "pointCount": 11,
+  "geometry": "Polygon",
+  "firstCoordinate": "16.0320,3.7638,0",
+  "lastCoordinate": "16.0348,3.7351,0",
+  "coordinateSummaryHash": "sha256-of-normalized-coordinate-rows",
+  "status": "locked",
+  "baselineCommit": "commit-hash",
+  "notes": "Human-reviewed stable baseline."
+}
+```
+
+`kmlCoordinateHash` may be used instead of `coordinateSummaryHash` when the
+baseline represents exported KML coordinates rather than accepted coordinate
+rows.
+
+### Baseline Status
+
+- `locked`: the result is expected to match the baseline.
+- `pending`: the sample exists but is not yet a release gate.
+- `unstable`: the sample is known to be vision/OCR unstable and must be
+  reported, but does not count as a hard fail unless it produces wrong KML.
+
+### Baseline Missing
+
+If a sample has `expected.json` but no `baseline.json`, the runner must report:
+
+```text
+BASELINE_MISSING
+```
+
+`BASELINE_MISSING` is not a parser failure and must not be counted as
+`REAL FAIL`. It means the regression sample has not yet been reviewed and
+locked.
+
+### Baseline Changed
+
+If `baseline.json` exists and the current run differs materially from the
+baseline, the runner must report:
+
+```text
+BASELINE_CHANGED
+```
+
+Material changes include:
+
+- `precisionMode` changed
+- `pointCount` changed
+- `parserTraceAlias` no longer matches
+- first coordinate changed beyond tolerance
+- last coordinate changed beyond tolerance
+- `coordinateSummaryHash` / `kmlCoordinateHash` changed
+
+`BASELINE_CHANGED` is a release-blocking result and must return exit code `1`.
+
+### Baseline Normalize Rules
+
+Baseline comparison keeps the existing normalization rules:
+
+- `PROJECTED:655000,1333600` equals `655000,1333600`
+- trailing KML altitude `,0` is ignored for coordinate comparison
+- numeric coordinate tolerance defaults to `1e-6`
+- parser traces support contains matching
+- parser traces support aliases such as
+  `DMS_GROUPED(blank_line):accepted` matching `DMS_GROUPED:accepted`
+
+### Baseline Creation Policy
+
+The V1 runner must not auto-generate or auto-update `baseline.json`.
+Baselines must be created through explicit human review after the sample has a
+trusted result.
+
+## 5. 20-Run Stability Verification
 
 Vision-dependent coordinate types require repeated validation.
 
@@ -221,7 +312,7 @@ A 20-run sample passes only if:
 
 If a sample intentionally expects instability, the runner must confirm that unstable results do not produce KML.
 
-## 5. PASS / FAIL Output Format
+## 6. PASS / FAIL Output Format
 
 Each sample result must produce a structured block.
 
@@ -259,11 +350,15 @@ export: FAIL
 ```text
 Regression Summary
 total: 12
-pass: 10
-fail: 1
-unstable: 1
-skippedText: 0
-blocked: 0
+PASS: 8
+REAL FAIL: 1
+FORMAT DIFFERENCE: 1
+API BLOCKED: 0
+PENDING: 1
+UNSTABLE: 1
+SKIPPED_TEXT: 0
+BASELINE_MISSING: 0
+BASELINE_CHANGED: 0
 
 Failed:
 - Madagascar cadastral: stable sample missing
@@ -272,7 +367,7 @@ Unstable:
 - Mozambique Geographic Table: 20-run rows=0 occurred
 ```
 
-## 6. Release Policy
+## 7. Release Policy
 
 Any commit that changes coordinate recognition behavior must follow this release sequence:
 
@@ -290,7 +385,7 @@ Code Change
 
 No parser, OCR, Vision Retry, Quality Gate, or export change may be merged unless the relevant Regression Runner result is PASS.
 
-## 7. Merge Gate Requirements
+## 8. Merge Gate Requirements
 
 A coordinate-related commit is mergeable only when:
 
@@ -307,7 +402,7 @@ If any sample fails, the commit must not be merged unless:
 - no wrong KML is generated
 - the issue is not caused by the current change
 
-## 8. Coordinate Type Coverage
+## 9. Coordinate Type Coverage
 
 The Regression Runner must include at least these coordinate types:
 
@@ -324,7 +419,7 @@ The Regression Runner must include at least these coordinate types:
 11. Ordinary DMS
 12. WGS84 Chat
 
-## 9. Forbidden Regression Shortcuts
+## 10. Forbidden Regression Shortcuts
 
 The Regression Runner must not allow:
 
@@ -336,7 +431,7 @@ The Regression Runner must not allow:
 - accepting missing duplicate boundary points
 - accepting rows=0 for a structured table unless unstable/no-KML is expected
 
-## 10. Artifact Storage
+## 11. Artifact Storage
 
 Each regression directory should contain:
 
@@ -345,6 +440,7 @@ README.md
 sample image path or image fixture
 ocr_raw.txt
 expected.json
+baseline.json
 expected.kml or expected_kml_coordinates.txt
 latest_result.json
 ```
@@ -359,7 +455,7 @@ If real images cannot be committed, the README must record:
 - expected first and last coordinates
 - whether the sample is mandatory or pending
 
-## 11. Governance
+## 12. Governance
 
 The Regression Runner is part of the Coordinate Engine Freeze Policy.
 

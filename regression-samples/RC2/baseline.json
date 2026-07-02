@@ -1,0 +1,14 @@
+{
+  "typeId": "wgs84-table-coordinates",
+  "status": "locked",
+  "baselineCommit": "47b4bee9a6212280157dfa692e1ff173af9b6645",
+  "precisionMode": "wgs84-table-coordinates",
+  "parserTraceAlias": ["OCR", "WGS84_TABLE:retry_vision", "BFTM:rejected", "WGS84_TABLE:accepted"],
+  "pointCount": 11,
+  "geometry": "Polygon",
+  "firstCoordinate": "16.0320,3.7638,0",
+  "lastCoordinate": "16.0348,3.7351,0",
+  "coordinateSummaryHash": "3a34fb917c16ebf9e2e1613a8014d6da2b6768fe5aec20a0a4465f3b9d13668e",
+  "kmlCoordinateHash": "3a34fb917c16ebf9e2e1613a8014d6da2b6768fe5aec20a0a4465f3b9d13668e",
+  "notes": "Locked baseline for RC2 WGS84 longitude/latitude table. Duplicate boundary points must remain preserved."
+}

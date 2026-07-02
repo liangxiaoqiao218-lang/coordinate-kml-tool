@@ -1,0 +1,14 @@
+{
+  "typeId": "kyrgyz-gk-point-x-y",
+  "status": "locked",
+  "baselineCommit": "47b4bee9a6212280157dfa692e1ff173af9b6645",
+  "precisionMode": "kyrgyz-gk-point-x-y",
+  "parserTraceAlias": [],
+  "pointCount": 65,
+  "geometry": "Polygon",
+  "firstCoordinate": "1,13261341",
+  "lastCoordinate": "65,13261317",
+  "coordinateSummaryHash": "2b2f6a05610d66311c434e79e82fca9520431fb202046a3a75f086532b878a02",
+  "kmlCoordinateHash": "2b2f6a05610d66311c434e79e82fca9520431fb202046a3a75f086532b878a02",
+  "notes": "Locked baseline for Kyrgyz GK source rows. Current API response does not expose parserTrace for this direct path, so parserTraceAlias is intentionally empty."
+}

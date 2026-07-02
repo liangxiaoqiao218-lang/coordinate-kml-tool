@@ -1,0 +1,14 @@
+{
+  "typeId": "french-perimeter-dms-prose",
+  "status": "locked",
+  "baselineCommit": "47b4bee9a6212280157dfa692e1ff173af9b6645",
+  "precisionMode": "french-perimeter-dms-prose",
+  "parserTraceAlias": ["OCR", "FRENCH_PERIMETER_DMS:retry_vision", "FRENCH_PERIMETER_DMS:accepted"],
+  "pointCount": 4,
+  "geometry": "Polygon",
+  "firstCoordinate": "-8.833333333333334,12.066666666666666,0",
+  "lastCoordinate": "-8.833333333333334,12.036666666666667,0",
+  "coordinateSummaryHash": "acc66d9d78053750dbbdd61b4cf8ae692a5a64264f0cc05d434eb402376ec19b",
+  "kmlCoordinateHash": "acc66d9d78053750dbbdd61b4cf8ae692a5a64264f0cc05d434eb402376ec19b",
+  "notes": "Locked baseline for French perimeter prose DMS. This type must not capture Point A-Z DMS tables."
+}

@@ -1,0 +1,14 @@
+{
+  "typeId": "bftm-projected-x-y",
+  "status": "locked",
+  "baselineCommit": "47b4bee9a6212280157dfa692e1ff173af9b6645",
+  "precisionMode": "bftm-projected-x-y",
+  "parserTraceAlias": ["OCR", "BFTM:accepted"],
+  "pointCount": 20,
+  "geometry": "Polygon",
+  "firstCoordinate": "655000,1333600",
+  "lastCoordinate": "655000,1356200",
+  "coordinateSummaryHash": "4d1877678b04d89b636339d55c6ffe701882faf791c7cdf0364b6f2cfb1930aa",
+  "kmlCoordinateHash": "4d1877678b04d89b636339d55c6ffe701882faf791c7cdf0364b6f2cfb1930aa",
+  "notes": "Locked baseline for BFTM projected X/Y source rows after OCR digit repair. PROJECTED prefix and KML altitude are normalized by the runner."
+}

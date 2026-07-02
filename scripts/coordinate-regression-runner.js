@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +22,19 @@ const requiredFields = [
   'expectedFirstKml',
   'expectedLastKml',
   'status',
+  'notes',
+];
+
+const baselineFields = [
+  'typeId',
+  'precisionMode',
+  'parserTraceAlias',
+  'pointCount',
+  'geometry',
+  'firstCoordinate',
+  'lastCoordinate',
+  'status',
+  'baselineCommit',
   'notes',
 ];
 
@@ -52,6 +66,26 @@ function validateExpected(sample) {
   const inputType = String(sample.inputType || '').trim().toLowerCase();
   if (!['image', 'text'].includes(inputType)) {
     errors.push('inputType must be image or text');
+  }
+
+  return errors;
+}
+
+function validateBaseline(baseline) {
+  const missing = baselineFields.filter((field) => !(field in baseline));
+  const errors = [];
+
+  if (missing.length) {
+    errors.push(`missing baseline fields: ${missing.join(', ')}`);
+  }
+
+  if (!Number.isInteger(baseline.pointCount)) {
+    errors.push('baseline pointCount must be an integer');
+  }
+
+  const status = normalizeStatus(baseline.status);
+  if (!['locked', 'pending', 'unstable'].includes(status)) {
+    errors.push('baseline status must be locked, pending, or unstable');
   }
 
   return errors;
@@ -182,6 +216,23 @@ function normalizeCoordinateForCompare(value) {
   return parts.join(',');
 }
 
+function normalizeCoordinateListForHash(coordinates = []) {
+  return coordinates.map(normalizeCoordinateForCompare).join('\n');
+}
+
+function hashCoordinateRows(coordinates = []) {
+  return createHash('sha256')
+    .update(normalizeCoordinateListForHash(coordinates))
+    .digest('hex');
+}
+
+function inferGeometry(pointCount) {
+  if (pointCount === 1) return 'Point';
+  if (pointCount === 2) return 'LineString';
+  if (pointCount >= 3) return 'Polygon';
+  return '';
+}
+
 function coordinateEquals(actualValue, expectedValue) {
   const actual = normalizeCoordinateForCompare(actualValue);
   const expected = normalizeCoordinateForCompare(expectedValue);
@@ -223,9 +274,11 @@ function summarizeApiResponse(data) {
     precisionMode: data?.precisionMode || '',
     parserTrace: normalizeTrace(data?.parserTrace),
     pointCount,
+    geometry: data?.geometry || inferGeometry(pointCount),
     firstCoordinate: coordinateRows[0] || '',
     lastCoordinate: coordinateRows[coordinateRows.length - 1] || '',
     coordinateRows,
+    coordinateSummaryHash: hashCoordinateRows(coordinateRows),
   };
 }
 
@@ -311,10 +364,76 @@ function compareExpected(expected, actual) {
   return { realFailures, formatDifferences };
 }
 
+function compareBaseline(baseline, actual) {
+  const baselineChanged = [];
+  const formatDifferences = [];
+
+  if (actual.precisionMode !== baseline.precisionMode) {
+    baselineChanged.push(`baseline precisionMode: ${baseline.precisionMode}; actual: ${actual.precisionMode || '(empty)'}`);
+  }
+
+  if (actual.pointCount !== baseline.pointCount) {
+    baselineChanged.push(`baseline pointCount: ${baseline.pointCount}; actual: ${actual.pointCount}`);
+  }
+
+  if (actual.geometry !== baseline.geometry) {
+    baselineChanged.push(`baseline geometry: ${baseline.geometry}; actual: ${actual.geometry || '(empty)'}`);
+  }
+
+  const parserTraceAlias = Array.isArray(baseline.parserTraceAlias)
+    ? baseline.parserTraceAlias
+    : String(baseline.parserTraceAlias || '')
+      .split(/(?:->|\n|,)/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  if (parserTraceAlias.length && !traceContains(actual.parserTrace, parserTraceAlias)) {
+    baselineChanged.push(`baseline parserTraceAlias contains: ${parserTraceAlias.join(' -> ')}; actual: ${actual.parserTrace.join(' -> ') || '(empty)'}`);
+  }
+
+  const firstCoordinateCompare = coordinateEquals(actual.firstCoordinate, baseline.firstCoordinate);
+  if (!firstCoordinateCompare.matches) {
+    baselineChanged.push(`baseline firstCoordinate: ${baseline.firstCoordinate}; actual: ${actual.firstCoordinate || '(empty)'}`);
+  } else if (!firstCoordinateCompare.exact) {
+    formatDifferences.push(`first coordinate normalized: baseline ${baseline.firstCoordinate}; actual ${actual.firstCoordinate || '(empty)'}`);
+  }
+
+  const lastCoordinateCompare = coordinateEquals(actual.lastCoordinate, baseline.lastCoordinate);
+  if (!lastCoordinateCompare.matches) {
+    baselineChanged.push(`baseline lastCoordinate: ${baseline.lastCoordinate}; actual: ${actual.lastCoordinate || '(empty)'}`);
+  } else if (!lastCoordinateCompare.exact) {
+    formatDifferences.push(`last coordinate normalized: baseline ${baseline.lastCoordinate}; actual ${actual.lastCoordinate || '(empty)'}`);
+  }
+
+  const expectedCoordinateSummaryHash = String(baseline.coordinateSummaryHash || '').trim();
+  if (expectedCoordinateSummaryHash && actual.coordinateSummaryHash !== expectedCoordinateSummaryHash) {
+    baselineChanged.push(`baseline coordinateSummaryHash: ${expectedCoordinateSummaryHash}; actual: ${actual.coordinateSummaryHash}`);
+  }
+
+  const expectedKmlCoordinateHash = String(baseline.kmlCoordinateHash || '').trim();
+  if (expectedKmlCoordinateHash && actual.coordinateSummaryHash !== expectedKmlCoordinateHash) {
+    baselineChanged.push(`baseline kmlCoordinateHash: ${expectedKmlCoordinateHash}; actual: ${actual.coordinateSummaryHash}`);
+  }
+
+  return { baselineChanged, formatDifferences };
+}
+
 async function loadExpectedJson(sampleDir) {
   const expectedPath = path.join(samplesRoot, sampleDir, 'expected.json');
   const raw = await readFile(expectedPath, 'utf8');
   return JSON.parse(raw);
+}
+
+async function loadBaselineJson(sampleDir) {
+  const baselinePath = path.join(samplesRoot, sampleDir, 'baseline.json');
+  try {
+    const raw = await readFile(baselinePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function main() {
@@ -331,6 +450,7 @@ async function main() {
       const expected = await loadExpectedJson(sampleDir);
       const errors = validateExpected(expected);
       const status = normalizeStatus(expected.status);
+      const baseline = await loadBaselineJson(sampleDir);
 
       if (errors.length) {
         rows.push({
@@ -365,12 +485,59 @@ async function main() {
         continue;
       }
 
+      if (!baseline) {
+        if (status === 'unstable') {
+          rows.push({
+            directory: sampleDir,
+            typeId: expected.typeId,
+            sampleName: expected.sampleName,
+            result: 'UNSTABLE',
+            errors: ['baseline.json not found; unstable sample remains non-blocking'],
+          });
+          continue;
+        }
+
+        rows.push({
+          directory: sampleDir,
+          typeId: expected.typeId,
+          sampleName: expected.sampleName,
+          result: 'BASELINE_MISSING',
+          errors: ['baseline.json not found; expected.json was used only as sample metadata'],
+        });
+        continue;
+      }
+
+      const baselineErrors = validateBaseline(baseline);
+      if (baselineErrors.length) {
+        rows.push({
+          directory: sampleDir,
+          typeId: baseline.typeId || expected.typeId,
+          sampleName: expected.sampleName,
+          result: 'REAL FAIL',
+          errors: baselineErrors,
+        });
+        continue;
+      }
+
+      const baselineStatus = normalizeStatus(baseline.status);
+      if (baselineStatus === 'pending') {
+        rows.push({
+          directory: sampleDir,
+          typeId: baseline.typeId,
+          sampleName: expected.sampleName,
+          result: 'PENDING',
+          errors: [],
+        });
+        continue;
+      }
+
       let actual;
       let comparison = { realFailures: [], formatDifferences: [] };
+      let baselineComparison = { baselineChanged: [], formatDifferences: [] };
       let apiBlocked = false;
       try {
         actual = await callRecognizeApi(expected);
-        comparison = compareExpected(expected, actual);
+        baselineComparison = compareBaseline(baseline, actual);
       } catch (error) {
         apiBlocked = error.apiStatus === 403;
         comparison.realFailures = [
@@ -384,11 +551,13 @@ async function main() {
 
       const result = apiBlocked
         ? 'API BLOCKED'
-        : status === 'unstable'
+        : baselineStatus === 'unstable'
         ? 'UNSTABLE'
+        : baselineComparison.baselineChanged.length
+          ? 'BASELINE_CHANGED'
         : comparison.realFailures.length
           ? 'REAL FAIL'
-          : comparison.formatDifferences.length
+          : baselineComparison.formatDifferences.length || comparison.formatDifferences.length
             ? 'FORMAT DIFFERENCE'
             : 'PASS';
 
@@ -397,7 +566,12 @@ async function main() {
         typeId: expected.typeId,
         sampleName: expected.sampleName,
         result,
-        errors: [...comparison.realFailures, ...comparison.formatDifferences],
+        errors: [
+          ...baselineComparison.baselineChanged,
+          ...comparison.realFailures,
+          ...baselineComparison.formatDifferences,
+          ...comparison.formatDifferences,
+        ],
         actual,
       });
     } catch (error) {
@@ -427,6 +601,8 @@ async function main() {
       pending: 0,
       unstable: 0,
       skipped_text: 0,
+      baseline_missing: 0,
+      baseline_changed: 0,
     },
   );
 
@@ -460,8 +636,10 @@ async function main() {
   console.log(`PENDING: ${summary.pending}`);
   console.log(`UNSTABLE: ${summary.unstable}`);
   console.log(`SKIPPED_TEXT: ${summary.skipped_text}`);
+  console.log(`BASELINE_MISSING: ${summary.baseline_missing}`);
+  console.log(`BASELINE_CHANGED: ${summary.baseline_changed}`);
 
-  if (summary.real_fail > 0 || summary.api_blocked > 0) {
+  if (summary.real_fail > 0 || summary.api_blocked > 0 || summary.baseline_changed > 0) {
     process.exitCode = 1;
   }
 }

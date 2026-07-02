@@ -1,0 +1,14 @@
+{
+  "typeId": "point-az-dms-table",
+  "status": "locked",
+  "baselineCommit": "47b4bee9a6212280157dfa692e1ff173af9b6645",
+  "precisionMode": "point-az-dms-table",
+  "parserTraceAlias": ["OCR", "POINT_AZ_DMS_TABLE:accepted"],
+  "pointCount": 26,
+  "geometry": "Polygon",
+  "firstCoordinate": "-8.266666666666667,10.870833333333334",
+  "lastCoordinate": "-8.254444444444445,10.870833333333334",
+  "coordinateSummaryHash": "207ab6ba721624522e94f54424d77b8c34a8e61b0224d271ca106fc96fc8b642",
+  "kmlCoordinateHash": "207ab6ba721624522e94f54424d77b8c34a8e61b0224d271ca106fc96fc8b642",
+  "notes": "Locked baseline for Point A-Z Nord/Est DMS table. A-Z row order must remain preserved."
+}
