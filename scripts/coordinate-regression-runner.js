@@ -436,12 +436,54 @@ async function loadBaselineJson(sampleDir) {
   }
 }
 
+function parseSelectedTypes(argv) {
+  const values = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === '--type') {
+      const next = argv[index + 1];
+      if (!next || next.startsWith('--')) {
+        throw new Error('--type requires a comma-separated regression sample directory list');
+      }
+      values.push(next);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--type=')) {
+      values.push(arg.slice('--type='.length));
+    }
+  }
+
+  return values
+    .flatMap((value) => value.split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 async function main() {
   const entries = await readdir(samplesRoot, { withFileTypes: true });
-  const sampleDirs = entries
+  const allSampleDirs = entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort((a, b) => a.localeCompare(b));
+  const selectedTypes = parseSelectedTypes(process.argv.slice(2));
+  const selectedTypesNormalized = new Set(selectedTypes.map((type) => type.toLowerCase()));
+  const sampleDirByLower = new Map(allSampleDirs.map((dir) => [dir.toLowerCase(), dir]));
+
+  const unknownTypes = selectedTypes.filter((type) => !sampleDirByLower.has(type.toLowerCase()));
+  if (unknownTypes.length) {
+    console.error(`Unknown regression sample type(s): ${unknownTypes.join(', ')}`);
+    console.error(`Available types: ${allSampleDirs.join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const sampleDirs = selectedTypes.length
+    ? allSampleDirs.filter((dir) => selectedTypesNormalized.has(dir.toLowerCase()))
+    : allSampleDirs;
 
   const rows = [];
 

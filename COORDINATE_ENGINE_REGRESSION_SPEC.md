@@ -129,6 +129,30 @@ SKIPPED_TEXT - text fixture requires text parser endpoint
 text fixtures visible in the matrix until a text parser endpoint or local parser
 harness is added.
 
+### Single-Type Runner Mode
+
+The V1 Regression Runner supports focused runs with `--type`.
+
+`--type` values match `regression-samples/<TYPE>` directory names, not Type IDs.
+Matching is case-insensitive. Multiple directories can be supplied as a
+comma-separated list.
+
+Examples:
+
+```text
+node scripts/coordinate-regression-runner.js --type MGRS
+node scripts/coordinate-regression-runner.js --type BFTM
+node scripts/coordinate-regression-runner.js --type RC2
+node scripts/coordinate-regression-runner.js --type MGRS,BFTM,RC2
+```
+
+If `--type` is omitted, the runner must keep the default full-matrix behavior.
+
+If a requested directory does not exist, the runner must print the unknown type,
+print the available type directories, and exit with code `1`.
+
+The summary must count only the selected directories.
+
 ## 3. Required Validation Checks
 
 The Regression Runner must check all of the following for every sample.
