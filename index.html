@@ -5415,7 +5415,51 @@ Au值 = 纯度 × 10 后取整数</div>
       return value;
     }
 
+    function getFlowStatusFromMessage(text, isError = false) {
+      const value = String(text || "").trim();
+
+      if (!value) return null;
+      if (/正在上传/.test(value)) {
+        return { text: "正在上传图片...", type: "loading" };
+      }
+      if (/正在调用|正在识别/.test(value)) {
+        return { text: "正在识别坐标...", type: "loading" };
+      }
+      if (/正在整理|正在解析/.test(value)) {
+        return { text: "正在解析坐标...", type: "loading" };
+      }
+      if (/正在生成/.test(value) && /KML/i.test(value)) {
+        return { text: "正在生成 KML 文件...", type: "loading" };
+      }
+      if (/已生成/.test(value) && /KML/i.test(value) && !/风险|核对|校对|人工|建议|需确认/.test(value)) {
+        return { text: "已生成 KML 文件，可直接下载", type: "success", hideDelay: 4200 };
+      }
+      if (/已生成/.test(value) && /KML/i.test(value)) {
+        return { text: "请结合原图核对", type: "warning", hideDelay: 6000 };
+      }
+      if (/已识别|识别完成|已自动识别/.test(value) && !/风险|核对|校对|人工|建议|需确认|异常|缺失/.test(value)) {
+        return { text: "识别完成", type: "success", hideDelay: 3800 };
+      }
+      if (/坐标不足|坐标点不足|至少需要|没有找到可生成|没有可生成 KML/.test(value)) {
+        return { text: "坐标不足，无法生成 KML", type: "error", hideDelay: 6500 };
+      }
+      if (/识别失败|KML 生成失败|生成 KML.*失败|下载失败/.test(value) || (isError && /KML|识别/.test(value) && /失败|错误|无法|不能|不足|缺少|异常/.test(value))) {
+        return { text: getLegacyToastTitle(value, "error") || "识别失败", type: "error", hideDelay: 6500 };
+      }
+      if (/风险|核对|校对|人工|建议|可能|需确认|请先确认/.test(value) && /坐标|KML|识别|经纬度|投影|网格|MGRS|BFTM|GK|DMS/i.test(value)) {
+        return { text: "请结合原图核对", type: "warning", hideDelay: 6000 };
+      }
+
+      return null;
+    }
+
     function showMessage(text, isError = false, durationMs = 2800) {
+      const flowStatus = getFlowStatusFromMessage(text, isError);
+      if (flowStatus) {
+        showRecognitionProgress(flowStatus.text, flowStatus.type, flowStatus.hideDelay || 0);
+        return;
+      }
+
       const type = inferLegacyToastType(text, isError);
       showToast({
         type,
@@ -10727,6 +10771,8 @@ ${placemarks}
         return;
       }
 
+      showRecognitionProgress("正在生成 KML 文件...", "loading");
+
       if (hasCadastralGridRows(input.value)) {
         const allRows = extractCadastralGridRows(input.value);
         const selectedRows = parseCadastralGridSelection(cadastralGridSelection?.value, allRows);
@@ -11229,7 +11275,7 @@ ${placemarks}
             error: "后端没有返回 JSON，可能是服务异常。"
           };
         }
-        showRecognitionProgress("正在整理坐标格式...", "loading");
+        showRecognitionProgress("正在解析坐标...", "loading");
 
         if (!response.ok && data.reason === "limit_exceeded") {
           if (data.quota) {
