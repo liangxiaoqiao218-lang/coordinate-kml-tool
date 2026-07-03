@@ -3271,6 +3271,34 @@ function looksLikeHandwrittenDmsBlock(text) {
   return !looksLikeCoordinateTable(text) && numberedDmsLines.length >= 8;
 }
 
+function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
+  const sourceText = String(rawText || "");
+  const coordinateText = String(coordinates || "");
+  const dmsRows = countDmsCoordinateRows(sourceText);
+  const pointRows = countCoordinateRows(coordinateText);
+  const isOcrImage = Boolean(options.isOcrImage);
+
+  const isHandwrittenDms = isOcrImage
+    && dmsRows >= 4
+    && pointRows >= 4
+    && looksLikeHandwrittenDmsBlock(sourceText)
+    && !getDmsGroupedCoordinateInfo(sourceText).output
+    && !looksLikeCoordinateTable(sourceText)
+    && !hasDmsGroupedContext(sourceText)
+    && !getFrenchPerimeterDmsInfo(sourceText).isFrenchPerimeterDms
+    && !looksLikePointAzDmsTable(sourceText)
+    && !hasBftmContext(sourceText)
+    && !getMgrsInfo(sourceText).isMgrs
+    && !getWgs84TableCoordinatesInfo(sourceText).isWgs84TableCoordinates
+    && !getChatCoordinatesInfo(sourceText).isChatCoordinates;
+
+  return {
+    isHandwrittenDms,
+    dmsRows,
+    pointRows
+  };
+}
+
 function groupEveryFourLinesWhenLikely(text, sourceText = "") {
   // Stable path: handwritten DMS uses rawText-derived recognizedLines and this four-line grouping.
   // Do not apply this to table formats such as standard DMS tables, BFTM/X-Y, or cadastral grids.
@@ -10203,6 +10231,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     let frenchPerimeterDms = getFrenchPerimeterDmsInfo(rawText);
     let dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
+    let handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, { isOcrImage: Boolean(req.file) });
     let pointAzDmsTableAccepted = false;
     if (dmsGroupedAccepted && shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo)) {
       try {
@@ -10784,6 +10813,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
+    handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, { isOcrImage: Boolean(req.file) });
     const finalBftmCoordinateRepair = normalizeBftmProjectedCoordinateText(coordinates);
     if (finalBftmCoordinateRepair.changed && finalBftmCoordinateRepair.rowCount >= 4) {
       coordinates = finalBftmCoordinateRepair.text;
@@ -10795,6 +10825,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     utm30Accepted = !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
     if (utm30Accepted && !parserTrace.includes("UTM30_XY:accepted")) {
       parserTrace.push("UTM30_XY:accepted");
+    }
+    if (handwrittenDms.isHandwrittenDms && !parserTrace.includes("HANDWRITTEN_DMS:accepted")) {
+      const dmsTraceIndex = parserTrace.indexOf("DMS:accepted");
+      if (dmsTraceIndex >= 0) {
+        parserTrace.splice(dmsTraceIndex, 1);
+      }
+      parserTrace.push("HANDWRITTEN_DMS:accepted");
     }
     if (dmsGroupedAccepted) {
       coordinates = dmsGroupedInfo.output;
@@ -10863,7 +10900,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ? "french-perimeter-dms-prose"
           : pointAzDmsTableAccepted
             ? "point-az-dms-table"
-            : bftmAccepted
+            : handwrittenDms.isHandwrittenDms
+              ? "handwritten-dms-coordinates"
+              : bftmAccepted
               ? "bftm-projected-x-y"
               : utm30Accepted
                 ? "utm30n-projected-x-y"

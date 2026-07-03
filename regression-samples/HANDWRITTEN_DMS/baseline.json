@@ -1,0 +1,14 @@
+{
+  "typeId": "handwritten-dms-coordinates",
+  "status": "locked",
+  "baselineCommit": "b400770d84b666d3d777fd53ac3d19af97eb8a28",
+  "precisionMode": "handwritten-dms-coordinates",
+  "parserTraceAlias": ["OCR", "HANDWRITTEN_DMS:accepted"],
+  "pointCount": 16,
+  "geometry": "Polygon",
+  "firstCoordinate": "-8.678369444444444,11.477016666666668",
+  "lastCoordinate": "-8.608544444444444,11.462525",
+  "coordinateSummaryHash": "cc71dd930aaae51b2e5f29c0e95f6e7487a9bfe8c9716d096fcbf79b77190650",
+  "kmlCoordinateHash": "cc71dd930aaae51b2e5f29c0e95f6e7487a9bfe8c9716d096fcbf79b77190650",
+  "notes": "Locked image fixture baseline for multi-line handwritten DMS recognition. The dedicated mode upgrades OCR-derived multi-line DMS images from the generic preserve-original-decimals-and-parse-dms fallback without changing the ordinary DMS parser."
+}

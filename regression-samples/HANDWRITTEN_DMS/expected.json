@@ -1,0 +1,13 @@
+{
+  "typeId": "handwritten-dms-coordinates",
+  "sampleName": "Handwritten DMS coordinate image with 16 points",
+  "inputType": "image",
+  "inputFile": "D:/关于西非的业务/测试素材/手写坐标.jpg",
+  "expectedPrecisionMode": "handwritten-dms-coordinates",
+  "expectedParserTrace": ["OCR", "HANDWRITTEN_DMS:accepted"],
+  "expectedPointCount": 16,
+  "expectedFirstKml": "-8.678369444444444,11.477016666666668,0",
+  "expectedLastKml": "-8.608544444444444,11.462525,0",
+  "status": "active",
+  "notes": "Historical successful handwritten DMS image fixture. Dedicated image fixture for multi-line handwritten DMS; it must not be folded into the ordinary single-point DMS text baseline."
+}
