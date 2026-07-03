@@ -1888,24 +1888,136 @@
 
     .toast {
       position: fixed;
-      top: 16px;
-      left: 50%;
+      top: 18px;
+      right: 18px;
       z-index: 20;
       display: none;
-      max-width: min(92vw, 420px);
-      padding: 10px 14px;
-      border-radius: 8px;
-      background: #14532d;
-      color: #ffffff;
+      align-items: flex-start;
+      gap: 10px;
+      width: min(90vw, 360px);
+      max-width: 360px;
+      padding: 12px 14px 12px 12px;
+      border: 1px solid #e2e8f0;
+      border-left: 5px solid #2563eb;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.96);
+      color: #0f172a;
       font-size: 14px;
-      line-height: 1.4;
-      text-align: center;
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
-      transform: translateX(-50%);
+      line-height: 1.45;
+      text-align: left;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.16);
+      opacity: 0;
+      transform: translateY(-8px);
+      transition: opacity 0.18s ease, transform 0.18s ease;
+      pointer-events: auto;
+    }
+
+    .toast.show {
+      display: flex;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .toast::before {
+      content: "i";
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 22px;
+      width: 22px;
+      height: 22px;
+      margin-top: 1px;
+      border-radius: 999px;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .toast.success {
+      border-left-color: #16a34a;
+    }
+
+    .toast.success::before {
+      content: "✓";
+      background: #dcfce7;
+      color: #15803d;
+    }
+
+    .toast.info {
+      border-left-color: #2563eb;
+    }
+
+    .toast.warning {
+      border-left-color: #f59e0b;
+    }
+
+    .toast.warning::before {
+      content: "!";
+      background: #fef3c7;
+      color: #b45309;
     }
 
     .toast.error {
-      background: #991b1b;
+      border-left-color: #dc2626;
+    }
+
+    .toast.error::before {
+      content: "×";
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+
+    .toast-body {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .toast-title {
+      display: block;
+      color: #0f172a;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .toast-message {
+      display: block;
+      margin-top: 2px;
+      color: #475569;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .toast-close {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      background: transparent;
+      color: #64748b;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .toast-close:hover {
+      background: #f1f5f9;
+      color: #0f172a;
+    }
+
+    @media (max-width: 640px) {
+      .toast {
+        top: 18px;
+        right: 50%;
+        width: 90vw;
+        transform: translate(50%, -8px);
+      }
+
+      .toast.show {
+        transform: translate(50%, 0);
+      }
     }
 
     .upload-message {
@@ -5183,21 +5295,133 @@ Au值 = 纯度 × 10 后取整数</div>
       }).catch(error => console.warn("记录事件失败", error));
     }
 
-    function showMessage(text, isError = false, durationMs = 2000) {
-      if (!text) {
-        toast.style.display = "none";
-        toast.textContent = "";
+    function getToastDuration(type, title, message, explicitDuration) {
+      if (Number.isFinite(explicitDuration) && explicitDuration > 0) {
+        return explicitDuration;
+      }
+
+      const textLength = `${title || ""}${message || ""}`.length;
+      const extra = textLength > 20 ? Math.min(2500, (textLength - 20) * 45) : 0;
+
+      if (type === "error") return 6000 + extra;
+      if (type === "warning") return 5000 + extra;
+      return 2800 + extra;
+    }
+
+    function hideToast() {
+      clearTimeout(showToast.timer);
+      toast.classList.remove("show");
+      toast.setAttribute("aria-hidden", "true");
+      setTimeout(() => {
+        if (!toast.classList.contains("show")) {
+          toast.style.display = "none";
+          toast.replaceChildren();
+        }
+      }, 190);
+    }
+
+    function showToast(options = {}) {
+      const type = ["success", "info", "warning", "error"].includes(options.type) ? options.type : "info";
+      const title = String(options.title || "").trim();
+      const message = String(options.message || "").trim();
+
+      if (!title && !message) {
+        hideToast();
         return;
       }
 
-      toast.textContent = text;
-      toast.className = isError ? "toast error" : "toast";
-      toast.style.display = "block";
+      const body = document.createElement("div");
+      body.className = "toast-body";
 
-      clearTimeout(showMessage.timer);
-      showMessage.timer = setTimeout(() => {
-        toast.style.display = "none";
-      }, durationMs);
+      const titleEl = document.createElement("span");
+      titleEl.className = "toast-title";
+      titleEl.textContent = title || message;
+      body.appendChild(titleEl);
+
+      if (title && message) {
+        const messageEl = document.createElement("span");
+        messageEl.className = "toast-message";
+        messageEl.textContent = message;
+        body.appendChild(messageEl);
+      }
+
+      toast.replaceChildren(body);
+      toast.className = `toast ${type}`;
+      toast.style.display = "flex";
+      toast.setAttribute("role", type === "error" ? "alert" : "status");
+      toast.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
+      toast.setAttribute("aria-hidden", "false");
+
+      if (type === "error") {
+        const closeButton = document.createElement("button");
+        closeButton.type = "button";
+        closeButton.className = "toast-close";
+        closeButton.setAttribute("aria-label", "关闭提示");
+        closeButton.textContent = "×";
+        closeButton.addEventListener("click", hideToast);
+        toast.appendChild(closeButton);
+      }
+
+      requestAnimationFrame(() => {
+        toast.classList.add("show");
+      });
+
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(hideToast, getToastDuration(type, title, message, options.duration));
+    }
+
+    function inferLegacyToastType(text, isError) {
+      const value = String(text || "");
+
+      if (/正在|调用|上传|生成中|处理中/.test(value)) {
+        return "info";
+      }
+
+      if (/已生成/.test(value) && /KML/i.test(value) && !/possible swapped lat\/lon|风险/.test(value)) {
+        return "success";
+      }
+
+      if (/风险|核对|校对|人工|建议|可能|需确认|请先确认/.test(value)) {
+        return "warning";
+      }
+
+      if (/已生成|已识别|识别完成|已转换|已标准化|内容已清空|已撤销|已删除|已复制|已交换|已自动识别/.test(value)) {
+        return "success";
+      }
+
+      if (isError || /失败|错误|无法|不能|不足|没有|缺少|异常|请检查|未找到|不可|暂未开通/.test(value)) {
+        return "error";
+      }
+
+      return "info";
+    }
+
+    function getLegacyToastTitle(text, type) {
+      const value = String(text || "").trim();
+
+      if (!value) return "";
+      if (/正在上传/.test(value)) return "正在上传图片";
+      if (/正在调用|正在识别/.test(value)) return "正在识别坐标";
+      if (/已生成/.test(value) && /KML/i.test(value)) return "已生成 KML 文件";
+      if (/已识别/.test(value)) return "识别完成";
+      if (/识别完成/.test(value)) return "识别完成";
+      if (/possible swapped lat\/lon|风险/.test(value)) return "坐标顺序需核对";
+      if (/核对|校对|人工|建议/.test(value) && type === "warning") return "请结合原图核对";
+      if (/没有找到可生成/.test(value)) return "没有可生成 KML 的坐标";
+      if (/坐标不足|坐标点不足|至少需要/.test(value)) return "坐标不足，无法生成 KML";
+      if (/生成 KML|KML/.test(value) && type === "error") return "KML 生成失败";
+      if (/识别失败/.test(value)) return "识别失败";
+      if (value.length > 24) return `${value.slice(0, 22)}…`;
+      return value;
+    }
+
+    function showMessage(text, isError = false, durationMs = 2800) {
+      const type = inferLegacyToastType(text, isError);
+      showToast({
+        type,
+        title: getLegacyToastTitle(text, type),
+        duration: durationMs
+      });
     }
 
     function rememberState() {
