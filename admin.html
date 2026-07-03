@@ -1891,19 +1891,19 @@
 
         <div class="quota-grid">
           <div>
-            <label for="quotaFreeConvert">免费坐标/KML</label>
+            <label for="quotaFreeConvert">今日免费坐标/KML（系统维护）</label>
             <input id="quotaFreeConvert" type="number" min="0" />
           </div>
           <div>
-            <label for="quotaPaidConvert">付费坐标/KML</label>
+            <label for="quotaPaidConvert">可用坐标/KML次数（管理员加次）</label>
             <input id="quotaPaidConvert" type="number" min="0" />
           </div>
           <div>
-            <label for="quotaFreeJudge">免费矿地快判</label>
+            <label for="quotaFreeJudge">今日免费矿地快判（系统维护）</label>
             <input id="quotaFreeJudge" type="number" min="0" />
           </div>
           <div>
-            <label for="quotaPaidJudge">付费矿地快判</label>
+            <label for="quotaPaidJudge">可用矿地快判次数（管理员加次）</label>
             <input id="quotaPaidJudge" type="number" min="0" />
           </div>
         </div>
@@ -2030,7 +2030,7 @@
       if (!pricingConfig) return;
       const quotaPricingNote = document.getElementById("quotaPricingNote");
       const lookupPricingNote = document.getElementById("lookupPricingNote");
-      const monthlyLine = `开通${pricingConfig.monthly.name} ${formatPricingYuan(pricingConfig.monthly.price)}：矿地快判 +${pricingConfig.monthly.judgeCount} 次，坐标/KML +${pricingConfig.monthly.convertCount} 次，并设置为${pricingConfig.monthly.name}。`;
+      const monthlyLine = `开通${pricingConfig.monthly.name} ${formatPricingYuan(pricingConfig.monthly.price)}：可用矿地快判 +${pricingConfig.monthly.judgeCount} 次，可用坐标/KML +${pricingConfig.monthly.convertCount} 次，并设置为${pricingConfig.monthly.name}。`;
       const judgeLine = `${pricingConfig.addJudge.name} ${formatPricingYuan(pricingConfig.addJudge.price)}：矿地快判付费次数 +${pricingConfig.addJudge.count}。`;
       const convertLine = `${pricingConfig.addConvert.name} ${formatPricingYuan(pricingConfig.addConvert.price)}：坐标/KML付费次数 +${pricingConfig.addConvert.count}。`;
       if (quotaPricingNote) {
@@ -2041,6 +2041,7 @@
             <li>${judgeLine}</li>
             <li>${convertLine}</li>
           </ul>
+          <div class="muted">提示：人工加次/充值写入“可用次数（管理员加次）”；“今日免费”字段由系统每日额度维护，可能被重置。</div>
         `;
       }
       if (lookupPricingNote) {
@@ -3896,6 +3897,29 @@
       `).join("");
     }
 
+    function getChangedSystemFreeQuotaFields() {
+      if (!selectedSupabaseUser) {
+        return [];
+      }
+
+      const changed = [];
+      const freeConvertInput = document.getElementById("quotaFreeConvert");
+      const freeJudgeInput = document.getElementById("quotaFreeJudge");
+      const currentFreeConvert = toQuotaInputValue(freeConvertInput?.value);
+      const currentFreeJudge = toQuotaInputValue(freeJudgeInput?.value);
+      const originalFreeConvert = toQuotaInputValue(selectedSupabaseUser.free_convert_count);
+      const originalFreeJudge = toQuotaInputValue(selectedSupabaseUser.free_judge_count);
+
+      if (currentFreeConvert !== originalFreeConvert) {
+        changed.push("今日免费坐标/KML");
+      }
+      if (currentFreeJudge !== originalFreeJudge) {
+        changed.push("今日免费矿地快判");
+      }
+
+      return changed;
+    }
+
     function quickAddSupabaseQuota(type, amount) {
       const inputId = type === "judge" ? "quotaPaidJudge" : "quotaPaidConvert";
       const input = document.getElementById(inputId);
@@ -3914,7 +3938,7 @@
     function quickAddMonthlyPlanQuota() {
       quickAddSupabaseQuota("judge", pricingConfig.monthly.judgeCount);
       quickAddSupabaseQuota("convert", pricingConfig.monthly.convertCount);
-      setQuotaEditMessage(`\u5df2\u586b\u5145\u6708\u5ea6\u6b21\u6570\uff1a\u77ff\u5730\u5feb\u5224 +${pricingConfig.monthly.judgeCount}\uff0c\u5750\u6807/KML +${pricingConfig.monthly.convertCount}\u3002\u8be5\u6309\u94ae\u53ea\u586b\u6b21\u6570\uff0c\u4e0d\u6539\u53d8VIP\u72b6\u6001\u3002`);
+      setQuotaEditMessage(`已填充月度可用次数：矿地快判 +${pricingConfig.monthly.judgeCount}，坐标/KML +${pricingConfig.monthly.convertCount}。该按钮写入管理员加次字段，不改变今日免费额度。`);
     }
 
     async function toggleSelectedSupabaseVip() {
@@ -3952,6 +3976,15 @@
       }
 
       try {
+        const changedSystemFreeFields = getChangedSystemFreeQuotaFields();
+        if (changedSystemFreeFields.length) {
+          const shouldContinue = window.confirm(`${changedSystemFreeFields.join("、")} 是系统每日免费额度字段，会被每日重置逻辑维护，不建议用于人工加次。人工加次请修改“可用次数（管理员加次）”。仍要保存这些今日免费字段吗？`);
+          if (!shouldContinue) {
+            setQuotaEditMessage("已取消保存。人工加次请修改“可用次数（管理员加次）”字段。", true);
+            return;
+          }
+        }
+
         setQuotaEditMessage("正在保存修改...");
         const result = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/quota`, {
           method: "PATCH",
