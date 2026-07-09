@@ -9528,6 +9528,12 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 
   let visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || req.query?.visitorId || "").trim();
   const regressionTestMode = getRegressionTestMode(req);
+  const consumeCoordinateUsage = async (metadata = {}) => {
+    if (regressionTestMode.active) {
+      return { success: true, reason: "regression_test", skipped: true };
+    }
+    return consumeUsage(visitorId, "convert", req, metadata);
+  };
 
   try {
     if (regressionTestMode.rejectReason) {
@@ -9574,13 +9580,6 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
         coordinates: ""
       });
     }
-
-    const consumeCoordinateUsage = async (metadata = {}) => {
-      if (regressionTestMode.active) {
-        return { success: true, reason: "regression_test", skipped: true };
-      }
-      return consumeUsage(visitorId, "convert", req, metadata);
-    };
 
     if (!regressionTestMode.active) {
       await updateSupabaseUserVisitMeta(visitorId, req);
