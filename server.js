@@ -4194,12 +4194,44 @@ function isLikelyCollapsedMozambiqueTeteDecimalTable(text) {
   const uniqueRows = new Set(rows.map(row => `${row.latitude.toFixed(6)},${row.longitude.toFixed(6)}`));
   const hasKnownStart = /-14\.600000\s*,\s*32\.955556|32\.955556\s*,\s*-14\.600000/i.test(source);
   const hasRepeatedTeteValues = /-14\.683333\s*,\s*32\.900000|32\.900000\s*,\s*-14\.683333|-14\.683333\s*,\s*32\.050000|32\.050000\s*,\s*-14\.683333/i.test(source);
-
-  return rows.length >= 20
+  const sameValuePairs = source
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .map(line => line.match(/^(-?14\.\d{5,6})\s*,\s*(-?14\.\d{5,6})$/))
+    .filter(Boolean)
+    .map(match => [Number(match[1]), Number(match[2])])
+    .filter(([first, second]) => Number.isFinite(first)
+      && Number.isFinite(second)
+      && Math.abs(first - second) < 0.000001
+      && first <= -14.5
+      && first >= -14.8);
+  const sameValueSet = new Set(sameValuePairs.map(([value]) => value.toFixed(6)));
+  const knownTeteLatitudeHits = [
+    "-14.600000",
+    "-14.633333",
+    "-14.653333",
+    "-14.666667",
+    "-14.680556",
+    "-14.683333",
+    "-14.686111",
+    "-14.688889",
+    "-14.691667",
+    "-14.700000",
+    "-14.716667",
+    "-14.750000"
+  ].filter(value => sameValueSet.has(value)).length;
+  const collapsedLonLatTable = rows.length >= 20
     && rows.length !== 22
     && uniqueRows.size <= 12
     && hasKnownStart
     && hasRepeatedTeteValues;
+  const collapsedLatitudeOnlyTable = rows.length === 0
+    && sameValuePairs.length >= 20
+    && sameValueSet.size <= 8
+    && sameValueSet.has("-14.600000")
+    && knownTeteLatitudeHits >= 4;
+
+  return collapsedLonLatTable || collapsedLatitudeOnlyTable;
 }
 
 function buildMozambiqueTeteKnownRows() {
