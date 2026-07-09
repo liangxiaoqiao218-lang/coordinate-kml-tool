@@ -3299,6 +3299,14 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
   };
 }
 
+function shouldRetryHandwrittenDmsOnTimeout(file, hint = "") {
+  const value = `${file?.originalname || ""} ${hint || ""}`;
+  const folded = foldSearchText(value);
+
+  return /手写|手寫|鎵嬪啓|HANDWRITTEN_DMS|handwritten|hand-written|hand\s*written|manual\s*dms|handwritten_dms|handwritten-dms/i.test(value)
+    || /handwritten[_\s-]*dms|hand\s*written[_\s-]*dms/.test(folded);
+}
+
 function groupEveryFourLinesWhenLikely(text, sourceText = "") {
   // Stable path: handwritten DMS uses rawText-derived recognizedLines and this four-line grouping.
   // Do not apply this to table formats such as standard DMS tables, BFTM/X-Y, or cadastral grids.
@@ -10948,6 +10956,118 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     try {
       if (!req.file) {
         throw error;
+      }
+
+      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file && shouldRetryHandwrittenDmsOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")) {
+        const handwrittenDmsDebug = {
+          handwrittenDmsRetryStarted: true,
+          handwrittenDmsRetrySuccess: false,
+          handwrittenDmsRetryTimeoutMs: 80000,
+          handwrittenDmsRetryRows: 0,
+          handwrittenDmsFallbackBlocked: true
+        };
+
+        try {
+          console.log("Aliyun timed out; retrying handwritten DMS visual recognition before local OCR fallback.", {
+            fileName: req.file?.originalname || "",
+            timeoutMs: handwrittenDmsDebug.handwrittenDmsRetryTimeoutMs
+          });
+          const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+          const handwrittenDmsTimeoutRetryPrompt = `Read ONLY handwritten DMS coordinate lines in this image.
+This is a literal transcription task for handwritten coordinates, NOT a coordinate conversion task.
+
+Target content:
+- Numbered handwritten DMS coordinate lines.
+- Lines may look like 11°28.31.26N, 08.40.42.13W, 11°27'57.74 N, 08 36 46.30 W.
+- Coordinates may appear in groups of 1, 2, 3, 4; preserve blank lines between groups if visible.
+
+Critical rules:
+- Preserve the visible DMS numbers as written.
+- Do NOT convert to decimal degrees.
+- Do NOT infer missing rows.
+- Do NOT read printed body text, signatures, phone UI, watermarks, or unrelated numbers.
+- Do NOT output explanations, markdown, confidence, bbox, or OCR metadata.
+- Each output line must contain exactly one latitude DMS and one longitude DMS coordinate.
+- Keep N/S/E/W/O direction letters when visible. O/Ouest means W.
+
+Output only coordinate lines. Examples:
+1. 11°28'31.26"N, 08°40'42.13"W
+2. 11°27'57.74"N, 08°36'46.30"W
+
+If fewer than four handwritten DMS coordinate rows are readable, output only: ${noCoordinatesText}`;
+          const retryResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: handwrittenDmsTimeoutRetryPrompt,
+            imageItems: [{
+              type: "image_url",
+              image_url: { url: imageDataUrl }
+            }],
+            temperature: 0,
+            maxTokens: 2200,
+            timeoutMs: handwrittenDmsDebug.handwrittenDmsRetryTimeoutMs
+          });
+          const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
+          const retryCoordinates = extractCoordinateLines(retryRawText);
+          const retryHandwrittenDms = getHandwrittenDmsInfo(retryRawText, retryCoordinates, { isOcrImage: true });
+          handwrittenDmsDebug.handwrittenDmsRetryRows = retryHandwrittenDms.pointRows || countCoordinateRows(retryCoordinates);
+
+          if (retryHandwrittenDms.isHandwrittenDms) {
+            handwrittenDmsDebug.handwrittenDmsRetrySuccess = true;
+            const consumeResult = await consumeCoordinateUsage({
+              note: "Coordinate recognition consumed after handwritten DMS timeout retry"
+            });
+            if (consumeResult.reason === "limit_exceeded") {
+              return res.status(403).json({
+                success: false,
+                reason: "limit_exceeded",
+                code: getQuotaExhaustedCode("convert"),
+                type: "convert",
+                quota: consumeResult.quota,
+                error: "CONVERT_QUOTA_EXHAUSTED",
+                rawText: "",
+                coordinates: "",
+                ...handwrittenDmsDebug
+              });
+            }
+            if (!consumeResult.success) {
+              return res.status(500).json({
+                success: false,
+                reason: consumeResult.reason || "db_error",
+                error: "CONVERT_QUOTA_CONSUME_FAILED",
+                rawText: "",
+                coordinates: "",
+                ...handwrittenDmsDebug
+              });
+            }
+
+            return res.json({
+              model: `${aliyunVisionModel}+handwritten-dms-timeout-retry`,
+              rawText: retryRawText,
+              coordinates: retryCoordinates,
+              precisionMode: "handwritten-dms-coordinates",
+              warning: "主视觉模型首次超时，已通过手写 DMS 专用视觉重试读取。手写坐标请结合原图逐行核对。",
+              parserTrace: ["OCR", "HANDWRITTEN_DMS:timeout_retry", "HANDWRITTEN_DMS:accepted"],
+              quota: consumeResult.quota,
+              ...handwrittenDmsDebug
+            });
+          }
+
+          console.log("Handwritten DMS timeout retry did not return stable rows:", retryRawText.slice(0, 500));
+        } catch (handwrittenRetryError) {
+          console.error("Handwritten DMS timeout visual retry failed:", handwrittenRetryError.message || handwrittenRetryError);
+        }
+
+        return res.status(504).json({
+          success: false,
+          reason: "handwritten_dms_timeout",
+          code: "HANDWRITTEN_DMS_TIMEOUT",
+          error: "手写坐标视觉识别超时，请稍后重试或上传更清晰图片。",
+          rawText: "",
+          coordinates: "",
+          precisionMode: "handwritten-dms-coordinates",
+          warning: "手写坐标视觉识别超时，请稍后重试或上传更清晰图片。",
+          ...handwrittenDmsDebug
+        });
       }
 
       if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file) {
