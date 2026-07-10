@@ -294,6 +294,57 @@ Regression requirement:
   - `Point C`: `-8.75,12.036666666666667,0`
   - `Point D`: `-8.833333333333334,12.036666666666667,0`
 
+## Cote d'Ivoire Geographic DMS Table
+
+Status:
+
+- Coordinate Engine V2 only.
+- Does not replace or modify V1 parser selection.
+
+Registered names:
+
+- `coordinate_type`: `cote_divoire_geographic_dms_table`
+- `precision_mode`: `cote-divoire-geographic-dms-table`
+- Normalization adapter: `normalizeCoteDIvoireGeographicDmsTable()`
+
+Trigger conditions:
+
+- File name or image text contains Cote d'Ivoire / Côte d'Ivoire / 科特迪瓦.
+- French table cues such as `POINTS`, `Latitude N`, `LATITUDE NORD`, `longitude W`, `LONGITUDE OUEST`, `Superficies (ha)`, `Superficie`, or `hectares`.
+- Geographic DMS coordinates with N latitude and W/Ouest longitude.
+- Supports degree/minute/second symbols, space-separated DMS, and decimal comma seconds.
+
+Multi-group rule:
+
+- Preserve source order.
+- Split by company heading and mine-zone marker when present.
+- Suggested names use `COMPANY_矿区N`, for example `CONNEXION RESSOURCES_矿区1`.
+
+Direction rule:
+
+- `N` / `Nord` is positive latitude.
+- `W` / `Ouest` is negative longitude.
+- Internal order is always lon,lat for KML.
+- No UTM, Abidjan 1987, or axis-swap conversion is allowed.
+
+Quality gate:
+
+- Check point count, duplicate points, polygon closure, self-intersection, abnormal edge length, and area difference.
+- `declared_area_ha` versus `calculated_area_ha` error above 2 percent sets `requires_review = true`.
+- Self-intersection sets `requires_review = true` and `kml_ready = false`.
+- The original point order must not be reordered automatically.
+
+Fallback rule:
+
+- Once this V2 type is matched, WGS84 Chat, decimal lat/lon, local Tesseract fallback, BFTM, Madagascar cadastral, Mozambique geographic table, Kyrgyzstan GK, and MGRS may only be recorded in debug.
+- They must not overwrite the V2 groups.
+
+Regression requirement:
+
+- `科特迪瓦01.png`, `科特迪瓦02.png`, `科特迪瓦03.png`, and `科特迪瓦04.png` must return one group with four points and `kml_ready = true`.
+- `科特迪瓦4个矿区坐标.jpg` must return four groups.
+- `SION RESSOURCE_矿区2` must keep the original self-intersecting order and return `kml_ready = false`.
+
 ## Mozambique Geographic Table
 
 Type id:

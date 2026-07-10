@@ -212,6 +212,51 @@ Status values:
 
 ---
 
+## cote-divoire-geographic-dms-table
+
+- Type ID: `cote-divoire-geographic-dms-table`
+- V2 coordinate_type: `cote_divoire_geographic_dms_table`
+- Intent:
+  - Côte d'Ivoire / Cote d'Ivoire / 科特迪瓦 French geographic DMS tables.
+  - Keywords: `POINTS`, `Latitude N`, `LATITUDE NORD`, `longitude W`,
+    `LONGITUDE OUEST`, `Superficies (ha)`, `Superficie`, `hectares`.
+  - Supports one image with one mining area and one image with multiple
+    company + mining-area groups.
+- Dedicated Vision:
+  - V2 shadow/normalization path only at this stage.
+  - Preserve group titles such as `CONNEXION RESSOURCES` + `矿区1`.
+- Dedicated Parser:
+  - `normalizeCoteDIvoireGeographicDmsTable()`.
+  - Parses degree-minute-second rows with symbols or spaces, including
+    `05°35'08,00"N` and `6 45 20N`.
+- Quality Gate:
+  - `N` / `Nord` is positive latitude.
+  - `W` / `Ouest` is negative longitude.
+  - Do not swap latitude and longitude.
+  - Calculate area per group and compare with declared `Superficie(s)` when
+    available. Area error above 2% requires review.
+  - Self-intersecting polygons require review and are not KML-ready.
+  - Do not auto-reorder points to hide a self-intersection.
+- Export:
+  - V2 groups expose `kml_ready` and optional per-group KML preview only.
+  - Existing frontend KML download remains unchanged in Phase 2.
+  - KML coordinate order is `longitude,latitude,0`.
+- Regression Sample:
+  - `科特迪瓦01.png`, `科特迪瓦02.png`, `科特迪瓦03.png`,
+    `科特迪瓦04.png`, `科特迪瓦4个矿区坐标.jpg`.
+  - `科特迪瓦4个矿区坐标.jpg` must produce four groups; the original
+    `SION RESSOURCE_矿区2` point order is self-intersecting and must return
+    `requires_review=true`, `kml_ready=false`.
+- Stable Since commit:
+  - Pending.
+- Status: Beta
+- Known Issues:
+  - This is a V2 type. Do not extend V1 fallback paths for this type.
+  - Must not be captured by WGS84 Chat, decimal, local OCR, BFTM, Madagascar,
+    Mozambique, Kyrgyz GK, or MGRS fallback paths once V2 detects it.
+
+---
+
 ## dms-coordinates
 
 - Type ID: `dms-coordinates`

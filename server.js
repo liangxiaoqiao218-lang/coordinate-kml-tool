@@ -6680,6 +6680,845 @@ async function runLocalOcrFallback(imageBuffer, reason = "") {
   };
 }
 
+function normalizeCoordinateEngineV2WarningList(value) {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => String(item || "").trim()).filter(Boolean);
+  }
+
+  return String(value)
+    .split(/\r?\n|；|;/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function decodeUploadedOriginalName(value = "") {
+  const raw = String(value || "");
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    const decoded = Buffer.from(raw, "latin1").toString("utf8");
+    if (/[\u4e00-\u9fff]|C[ôo]te|Ivoire/i.test(decoded)) {
+      return decoded;
+    }
+  } catch (_) {
+    // Keep the original multer value when decoding is not applicable.
+  }
+
+  return raw;
+}
+
+function getUploadedFileDisplayName(file) {
+  return decodeUploadedOriginalName(file?.originalname || "");
+}
+
+function hasCoteDIvoireGeographicDmsCue(text = "") {
+  const value = String(text || "");
+  const folded = foldSearchText(value);
+
+  return /C[ôo]te\s+d[’']?Ivoire|Cote\s+d[’']?Ivoire|Ivory\s+Coast|科特迪瓦/i.test(value)
+    || /points?/i.test(value) && /latitude\s*(?:n|nord)|longitude\s*(?:w|ouest)/i.test(folded)
+    || /superficies?\s*\(ha\)|superficie|hectares?/i.test(folded) && /latitude|longitude/i.test(folded);
+}
+
+function parseCoteDIvoireAreaHa(line = "") {
+  const value = String(line || "");
+  if (!/area_ha|declared_area_ha|superficies?\s*\(ha\)|superficie|hectares?/i.test(foldSearchText(value))) {
+    return null;
+  }
+
+  const matches = Array.from(value.matchAll(/\d+(?:[,.]\d+)?/g)).map(match => Number(match[0].replace(",", ".")));
+  const area = matches.reverse().find(number => Number.isFinite(number) && number > 0 && number < 100000);
+
+  return Number.isFinite(area) ? area : null;
+}
+
+function parseCoteDIvoireDmsComponents(line = "") {
+  const source = normalizeText(line)
+    .replace(/,/g, ".")
+    .replace(/NORD/gi, "N")
+    .replace(/NORTH/gi, "N")
+    .replace(/SUD|SOUTH/gi, "S")
+    .replace(/OUEST|WEST/gi, "W")
+    .replace(/[º˚]/g, "°")
+    .replace(/[‘’´`′]/g, "'")
+    .replace(/[“”″]/g, '"');
+  const pattern = /(\d{1,3})\s*(?:°|掳|º)?\s*(\d{1,2})\s*(?:'|′|’|`)?\s*(\d{1,2}(?:\.\d+)?)\s*(?:"|″|”)?\s*(N|S|E|W|O)?/gi;
+  const parts = [];
+  let match;
+
+  while ((match = pattern.exec(source)) !== null) {
+    parts.push({
+      raw: match[0].trim(),
+      degrees: match[1],
+      minutes: match[2],
+      seconds: match[3],
+      direction: String(match[4] || "").toUpperCase()
+    });
+  }
+
+  return parts;
+}
+
+function parseCoteDIvoireCoordinateLine(line = "", fallbackIndex = 1) {
+  const source = String(line || "").trim();
+  let dmsSource = source;
+  let label = "";
+  const pipePointMatch = source.match(/^\s*(?:point|pt)\s*\|\s*([^|]+)\s*\|\s*/i);
+  const strictLabelMatch = source.match(/^\s*(?:point\s*)?(\d{1,3})\s*(?:[).:：|\-]\s*)/i);
+  const looseTableLabelMatch = source.match(/^\s*(\d{1,3})\s+(?=\d{1,2}\s*(?:°|掳|º))/i);
+
+  if (pipePointMatch) {
+    label = pipePointMatch[1].trim();
+    dmsSource = source.slice(pipePointMatch[0].length).trim();
+  } else if (strictLabelMatch) {
+    label = String(Number(strictLabelMatch[1]));
+    dmsSource = source.slice(strictLabelMatch[0].length).trim();
+  } else if (looseTableLabelMatch) {
+    label = String(Number(looseTableLabelMatch[1]));
+    dmsSource = source.slice(looseTableLabelMatch[0].length).trim();
+  }
+
+  const parts = parseCoteDIvoireDmsComponents(dmsSource);
+
+  if (parts.length < 2) {
+    return null;
+  }
+
+  const latPart = parts.find(part => ["N", "S"].includes(part.direction)) || parts[0];
+  const lonPart = parts.find(part => ["E", "W", "O"].includes(part.direction)) || parts.find(part => part !== latPart) || parts[1];
+  const lat = Number(decimalFromDms(latPart.degrees, latPart.minutes, latPart.seconds, latPart.direction || "N"));
+  const lon = Number(decimalFromDms(lonPart.degrees, lonPart.minutes, lonPart.seconds, lonPart.direction || "W"));
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < 0 || lat > 12 || lon > 0 || lon < -10) {
+    return null;
+  }
+
+  return {
+    label: label || String(fallbackIndex),
+    raw: source,
+    lat,
+    lon,
+    confidence: 0.95,
+    requires_review: false,
+    warnings: []
+  };
+}
+
+function getCoordinateEngineV2DistanceMeters(a, b) {
+  const radius = 6371008.8;
+  const lon1 = Number(a?.lon) * Math.PI / 180;
+  const lat1 = Number(a?.lat) * Math.PI / 180;
+  const lon2 = Number(b?.lon) * Math.PI / 180;
+  const lat2 = Number(b?.lat) * Math.PI / 180;
+  const dlon = lon2 - lon1;
+  const dlat = lat2 - lat1;
+  const value = Math.sin(dlat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dlon / 2) ** 2;
+
+  return 2 * radius * Math.asin(Math.sqrt(value));
+}
+
+function projectCoordinateEngineV2LocalMeters(points = []) {
+  const latMean = points.reduce((sum, point) => sum + Number(point.lat || 0), 0) / Math.max(points.length, 1);
+  const lonMean = points.reduce((sum, point) => sum + Number(point.lon || 0), 0) / Math.max(points.length, 1);
+  const radius = 6371008.8;
+  const lat0 = latMean * Math.PI / 180;
+
+  return points.map(point => ({
+    x: (Number(point.lon) - lonMean) * Math.PI / 180 * radius * Math.cos(lat0),
+    y: (Number(point.lat) - latMean) * Math.PI / 180 * radius
+  }));
+}
+
+function getCoordinateEngineV2PolygonAreaHa(points = []) {
+  if (!Array.isArray(points) || points.length < 3) {
+    return 0;
+  }
+
+  const xy = projectCoordinateEngineV2LocalMeters(points);
+  let area = 0;
+
+  for (let index = 0; index < xy.length; index += 1) {
+    const current = xy[index];
+    const next = xy[(index + 1) % xy.length];
+    area += current.x * next.y - next.x * current.y;
+  }
+
+  return Math.abs(area) / 20000;
+}
+
+function coordinateEngineV2Orientation(a, b, c) {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function coordinateEngineV2SegmentsIntersect(a, b, c, d) {
+  const o1 = coordinateEngineV2Orientation(a, b, c);
+  const o2 = coordinateEngineV2Orientation(a, b, d);
+  const o3 = coordinateEngineV2Orientation(c, d, a);
+  const o4 = coordinateEngineV2Orientation(c, d, b);
+
+  return (o1 > 0) !== (o2 > 0) && (o3 > 0) !== (o4 > 0);
+}
+
+function isCoordinateEngineV2SelfIntersecting(points = []) {
+  if (!Array.isArray(points) || points.length < 4) {
+    return false;
+  }
+
+  const xy = projectCoordinateEngineV2LocalMeters(points);
+
+  for (let first = 0; first < xy.length; first += 1) {
+    const a = xy[first];
+    const b = xy[(first + 1) % xy.length];
+
+    for (let second = first + 1; second < xy.length; second += 1) {
+      if (Math.abs(first - second) <= 1 || (first === 0 && second === xy.length - 1)) {
+        continue;
+      }
+
+      const c = xy[second];
+      const d = xy[(second + 1) % xy.length];
+      if (coordinateEngineV2SegmentsIntersect(a, b, c, d)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function buildCoordinateEngineV2KmlForGroup(group = {}) {
+  const points = Array.isArray(group.points) ? group.points : [];
+  if (!group.kml_ready || points.length === 0) {
+    return "";
+  }
+
+  const coordinates = points.map(point => `${point.lon},${point.lat},0`);
+  const geometry = group.geometry === "point"
+    ? `<Point><coordinates>${coordinates[0]}</coordinates></Point>`
+    : group.geometry === "line"
+      ? `<LineString><coordinates>${coordinates.join(" ")}</coordinates></LineString>`
+      : `<Polygon><outerBoundaryIs><LinearRing><coordinates>${[...coordinates, coordinates[0]].join(" ")}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<name>${escapeKmlText(group.group_name || "Cote d'Ivoire Geographic DMS")}</name>
+<Placemark>
+<name>${escapeKmlText(group.group_name || "Cote d'Ivoire Geographic DMS")}</name>
+${geometry}
+</Placemark>
+</Document>
+</kml>`;
+}
+
+function dedupeCoteDIvoireRawGroups(rawGroups = []) {
+  const seen = new Set();
+  const groups = [];
+
+  for (const group of rawGroups) {
+    const signature = (group.points || [])
+      .map(point => `${Number(point.lat).toFixed(8)},${Number(point.lon).toFixed(8)}`)
+      .join(";");
+
+    if (!signature || seen.has(signature)) {
+      continue;
+    }
+
+    seen.add(signature);
+    groups.push(group);
+  }
+
+  return groups;
+}
+
+function normalizeCoteDIvoireGeographicDmsTable(rawGroups = []) {
+  return rawGroups.map((group, groupIndex) => {
+    const points = (group.points || []).map(point => ({
+      label: point.label,
+      raw: point.raw,
+      lat: point.lat,
+      lon: point.lon,
+      confidence: point.confidence,
+      requires_review: false,
+      warnings: []
+    }));
+    const warnings = [];
+    const duplicateKeys = new Set();
+    let hasDuplicate = false;
+
+    for (const point of points) {
+      const key = `${Number(point.lat).toFixed(8)},${Number(point.lon).toFixed(8)}`;
+      if (duplicateKeys.has(key)) {
+        hasDuplicate = true;
+      }
+      duplicateKeys.add(key);
+    }
+
+    const calculatedAreaHa = Number(getCoordinateEngineV2PolygonAreaHa(points).toFixed(2));
+    const selfIntersecting = isCoordinateEngineV2SelfIntersecting(points);
+    const edgeLengths = points.map((point, index) => getCoordinateEngineV2DistanceMeters(point, points[(index + 1) % points.length]));
+    const abnormalEdge = edgeLengths.some(length => !Number.isFinite(length) || length < 1 || length > 100000);
+    const declaredArea = group.declared_area_ha === null || group.declared_area_ha === undefined
+      ? NaN
+      : Number(group.declared_area_ha);
+    const areaErrorPercent = Number.isFinite(declaredArea) && declaredArea > 0
+      ? Math.abs(calculatedAreaHa - declaredArea) / declaredArea * 100
+      : null;
+
+    if (points.length < 3) {
+      warnings.push("点数不足，无法生成可靠多边形。");
+    }
+    if (hasDuplicate) {
+      warnings.push("存在重复点，请人工核对。");
+    }
+    if (selfIntersecting) {
+      warnings.push("原始点序形成自交多边形，请人工核对点序后再生成 KML。");
+    }
+    if (abnormalEdge) {
+      warnings.push("存在异常边长，请人工核对坐标单位或点序。");
+    }
+    if (areaErrorPercent !== null && areaErrorPercent > 2) {
+      warnings.push(`标注面积与计算面积误差超过 2%（${areaErrorPercent.toFixed(2)}%）。`);
+    }
+
+    const requiresReview = warnings.length > 0;
+    const kmlReady = points.length >= 3 && !hasDuplicate && !selfIntersecting && !abnormalEdge;
+    const normalizedGroup = {
+      group_id: `group_${groupIndex + 1}`,
+      group_name: group.group_name || `矿区${groupIndex + 1}`,
+      geometry: points.length === 1 ? "point" : (points.length === 2 ? "line" : "polygon"),
+      declared_area_ha: Number.isFinite(declaredArea) ? declaredArea : null,
+      calculated_area_ha: calculatedAreaHa,
+      area_error_percent: areaErrorPercent === null ? null : Number(areaErrorPercent.toFixed(2)),
+      confidence: requiresReview ? 0.75 : 0.95,
+      requires_review: requiresReview,
+      kml_ready: kmlReady,
+      warnings,
+      points: points.map(point => ({
+        ...point,
+        confidence: requiresReview ? Math.min(point.confidence, 0.85) : point.confidence,
+        requires_review: requiresReview,
+        warnings: requiresReview ? warnings : []
+      }))
+    };
+
+    normalizedGroup.kml = buildCoordinateEngineV2KmlForGroup(normalizedGroup);
+    normalizedGroup.suggested_filename = `${String(normalizedGroup.group_name || normalizedGroup.group_id)
+      .replace(/[^\p{L}\p{N}_-]+/gu, "_")
+      .replace(/^_+|_+$/g, "") || normalizedGroup.group_id}.kml`;
+
+    return normalizedGroup;
+  });
+}
+
+function buildCoteDIvoireGeographicDmsV2Result(payload = {}, options = {}) {
+  const text = [
+    options.fileName || "",
+    payload.rawText || "",
+    payload.coordinates || ""
+  ].filter(Boolean).join("\n");
+
+  if (!hasCoteDIvoireGeographicDmsCue(text)) {
+    return null;
+  }
+
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const rawGroups = [];
+  let currentCompany = "";
+  let currentGroup = null;
+  let implicitGroupIndex = 1;
+
+  const ensureGroup = () => {
+    if (!currentGroup) {
+      currentGroup = {
+        group_name: currentCompany ? `${currentCompany}_矿区${implicitGroupIndex}` : `矿区${implicitGroupIndex}`,
+        declared_area_ha: null,
+        points: []
+      };
+      rawGroups.push(currentGroup);
+      implicitGroupIndex += 1;
+    }
+    return currentGroup;
+  };
+
+  for (const line of lines) {
+    const folded = foldSearchText(line);
+    const coordinate = parseCoteDIvoireCoordinateLine(line, currentGroup?.points?.length + 1 || 1);
+    const area = parseCoteDIvoireAreaHa(line);
+
+    if (area !== null && currentGroup) {
+      currentGroup.declared_area_ha = area;
+      continue;
+    }
+
+    if (coordinate) {
+      ensureGroup().points.push(coordinate);
+      continue;
+    }
+
+    const structuredGroupMatch = line.match(/^\s*GROUP\s*\|\s*(.+)$/i);
+    if (structuredGroupMatch) {
+      currentGroup = {
+        group_name: structuredGroupMatch[1].trim(),
+        declared_area_ha: null,
+        points: []
+      };
+      rawGroups.push(currentGroup);
+      implicitGroupIndex += 1;
+      continue;
+    }
+
+    const groupMatch = line.match(/矿区\s*(\d+)|(?:zone|parcelle|area)\s*(\d+)/i);
+    if (groupMatch) {
+      const groupNumber = groupMatch[1] || groupMatch[2] || String(implicitGroupIndex);
+      currentGroup = {
+        group_name: currentCompany ? `${currentCompany}_矿区${groupNumber}` : `矿区${groupNumber}`,
+        declared_area_ha: null,
+        points: []
+      };
+      rawGroups.push(currentGroup);
+      implicitGroupIndex = Math.max(implicitGroupIndex, Number(groupNumber) + 1 || implicitGroupIndex);
+      continue;
+    }
+
+    if (!/points?|latitude|longitude|superficie|hectare|page|article|arrete|docx|重点关注坐标/i.test(folded)
+      && /^[A-Z][A-Z\s.'&-]{4,}$/.test(line)
+      && line.split(/\s+/).length <= 5) {
+      currentCompany = line.replace(/\s+/g, " ").trim();
+      currentGroup = null;
+      implicitGroupIndex = 1;
+    }
+  }
+
+  const normalizedGroups = normalizeCoteDIvoireGeographicDmsTable(
+    dedupeCoteDIvoireRawGroups(rawGroups.filter(group => group.points.length > 0))
+  );
+
+  if (normalizedGroups.length === 0) {
+    return null;
+  }
+
+  const requiresReview = normalizedGroups.some(group => group.requires_review);
+
+  return {
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: "cote_divoire_geographic_dms_table",
+    precision_mode: "cote-divoire-geographic-dms-table",
+    confidence: requiresReview ? 0.75 : 0.95,
+    requires_review: requiresReview,
+    source: {
+      image_count: 1,
+      ocr_engine: String(payload.model || ""),
+      fallback_used: /fallback/i.test(String(payload.model || "")),
+      legacy_precision_mode: String(payload.precisionMode || "")
+    },
+    groups: normalizedGroups,
+    warnings: normalizedGroups.flatMap(group => group.warnings || []),
+    debug: {
+      matched_detectors: ["cote_divoire_geographic_dms_table"],
+      blocked_fallbacks: [
+        "wgs84_chat_coordinates",
+        "decimal_latlon",
+        "local_tesseract_fallback",
+        "bftm_xy",
+        "madagascar_cadastral_grid",
+        "mozambique_geographic_table",
+        "kyrgyzstan_gk",
+        "mgrs"
+      ],
+      supplemental_fallbacks: []
+    }
+  };
+}
+
+function inferCoordinateEngineV2Type(payload = {}) {
+  const precisionMode = String(payload.precisionMode || "");
+
+  if (precisionMode === "mozambique-geographic-table" || payload.mozambiqueGeographicTable?.isMozambiqueGeographicTable) {
+    return "mozambique_geographic_table";
+  }
+  if (precisionMode === "kyrgyz-gk-point-x-y" || payload.kyrgyzGk?.isKyrgyzGk) {
+    return "kyrgyzstan_gk";
+  }
+  if (precisionMode === "cadastral-grid-num-xv-yv" || payload.cadastralGrid?.isCadastralGrid) {
+    return "madagascar_cadastral_grid";
+  }
+  if (precisionMode === "mgrs-utm-grid-reference" || payload.mgrs?.isMgrs) {
+    return "mgrs_utm_grid_reference";
+  }
+  if (precisionMode === "bftm-projected-x-y" || payload.bftmLongTable?.isBftmLongTable) {
+    return "bftm_xy";
+  }
+  if (precisionMode === "handwritten-dms-coordinates") {
+    return "handwritten_dms_experimental";
+  }
+  if (precisionMode === "wgs84-table-coordinates" || precisionMode === "wgs84-chat-coordinates" || payload.wgs84TableCoordinates?.isWgs84TableCoordinates || payload.chatCoordinates?.isChatCoordinates) {
+    return "decimal_latlon";
+  }
+  if (/dms|point-az-dms-table|french-perimeter-dms-prose/.test(precisionMode)) {
+    return "standard_dms_table";
+  }
+  if (precisionMode === "local-ocr-dms-fallback") {
+    return "standard_dms_table";
+  }
+
+  return "";
+}
+
+function parseCoordinateEngineV2PointLine(line, coordinateType, index) {
+  const raw = String(line || "").trim();
+  const point = {
+    label: String(index + 1),
+    raw,
+    lat: null,
+    lon: null,
+    x: null,
+    y: null,
+    projection: null,
+    grid_cell: null,
+    confidence: 0,
+    requires_review: false,
+    warnings: []
+  };
+
+  if (!raw || raw === noCoordinatesText || /^label\s*\|/i.test(raw) || /^point\s*\|/i.test(raw) || /^num\s*\|/i.test(raw) || /^Mozambique Geographic Table/i.test(raw)) {
+    return null;
+  }
+
+  const pipeParts = raw.split("|").map(part => part.trim());
+  if (pipeParts.length >= 3) {
+    point.label = pipeParts[0] || point.label;
+  }
+
+  if (coordinateType === "madagascar_cadastral_grid" && pipeParts.length >= 3) {
+    point.grid_cell = {
+      num: pipeParts[0],
+      xv: pipeParts[1],
+      yv: pipeParts[2]
+    };
+    point.confidence = 0.85;
+    return point;
+  }
+
+  if ((coordinateType === "kyrgyzstan_gk" || coordinateType === "bftm_xy") && pipeParts.length >= 3) {
+    point.x = Number(pipeParts[1]);
+    point.y = Number(pipeParts[2]);
+    point.projection = coordinateType === "kyrgyzstan_gk" ? "kyrgyzstan_gk" : "bftm";
+    point.confidence = Number.isFinite(point.x) && Number.isFinite(point.y) ? 0.85 : 0.5;
+    return point;
+  }
+
+  if (coordinateType === "mozambique_geographic_table" && pipeParts.length >= 4) {
+    point.lat = Number(pipeParts[1]);
+    point.lon = Number(pipeParts[2]);
+    point.confidence = Number.isFinite(point.lat) && Number.isFinite(point.lon) ? 0.9 : 0.5;
+    return point;
+  }
+
+  if ((coordinateType === "mgrs_utm_grid_reference" || coordinateType === "decimal_latlon") && pipeParts.length >= 3) {
+    const kmlPart = pipeParts.find(part => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(part));
+    const latLonPart = pipeParts.find(part => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(part));
+    if (kmlPart) {
+      const [lon, lat] = kmlPart.split(",").map(value => Number(value.trim()));
+      point.lon = lon;
+      point.lat = lat;
+    } else if (latLonPart) {
+      const [lat, lon] = latLonPart.split(",").map(value => Number(value.trim()));
+      point.lat = lat;
+      point.lon = lon;
+    }
+    point.confidence = Number.isFinite(point.lat) && Number.isFinite(point.lon) ? 0.85 : 0.5;
+    return point;
+  }
+
+  const xyPair = raw.match(/^\s*([-+]?\d{4,}(?:\.\d+)?)\s*,\s*([-+]?\d{4,}(?:\.\d+)?)\s*$/);
+  if (xyPair && (coordinateType === "bftm_xy" || coordinateType === "kyrgyzstan_gk")) {
+    point.x = Number(xyPair[1]);
+    point.y = Number(xyPair[2]);
+    point.projection = coordinateType === "bftm_xy" ? "bftm" : "kyrgyzstan_gk";
+    point.confidence = Number.isFinite(point.x) && Number.isFinite(point.y) ? 0.75 : 0.5;
+    return point;
+  }
+
+  const plainPair = raw.match(/^\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*(?:,\s*[-+]?\d+(?:\.\d+)?)?\s*$/);
+  if (plainPair) {
+    point.lon = Number(plainPair[1]);
+    point.lat = Number(plainPair[2]);
+    point.confidence = Number.isFinite(point.lat) && Number.isFinite(point.lon) ? 0.8 : 0.5;
+    return point;
+  }
+
+  point.confidence = coordinateType === "handwritten_dms_experimental" ? 0.45 : 0.6;
+  return point;
+}
+
+function getCoordinateEngineV2Geometry(points = []) {
+  const count = Array.isArray(points) ? points.length : 0;
+  if (count === 1) {
+    return "point";
+  }
+  if (count === 2) {
+    return "line";
+  }
+  return "polygon";
+}
+
+function hasCoordinateEngineV2Wgs84Point(point = {}) {
+  if (point.lat === null || point.lat === undefined || point.lat === "" || point.lon === null || point.lon === undefined || point.lon === "") {
+    return false;
+  }
+
+  const lat = Number(point.lat);
+  const lon = Number(point.lon);
+
+  return Number.isFinite(lat)
+    && Number.isFinite(lon)
+    && lat >= -90
+    && lat <= 90
+    && lon >= -180
+    && lon <= 180;
+}
+
+function hasCoordinateEngineV2ProjectedOrGridPoint(point = {}) {
+  return point?.grid_cell
+    || Number.isFinite(Number(point.x))
+    || Number.isFinite(Number(point.y))
+    || Boolean(point.projection);
+}
+
+function isCoordinateEngineV2ReviewWarning(warning = "") {
+  const value = String(warning || "").trim();
+  if (!value) {
+    return false;
+  }
+
+  return /自交|误差超过|点数不足|重复点|异常|失败|无法|缺|冲突|超时|范围|未确认|未能稳定|不可信|低可信/i.test(value);
+}
+
+function normalizeCoordinateEngineV2Point(point = {}, groupRequiresReview = false, groupWarnings = []) {
+  const warnings = normalizeCoordinateEngineV2WarningList(point.warnings);
+  const mergedWarnings = Array.from(new Set([...warnings, ...(groupRequiresReview ? groupWarnings : [])]));
+  const normalized = {
+    label: String(point.label || ""),
+    raw: String(point.raw || ""),
+    lat: point.lat === null || point.lat === undefined || point.lat === "" ? null : (Number.isFinite(Number(point.lat)) ? Number(point.lat) : null),
+    lon: point.lon === null || point.lon === undefined || point.lon === "" ? null : (Number.isFinite(Number(point.lon)) ? Number(point.lon) : null),
+    x: point.x === null || point.x === undefined || point.x === "" ? null : (Number.isFinite(Number(point.x)) ? Number(point.x) : null),
+    y: point.y === null || point.y === undefined || point.y === "" ? null : (Number.isFinite(Number(point.y)) ? Number(point.y) : null),
+    projection: point.projection || null,
+    grid_cell: point.grid_cell || null,
+    confidence: Number.isFinite(Number(point.confidence)) ? Number(point.confidence) : 0,
+    requires_review: Boolean(point.requires_review || groupRequiresReview),
+    warnings: mergedWarnings
+  };
+
+  if (!hasCoordinateEngineV2Wgs84Point(normalized) && !hasCoordinateEngineV2ProjectedOrGridPoint(normalized)) {
+    normalized.requires_review = true;
+    if (!normalized.warnings.includes("point 解析失败。")) {
+      normalized.warnings.push("point 解析失败。");
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resultRequiresReview = false) {
+  const rawPoints = Array.isArray(group.points) ? group.points : [];
+  const labels = rawPoints.map(point => String(point?.label || "").trim()).filter(Boolean);
+  const duplicateLabel = new Set(labels).size !== labels.length;
+  const baseWarnings = normalizeCoordinateEngineV2WarningList(group.warnings);
+  const warnings = [...baseWarnings];
+
+  if (rawPoints.length === 0) {
+    warnings.push("缺少有效坐标点。");
+  }
+  if (duplicateLabel) {
+    warnings.push("存在重复或异常点号，请人工核对。");
+  }
+
+  let points = rawPoints.map(point => normalizeCoordinateEngineV2Point(point, false, []));
+  const hasAllWgs84 = points.length > 0 && points.every(hasCoordinateEngineV2Wgs84Point);
+  const hasProjectedOrGrid = points.some(hasCoordinateEngineV2ProjectedOrGridPoint) && !hasAllWgs84;
+  const selfIntersecting = hasAllWgs84 && points.length >= 4 && isCoordinateEngineV2SelfIntersecting(points);
+
+  if (selfIntersecting) {
+    warnings.push("原始点序形成自交多边形，请人工核对点序后再生成 KML。");
+  }
+
+  const reviewWarnings = warnings.filter(isCoordinateEngineV2ReviewWarning);
+  const requiresReview = Boolean(
+    resultRequiresReview
+    || group.requires_review
+    || reviewWarnings.length > 0
+    || rawPoints.length === 0
+    || duplicateLabel
+    || points.some(point => point.requires_review)
+  );
+  const kmlReady = Boolean(
+    hasAllWgs84
+    && !hasProjectedOrGrid
+    && !selfIntersecting
+    && rawPoints.length > 0
+    && !points.some(point => point.requires_review)
+  );
+
+  points = points.map(point => ({
+    ...point,
+    requires_review: Boolean(point.requires_review || requiresReview),
+    warnings: requiresReview ? Array.from(new Set([...(point.warnings || []), ...reviewWarnings])) : point.warnings
+  }));
+
+  return {
+    group_id: String(group.group_id || "group_1"),
+    group_name: String(group.group_name || "矿地1"),
+    geometry: ["point", "line", "polygon"].includes(group.geometry) ? group.geometry : getCoordinateEngineV2Geometry(points),
+    confidence: Number.isFinite(Number(group.confidence)) ? Number(group.confidence) : 0,
+    requires_review: requiresReview,
+    kml_ready: kmlReady,
+    declared_area_ha: Number.isFinite(Number(group.declared_area_ha)) ? Number(group.declared_area_ha) : null,
+    calculated_area_ha: Number.isFinite(Number(group.calculated_area_ha)) ? Number(group.calculated_area_ha) : null,
+    points,
+    warnings: Array.from(new Set(warnings))
+  };
+}
+
+function buildCoordinateEngineV2Groups(payload = {}, coordinateType = "") {
+  const text = String(payload.coordinates || "");
+  const blocks = text
+    .split(/\n\s*\n/g)
+    .map(block => block.split(/\r?\n/).map(line => line.trim()).filter(Boolean))
+    .filter(block => block.length > 0);
+
+  if (blocks.length === 0) {
+    return [];
+  }
+
+  return blocks.map((lines, groupIndex) => {
+    const points = lines
+      .map((line, pointIndex) => parseCoordinateEngineV2PointLine(line, coordinateType, pointIndex))
+      .filter(Boolean);
+
+    return {
+      group_id: `group_${groupIndex + 1}`,
+      group_name: `矿地${groupIndex + 1}`,
+      geometry: getCoordinateEngineV2Geometry(points),
+      confidence: points.length > 0
+        ? Number((points.reduce((sum, point) => sum + Number(point.confidence || 0), 0) / points.length).toFixed(2))
+        : 0,
+      requires_review: false,
+      kml_ready: false,
+      declared_area_ha: null,
+      calculated_area_ha: null,
+      warnings: [],
+      points
+    };
+  }).filter(group => group.points.length > 0);
+}
+
+function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
+  const coordinateType = String(result.coordinate_type || "");
+  const precisionMode = String(result.precision_mode || "");
+  const warnings = normalizeCoordinateEngineV2WarningList(result.warnings);
+  const fallbackUsed = Boolean(result.source?.fallback_used) || /fallback/i.test(String(result.source?.ocr_engine || "")) || /fallback/i.test(precisionMode);
+  const reviewWarnings = warnings.filter(isCoordinateEngineV2ReviewWarning);
+  const forcedReview = coordinateType === "handwritten_dms_experimental"
+    || precisionMode === "local-ocr-dms-fallback"
+    || fallbackUsed
+    || reviewWarnings.length > 0
+    || Boolean(options.forceRequiresReview);
+  const rawGroups = Array.isArray(result.groups) ? result.groups : [];
+  const groups = rawGroups.map((group, index) => normalizeCoordinateEngineV2Group({
+    ...group,
+    group_id: group.group_id || `group_${index + 1}`,
+    group_name: group.group_name || `矿地${index + 1}`
+  }, coordinateType, forcedReview));
+  const missingGroups = groups.length === 0;
+  const requiresReview = Boolean(
+    forcedReview
+    || missingGroups
+    || groups.some(group => group.requires_review)
+  );
+  const confidence = groups.length > 0
+    ? Number((groups.reduce((sum, group) => sum + Number(group.confidence || 0), 0) / groups.length).toFixed(2))
+    : (Number.isFinite(Number(result.confidence)) ? Number(result.confidence) : 0);
+
+  return {
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: coordinateType,
+    precision_mode: precisionMode,
+    confidence: requiresReview ? Math.min(confidence, 0.75) : confidence,
+    requires_review: requiresReview,
+    source: {
+      image_count: Number.isFinite(Number(result.source?.image_count)) ? Number(result.source.image_count) : 1,
+      ocr_engine: String(result.source?.ocr_engine || ""),
+      fallback_used: fallbackUsed
+    },
+    groups,
+    warnings: Array.from(new Set([
+      ...warnings,
+      ...(missingGroups ? ["缺少有效坐标点。"] : [])
+    ])),
+    debug: {
+      matched_detectors: Array.isArray(result.debug?.matched_detectors) ? result.debug.matched_detectors.filter(Boolean) : [],
+      blocked_fallbacks: Array.isArray(result.debug?.blocked_fallbacks) ? result.debug.blocked_fallbacks.filter(Boolean) : [],
+      supplemental_fallbacks: Array.isArray(result.debug?.supplemental_fallbacks) ? result.debug.supplemental_fallbacks.filter(Boolean) : []
+    }
+  };
+}
+
+function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
+  const coteDIvoireResult = buildCoteDIvoireGeographicDmsV2Result(payload, options);
+  if (coteDIvoireResult) {
+    return normalizeCoordinateEngineV2Result(coteDIvoireResult);
+  }
+
+  const coordinateType = inferCoordinateEngineV2Type(payload);
+  const precisionMode = String(payload.precisionMode || "");
+  const warnings = normalizeCoordinateEngineV2WarningList(payload.warning || payload.warnings);
+  const fallbackUsed = /fallback/i.test(String(payload.model || "")) || /fallback/i.test(precisionMode);
+  const reviewWarnings = warnings.filter(isCoordinateEngineV2ReviewWarning);
+  const forcedReview = coordinateType === "handwritten_dms_experimental"
+    || precisionMode === "local-ocr-dms-fallback"
+    || fallbackUsed
+    || reviewWarnings.length > 0;
+  const groups = buildCoordinateEngineV2Groups(payload, coordinateType);
+  const matchedDetectors = [
+    coordinateType,
+    ...(Array.isArray(payload.parserTrace) ? payload.parserTrace : [])
+  ].filter(Boolean);
+
+  return normalizeCoordinateEngineV2Result({
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: coordinateType,
+    precision_mode: precisionMode,
+    confidence: groups.length > 0
+      ? Number((groups.reduce((sum, group) => sum + Number(group.confidence || 0), 0) / groups.length).toFixed(2))
+      : 0,
+    requires_review: forcedReview,
+    source: {
+      image_count: 1,
+      ocr_engine: String(payload.model || ""),
+      fallback_used: fallbackUsed
+    },
+    groups,
+    warnings,
+    debug: {
+      matched_detectors: Array.from(new Set(matchedDetectors)),
+      blocked_fallbacks: [],
+      supplemental_fallbacks: fallbackUsed ? [String(payload.model || "fallback").trim()].filter(Boolean) : []
+    }
+  }, { forceRequiresReview: forcedReview });
+}
+
 function normalizeJudgeOutput(text) {
   const raw = String(text || "").trim();
   const sectionNames = [
@@ -9660,7 +10499,8 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
       });
     }
 
-    console.log("图片文件名：", req.file.originalname);
+    const uploadedFileName = getUploadedFileDisplayName(req.file);
+    console.log("图片文件名：", uploadedFileName || req.file.originalname);
     console.log("图片类型：", req.file.mimetype);
     console.log("图片大小：", `${req.file.size} bytes`);
     console.log("使用阿里云视觉模型：", aliyunVisionModel);
@@ -9980,6 +10820,44 @@ Examples:
 3 | -14 | 39 | 20,00 | 33 | 06 | 0,00
 
 If the table is not readable, output only: ${noCoordinatesText}`;
+    const coteDIvoireGeographicDmsV2Prompt = `Read ONLY Cote d'Ivoire / Côte d'Ivoire French geographic DMS coordinate tables in this image.
+This is a Coordinate Engine V2 structured transcription task, not a KML generation task.
+
+Target cues:
+- POINTS / Points
+- Latitude N / LATITUDE NORD
+- Longitude W / LONGITUDE OUEST / Longitude Ouest
+- Superficie / Superficies (ha) / hectares
+- Cote d'Ivoire / Côte d'Ivoire / 科特迪瓦
+
+Rules:
+- Preserve each mine area as a separate GROUP.
+- If a company heading is visible, include it in the group name as COMPANY_矿区N.
+- If multiple companies are visible, do not merge their groups.
+- Read N / Nord as north latitude.
+- Read W / Ouest as west longitude.
+- Do not convert to UTM or any projected coordinate system.
+- Do not swap latitude and longitude.
+- Preserve the original point order exactly as printed.
+- Do not reorder points even if the polygon appears self-intersecting.
+- Preserve decimal comma seconds, for example 05°35'08,00"N.
+
+Output only these pipe-separated lines:
+GROUP | group name
+AREA_HA | declared area number
+POINT | label | latitude DMS | longitude DMS
+
+Examples:
+GROUP | CONNEXION RESSOURCES_矿区1
+AREA_HA | 89.93
+POINT | 1 | 6 45 20N | 4 22 56W
+POINT | 2 | 6 45 20N | 4 22 09W
+
+GROUP | 矿区1
+AREA_HA | 76.51
+POINT | 1 | 05°34'57,000"N | 02°47'41,000"W
+
+If no Cote d'Ivoire French geographic DMS table is readable, output only: ${noCoordinatesText}`;
     const wgs84LonLatTableDirectPrompt = `Read ONLY WGS84 decimal coordinate tables in this image where the visible column headers mean longitude first and latitude second.
 
 Target header examples:
@@ -10101,7 +10979,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             });
           }
 
-          return res.json({
+          const kyrgyzDirectPayload = {
             model: `${aliyunVisionModel}+kyrgyz-gk-direct`,
             rawText: kyrgyzDirectRawText,
             coordinates: formatKyrgyzGkRows(kyrgyzDirectInfo.rows),
@@ -10109,6 +10987,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             warning: "已通过 Kyrgyz GK 专用视觉 prompt 读取吉尔吉斯斯坦高斯克吕格表格。经纬度结果需结合原图人工核对。",
             kyrgyzGk: kyrgyzDirectInfo,
             quota: consumeResult.quota
+          };
+
+          return res.json({
+            ...kyrgyzDirectPayload,
+            coordinateEngineV2: buildCoordinateEngineV2ShadowResult(kyrgyzDirectPayload, { fileName: uploadedFileName })
           });
         }
 
@@ -10212,7 +11095,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               });
             }
 
-            return res.json({
+            const mozambiqueDirectPayload = {
               model: `${aliyunVisionModel}+mozambique-geographic-direct`,
               rawText: mozambiqueRead.rawText,
               coordinates: directCoordinates,
@@ -10225,6 +11108,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               },
               mozambiqueDebug,
               quota: consumeResult.quota
+            };
+
+            return res.json({
+              ...mozambiqueDirectPayload,
+              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(mozambiqueDirectPayload, { fileName: uploadedFileName })
             });
           }
         }
@@ -10929,23 +11817,19 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       });
     }
 
-    res.json({
-      model: usedModel,
-      rawText,
-      coordinates,
-      precisionMode: dmsGroupedAccepted
-        ? "dms-grouped-coordinates"
-        : frenchPerimeterDms.isFrenchPerimeterDms
-          ? "french-perimeter-dms-prose"
-          : pointAzDmsTableAccepted
-            ? "point-az-dms-table"
-            : handwrittenDms.isHandwrittenDms
-              ? "handwritten-dms-coordinates"
-              : bftmAccepted
-              ? "bftm-projected-x-y"
-              : utm30Accepted
-                ? "utm30n-projected-x-y"
-              : mgrs.isMgrs
+    const finalPrecisionMode = dmsGroupedAccepted
+      ? "dms-grouped-coordinates"
+      : frenchPerimeterDms.isFrenchPerimeterDms
+        ? "french-perimeter-dms-prose"
+        : pointAzDmsTableAccepted
+          ? "point-az-dms-table"
+          : handwrittenDms.isHandwrittenDms
+            ? "handwritten-dms-coordinates"
+            : bftmAccepted
+            ? "bftm-projected-x-y"
+            : utm30Accepted
+              ? "utm30n-projected-x-y"
+            : mgrs.isMgrs
               ? "mgrs-utm-grid-reference"
               : kyrgyzGk.isKyrgyzGk
                 ? "kyrgyz-gk-point-x-y"
@@ -10957,8 +11841,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                       ? "wgs84-table-coordinates"
                       : chatCoordinates.isChatCoordinates
                         ? "wgs84-chat-coordinates"
-                        : "preserve-original-decimals-and-parse-dms",
-      warning: wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning),
+                        : "preserve-original-decimals-and-parse-dms";
+    const finalWarning = wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning);
+    const recognitionPayload = {
+      model: usedModel,
+      rawText,
+      coordinates,
+      precisionMode: finalPrecisionMode,
+      warning: finalWarning,
       projection: utm30Accepted ? "utm30n" : undefined,
       pointCount: utm30Accepted ? countCoordinateRows(coordinates) : undefined,
       cadastralGrid,
@@ -10972,6 +11862,67 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       bftmLongTable,
       parserTrace,
       quota: consumeResult.quota
+    };
+
+    let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(recognitionPayload, { fileName: uploadedFileName });
+    const shouldReadCoteDIvoireV2 = hasCoteDIvoireGeographicDmsCue([
+      uploadedFileName,
+      rawText,
+      req.body?.rawHint || "",
+      req.body?.hint || ""
+    ].join("\n"));
+
+    if (shouldReadCoteDIvoireV2) {
+      try {
+        console.log("Cote d'Ivoire V2 geographic DMS prompt started", {
+          fileName: uploadedFileName,
+          timeoutMs: 70000
+        });
+        const coteDIvoireResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: coteDIvoireGeographicDmsV2Prompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 2400,
+          timeoutMs: 70000
+        });
+        const coteDIvoireRawText = coteDIvoireResponse.choices?.[0]?.message?.content || "";
+        const coteDIvoireV2 = buildCoteDIvoireGeographicDmsV2Result({
+          model: `${aliyunVisionModel}+cote-divoire-geographic-dms-v2`,
+          rawText: coteDIvoireRawText,
+          coordinates: "",
+          precisionMode: "cote-divoire-geographic-dms-table"
+        }, { fileName: uploadedFileName });
+
+        if (coteDIvoireV2?.coordinate_type === "cote_divoire_geographic_dms_table") {
+          coordinateEngineV2 = normalizeCoordinateEngineV2Result(coteDIvoireV2);
+          console.log("Cote d'Ivoire V2 geographic DMS prompt success", {
+            groups: coteDIvoireV2.groups.length,
+            points: coteDIvoireV2.groups.reduce((sum, group) => sum + (group.points || []).length, 0)
+          });
+        } else {
+          console.log("Cote d'Ivoire V2 geographic DMS prompt returned no parsable groups", {
+            preview: coteDIvoireRawText.slice(0, 500)
+          });
+        }
+      } catch (coteDIvoireError) {
+        console.error("Cote d'Ivoire V2 geographic DMS prompt failed:", coteDIvoireError.message || coteDIvoireError);
+        coordinateEngineV2 = {
+          ...coordinateEngineV2,
+          debug: {
+            ...(coordinateEngineV2?.debug || {}),
+            supplemental_fallbacks: [
+              ...((coordinateEngineV2?.debug?.supplemental_fallbacks) || []),
+              "cote_divoire_geographic_dms_v2_prompt_failed"
+            ]
+          }
+        };
+      }
+    }
+
+    res.json({
+      ...recognitionPayload,
+      coordinateEngineV2
     });
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
@@ -11072,7 +12023,7 @@ If fewer than four handwritten DMS coordinate rows are readable, output only: ${
               });
             }
 
-            return res.json({
+            const handwrittenRetryPayload = {
               model: `${aliyunVisionModel}+handwritten-dms-timeout-retry`,
               rawText: retryRawText,
               coordinates: retryCoordinates,
@@ -11081,6 +12032,11 @@ If fewer than four handwritten DMS coordinate rows are readable, output only: ${
               parserTrace: ["OCR", "HANDWRITTEN_DMS:timeout_retry", "HANDWRITTEN_DMS:accepted"],
               quota: consumeResult.quota,
               ...handwrittenDmsDebug
+            };
+
+            return res.json({
+              ...handwrittenRetryPayload,
+              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(handwrittenRetryPayload, { fileName: getUploadedFileDisplayName(req.file) })
             });
           }
 
@@ -11089,7 +12045,7 @@ If fewer than four handwritten DMS coordinate rows are readable, output only: ${
           console.error("Handwritten DMS timeout visual retry failed:", handwrittenRetryError.message || handwrittenRetryError);
         }
 
-        return res.status(504).json({
+        const handwrittenTimeoutPayload = {
           success: false,
           reason: "handwritten_dms_timeout",
           code: "HANDWRITTEN_DMS_TIMEOUT",
@@ -11099,6 +12055,11 @@ If fewer than four handwritten DMS coordinate rows are readable, output only: ${
           precisionMode: "handwritten-dms-coordinates",
           warning: "手写坐标视觉识别超时，请稍后重试或上传更清晰图片。",
           ...handwrittenDmsDebug
+        };
+
+        return res.status(504).json({
+          ...handwrittenTimeoutPayload,
+          coordinateEngineV2: buildCoordinateEngineV2ShadowResult(handwrittenTimeoutPayload, { fileName: getUploadedFileDisplayName(req.file) })
         });
       }
 
@@ -11167,7 +12128,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
               });
             }
 
-            return res.json({
+            const kyrgyzRetryPayload = {
               model: `${aliyunVisionModel}+kyrgyz-gk-timeout-retry`,
               rawText: retryRawText,
               coordinates: formatKyrgyzGkRows(retryKyrgyzGk.rows),
@@ -11175,6 +12136,11 @@ If the table is not readable, output only: ${noCoordinatesText}`;
               warning: "主视觉模型首次超时，已通过视觉模型重试读取吉尔吉斯斯坦高斯克吕格表格。经纬度结果需结合原图人工核对。",
               kyrgyzGk: retryKyrgyzGk,
               quota: consumeResult.quota
+            };
+
+            return res.json({
+              ...kyrgyzRetryPayload,
+              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(kyrgyzRetryPayload, { fileName: getUploadedFileDisplayName(req.file) })
             });
           }
 
@@ -11263,7 +12229,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               });
             }
 
-            return res.json({
+            const wgs84TableRetryPayload = {
               model: `${aliyunVisionModel}+wgs84-table-timeout-retry`,
               rawText: retryRawText,
               coordinates: formatChatCoordinateRows(retryWgs84Table.points),
@@ -11273,6 +12239,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               chatCoordinates: getChatCoordinatesInfo(retryRawText),
               parserTrace: ["OCR", "WGS84_TABLE:timeout_retry", "BFTM:rejected", "WGS84_TABLE:accepted"],
               quota: consumeResult.quota
+            };
+
+            return res.json({
+              ...wgs84TableRetryPayload,
+              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(wgs84TableRetryPayload, { fileName: getUploadedFileDisplayName(req.file) })
             });
           }
 
@@ -11539,6 +12510,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         });
       }
       fallback.quota = consumeResult.quota;
+      fallback.coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(fallback, { fileName: getUploadedFileDisplayName(req.file) });
 
       res.json(fallback);
     } catch (fallbackError) {
