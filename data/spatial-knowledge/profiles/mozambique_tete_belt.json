@@ -1,0 +1,66 @@
+{
+  "profile_id": "mozambique_tete_belt",
+  "profile_name": "Mozambique Tete Belt",
+  "status": "alpha",
+  "profile_type": "document_profile",
+  "countries": [
+    { "name": "Mozambique", "name_zh": null, "iso2": "MZ", "iso3": "MOZ" }
+  ],
+  "bbox": {
+    "min_lon": 30.2132,
+    "max_lon": 40.8375,
+    "min_lat": -26.8681,
+    "max_lat": -10.4738
+  },
+  "languages": ["pt"],
+  "coordinate_types": [
+    { "coordinate_type": "mozambique_geographic_table", "weight": 35 },
+    { "coordinate_type": "decimal_latlon", "weight": 0 },
+    { "coordinate_type": "standard_dms_table", "weight": 0 }
+  ],
+  "crs": [],
+  "axis_expectations": [
+    {
+      "pattern": "decimal_pair",
+      "likely_order": "lon_lat",
+      "weight": 0
+    }
+  ],
+  "document_patterns": [
+    {
+      "id": "mozambique_geographic_table_header",
+      "keywords": ["latitude", "longitude", "tete"],
+      "weight": 18
+    }
+  ],
+  "filename_keywords": ["mozambique", "mocambique", "moçambique", "tete"],
+  "context_keywords": ["mozambique", "mocambique", "moçambique", "tete"],
+  "known_samples": [
+    {
+      "name": "mozambique_geographic_table_real_sample",
+      "status": "observed",
+      "expected_coordinate_type": "mozambique_geographic_table"
+    }
+  ],
+  "scoring_rules": [
+    {
+      "id": "type_lock",
+      "weight": 35,
+      "notes": "High confidence only when the dedicated Mozambique geographic-table detector has already matched."
+    }
+  ],
+  "sources": [
+    {
+      "name": "geoBoundaries gbOpen ADM0 Mozambique bbox used in CKB Phase 0 draft",
+      "url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/MOZ/ADM0/geoBoundaries-MOZ-ADM0.geojson"
+    },
+    {
+      "name": "Project real sample",
+      "url": null
+    }
+  ],
+  "notes": [
+    "Document profile.",
+    "Shadow ranking only; must not replace the Mozambique parser."
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "spatial_knowledge_base_v1",
+  "status": "alpha",
+  "source_note": "Spatial profiles describe observed document and coordinate-system patterns. They are shadow scoring inputs only and do not replace parsers, resolver rules, or KML generation.",
+  "profiles": [
+    "profiles/west_africa_gold_belt.json",
+    "profiles/mozambique_tete_belt.json",
+    "profiles/madagascar_mining_grid.json",
+    "profiles/kyrgyz_south_belt.json",
+    "profiles/cote_divoire_geographic_dms_tables.json",
+    "profiles/burkina_bftm_projected_area.json"
+  ]
+}

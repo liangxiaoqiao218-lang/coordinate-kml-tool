@@ -1,0 +1,78 @@
+{
+  "profile_id": "cote_divoire_geographic_dms_tables",
+  "profile_name": "Cote d'Ivoire Geographic DMS Tables",
+  "status": "alpha",
+  "profile_type": "document_profile",
+  "countries": [
+    { "name": "Cote d'Ivoire", "name_zh": null, "iso2": "CI", "iso3": "CIV" }
+  ],
+  "bbox": {
+    "min_lon": -8.6187,
+    "max_lon": -2.5063,
+    "min_lat": 4.3441,
+    "max_lat": 10.7265
+  },
+  "languages": ["fr"],
+  "coordinate_types": [
+    { "coordinate_type": "cote_divoire_geographic_dms_table", "weight": 40 },
+    { "coordinate_type": "decimal_latlon", "weight": 0 },
+    { "coordinate_type": "standard_dms_table", "weight": 0 }
+  ],
+  "crs": [],
+  "axis_expectations": [
+    {
+      "pattern": "decimal_pair",
+      "likely_order": "lon_lat",
+      "weight": 4
+    }
+  ],
+  "document_patterns": [
+    {
+      "id": "french_dms_table_headers",
+      "keywords": ["points", "latitude", "longitude"],
+      "weight": 14
+    },
+    {
+      "id": "french_area_terms",
+      "keywords": ["superficie"],
+      "weight": 8
+    }
+  ],
+  "filename_keywords": ["cote d'ivoire", "côte d'ivoire", "ivory coast"],
+  "context_keywords": ["cote d'ivoire", "côte d'ivoire", "latitude nord", "longitude ouest", "superficie", "hectares"],
+  "known_samples": [
+    {
+      "name": "cote_divoire_four_groups_real_sample",
+      "status": "observed",
+      "expected_coordinate_type": "cote_divoire_geographic_dms_table"
+    },
+    {
+      "name": "bare_decimal_lon_lat_west_africa_sample",
+      "status": "observed",
+      "notes": [
+        "The sample center is near the northern Cote d'Ivoire boundary; SKB can rank it but must not resolve axis order in Phase 0.5."
+      ]
+    }
+  ],
+  "scoring_rules": [
+    {
+      "id": "document_profile_combined_evidence",
+      "weight": 0,
+      "notes": "High confidence requires coordinate type or document/header evidence in addition to bbox proximity."
+    }
+  ],
+  "sources": [
+    {
+      "name": "geoBoundaries gbOpen ADM0 Cote d'Ivoire bbox used in CKB Phase 0 draft",
+      "url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/CIV/ADM0/geoBoundaries-CIV-ADM0.geojson"
+    },
+    {
+      "name": "Project real samples",
+      "url": null
+    }
+  ],
+  "notes": [
+    "Document profile.",
+    "Must not override explicit Latitude/Longitude headers or direction symbols."
+  ]
+}

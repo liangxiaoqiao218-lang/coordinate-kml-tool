@@ -1,0 +1,58 @@
+{
+  "profile_id": "madagascar_mining_grid",
+  "profile_name": "Madagascar Mining Grid",
+  "status": "alpha",
+  "profile_type": "coordinate_system_profile",
+  "countries": [
+    { "name": "Madagascar", "name_zh": null, "iso2": "MG", "iso3": "MDG" }
+  ],
+  "bbox": {
+    "min_lon": 43.2202,
+    "max_lon": 50.4863,
+    "min_lat": -25.6071,
+    "max_lat": -11.952
+  },
+  "languages": ["fr", "mg"],
+  "coordinate_types": [
+    { "coordinate_type": "madagascar_cadastral_grid", "weight": 70 }
+  ],
+  "crs": [],
+  "axis_expectations": [],
+  "document_patterns": [
+    {
+      "id": "madagascar_grid_terms",
+      "keywords": ["liste", "carres", "carrés"],
+      "weight": 12
+    }
+  ],
+  "filename_keywords": ["madagascar"],
+  "context_keywords": ["madagascar", "grille cadastrale", "carres", "carrés"],
+  "known_samples": [
+    {
+      "name": "madagascar_grid_real_sample",
+      "status": "observed",
+      "expected_coordinate_type": "madagascar_cadastral_grid"
+    }
+  ],
+  "scoring_rules": [
+    {
+      "id": "coordinate_type_only",
+      "weight": 70,
+      "notes": "This profile validates an already detected grid type and does not participate in decimal lat/lon order exchange."
+    }
+  ],
+  "sources": [
+    {
+      "name": "geoBoundaries gbOpen ADM0 Madagascar bbox used in CKB Phase 0 draft",
+      "url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/MDG/ADM0/geoBoundaries-MDG-ADM0.geojson"
+    },
+    {
+      "name": "Project real sample",
+      "url": null
+    }
+  ],
+  "notes": [
+    "Coordinate-system profile only.",
+    "CRS details remain empty until source-backed."
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "profile_id": "burkina_bftm_projected_area",
+  "profile_name": "Burkina Faso BFTM Projected Area",
+  "status": "alpha",
+  "profile_type": "coordinate_system_profile",
+  "countries": [
+    { "name": "Burkina Faso", "name_zh": null, "iso2": "BF", "iso3": "BFA" }
+  ],
+  "bbox": {
+    "min_lon": -5.5189,
+    "max_lon": 2.4054,
+    "min_lat": 9.4011,
+    "max_lat": 15.0826
+  },
+  "languages": ["fr"],
+  "coordinate_types": [
+    { "coordinate_type": "bftm_xy", "weight": 70 }
+  ],
+  "crs": [],
+  "axis_expectations": [],
+  "document_patterns": [
+    {
+      "id": "bftm_xy_terms",
+      "keywords": ["bftm"],
+      "weight": 12
+    }
+  ],
+  "filename_keywords": ["burkina", "burkina faso", "bftm"],
+  "context_keywords": ["burkina", "burkina faso", "bftm", "sommets", "coordonnees", "coordonnées"],
+  "known_samples": [
+    {
+      "name": "burkina_bftm_real_sample",
+      "status": "observed",
+      "expected_coordinate_type": "bftm_xy"
+    }
+  ],
+  "scoring_rules": [
+    {
+      "id": "coordinate_type_only",
+      "weight": 70,
+      "notes": "This profile validates an already detected projected BFTM type and does not participate in decimal lat/lon order exchange."
+    }
+  ],
+  "sources": [
+    {
+      "name": "geoBoundaries gbOpen ADM0 Burkina Faso bbox used in CKB Phase 0 draft",
+      "url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/BFA/ADM0/geoBoundaries-BFA-ADM0.geojson"
+    },
+    {
+      "name": "Project real sample",
+      "url": null
+    }
+  ],
+  "notes": [
+    "Coordinate-system profile only.",
+    "CRS details remain empty until source-backed."
+  ]
+}

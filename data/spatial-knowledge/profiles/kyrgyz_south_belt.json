@@ -1,0 +1,52 @@
+{
+  "profile_id": "kyrgyz_south_belt",
+  "profile_name": "Kyrgyz South Belt",
+  "status": "alpha",
+  "profile_type": "coordinate_system_profile",
+  "countries": [
+    { "name": "Kyrgyzstan", "name_zh": null, "iso2": "KG", "iso3": "KGZ" }
+  ],
+  "bbox": {
+    "min_lon": 69.265,
+    "max_lon": 80.2296,
+    "min_lat": 39.1728,
+    "max_lat": 43.2668
+  },
+  "languages": ["ru", "ky"],
+  "coordinate_types": [
+    { "coordinate_type": "kyrgyzstan_gk", "weight": 70 }
+  ],
+  "crs": [],
+  "axis_expectations": [],
+  "document_patterns": [],
+  "filename_keywords": ["kyrgyzstan", "kyrgyz"],
+  "context_keywords": ["kyrgyzstan", "kyrgyz", "koordinaty", "coordinates"],
+  "known_samples": [
+    {
+      "name": "kyrgyzstan_gk_real_sample",
+      "status": "observed",
+      "expected_coordinate_type": "kyrgyzstan_gk"
+    }
+  ],
+  "scoring_rules": [
+    {
+      "id": "coordinate_type_only",
+      "weight": 70,
+      "notes": "This profile validates an already detected projected GK type and does not participate in decimal lat/lon order exchange."
+    }
+  ],
+  "sources": [
+    {
+      "name": "geoBoundaries gbOpen ADM0 Kyrgyzstan bbox used in CKB Phase 0 draft",
+      "url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/KGZ/ADM0/geoBoundaries-KGZ-ADM0.geojson"
+    },
+    {
+      "name": "Project real sample",
+      "url": null
+    }
+  ],
+  "notes": [
+    "Coordinate-system profile only.",
+    "Projection details remain outside SKB Phase 0.5."
+  ]
+}

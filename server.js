@@ -7547,6 +7547,300 @@ function getCoordinateEngineV2AxisEvidence(coordinateType = "", result = {}, opt
   };
 }
 
+let spatialKnowledgeBaseCache = null;
+
+function loadSpatialKnowledgeBase() {
+  if (spatialKnowledgeBaseCache) {
+    return spatialKnowledgeBaseCache;
+  }
+
+  const baseDir = path.join(__dirname, "data", "spatial-knowledge");
+  const indexPath = path.join(baseDir, "index.json");
+
+  try {
+    const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+    const profiles = (index.profiles || []).map(relativePath => {
+      const profilePath = path.join(baseDir, relativePath);
+      return JSON.parse(fs.readFileSync(profilePath, "utf8"));
+    });
+    spatialKnowledgeBaseCache = {
+      status: "loaded",
+      baseDir,
+      index,
+      profiles
+    };
+  } catch (error) {
+    spatialKnowledgeBaseCache = {
+      status: "unavailable",
+      error: error.message || String(error),
+      baseDir,
+      index: null,
+      profiles: []
+    };
+  }
+
+  return spatialKnowledgeBaseCache;
+}
+
+function getSpatialKnowledgeProfiles() {
+  return loadSpatialKnowledgeBase().profiles || [];
+}
+
+function isSpatialKnowledgeCenterInsideBbox(center = {}, bbox = {}) {
+  if (!center
+    || !bbox
+    || !Number.isFinite(Number(center.lon))
+    || !Number.isFinite(Number(center.lat))
+    || !Number.isFinite(Number(bbox.min_lon))
+    || !Number.isFinite(Number(bbox.max_lon))
+    || !Number.isFinite(Number(bbox.min_lat))
+    || !Number.isFinite(Number(bbox.max_lat))) {
+    return false;
+  }
+
+  return Number(center.lon) >= Number(bbox.min_lon)
+    && Number(center.lon) <= Number(bbox.max_lon)
+    && Number(center.lat) >= Number(bbox.min_lat)
+    && Number(center.lat) <= Number(bbox.max_lat);
+}
+
+function getSpatialKnowledgeBboxDistanceDegrees(center = {}, bbox = {}) {
+  if (!center
+    || !bbox
+    || !Number.isFinite(Number(center.lon))
+    || !Number.isFinite(Number(center.lat))
+    || !Number.isFinite(Number(bbox.min_lon))
+    || !Number.isFinite(Number(bbox.max_lon))
+    || !Number.isFinite(Number(bbox.min_lat))
+    || !Number.isFinite(Number(bbox.max_lat))) {
+    return null;
+  }
+
+  const lon = Number(center.lon);
+  const lat = Number(center.lat);
+  const dx = lon < Number(bbox.min_lon)
+    ? Number(bbox.min_lon) - lon
+    : lon > Number(bbox.max_lon)
+      ? lon - Number(bbox.max_lon)
+      : 0;
+  const dy = lat < Number(bbox.min_lat)
+    ? Number(bbox.min_lat) - lat
+    : lat > Number(bbox.max_lat)
+      ? lat - Number(bbox.max_lat)
+      : 0;
+
+  return Number(Math.sqrt(dx ** 2 + dy ** 2).toFixed(4));
+}
+
+function buildSpatialKnowledgeEvidence(result = {}, options = {}) {
+  const text = foldSearchText(getCoordinateEngineV2ContextText(result, options));
+  return {
+    text,
+    file_name: String(options.fileName || ""),
+    raw_hint: String(options.rawHint || options.hint || ""),
+    coordinate_type: String(result.coordinate_type || ""),
+    precision_mode: String(result.precision_mode || ""),
+    profile_hint: String(options.profileHint || "")
+  };
+}
+
+function countSpatialKnowledgeKeywordMatches(text = "", keywords = []) {
+  const value = foldSearchText(text);
+  return (keywords || []).filter(keyword => {
+    const foldedKeyword = foldSearchText(keyword);
+    return foldedKeyword.length >= 4 && value.includes(foldedKeyword);
+  }).length;
+}
+
+function getSpatialKnowledgeCoordinateTypeWeight(profile = {}, coordinateType = "") {
+  const match = (profile.coordinate_types || []).find(item => item && item.coordinate_type === coordinateType);
+  return match ? Number(match.weight || 0) : 0;
+}
+
+function getSpatialKnowledgeDocumentPatternMatches(profile = {}, evidence = {}) {
+  const text = evidence.text || "";
+  return (profile.document_patterns || []).filter(pattern => {
+    const keywords = pattern?.keywords || [];
+    return keywords.length > 0 && keywords.every(keyword => text.includes(foldSearchText(keyword)));
+  });
+}
+
+function scoreCandidateAgainstSpatialProfile(candidate = {}, profile = {}, evidence = {}) {
+  const center = candidate.center || null;
+  const bbox = profile.bbox || {};
+  const insideBbox = isSpatialKnowledgeCenterInsideBbox(center, bbox);
+  const bboxDistanceDegrees = getSpatialKnowledgeBboxDistanceDegrees(center, bbox);
+  const filenameHits = countSpatialKnowledgeKeywordMatches(evidence.file_name, profile.filename_keywords);
+  const contextHits = countSpatialKnowledgeKeywordMatches(`${evidence.text} ${evidence.raw_hint}`, profile.context_keywords);
+  const profileNameHits = countSpatialKnowledgeKeywordMatches(evidence.text, [
+    profile.profile_id,
+    profile.profile_name,
+    ...(profile.countries || []).flatMap(country => [
+      country.name,
+      country.name_zh
+    ])
+  ].filter(Boolean));
+  const documentPatternMatches = getSpatialKnowledgeDocumentPatternMatches(profile, evidence);
+  const languageMatch = (profile.languages || []).some(language => evidence.text.includes(foldSearchText(language)));
+  const coordinateTypeWeight = getSpatialKnowledgeCoordinateTypeWeight(profile, evidence.coordinate_type);
+  const axisExpectation = (profile.axis_expectations || []).find(item => item.pattern === "decimal_pair");
+  const axisMatches = axisExpectation
+    && ((axisExpectation.likely_order === "lon_lat" && candidate.interpretation === "first_is_lon_second_is_lat")
+      || (axisExpectation.likely_order === "lat_lon" && candidate.interpretation === "first_is_lat_second_is_lon"));
+  const evidenceItems = [];
+  const conflicts = [];
+  let score = 0;
+
+  if (insideBbox) {
+    score += profile.profile_type === "regional_profile" ? 25 : 45;
+    evidenceItems.push("center_inside_profile_bbox");
+  } else if (bboxDistanceDegrees !== null && bboxDistanceDegrees <= 0.25) {
+    score += 20;
+    evidenceItems.push("center_near_profile_bbox");
+  } else if (bboxDistanceDegrees !== null && bboxDistanceDegrees <= 1) {
+    score += 8;
+    evidenceItems.push("center_in_profile_neighborhood");
+  } else {
+    score -= profile.profile_type === "regional_profile" ? 8 : 20;
+    conflicts.push("center_outside_profile_bbox");
+  }
+
+  if (filenameHits > 0) {
+    score += Math.min(16, filenameHits * 8);
+    evidenceItems.push("filename_keyword_match");
+  }
+  if (profileNameHits > 0) {
+    score += Math.min(18, profileNameHits * 9);
+    evidenceItems.push("profile_or_country_name_match");
+  }
+  if (contextHits > 0) {
+    score += Math.min(14, contextHits * 7);
+    evidenceItems.push("context_keyword_match");
+  }
+  if (documentPatternMatches.length > 0) {
+    score += Math.min(24, documentPatternMatches.reduce((sum, pattern) => sum + Number(pattern.weight || 0), 0));
+    evidenceItems.push("document_pattern_match");
+  }
+  if (languageMatch) {
+    score += 4;
+    evidenceItems.push("language_match");
+  }
+  if (coordinateTypeWeight > 0) {
+    score += coordinateTypeWeight;
+    evidenceItems.push("coordinate_type_common_for_profile");
+  }
+  if (axisMatches && profile.profile_type !== "coordinate_system_profile") {
+    score += Number(axisExpectation.weight || 0);
+    evidenceItems.push("axis_expectation_match");
+  } else if (axisExpectation && !axisMatches && candidate.interpretation) {
+    conflicts.push("axis_expectation_conflict");
+  }
+
+  return {
+    profile_id: profile.profile_id,
+    profile_type: profile.profile_type,
+    score: Math.max(0, Math.min(100, score)),
+    bbox_match: insideBbox,
+    bbox_distance_degrees: bboxDistanceDegrees,
+    document_pattern_match: documentPatternMatches.length > 0,
+    coordinate_type_match: coordinateTypeWeight > 0,
+    language_match: languageMatch,
+    context_match: contextHits > 0 || profileNameHits > 0 || filenameHits > 0,
+    evidence: evidenceItems
+      .concat(documentPatternMatches.map(pattern => `document_pattern:${pattern.id || "unnamed"}`)),
+    conflicts
+  };
+}
+
+function rankSpatialProfilesForCandidate(candidate = {}, evidence = {}) {
+  return getSpatialKnowledgeProfiles()
+    .map(profile => scoreCandidateAgainstSpatialProfile(candidate, profile, evidence))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+}
+
+function attachSpatialKnowledgeReport(result = {}, options = {}) {
+  const kb = loadSpatialKnowledgeBase();
+  const evidence = buildSpatialKnowledgeEvidence(result, options);
+  const validationGroups = result.coordinate_validation_report?.groups || [];
+  const candidateRankings = [];
+
+  for (const group of validationGroups) {
+    const candidates = group.validation?.coordinate_order_candidates || group.validation?.candidates || [];
+    const candidatesForRanking = candidates.length > 0
+      ? candidates
+      : [{
+        id: "candidate_not_applicable",
+        interpretation: "not_applicable",
+        score: group.validation?.candidate_score || 0,
+        center: null
+      }];
+    for (const candidate of candidatesForRanking) {
+      const profileRankings = rankSpatialProfilesForCandidate(candidate, evidence);
+      for (const ranking of profileRankings) {
+        candidateRankings.push({
+          group_id: group.group_id,
+          group_name: group.group_name,
+          candidate_id: candidate.id,
+          interpretation: candidate.interpretation,
+          candidate_score: candidate.score,
+          center: candidate.center || null,
+          profile_id: ranking.profile_id,
+          profile_type: ranking.profile_type,
+          score: ranking.score,
+          bbox_match: ranking.bbox_match,
+          bbox_distance_degrees: ranking.bbox_distance_degrees,
+          document_pattern_match: ranking.document_pattern_match,
+          coordinate_type_match: ranking.coordinate_type_match,
+          language_match: ranking.language_match,
+          context_match: ranking.context_match,
+          evidence: ranking.evidence,
+          conflicts: ranking.conflicts
+        });
+      }
+    }
+  }
+
+  candidateRankings.sort((a, b) => b.score - a.score);
+  const top = candidateRankings[0] || null;
+  const second = candidateRankings.find(item => item.profile_id !== top?.profile_id || item.candidate_id !== top?.candidate_id) || null;
+  const scoreMargin = top && second ? Number((top.score - second.score).toFixed(2)) : (top ? top.score : 0);
+  const status = kb.status !== "loaded"
+    ? "insufficient"
+    : top && top.score >= 70 && scoreMargin >= 15
+      ? "confident"
+      : top && top.score > 0
+        ? "ranked"
+        : "insufficient";
+  const notes = [];
+  if (candidateRankings.some(candidate => candidate.interpretation === "not_applicable")) {
+    notes.push("Projected/grid coordinate types are ranked by recognized coordinate_type only; SKB does not participate in lat/lon order exchange for them.");
+  }
+
+  return {
+    ...result,
+    spatial_knowledge_report: {
+      status,
+      knowledge_base_status: kb.status,
+      top_profile: top ? {
+        profile_id: top.profile_id,
+        profile_type: top.profile_type,
+        score: top.score,
+        candidate_id: top.candidate_id,
+        interpretation: top.interpretation
+      } : null,
+      score_margin: scoreMargin,
+      evidence: [
+        evidence.file_name ? "file_name" : "",
+        evidence.raw_hint ? "raw_hint" : "",
+        evidence.coordinate_type ? `coordinate_type:${evidence.coordinate_type}` : ""
+      ].filter(Boolean),
+      notes,
+      candidate_rankings: candidateRankings
+    }
+  };
+}
+
 function isCoordinateEngineV2PointInsideBbox(point = {}, bbox = {}) {
   return hasCoordinateEngineV2Wgs84Point(point)
     && Number(point.lon) >= Number(bbox.minLon)
@@ -7942,7 +8236,7 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
     }
   };
 
-  return normalizedResult;
+  return attachSpatialKnowledgeReport(normalizedResult, options);
 }
 
 function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {

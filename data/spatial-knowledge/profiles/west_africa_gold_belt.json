@@ -1,0 +1,87 @@
+{
+  "profile_id": "west_africa_gold_belt",
+  "profile_name": "West Africa Gold Belt",
+  "status": "alpha",
+  "profile_type": "regional_profile",
+  "countries": [
+    { "name": "Guinea", "name_zh": null, "iso2": "GN", "iso3": "GIN" },
+    { "name": "Cote d'Ivoire", "name_zh": null, "iso2": "CI", "iso3": "CIV" },
+    { "name": "Burkina Faso", "name_zh": null, "iso2": "BF", "iso3": "BFA" },
+    { "name": "Ghana", "name_zh": null, "iso2": "GH", "iso3": "GHA" },
+    { "name": "Liberia", "name_zh": null, "iso2": "LR", "iso3": "LBR" },
+    { "name": "Sierra Leone", "name_zh": null, "iso2": "SL", "iso3": "SLE" }
+  ],
+  "bbox": {
+    "min_lon": -15.2,
+    "max_lon": 2.5,
+    "min_lat": 4.0,
+    "max_lat": 15.2
+  },
+  "languages": ["fr", "en"],
+  "coordinate_types": [
+    { "coordinate_type": "decimal_latlon", "weight": 0 },
+    { "coordinate_type": "standard_dms_table", "weight": 0 },
+    { "coordinate_type": "bftm_xy", "weight": 0 }
+  ],
+  "crs": [],
+  "axis_expectations": [
+    {
+      "pattern": "decimal_pair",
+      "likely_order": "lon_lat",
+      "weight": 2
+    }
+  ],
+  "document_patterns": [],
+  "filename_keywords": [
+    "west africa",
+    "afrique de l'ouest",
+    "guinea",
+    "guinee",
+    "guinee",
+    "cote d'ivoire",
+    "ivory coast",
+    "burkina",
+    "ghana",
+    "liberia",
+    "sierra leone"
+  ],
+  "context_keywords": [
+    "west africa",
+    "afrique de l'ouest",
+    "guinea",
+    "guinee",
+    "guinee",
+    "cote d'ivoire",
+    "ivory coast",
+    "burkina",
+    "ghana",
+    "liberia",
+    "sierra leone"
+  ],
+  "known_samples": [
+    {
+      "name": "bare_decimal_lon_lat_west_africa_sample",
+      "status": "observed",
+      "notes": [
+        "The sample center is lon=-6.7053, lat=10.7426. SKB ranks the regional match but does not resolve coordinate order in Phase 0.5."
+      ]
+    }
+  ],
+  "scoring_rules": [
+    {
+      "id": "regional_bbox",
+      "weight": 0,
+      "notes": "Regional profiles can assist ranking but cannot decide country or axis order by themselves."
+    }
+  ],
+  "sources": [
+    {
+      "name": "Project-confirmed country set and prior real samples",
+      "url": null
+    }
+  ],
+  "notes": [
+    "Regional profile only.",
+    "Must not override explicit headers, direction symbols, locked coordinate types, national boundary conflicts, or projection/grid coordinate types."
+  ]
+}
