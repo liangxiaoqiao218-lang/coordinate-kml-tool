@@ -7331,7 +7331,7 @@ function normalizeCoordinateEngineV2Point(point = {}, groupRequiresReview = fals
   return normalized;
 }
 
-function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resultRequiresReview = false) {
+function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resultRequiresReview = false, validationContext = {}) {
   const rawPoints = Array.isArray(group.points) ? group.points : [];
   const labels = rawPoints.map(point => String(point?.label || "").trim()).filter(Boolean);
   const duplicateLabel = new Set(labels).size !== labels.length;
@@ -7354,10 +7354,28 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
     warnings.push("原始点序形成自交多边形，请人工核对点序后再生成 KML。");
   }
 
-  const reviewWarnings = warnings.filter(isCoordinateEngineV2ReviewWarning);
+  const validation = buildCoordinateEngineV2ValidationReport({
+    ...group,
+    points
+  }, coordinateType, validationContext);
+  const selectedCandidate = (validation.candidates || []).find(candidate => candidate.interpretation === validation.selected_interpretation);
+  const validationWarnings = selectedCandidate?.warnings || [];
+  if (validation.status === "scored"
+    && validation.order_status !== "ambiguous"
+    && validation.selected_interpretation
+    && validation.selected_interpretation !== validation.effective_point_interpretation) {
+    points = buildCoordinateEngineV2CandidatePoints(points, validation.selected_interpretation).map(point => normalizeCoordinateEngineV2Point(point, false, []));
+  }
+  const validatorRequiresReview = validation.status === "scored" && (
+    validation.candidate_score < 70
+    || validation.order_status === "ambiguous"
+    || validationWarnings.length > 0
+  );
+  const reviewWarnings = Array.from(new Set([...warnings, ...validationWarnings])).filter(isCoordinateEngineV2ReviewWarning);
   const requiresReview = Boolean(
     resultRequiresReview
     || group.requires_review
+    || validatorRequiresReview
     || reviewWarnings.length > 0
     || rawPoints.length === 0
     || duplicateLabel
@@ -7367,6 +7385,10 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
     hasAllWgs84
     && !hasProjectedOrGrid
     && !selfIntersecting
+    && validation.status === "scored"
+    && validation.order_status !== "ambiguous"
+    && validation.candidate_score >= 70
+    && !validatorRequiresReview
     && rawPoints.length > 0
     && !points.some(point => point.requires_review)
   );
@@ -7387,7 +7409,425 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
     declared_area_ha: Number.isFinite(Number(group.declared_area_ha)) ? Number(group.declared_area_ha) : null,
     calculated_area_ha: Number.isFinite(Number(group.calculated_area_ha)) ? Number(group.calculated_area_ha) : null,
     points,
-    warnings: Array.from(new Set(warnings))
+    warnings: Array.from(new Set([...warnings, ...validationWarnings])),
+    validation
+  };
+}
+
+const coordinateEngineV2CountryProfiles = {
+  guinea_west_africa_context: {
+    country: "Guinea / West Africa context",
+    bbox: { minLon: -17, maxLon: -2, minLat: 4, maxLat: 16 },
+    expectedAreaHa: { min: 0.0001, max: 10000000 },
+    expectedEdgeMeters: { min: 0.1, max: 1000000 }
+  },
+  mozambique_geographic_table: {
+    country: "Mozambique",
+    bbox: { minLon: 30, maxLon: 41, minLat: -27, maxLat: -10 },
+    expectedAreaHa: { min: 0.01, max: 10000000 },
+    expectedEdgeMeters: { min: 0.5, max: 500000 }
+  },
+  cote_divoire_geographic_dms_table: {
+    country: "Cote d'Ivoire",
+    bbox: { minLon: -9, maxLon: -2, minLat: 4, maxLat: 11 },
+    expectedAreaHa: { min: 0.01, max: 1000000 },
+    expectedEdgeMeters: { min: 0.5, max: 100000 }
+  },
+  mgrs_utm_grid_reference: {
+    country: "Myanmar",
+    bbox: { minLon: 92, maxLon: 102, minLat: 8, maxLat: 29 },
+    expectedAreaHa: { min: 0.0001, max: 1000000 },
+    expectedEdgeMeters: { min: 0.1, max: 200000 }
+  },
+  standard_dms_table: {
+    country: "Unknown",
+    bbox: { minLon: -180, maxLon: 180, minLat: -90, maxLat: 90 },
+    expectedAreaHa: { min: 0.0001, max: 10000000 },
+    expectedEdgeMeters: { min: 0.1, max: 1000000 }
+  },
+  decimal_latlon: {
+    country: "Unknown",
+    bbox: { minLon: -180, maxLon: 180, minLat: -90, maxLat: 90 },
+    expectedAreaHa: { min: 0.0001, max: 10000000 },
+    expectedEdgeMeters: { min: 0.1, max: 1000000 }
+  },
+  handwritten_dms_experimental: {
+    country: "Unknown",
+    bbox: { minLon: -180, maxLon: 180, minLat: -90, maxLat: 90 },
+    expectedAreaHa: { min: 0.0001, max: 10000000 },
+    expectedEdgeMeters: { min: 0.1, max: 1000000 }
+  }
+};
+
+function getCoordinateEngineV2ValidationProfile(coordinateType = "") {
+  return coordinateEngineV2CountryProfiles[coordinateType] || {
+    country: "Unknown",
+    bbox: { minLon: -180, maxLon: 180, minLat: -90, maxLat: 90 },
+    expectedAreaHa: { min: 0.0001, max: 10000000 },
+    expectedEdgeMeters: { min: 0.1, max: 1000000 }
+  };
+}
+
+function getCoordinateEngineV2ContextText(result = {}, options = {}) {
+  return [
+    options.fileName || "",
+    options.rawHint || "",
+    result.source?.context || "",
+    result.source?.legacy_precision_mode || "",
+    result.precision_mode || "",
+    result.coordinate_type || "",
+    ...(Array.isArray(result.warnings) ? result.warnings : []),
+    ...(Array.isArray(result.groups) ? result.groups.flatMap(group => [
+      group.group_name || "",
+      ...(Array.isArray(group.points) ? group.points.map(point => point.raw || "") : [])
+    ]) : [])
+  ].filter(Boolean).join("\n");
+}
+
+function getCoordinateEngineV2ContextualProfile(coordinateType = "", result = {}, options = {}) {
+  const text = foldSearchText(getCoordinateEngineV2ContextText(result, options));
+  if (/guinea|guinee|guin[eé]e|几内亚|幾內亞|west\s*africa|西非/i.test(text)) {
+    return {
+      ...coordinateEngineV2CountryProfiles.guinea_west_africa_context,
+      context_matched: "guinea_west_africa"
+    };
+  }
+
+  return {
+    ...getCoordinateEngineV2ValidationProfile(coordinateType),
+    context_matched: ""
+  };
+}
+
+function getCoordinateEngineV2AxisEvidence(coordinateType = "", result = {}, options = {}) {
+  const text = foldSearchText([
+    options.fileName || "",
+    options.rawHint || "",
+    result.source?.context || "",
+    ...(Array.isArray(result.warnings) ? result.warnings : []),
+    ...(Array.isArray(result.groups) ? result.groups.flatMap(group => [
+      group.group_name || "",
+      ...(Array.isArray(group.points) ? group.points.map(point => point.raw || "") : [])
+    ]) : [])
+  ].filter(Boolean).join("\n"));
+  const registeredAxisLockedTypes = new Set([
+    "mozambique_geographic_table",
+    "cote_divoire_geographic_dms_table",
+    "mgrs_utm_grid_reference",
+    "standard_dms_table",
+    "handwritten_dms_experimental"
+  ]);
+
+  if (registeredAxisLockedTypes.has(coordinateType)) {
+    return {
+      status: "locked_by_coordinate_type",
+      interpretation: "as_parsed",
+      reason: "registered coordinate type axis order"
+    };
+  }
+  if (/longitude\s*[/|, -]*\s*latitude|lon\s*[/|, -]*\s*lat|经度\s*[/|, -]*\s*纬度|經度\s*[/|, -]*\s*緯度/i.test(text)) {
+    return {
+      status: "explicit_header",
+      interpretation: "first_is_lon_second_is_lat",
+      reason: "explicit longitude/latitude header"
+    };
+  }
+  if (/latitude\s*[/|, -]*\s*longitude|lat\s*[/|, -]*\s*lon|纬度\s*[/|, -]*\s*经度|緯度\s*[/|, -]*\s*經度/i.test(text)) {
+    return {
+      status: "explicit_header",
+      interpretation: "first_is_lat_second_is_lon",
+      reason: "explicit latitude/longitude header"
+    };
+  }
+
+  return {
+    status: "none",
+    interpretation: null,
+    reason: ""
+  };
+}
+
+function isCoordinateEngineV2PointInsideBbox(point = {}, bbox = {}) {
+  return hasCoordinateEngineV2Wgs84Point(point)
+    && Number(point.lon) >= Number(bbox.minLon)
+    && Number(point.lon) <= Number(bbox.maxLon)
+    && Number(point.lat) >= Number(bbox.minLat)
+    && Number(point.lat) <= Number(bbox.maxLat);
+}
+
+function getCoordinateEngineV2Bbox(points = []) {
+  const validPoints = points.filter(hasCoordinateEngineV2Wgs84Point);
+  if (validPoints.length === 0) {
+    return null;
+  }
+
+  return {
+    minLon: Math.min(...validPoints.map(point => Number(point.lon))),
+    maxLon: Math.max(...validPoints.map(point => Number(point.lon))),
+    minLat: Math.min(...validPoints.map(point => Number(point.lat))),
+    maxLat: Math.max(...validPoints.map(point => Number(point.lat)))
+  };
+}
+
+function getCoordinateEngineV2Center(points = []) {
+  const validPoints = points.filter(hasCoordinateEngineV2Wgs84Point);
+  if (validPoints.length === 0) {
+    return null;
+  }
+
+  return {
+    lon: Number((validPoints.reduce((sum, point) => sum + Number(point.lon), 0) / validPoints.length).toFixed(8)),
+    lat: Number((validPoints.reduce((sum, point) => sum + Number(point.lat), 0) / validPoints.length).toFixed(8))
+  };
+}
+
+function getCoordinateEngineV2EdgeStats(points = []) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return {
+      min_m: null,
+      max_m: null,
+      total_m: null,
+      abnormal: false
+    };
+  }
+
+  const closed = points.length >= 3;
+  const distances = points.map((point, index) => {
+    if (!closed && index === points.length - 1) {
+      return null;
+    }
+    return getCoordinateEngineV2DistanceMeters(point, points[(index + 1) % points.length]);
+  }).filter(value => Number.isFinite(value));
+
+  if (distances.length === 0) {
+    return {
+      min_m: null,
+      max_m: null,
+      total_m: null,
+      abnormal: true
+    };
+  }
+
+  return {
+    min_m: Number(Math.min(...distances).toFixed(2)),
+    max_m: Number(Math.max(...distances).toFixed(2)),
+    total_m: Number(distances.reduce((sum, value) => sum + value, 0).toFixed(2)),
+    abnormal: distances.some(value => value < 0.1 || value > 1000000)
+  };
+}
+
+function parseCoordinateEngineV2RawPair(point = {}) {
+  const raw = String(point.raw || "").trim();
+  const pipeParts = raw.split("|").map(part => part.trim()).filter(Boolean);
+  const pipePair = pipeParts.find(part => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(part));
+
+  if (pipePair) {
+    const [first, second] = pipePair.split(",").map(value => Number(value.trim()));
+    if (Number.isFinite(first) && Number.isFinite(second)) {
+      return { first, second };
+    }
+  }
+
+  const matches = Array.from(raw.matchAll(/[-+]?\d+(?:\.\d+)?/g)).map(match => Number(match[0]));
+  if (matches.length >= 2 && matches.every(Number.isFinite)) {
+    return {
+      first: matches[0],
+      second: matches[1]
+    };
+  }
+
+  if (hasCoordinateEngineV2Wgs84Point(point)) {
+    return {
+      first: Number(point.lon),
+      second: Number(point.lat)
+    };
+  }
+
+  return null;
+}
+
+function buildCoordinateEngineV2CandidatePoints(points = [], interpretation = "as_parsed") {
+  return points.map(point => {
+    const rawPair = parseCoordinateEngineV2RawPair(point);
+    if (interpretation === "first_is_lon_second_is_lat" && rawPair) {
+      return {
+        ...point,
+        lon: rawPair.first,
+        lat: rawPair.second
+      };
+    }
+    if (interpretation === "first_is_lat_second_is_lon" && rawPair) {
+      return {
+        ...point,
+        lat: rawPair.first,
+        lon: rawPair.second
+      };
+    }
+    if (!hasCoordinateEngineV2Wgs84Point(point)) {
+      return { ...point };
+    }
+    if (interpretation === "swapped_lat_lon") {
+      return {
+        ...point,
+        lat: Number(point.lon),
+        lon: Number(point.lat)
+      };
+    }
+    return { ...point };
+  });
+}
+
+function validateCoordinateEngineV2Candidate(points = [], profile = {}, interpretation = "as_parsed") {
+  const candidatePoints = buildCoordinateEngineV2CandidatePoints(points, interpretation);
+  const validPoints = candidatePoints.filter(hasCoordinateEngineV2Wgs84Point);
+  const bbox = getCoordinateEngineV2Bbox(candidatePoints);
+  const insideCountryCount = validPoints.filter(point => isCoordinateEngineV2PointInsideBbox(point, profile.bbox)).length;
+  const allInsideCountry = validPoints.length > 0 && insideCountryCount === validPoints.length;
+  const allOutsideCountry = validPoints.length > 0 && insideCountryCount === 0;
+  const selfIntersecting = validPoints.length >= 4 && isCoordinateEngineV2SelfIntersecting(candidatePoints);
+  const areaHa = validPoints.length >= 3 ? Number(getCoordinateEngineV2PolygonAreaHa(candidatePoints).toFixed(2)) : null;
+  const edgeStats = getCoordinateEngineV2EdgeStats(candidatePoints);
+  const areaLimits = profile.expectedAreaHa || {};
+  const edgeLimits = profile.expectedEdgeMeters || {};
+  const areaAbnormal = areaHa !== null && (
+    areaHa < Number(areaLimits.min || 0)
+    || areaHa > Number(areaLimits.max || Number.MAX_SAFE_INTEGER)
+  );
+  const edgeAbnormal = edgeStats.abnormal
+    || (edgeStats.min_m !== null && edgeStats.min_m < Number(edgeLimits.min || 0))
+    || (edgeStats.max_m !== null && edgeStats.max_m > Number(edgeLimits.max || Number.MAX_SAFE_INTEGER));
+  const geometryReasonable = validPoints.length === candidatePoints.length
+    && validPoints.length > 0
+    && !selfIntersecting
+    && !areaAbnormal
+    && !edgeAbnormal;
+  const allAtSea = profile.country !== "Unknown" && allOutsideCountry;
+  const warnings = [];
+  let score = 0;
+
+  score += validPoints.length === candidatePoints.length && validPoints.length > 0 ? 25 : -40;
+  score += allInsideCountry ? 25 : (profile.country === "Unknown" ? 5 : -20);
+  score += bbox ? 10 : -10;
+  score += !selfIntersecting ? 15 : -35;
+  score += !areaAbnormal ? 10 : -20;
+  score += !edgeAbnormal ? 10 : -20;
+  score += !allAtSea ? 5 : -30;
+
+  if (validPoints.length !== candidatePoints.length || validPoints.length === 0) {
+    warnings.push("存在无效经纬度点。");
+  }
+  if (profile.country !== "Unknown" && !allInsideCountry) {
+    warnings.push("部分或全部点不在目标国家范围内。");
+  }
+  if (allAtSea) {
+    warnings.push("所有点均落在目标国家陆域范围外，疑似落海或国家不匹配。");
+  }
+  if (selfIntersecting) {
+    warnings.push("polygon 自交。");
+  }
+  if (areaAbnormal) {
+    warnings.push("polygon 面积异常。");
+  }
+  if (edgeAbnormal) {
+    warnings.push("边长异常。");
+  }
+
+  return {
+    id: interpretation === "first_is_lon_second_is_lat"
+      ? "candidate_lon_lat"
+      : interpretation === "first_is_lat_second_is_lon"
+        ? "candidate_lat_lon"
+        : `candidate_${interpretation}`,
+    interpretation,
+    score: Math.max(0, Math.min(100, score)),
+    point_count: candidatePoints.length,
+    valid_point_count: validPoints.length,
+    bbox,
+    center: getCoordinateEngineV2Center(candidatePoints),
+    country: profile.country,
+    country_candidates: profile.country === "Unknown" ? [] : [profile.country],
+    points_inside_country: insideCountryCount,
+    all_inside_country: allInsideCountry,
+    all_at_sea: allAtSea,
+    calculated_area_ha: areaHa,
+    edge_stats: edgeStats,
+    self_intersecting: selfIntersecting,
+    geometry_reasonable: geometryReasonable,
+    warnings
+  };
+}
+
+function buildCoordinateEngineV2ValidationReport(group = {}, coordinateType = "", validationContext = {}) {
+  const points = Array.isArray(group.points) ? group.points : [];
+  const hasProjectedOrGrid = points.some(hasCoordinateEngineV2ProjectedOrGridPoint) && !points.every(hasCoordinateEngineV2Wgs84Point);
+  const profile = validationContext.profile || getCoordinateEngineV2ValidationProfile(coordinateType);
+  const axisEvidence = validationContext.axisEvidence || { status: "none", interpretation: null, reason: "" };
+  const scoreMarginThreshold = 15;
+
+  if (hasProjectedOrGrid) {
+    return {
+      status: "skipped_projected_or_grid",
+      reason: "V2 validator only scores WGS84 lat/lon candidates in this phase; projected/grid normalization is not implemented.",
+      candidate_score: 0,
+      selected_interpretation: null,
+      effective_point_interpretation: null,
+      selection_reason: "projected_or_grid_requires_normalization",
+      order_status: "not_applicable",
+      score_margin: null,
+      candidates: []
+    };
+  }
+
+  const candidateInterpretations = axisEvidence.status === "locked_by_coordinate_type"
+    ? ["as_parsed", "swapped_lat_lon"]
+    : ["first_is_lon_second_is_lat", "first_is_lat_second_is_lon"];
+  const candidates = candidateInterpretations
+    .map(interpretation => validateCoordinateEngineV2Candidate(points, profile, interpretation))
+    .sort((a, b) => b.score - a.score);
+  const best = candidates[0] || null;
+  const runnerUp = candidates[1] || null;
+  const scoreMargin = best && runnerUp ? Number((best.score - runnerUp.score).toFixed(2)) : null;
+  const effectivePointInterpretation = axisEvidence.status === "locked_by_coordinate_type" ? "as_parsed" : (points.every(point => {
+    const rawPair = parseCoordinateEngineV2RawPair(point);
+    return rawPair && hasCoordinateEngineV2Wgs84Point(point)
+      && Number(point.lon) === Number(rawPair.first)
+      && Number(point.lat) === Number(rawPair.second);
+  })
+    ? "first_is_lon_second_is_lat"
+    : "first_is_lat_second_is_lon");
+  let selected = best;
+  let selectionReason = "highest_candidate_score";
+  let orderStatus = "resolved";
+
+  if (axisEvidence.status === "locked_by_coordinate_type") {
+    selected = candidates.find(candidate => candidate.interpretation === effectivePointInterpretation) || best;
+    selectionReason = axisEvidence.reason;
+    orderStatus = "locked_by_coordinate_type";
+  } else if (axisEvidence.status === "explicit_header" && axisEvidence.interpretation) {
+    selected = candidates.find(candidate => candidate.interpretation === axisEvidence.interpretation) || best;
+    selectionReason = axisEvidence.reason;
+    orderStatus = "resolved_by_header";
+  } else if (profile.context_matched && best) {
+    selectionReason = `resolved_by_context:${profile.context_matched}`;
+    orderStatus = "resolved_by_context";
+  } else if (best && runnerUp && scoreMargin !== null && scoreMargin < scoreMarginThreshold) {
+    selectionReason = "candidate_scores_too_close_without_axis_or_country_context";
+    orderStatus = "ambiguous";
+    if (!selected.warnings.includes("坐标顺序存在歧义，请人工确认经纬度顺序。")) {
+      selected.warnings.push("坐标顺序存在歧义，请人工确认经纬度顺序。");
+    }
+  }
+
+  return {
+    status: selected ? "scored" : "no_candidates",
+    candidate_score: selected?.score || 0,
+    selected_interpretation: selected?.interpretation || null,
+    effective_point_interpretation: effectivePointInterpretation,
+    selection_reason: selectionReason,
+    order_status: orderStatus,
+    score_margin: scoreMargin,
+    coordinate_order_candidates: candidates,
+    candidates
   };
 }
 
@@ -7430,6 +7870,10 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
   const warnings = normalizeCoordinateEngineV2WarningList(result.warnings);
   const fallbackUsed = Boolean(result.source?.fallback_used) || /fallback/i.test(String(result.source?.ocr_engine || "")) || /fallback/i.test(precisionMode);
   const reviewWarnings = warnings.filter(isCoordinateEngineV2ReviewWarning);
+  const validationContext = {
+    profile: getCoordinateEngineV2ContextualProfile(coordinateType, result, options),
+    axisEvidence: getCoordinateEngineV2AxisEvidence(coordinateType, result, options)
+  };
   const forcedReview = coordinateType === "handwritten_dms_experimental"
     || precisionMode === "local-ocr-dms-fallback"
     || fallbackUsed
@@ -7440,7 +7884,7 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
     ...group,
     group_id: group.group_id || `group_${index + 1}`,
     group_name: group.group_name || `矿地${index + 1}`
-  }, coordinateType, forcedReview));
+  }, coordinateType, forcedReview, validationContext));
   const missingGroups = groups.length === 0;
   const requiresReview = Boolean(
     forcedReview
@@ -7450,13 +7894,17 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
   const confidence = groups.length > 0
     ? Number((groups.reduce((sum, group) => sum + Number(group.confidence || 0), 0) / groups.length).toFixed(2))
     : (Number.isFinite(Number(result.confidence)) ? Number(result.confidence) : 0);
+  const validationReports = groups.map(group => group.validation).filter(Boolean);
+  const validationWarnings = groups.flatMap(group => group.validation?.candidates?.[0]?.warnings || []);
+  const validationFailed = validationReports.some(report => report.status === "scored" && report.candidate_score < 70);
+  const orderAmbiguous = validationReports.some(report => report.order_status === "ambiguous");
 
-  return {
+  const normalizedResult = {
     schema_version: "coordinate_engine_v2",
     coordinate_type: coordinateType,
     precision_mode: precisionMode,
     confidence: requiresReview ? Math.min(confidence, 0.75) : confidence,
-    requires_review: requiresReview,
+    requires_review: Boolean(requiresReview || validationFailed || orderAmbiguous),
     source: {
       image_count: Number.isFinite(Number(result.source?.image_count)) ? Number(result.source.image_count) : 1,
       ocr_engine: String(result.source?.ocr_engine || ""),
@@ -7465,14 +7913,36 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
     groups,
     warnings: Array.from(new Set([
       ...warnings,
+      ...validationWarnings,
       ...(missingGroups ? ["缺少有效坐标点。"] : [])
     ])),
+    coordinate_validation_report: {
+      validator_version: "coordinate_validator_v1",
+      candidate_score: validationReports.length > 0
+        ? Number((validationReports.reduce((sum, report) => sum + Number(report.candidate_score || 0), 0) / validationReports.length).toFixed(2))
+        : 0,
+      selected_interpretations: validationReports.map(report => report.selected_interpretation).filter(Boolean),
+      selection_reasons: validationReports.map(report => report.selection_reason).filter(Boolean),
+      order_statuses: validationReports.map(report => report.order_status).filter(Boolean),
+      coordinate_order_candidates: validationReports.length === 1 ? (validationReports[0].coordinate_order_candidates || []) : [],
+      selected_interpretation: validationReports.length === 1 ? (validationReports[0].selected_interpretation || null) : null,
+      selection_reason: validationReports.length === 1 ? (validationReports[0].selection_reason || "") : "",
+      order_status: validationReports.length === 1 ? (validationReports[0].order_status || "") : "",
+      score_margin: validationReports.length === 1 ? validationReports[0].score_margin : null,
+      groups: groups.map(group => ({
+        group_id: group.group_id,
+        group_name: group.group_name,
+        validation: group.validation
+      }))
+    },
     debug: {
       matched_detectors: Array.isArray(result.debug?.matched_detectors) ? result.debug.matched_detectors.filter(Boolean) : [],
       blocked_fallbacks: Array.isArray(result.debug?.blocked_fallbacks) ? result.debug.blocked_fallbacks.filter(Boolean) : [],
       supplemental_fallbacks: Array.isArray(result.debug?.supplemental_fallbacks) ? result.debug.supplemental_fallbacks.filter(Boolean) : []
     }
   };
+
+  return normalizedResult;
 }
 
 function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
@@ -7507,7 +7977,8 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
     source: {
       image_count: 1,
       ocr_engine: String(payload.model || ""),
-      fallback_used: fallbackUsed
+      fallback_used: fallbackUsed,
+      context: String(options.rawHint || options.hint || "")
     },
     groups,
     warnings,
@@ -10345,10 +10816,19 @@ app.post("/api/regression/parse-coordinate-text", (req, res) => {
     });
   }
 
+  const parsed = buildRegressionTextCoordinateResult(text);
+
   return res.json({
     success: true,
     rawText: text,
-    ...buildRegressionTextCoordinateResult(text)
+    ...parsed,
+    coordinateEngineV2: buildCoordinateEngineV2ShadowResult({
+      model: "regression-text",
+      rawText: text,
+      ...parsed
+    }, {
+      rawHint: String(req.body?.rawHint || req.body?.hint || req.body?.context || "")
+    })
   });
 });
 
@@ -10506,6 +10986,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
     console.log("使用阿里云视觉模型：", aliyunVisionModel);
 
     const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+    const coordinateEngineV2ContextHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || req.body?.country || req.body?.projectCountry || "");
     const prompt = `你是矿业坐标识别助手。请只识别图片中的真实坐标表区域，并只返回坐标行。图片可能是完整文件、手机截图、扫描件、带水印图片、长表、局部表格、同一页多块矿区坐标或带菜单按钮的截图。
 
 必须忽略：
@@ -10991,7 +11472,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
           return res.json({
             ...kyrgyzDirectPayload,
-            coordinateEngineV2: buildCoordinateEngineV2ShadowResult(kyrgyzDirectPayload, { fileName: uploadedFileName })
+            coordinateEngineV2: buildCoordinateEngineV2ShadowResult(kyrgyzDirectPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint })
           });
         }
 
@@ -11112,7 +11593,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
             return res.json({
               ...mozambiqueDirectPayload,
-              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(mozambiqueDirectPayload, { fileName: uploadedFileName })
+              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(mozambiqueDirectPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint })
             });
           }
         }
@@ -11864,7 +12345,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       quota: consumeResult.quota
     };
 
-    let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(recognitionPayload, { fileName: uploadedFileName });
+    let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(recognitionPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });
     const shouldReadCoteDIvoireV2 = hasCoteDIvoireGeographicDmsCue([
       uploadedFileName,
       rawText,
@@ -11895,7 +12376,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }, { fileName: uploadedFileName });
 
         if (coteDIvoireV2?.coordinate_type === "cote_divoire_geographic_dms_table") {
-          coordinateEngineV2 = normalizeCoordinateEngineV2Result(coteDIvoireV2);
+          coordinateEngineV2 = normalizeCoordinateEngineV2Result(coteDIvoireV2, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });
           console.log("Cote d'Ivoire V2 geographic DMS prompt success", {
             groups: coteDIvoireV2.groups.length,
             points: coteDIvoireV2.groups.reduce((sum, group) => sum + (group.points || []).length, 0)
@@ -12036,7 +12517,7 @@ If fewer than four handwritten DMS coordinate rows are readable, output only: ${
 
             return res.json({
               ...handwrittenRetryPayload,
-              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(handwrittenRetryPayload, { fileName: getUploadedFileDisplayName(req.file) })
+              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(handwrittenRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
             });
           }
 
@@ -12059,7 +12540,7 @@ If fewer than four handwritten DMS coordinate rows are readable, output only: ${
 
         return res.status(504).json({
           ...handwrittenTimeoutPayload,
-          coordinateEngineV2: buildCoordinateEngineV2ShadowResult(handwrittenTimeoutPayload, { fileName: getUploadedFileDisplayName(req.file) })
+          coordinateEngineV2: buildCoordinateEngineV2ShadowResult(handwrittenTimeoutPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
         });
       }
 
@@ -12140,7 +12621,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
 
             return res.json({
               ...kyrgyzRetryPayload,
-              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(kyrgyzRetryPayload, { fileName: getUploadedFileDisplayName(req.file) })
+              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(kyrgyzRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
             });
           }
 
@@ -12243,7 +12724,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
             return res.json({
               ...wgs84TableRetryPayload,
-              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(wgs84TableRetryPayload, { fileName: getUploadedFileDisplayName(req.file) })
+              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(wgs84TableRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
             });
           }
 
@@ -12510,7 +12991,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         });
       }
       fallback.quota = consumeResult.quota;
-      fallback.coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(fallback, { fileName: getUploadedFileDisplayName(req.file) });
+      fallback.coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(fallback, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") });
 
       res.json(fallback);
     } catch (fallbackError) {
