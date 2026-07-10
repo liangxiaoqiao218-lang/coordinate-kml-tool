@@ -775,23 +775,45 @@
       position: relative;
     }
 
+    #coordinatePage {
+      max-width: 1040px;
+    }
+
+    #coordinatePage .coordinate-title-row,
+    #coordinatePage .intro {
+      display: none;
+    }
+
     .coordinate-workspace {
-      margin-top: 10px;
-      padding: 12px;
-      border-color: #bfdbfe;
-      background: #f8fbff;
-      box-shadow: 0 12px 28px rgba(37, 99, 235, 0.08);
+      margin-top: 18px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .coordinate-workspace .workspace-head {
+      display: block;
+      margin-bottom: 14px;
     }
 
     .coordinate-workspace .workspace-head label {
-      margin-bottom: 2px;
+      margin-bottom: 4px;
       color: #0f172a;
-      font-size: 15px;
+      font-size: 24px;
       font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .coordinate-workspace .workspace-subtitle {
+      margin: 0;
+      color: #64748b;
+      font-size: 15px;
+      line-height: 1.45;
     }
 
     .coordinate-workspace .textarea-wrap {
-      margin-top: 4px;
+      margin-top: 0;
     }
 
     .icon-button {
@@ -812,18 +834,55 @@
 
     .workspace-tools {
       position: absolute;
-      bottom: 10px;
-      right: 10px;
+      top: 12px;
+      right: 12px;
       z-index: 1;
       display: flex;
       flex-wrap: wrap;
       justify-content: flex-end;
       gap: 6px;
-      max-width: 190px;
+      max-width: 48px;
     }
 
     .workspace-tools .icon-button {
-      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.16);
+      box-shadow: none;
+    }
+
+    .workspace-tools .icon-button:not(.clear-input-button) {
+      display: none;
+    }
+
+    .workspace-tools.has-order-review .swap-order-button {
+      display: inline-flex;
+    }
+
+    .clear-input-button {
+      width: 34px;
+      min-height: 34px;
+      border: 0;
+      background: transparent;
+      color: #64748b;
+      font-size: 18px;
+    }
+
+    .clear-input-button:hover {
+      background: #f1f5f9;
+      color: #0f766e;
+    }
+
+    .coordinate-input-shell {
+      overflow: hidden;
+      border: 1px solid #b7c7d8;
+      border-radius: 14px;
+      background: #ffffff;
+      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.04);
+    }
+
+    .coordinate-input-footer {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-top: 1px solid #e2e8f0;
     }
 
     textarea {
@@ -842,15 +901,27 @@
 
     #coordinateInput {
       min-height: 250px;
-      border-color: #bfdbfe;
+      padding: 22px 52px 18px 22px;
+      border: 0;
+      border-radius: 0;
       background: #ffffff;
+      box-shadow: none;
+      color: #0f172a;
+    }
+
+    #coordinateInput::placeholder {
+      color: #9aa6b2;
     }
 
     textarea:focus,
     select:focus,
     input:focus {
-      outline: 3px solid #bfdbfe;
-      border-color: #3b82f6;
+      outline: 3px solid rgba(13, 148, 136, 0.18);
+      border-color: #0d9488;
+    }
+
+    #coordinateInput:focus {
+      outline: 0;
     }
 
     .panel {
@@ -866,7 +937,7 @@
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 10px;
-      margin-top: 18px;
+      margin-top: 12px;
     }
 
     .settings-grid .panel {
@@ -875,6 +946,7 @@
 
     .setting-panel {
       background: #f8fafc;
+      box-shadow: none;
     }
 
     .setting-panel label {
@@ -882,23 +954,65 @@
       font-size: 14px;
     }
 
+    .aux-section {
+      margin-top: 14px;
+      border-top: 1px solid #e2e8f0;
+      border-bottom: 1px solid #e2e8f0;
+      background: transparent;
+    }
+
+    .aux-section + .aux-section,
+    .aux-section + .debug-panel,
+    .debug-panel + .aux-section {
+      margin-top: 0;
+      border-top: 0;
+    }
+
+    .aux-section summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 54px;
+      cursor: pointer;
+      color: #0f172a;
+      font-weight: 800;
+      list-style: none;
+    }
+
+    .aux-section summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .aux-section summary::after {
+      content: "›";
+      color: #64748b;
+      font-size: 24px;
+      font-weight: 400;
+      transform: rotate(0deg);
+      transition: transform 0.18s ease;
+    }
+
+    .aux-section[open] summary::after {
+      transform: rotate(90deg);
+    }
+
+    .aux-section:not([open]) .settings-grid {
+      display: none;
+    }
+
     .upload-box {
-      border-style: dashed;
-      border-color: #9fb1c8;
-      background: #f8fbff;
-      padding: 12px 14px;
+      border: 0;
+      background: transparent;
+      padding: 0;
     }
 
     .coordinate-upload-card {
-      display: grid;
-      place-items: center;
-      gap: 8px;
-      border-color: #93c5fd;
-      border-width: 2px;
-      border-radius: 14px;
-      background: #eff6ff;
-      padding: 18px 16px;
-      text-align: center;
+      display: block;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      padding: 0;
+      text-align: left;
       transition: padding 0.2s ease, background 0.2s ease, border-color 0.2s ease;
     }
 
@@ -909,37 +1023,43 @@
     }
 
     .coordinate-upload-trigger {
-      display: grid;
-      place-items: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       gap: 8px;
-      width: 100%;
+      width: auto;
+      min-height: 42px;
+      padding: 0 16px;
+      border: 1px solid rgba(13, 148, 136, 0.38);
+      border-radius: 9px;
+      background: #f0fdfa;
+      color: #0f766e;
       margin: 0;
       line-height: 1.2;
       cursor: pointer;
     }
 
     .coordinate-upload-icon {
-      display: grid;
-      place-items: center;
-      width: 46px;
-      height: 46px;
-      border-radius: 16px;
-      background: #dbeafe;
-      color: #1d4ed8;
-      font-size: 24px;
-      font-weight: 900;
-    }
-
-    .coordinate-upload-title {
-      color: #0f172a;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: auto;
+      height: auto;
+      border-radius: 0;
+      background: transparent;
+      color: currentColor;
       font-size: 18px;
       font-weight: 900;
     }
 
+    .coordinate-upload-title {
+      color: currentColor;
+      font-size: 15px;
+      font-weight: 900;
+    }
+
     .coordinate-upload-subtitle {
-      color: #475569;
-      font-size: 13px;
-      font-weight: 700;
+      display: none;
     }
 
     .upload-box input {
@@ -957,16 +1077,14 @@
     }
 
     .compact-upload-box {
-      max-height: 220px;
-      overflow-y: auto;
+      max-height: none;
+      overflow: visible;
     }
 
     .coordinate-upload-card.is-complete {
-      align-items: center;
-      grid-template-columns: 1fr;
-      padding: 12px 14px;
-      background: #f8fbff;
-      border-color: #bfdbfe;
+      padding: 0;
+      background: transparent;
+      border-color: transparent;
     }
 
     .coordinate-upload-card.is-complete label {
@@ -998,9 +1116,9 @@
     }
 
     .coordinate-upload-card.is-complete .image-preview {
-      max-height: 74px;
+      max-height: none;
       margin-top: 0;
-      padding: 6px;
+      padding: 0;
     }
 
     .coordinate-upload-card.is-complete .image-preview-row {
@@ -1017,17 +1135,17 @@
       position: relative;
       z-index: 2;
       display: block;
-      width: min(100%, 420px);
-      margin: 12px auto 0;
-      padding: 13px 18px;
-      background: #2563eb;
-      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
+      width: 100%;
+      margin: 14px auto 0;
+      padding: 14px 18px;
+      background: #0f9488;
+      box-shadow: 0 12px 24px rgba(15, 148, 136, 0.16);
       font-size: 16px;
       font-weight: 900;
     }
 
     .kml-download-action:hover {
-      background: #1d4ed8;
+      background: #0f766e;
     }
 
     .coordinate-upload-card.is-complete + .kml-download-action {
@@ -1073,10 +1191,11 @@
     .image-preview {
       display: none;
       margin-top: 12px;
-      padding: 10px;
-      border: 1px solid #d8e0ec;
-      border-radius: 8px;
-      background: #ffffff;
+      padding: 10px 0 0;
+      border: 0;
+      border-top: 1px solid #e2e8f0;
+      border-radius: 0;
+      background: transparent;
     }
 
     .compact-upload-box .image-preview {
@@ -1087,14 +1206,14 @@
     .image-preview-row {
       position: relative;
       display: grid;
-      grid-template-columns: 96px 1fr auto;
-      gap: 10px;
+      grid-template-columns: 56px minmax(0, 1fr) auto;
+      gap: 12px;
       align-items: center;
     }
 
     .image-preview img {
-      width: 96px;
-      height: 72px;
+      width: 56px;
+      height: 48px;
       object-fit: cover;
       border: 1px solid #e5e7eb;
       border-radius: 6px;
@@ -1132,20 +1251,23 @@
     }
 
     .image-preview .remove-image {
-      position: absolute;
-      top: -8px;
-      right: -8px;
-      width: 28px;
-      height: 28px;
-      min-height: 28px;
+      position: static;
+      width: 32px;
+      height: 32px;
+      min-height: 32px;
       padding: 0;
-      border: 1px solid #cbd5e1;
+      border: 0;
       border-radius: 999px;
-      background: #ffffff;
-      color: #334155;
-      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.16);
+      background: transparent;
+      color: #64748b;
+      box-shadow: none;
       font-size: 18px;
       line-height: 1;
+    }
+
+    .image-preview .remove-image:hover {
+      background: #f1f5f9;
+      color: #0f766e;
     }
 
     .judge-upload-footer {
@@ -1888,24 +2010,24 @@
 
     .toast {
       position: fixed;
-      top: 18px;
-      right: 18px;
+      top: 86px;
+      right: 24px;
       z-index: 20;
       display: none;
-      align-items: flex-start;
+      align-items: center;
       gap: 10px;
-      width: min(90vw, 360px);
-      max-width: 360px;
-      padding: 12px 14px 12px 12px;
+      width: fit-content;
+      max-width: min(420px, calc(100vw - 32px));
+      min-height: 48px;
+      padding: 10px 16px 10px 12px;
       border: 1px solid #e2e8f0;
-      border-left: 5px solid #2563eb;
-      border-radius: 12px;
+      border-radius: 14px;
       background: rgba(255, 255, 255, 0.96);
       color: #0f172a;
       font-size: 14px;
       line-height: 1.45;
       text-align: left;
-      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.16);
+      box-shadow: 0 16px 34px rgba(15, 23, 42, 0.13);
       opacity: 0;
       transform: translateY(-8px);
       transition: opacity 0.18s ease, transform 0.18s ease;
@@ -1988,30 +2110,52 @@
       overflow-wrap: anywhere;
     }
 
-    .toast-close {
-      appearance: none;
-      border: 0;
-      border-radius: 999px;
-      width: 24px;
-      height: 24px;
-      padding: 0;
-      background: transparent;
-      color: #64748b;
-      font-size: 18px;
-      line-height: 1;
-      cursor: pointer;
+    .toast.success,
+    .toast.info,
+    .toast.warning,
+    .toast.error {
+      border-left-width: 1px;
     }
 
-    .toast-close:hover {
-      background: #f1f5f9;
-      color: #0f172a;
+    .toast.success {
+      border-color: #d8eee8;
+      background: rgba(250, 255, 253, 0.98);
+    }
+
+    .toast.success::before {
+      content: "✓";
+      background: #dcfce7;
+      color: #15803d;
+    }
+
+    .toast.info {
+      border-color: #dbeafe;
+      background: rgba(248, 251, 255, 0.98);
+    }
+
+    .toast.warning {
+      border-color: #fed7aa;
+      background: rgba(255, 251, 235, 0.98);
+    }
+
+    .toast.error {
+      border-color: #fecaca;
+      background: rgba(255, 247, 247, 0.98);
+    }
+
+    .toast.error::before {
+      content: "!";
+      background: #fee2e2;
+      color: #b91c1c;
     }
 
     @media (max-width: 640px) {
       .toast {
-        top: 18px;
+        top: 76px;
         right: 50%;
-        width: 90vw;
+        width: auto;
+        max-width: calc(100vw - 32px);
+        min-height: 56px;
         transform: translate(50%, -8px);
       }
 
@@ -2086,6 +2230,28 @@
 
     .recognition-status.error::before {
       background: #dc2626;
+    }
+
+    .recognition-status-text {
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow-wrap: anywhere;
+    }
+
+    .recognition-copy-button {
+      flex: 0 0 auto;
+      min-height: 34px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #0f766e;
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .recognition-copy-button:hover {
+      background: rgba(15, 148, 136, 0.08);
     }
 
     @keyframes spin {
@@ -3506,6 +3672,63 @@
         margin-top: 10px;
       }
 
+      #coordinatePage .coordinate-workspace {
+        margin-top: 10px;
+        padding: 0;
+      }
+
+      .coordinate-workspace .workspace-head {
+        margin-bottom: 10px;
+      }
+
+      .coordinate-workspace .workspace-head label {
+        font-size: 26px;
+        line-height: 1.2;
+      }
+
+      .coordinate-workspace .workspace-subtitle {
+        font-size: 14px;
+      }
+
+      #coordinateInput {
+        min-height: 250px;
+        padding: 22px 50px 18px 18px;
+      }
+
+      .workspace-tools {
+        top: 12px;
+        right: 10px;
+        bottom: auto;
+        max-width: 40px;
+      }
+
+      .coordinate-input-footer {
+        padding: 12px;
+      }
+
+      .coordinate-upload-trigger {
+        width: 100%;
+        min-height: 46px;
+      }
+
+      .image-preview-row {
+        grid-template-columns: 52px minmax(0, 1fr) auto;
+      }
+
+      .image-preview img {
+        width: 52px;
+        height: 46px;
+      }
+
+      .recognition-status {
+        min-height: 52px;
+        padding: 12px;
+      }
+
+      .aux-section summary {
+        min-height: 56px;
+      }
+
       .buttons,
       .settings-grid,
       .gold-input-grid,
@@ -3766,34 +3989,38 @@
 
       <div class="panel coordinate-workspace">
         <div class="workspace-head">
-        <label for="coordinateInput">坐标工作区</label>
-        <span id="cadastralGridBadge" class="cadastral-grid-badge">矿权网格模式</span>
+          <label for="coordinateInput">&#22352;&#26631;&#24037;&#20316;&#21306;</label>
+          <p class="workspace-subtitle">&#31896;&#36148;&#22352;&#26631;&#25110;&#19978;&#20256;&#22270;&#29255;&#29983;&#25104; KML</p>
+          <span id="cadastralGridBadge" class="cadastral-grid-badge">&#30719;&#26435;&#32593;&#26684;&#27169;&#24335;</span>
         </div>
-        <div class="textarea-wrap">
-        <textarea id="coordinateInput" placeholder="示例：
--6.74805556,10.79444444
--6°55'10.1944'',10°30'43.0143''
--6°55.169907',10°30.716905'"></textarea>
-        <div class="workspace-tools">
-          <button type="button" class="icon-button" onclick="undoLastChange()" title="撤销上一步" aria-label="撤销上一步">↶</button>
-          <button type="button" class="icon-button" onclick="confirmClearContent()" title="清空内容" aria-label="清空内容">×</button>
-          <button type="button" class="icon-button" onclick="swapLongitudeLatitude()" title="交换经纬度" aria-label="交换经纬度">⇄</button>
-          <button type="button" class="icon-button" onclick="copyContent()" title="复制内容" aria-label="复制内容">⧉</button>
+        <div class="textarea-wrap coordinate-input-shell">
+          <textarea id="coordinateInput" placeholder="&#31896;&#36148;&#22352;&#26631;...
+
+&#20363;&#22914;&#65306;
+116.391245,39.907654
+31&#176;15'30.12&quot;N,121&#176;28'15.45&quot;E"></textarea>
+          <div class="workspace-tools">
+            <button type="button" class="icon-button" onclick="undoLastChange()" title="&#25764;&#38144;&#19978;&#19968;&#27493;" aria-label="&#25764;&#38144;&#19978;&#19968;&#27493;">&#8630;</button>
+            <button type="button" class="icon-button clear-input-button" onclick="confirmClearContent()" title="&#28165;&#31354;&#20869;&#23481;" aria-label="&#28165;&#31354;&#20869;&#23481;">&#9003;</button>
+            <button type="button" class="icon-button swap-order-button" onclick="swapLongitudeLatitude()" title="&#20132;&#25442;&#32463;&#32428;&#24230;" aria-label="&#20132;&#25442;&#32463;&#32428;&#24230;">&#8644;</button>
+            <button type="button" class="icon-button" onclick="copyContent()" title="&#22797;&#21046;&#20869;&#23481;" aria-label="&#22797;&#21046;&#20869;&#23481;">&#10697;</button>
+          </div>
+          <div class="coordinate-input-footer">
+            <div id="coordinateUploadPanel" class="upload-box compact-upload-box coordinate-upload-card">
+              <label for="imageInput" class="coordinate-upload-trigger">
+                <span class="coordinate-upload-icon" aria-hidden="true">&#9635;</span>
+                <span class="coordinate-upload-title">&#22270;&#29255;&#35782;&#21035;</span>
+                <span class="coordinate-upload-subtitle">&#28857;&#20987;&#36873;&#25321;&#22352;&#26631;&#22270;&#29255;</span>
+              </label>
+              <input id="imageInput" class="coordinate-file-input" type="file" accept="image/*" />
+              <div id="imagePreview" class="image-preview"></div>
+              <div id="uploadMessage" class="upload-message"></div>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div id="coordinateUploadPanel" class="panel upload-box compact-upload-box coordinate-upload-card">
-      <label for="imageInput" class="coordinate-upload-trigger">
-        <span class="coordinate-upload-icon" aria-hidden="true">+</span>
-        <span class="coordinate-upload-title">第一步：上传坐标图片</span>
-        <span class="coordinate-upload-subtitle">只截坐标表，识别更稳定。</span>
-      </label>
       <div id="recognitionStatus" class="recognition-status"></div>
-      <input id="imageInput" class="coordinate-file-input" type="file" accept="image/*" />
-      <div id="imagePreview" class="image-preview"></div>
-      <div id="uploadMessage" class="upload-message"></div>
-    </div>
 
     <div id="cadastralGridPanel" class="panel cadastral-grid-panel">
       <label for="cadastralGridSelection">矿权网格编号</label>
@@ -3801,11 +4028,11 @@
       <p class="cadastral-grid-hint">不填写时默认生成识别表格里的全部网格。已识别为马达加斯加矿权格网，当前默认按 XV/YV 为单格中心点生成网格。生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。</p>
     </div>
 
-    <button type="button" class="primary-action kml-download-action" onclick="downloadKml()">生成KML文件并下载</button>
+    <button type="button" class="primary-action kml-download-action" onclick="downloadKml()">&#29983;&#25104; KML</button>
 
     <div id="debugPanel" class="panel debug-panel">
       <div class="panel-title-row">
-        <strong>识别调试信息</strong>
+        <strong>&#26597;&#30475;&#35782;&#21035;&#35814;&#24773;</strong>
       </div>
       <textarea id="debugText" readonly></textarea>
     </div>
@@ -3827,7 +4054,9 @@
     <div id="message" class="message"></div>
     <div id="toast" class="toast"></div>
 
-    <div class="settings-grid">
+    <details class="aux-section">
+      <summary>&#39640;&#32423;&#35774;&#32622;</summary>
+      <div class="settings-grid">
       <div class="panel setting-panel">
         <label for="coordinateFormat">格式转换</label>
         <select id="coordinateFormat">
@@ -3846,7 +4075,8 @@
           <option value="Polygon">自动识别：Polygon</option>
         </select>
       </div>
-    </div>
+      </div>
+    </details>
 
     <section class="help">
       <strong>坐标说明：</strong><br />
@@ -4307,7 +4537,12 @@ Au值 = 纯度 × 10 后取整数</div>
     let currentGoldPriceSource = "unavailable";
     let currentGoldPriceUpdatedAt = "";
     let goldUsageLoggedThisSession = false;
-    const visitorId = getOrCreateVisitorId();
+    let visitorId = "";
+    try {
+      visitorId = getOrCreateVisitorId();
+    } catch (error) {
+      console.warn("visitorId init failed", error);
+    }
     const userCode = getOrCreateUserCode();
     renderPricingConfigText();
     window.addEventListener("pricing-config-updated", () => {
@@ -4358,6 +4593,7 @@ Au值 = 纯度 × 10 后取整数</div>
     input.addEventListener("input", () => {
       activeCoordinatePrecisionMode = "";
       internalKmlSourceDirty = true;
+      setCoordinateOrderReviewVisible(false);
       updateCadastralGridPanel();
     });
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
@@ -4592,6 +4828,16 @@ Au值 = 纯度 × 10 后取整数</div>
       localStorage.setItem("coordinateToolVisitorId", nextId);
 
       return nextId;
+    }
+
+    function ensureVisitorId() {
+      try {
+        visitorId = String(getOrCreateVisitorId() || "").trim();
+      } catch (error) {
+        console.warn("visitorId ensure failed", error);
+        visitorId = "";
+      }
+      return visitorId;
     }
 
     function normalizeUserCode(value) {
@@ -5303,9 +5549,9 @@ Au值 = 纯度 × 10 后取整数</div>
       const textLength = `${title || ""}${message || ""}`.length;
       const extra = textLength > 20 ? Math.min(2500, (textLength - 20) * 45) : 0;
 
-      if (type === "error") return 6000 + extra;
-      if (type === "warning") return 5000 + extra;
-      return 2800 + extra;
+      if (type === "error") return 5000 + extra;
+      if (type === "warning") return 4000 + extra;
+      return 3000 + extra;
     }
 
     function hideToast() {
@@ -5351,16 +5597,6 @@ Au值 = 纯度 × 10 后取整数</div>
       toast.setAttribute("role", type === "error" ? "alert" : "status");
       toast.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
       toast.setAttribute("aria-hidden", "false");
-
-      if (type === "error") {
-        const closeButton = document.createElement("button");
-        closeButton.type = "button";
-        closeButton.className = "toast-close";
-        closeButton.setAttribute("aria-label", "关闭提示");
-        closeButton.textContent = "×";
-        closeButton.addEventListener("click", hideToast);
-        toast.appendChild(closeButton);
-      }
 
       requestAnimationFrame(() => {
         toast.classList.add("show");
@@ -5512,8 +5748,46 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       recognitionStatus.style.display = "flex";
-      recognitionStatus.textContent = text;
       recognitionStatus.className = `recognition-status ${type}`.trim();
+      recognitionStatus.replaceChildren();
+
+      const statusText = document.createElement("span");
+      statusText.className = "recognition-status-text";
+      statusText.textContent = text;
+      recognitionStatus.appendChild(statusText);
+
+      if (type === "success") {
+        const copyButton = document.createElement("button");
+        copyButton.type = "button";
+        copyButton.className = "recognition-copy-button";
+        copyButton.textContent = "复制";
+        copyButton.addEventListener("click", copyContent);
+        recognitionStatus.appendChild(copyButton);
+      }
+    }
+
+    function setCoordinateOrderReviewVisible(visible) {
+      document.querySelector(".workspace-tools")?.classList.toggle("has-order-review", Boolean(visible));
+    }
+
+    function hasCoordinateOrderReviewSignal(data) {
+      if (!data || typeof data !== "object") {
+        return false;
+      }
+
+      const engine = data.coordinateEngineV2 || data.coordinate_engine_v2 || {};
+      const candidates = engine.coordinate_order_candidates || data.coordinate_order_candidates;
+      const orderStatus = engine.order_status || data.order_status || "";
+      const warning = [
+        data.warning,
+        data.chatCoordinates?.warning,
+        engine.selection_reason,
+        data.selection_reason
+      ].filter(Boolean).join(" ").toLowerCase();
+
+      return warning.includes("possible swapped lat/lon")
+        || orderStatus === "ambiguous"
+        || (Boolean(engine.requires_review || data.requires_review) && Array.isArray(candidates) && candidates.length > 1);
     }
 
     function showRecognitionProgress(text, type = "loading", hideDelay = 0) {
@@ -5586,7 +5860,7 @@ Au值 = 纯度 × 10 后取整数</div>
           <button type="button" class="preview-button" onclick="openSelectedImage()" title="点击查看上传图片">
             <img src="${selectedImageUrl}" alt="已上传图片预览" />
           </button>
-          <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB<br />点击图片可查看大图</p>
+          <p><strong>${escapeHtml(file.name)}</strong><br />${Math.round(file.size / 1024)} KB</p>
           <button type="button" class="remove-image" onclick="clearSelectedImage()" title="删除图片" aria-label="删除图片">×</button>
         </div>`;
     }
@@ -5795,7 +6069,7 @@ Au值 = 纯度 × 10 后取整数</div>
       coordinateUploadPanel?.classList.remove("is-complete");
       clearUploadMessage();
       setRecognitionStatus();
-      showMessage("已删除上传图片，可以重新选择。");
+      showMessage("已删除上传图片");
     }
 
     async function showJudgeSelectedImage(files) {
@@ -10002,6 +10276,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       input.value = swappedLines.join("\n");
       coordinateOrder.value = "lnglat";
       setInternalKmlSourceFromText(input.value);
+      setCoordinateOrderReviewVisible(false);
       updateCadastralGridPanel();
       trackEvent("swap_lnglat_click", {
         count: swappedCount
@@ -10352,7 +10627,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return;
       }
 
-      await copyText(input.value, "内容已复制。");
+      await copyText(input.value, "已复制坐标结果");
       trackEvent("copy_content_click");
     }
 
@@ -10369,7 +10644,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return;
       }
 
-      showMessage("再次点击清空按钮确认清空。", true);
+      showMessage("再次点击\"清空\"确认删除全部内容", true);
       clearConfirmTimer = setTimeout(() => {
         clearConfirmTimer = null;
       }, 3000);
@@ -10379,9 +10654,10 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       rememberState();
       input.value = "";
       clearInternalKmlSource();
+      setCoordinateOrderReviewVisible(false);
       updateCadastralGridPanel();
       trackEvent("clear_content_click");
-      showMessage("内容已清空。");
+      showMessage("内容已清空");
       input.focus();
     }
 
@@ -11079,8 +11355,10 @@ ${placemarks}
 
         const warnings = getChatCoordinateWarnings(pairs);
         if (warnings.includes("possible swapped lat/lon")) {
+          setCoordinateOrderReviewVisible(true);
           showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 聊天坐标点；存在 possible swapped lat/lon 风险，请核对经纬度顺序。`, true, 7000);
         } else {
+          setCoordinateOrderReviewVisible(false);
           showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 聊天坐标点。`);
         }
         return;
@@ -11230,6 +11508,15 @@ ${placemarks}
         showMessage("图片预览失败，但会继续尝试识别。", true);
       }
 
+      const currentVisitorId = ensureVisitorId();
+
+      if (!currentVisitorId) {
+        imageInput.value = "";
+        showMessage("用户识别码初始化失败，请刷新页面后重试。", true);
+        setRecognitionStatus("用户识别码初始化失败，请刷新页面后重试。", "error");
+        return;
+      }
+
       await loadUserConfig();
 
       if (!canUse("aiOcrEnabled", "当前用户暂未开通图片识别。")) {
@@ -11240,6 +11527,7 @@ ${placemarks}
       imageInput.disabled = true;
       supportPanel.style.display = "none";
       clearUploadMessage();
+      setCoordinateOrderReviewVisible(false);
       showRecognitionProgress("正在上传图片...", "loading");
       trackEvent("image_upload_select", {
         fileSize: file.size,
@@ -11251,7 +11539,7 @@ ${placemarks}
       try {
         const formData = new FormData();
         formData.append("image", file);
-        formData.append("visitorId", visitorId);
+        formData.append("visitorId", currentVisitorId);
         formData.append("userCode", userCode);
 
         appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
@@ -11262,7 +11550,7 @@ ${placemarks}
         const response = await fetch("/api/recognize-coordinates", {
           method: "POST",
           headers: getSourceHeaders({
-            "x-visitor-id": visitorId
+            "x-visitor-id": currentVisitorId
           }),
           body: formData
         });
@@ -11366,6 +11654,7 @@ ${placemarks}
           ? (data.kyrgyzGk?.integrity || analyzeKyrgyzGkRows(kyrgyzGkRows))
           : null;
         const isBftmProjected = data.precisionMode === "bftm-projected-x-y";
+        const hasOrderReview = hasCoordinateOrderReviewSignal(data);
 
         if (!isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
           const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
@@ -11382,16 +11671,15 @@ ${placemarks}
         // Coordinate recognition must follow COORDINATE_TYPE_REGISTRY.md.
         // Newly verified types must be registered there without breaking stable paths.
         // Stable coordinate display path:
-        // 1. Handwritten DMS: rawText -> recognizedLines -> groupEveryFourLinesWhenLikely(); keep original DMS display.
-        // 2. Standard DMS tables: keep visual-model DMS table display; W/O/Ouest stays negative longitude internally.
-        // 3. BFTM/X-Y: keep projected X,Y text and never let decimal extraction override it.
-        // 4. Madagascar cadastral grid: display only num | XV | YV; KML later converts EPSG:29702 corners to WGS84.
-        // 5. MGRS / UTM Grid Reference: display raw MGRS plus WGS84/KML columns; KML uses converted WGS84.
-        // 6. Mozambique Portuguese geographic tables: display WGS84 lon,lat parsed from Latitude/Longitude DMS columns.
-        // 7. WGS84 table coordinates: when headers say longitude/latitude, source is lon,lat and KML stays lon,lat,0.
-        // 8. WGS84 chat coordinates: display label | WGS84 | KML; source is lat,lon and KML is lon,lat,0.
-        // 9. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
-        // 10. Plain decimal lon/lat: use the ordinary polygon path only.
+        // 1. Standard DMS tables: keep visual-model DMS table display; W/O/Ouest stays negative longitude internally.
+        // 2. BFTM/X-Y: keep projected X,Y text and never let decimal extraction override it.
+        // 3. Madagascar cadastral grid: display only num | XV | YV; KML later converts EPSG:29702 corners to WGS84.
+        // 4. MGRS / UTM Grid Reference: display raw MGRS plus WGS84/KML columns; KML uses converted WGS84.
+        // 5. Mozambique Portuguese geographic tables: display WGS84 lon,lat parsed from Latitude/Longitude DMS columns.
+        // 6. WGS84 table coordinates: when headers say longitude/latitude, source is lon,lat and KML stays lon,lat,0.
+        // 7. WGS84 chat coordinates: display label | WGS84 | KML; source is lat,lon and KML is lon,lat,0.
+        // 8. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
+        // 9. Plain decimal lon/lat: use the ordinary polygon path only.
         // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, mgrsText, mozambiqueText, wgs84TableText, chatText, or kyrgyzGkText.
         const finalCoordinates = isDmsGrouped
           ? (data.coordinates || dmsCoordinates || "")
@@ -11455,6 +11743,7 @@ ${placemarks}
         rememberState();
         input.value = finalCoordinates;
         coordinateOrder.value = "auto";
+        setCoordinateOrderReviewVisible(hasOrderReview);
         updateCadastralGridPanel();
         if (isDmsGrouped) {
           setInternalKmlSourceFromGroups(getDelimitedCoordinateGroupsFromText(finalCoordinates));
