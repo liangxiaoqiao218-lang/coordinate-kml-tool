@@ -794,11 +794,11 @@
 
     .coordinate-workspace .workspace-head {
       display: block;
-      margin-bottom: 14px;
+      margin-bottom: 18px;
     }
 
     .coordinate-workspace .workspace-head label {
-      margin-bottom: 4px;
+      margin-bottom: 6px;
       color: #0f172a;
       font-size: 24px;
       font-weight: 900;
@@ -872,17 +872,18 @@
 
     .coordinate-input-shell {
       overflow: hidden;
-      border: 1px solid #b7c7d8;
+      border: 1px solid #cbd5e1;
       border-radius: 14px;
       background: #ffffff;
-      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.04);
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.035);
     }
 
     .coordinate-input-footer {
       display: grid;
       gap: 12px;
-      padding: 14px;
+      padding: 14px 16px 16px;
       border-top: 1px solid #e2e8f0;
+      background: #fbfdff;
     }
 
     textarea {
@@ -901,7 +902,7 @@
 
     #coordinateInput {
       min-height: 250px;
-      padding: 22px 52px 18px 22px;
+      padding: 22px 56px 18px 22px;
       border: 0;
       border-radius: 0;
       background: #ffffff;
@@ -937,7 +938,7 @@
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 10px;
-      margin-top: 12px;
+      margin-top: 14px;
     }
 
     .settings-grid .panel {
@@ -945,6 +946,8 @@
     }
 
     .setting-panel {
+      padding: 12px;
+      border-color: #e2e8f0;
       background: #f8fafc;
       box-shadow: none;
     }
@@ -952,52 +955,6 @@
     .setting-panel label {
       color: #475569;
       font-size: 14px;
-    }
-
-    .aux-section {
-      margin-top: 14px;
-      border-top: 1px solid #e2e8f0;
-      border-bottom: 1px solid #e2e8f0;
-      background: transparent;
-    }
-
-    .aux-section + .aux-section,
-    .aux-section + .debug-panel,
-    .debug-panel + .aux-section {
-      margin-top: 0;
-      border-top: 0;
-    }
-
-    .aux-section summary {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      min-height: 54px;
-      cursor: pointer;
-      color: #0f172a;
-      font-weight: 800;
-      list-style: none;
-    }
-
-    .aux-section summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .aux-section summary::after {
-      content: "›";
-      color: #64748b;
-      font-size: 24px;
-      font-weight: 400;
-      transform: rotate(0deg);
-      transition: transform 0.18s ease;
-    }
-
-    .aux-section[open] summary::after {
-      transform: rotate(90deg);
-    }
-
-    .aux-section:not([open]) .settings-grid {
-      display: none;
     }
 
     .upload-box {
@@ -1191,7 +1148,7 @@
     .image-preview {
       display: none;
       margin-top: 12px;
-      padding: 10px 0 0;
+      padding: 12px 0 0;
       border: 0;
       border-top: 1px solid #e2e8f0;
       border-radius: 0;
@@ -2417,9 +2374,39 @@
       display: none;
     }
 
+    .debug-panel summary {
+      list-style: none;
+      cursor: pointer;
+    }
+
+    .debug-panel summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .debug-title-row {
+      margin-bottom: 10px;
+    }
+
     .debug-panel strong {
       display: block;
-      margin-bottom: 8px;
+      margin-bottom: 0;
+    }
+
+    .debug-copy-button {
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #0f766e;
+      font-size: 13px;
+      font-weight: 800;
+      box-shadow: none;
+    }
+
+    .debug-copy-button:hover {
+      background: #ecfdf5;
+      border-color: #99f6e4;
     }
 
     .debug-panel textarea {
@@ -3628,12 +3615,12 @@
 
       .upload-box {
         max-height: 180px;
-        margin-top: 10px;
-        padding: 9px 12px;
+        margin-top: 0;
+        padding: 0;
       }
 
       .coordinate-upload-card {
-        padding: 14px 12px;
+        padding: 0;
       }
 
       .coordinate-upload-icon {
@@ -3678,7 +3665,7 @@
       }
 
       .coordinate-workspace .workspace-head {
-        margin-bottom: 10px;
+        margin-bottom: 18px;
       }
 
       .coordinate-workspace .workspace-head label {
@@ -3692,7 +3679,7 @@
 
       #coordinateInput {
         min-height: 250px;
-        padding: 22px 50px 18px 18px;
+        padding: 20px 50px 18px 16px;
       }
 
       .workspace-tools {
@@ -3703,7 +3690,7 @@
       }
 
       .coordinate-input-footer {
-        padding: 12px;
+        padding: 14px 16px 16px;
       }
 
       .coordinate-upload-trigger {
@@ -3723,10 +3710,6 @@
       .recognition-status {
         min-height: 52px;
         padding: 12px;
-      }
-
-      .aux-section summary {
-        min-height: 56px;
       }
 
       .buttons,
@@ -4030,12 +4013,13 @@
 
     <button type="button" class="primary-action kml-download-action" onclick="downloadKml()">&#29983;&#25104; KML</button>
 
-    <div id="debugPanel" class="panel debug-panel">
-      <div class="panel-title-row">
+    <details id="debugPanel" class="panel debug-panel" open>
+      <summary class="panel-title-row debug-title-row">
         <strong>&#26597;&#30475;&#35782;&#21035;&#35814;&#24773;</strong>
-      </div>
+        <button type="button" class="debug-copy-button" onclick="event.preventDefault(); event.stopPropagation(); copyDebugText()">&#10697; &#22797;&#21046;&#35814;&#24773;</button>
+      </summary>
       <textarea id="debugText" readonly></textarea>
-    </div>
+    </details>
 
     <select id="coordinateOrder" hidden>
       <option value="auto" selected>自动判断</option>
@@ -4054,9 +4038,7 @@
     <div id="message" class="message"></div>
     <div id="toast" class="toast"></div>
 
-    <details class="aux-section">
-      <summary>&#39640;&#32423;&#35774;&#32622;</summary>
-      <div class="settings-grid">
+    <div class="settings-grid">
       <div class="panel setting-panel">
         <label for="coordinateFormat">格式转换</label>
         <select id="coordinateFormat">
@@ -4075,8 +4057,7 @@
           <option value="Polygon">自动识别：Polygon</option>
         </select>
       </div>
-      </div>
-    </details>
+    </div>
 
     <section class="help">
       <strong>坐标说明：</strong><br />
@@ -6221,6 +6202,9 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function setDebug(text) {
       debugPanel.style.display = "block";
+      if ("open" in debugPanel) {
+        debugPanel.open = true;
+      }
       debugText.textContent = text;
     }
 
@@ -8109,7 +8093,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return;
       }
 
-      copyText(debugText.value, "识别调试信息已复制。");
+      copyText(debugText.value, "识别详情已复制");
     }
 
     function cleanNumberText(text) {
