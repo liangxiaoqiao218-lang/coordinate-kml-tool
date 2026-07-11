@@ -8173,12 +8173,16 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
     || fallbackUsed
     || reviewWarnings.length > 0
     || Boolean(options.forceRequiresReview);
+  const forceGroupReview = coordinateType === "handwritten_dms_experimental"
+    || precisionMode === "local-ocr-dms-fallback"
+    || fallbackUsed
+    || Boolean(options.forceRequiresReview);
   const rawGroups = Array.isArray(result.groups) ? result.groups : [];
   const groups = rawGroups.map((group, index) => normalizeCoordinateEngineV2Group({
     ...group,
     group_id: group.group_id || `group_${index + 1}`,
     group_name: group.group_name || `矿地${index + 1}`
-  }, coordinateType, forcedReview, validationContext));
+  }, coordinateType, forceGroupReview, validationContext));
   const missingGroups = groups.length === 0;
   const requiresReview = Boolean(
     forcedReview
