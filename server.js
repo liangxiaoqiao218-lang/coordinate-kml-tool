@@ -3299,13 +3299,103 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
   };
 }
 
-function shouldRetryHandwrittenDmsOnTimeout(file, hint = "") {
+function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) {
   const value = `${file?.originalname || ""} ${hint || ""}`;
   const folded = foldSearchText(value);
+  const ocrText = String(options.ocrText || "");
+  const mimeType = String(file?.mimetype || "").toLowerCase();
+  const fileSize = Number(file?.size || file?.buffer?.length || 0);
+  const highConfidenceNameOrHint = /手写|手寫|鎵嬪啓|HANDWRITTEN_DMS|handwritten|hand-written|hand\s*written|manual\s*dms|manuscript|handwritten_dms|handwritten-dms/i.test(value)
+    || /handwritten[_\s-]*dms|hand\s*written[_\s-]*dms|manuscript/.test(folded);
 
-  return /手写|手寫|鎵嬪啓|HANDWRITTEN_DMS|handwritten|hand-written|hand\s*written|manual\s*dms|handwritten_dms|handwritten-dms/i.test(value)
-    || /handwritten[_\s-]*dms|hand\s*written[_\s-]*dms/.test(folded);
+  const evidence = {
+    shouldRetry: highConfidenceNameOrHint,
+    reason: highConfidenceNameOrHint ? "filename_or_hint" : "",
+    highConfidenceNameOrHint,
+    hasImageMime: /^image\/(?:jpe?g|png|webp|bmp|tiff?)$/.test(mimeType),
+    fileSize,
+    ocrTextAvailable: Boolean(ocrText.trim()),
+    score: 0,
+    numericTokenCount: 0,
+    directionTokenCount: 0,
+    dmsSymbolCount: 0,
+    dmsPairLineCount: 0,
+    damagedDmsLineCount: 0,
+    tableBoundaryHints: 0,
+    stableDetectorMatched: false,
+    stableDetectorReasons: []
+  };
+
+  if (evidence.shouldRetry || !evidence.ocrTextAvailable) {
+    return evidence;
+  }
+
+  const addStableReason = (condition, reason) => {
+    if (condition) evidence.stableDetectorReasons.push(reason);
+  };
+
+  addStableReason(getCadastralGridInfo(ocrText).isCadastralGrid, "madagascar_cadastral_grid");
+  addStableReason(getMgrsInfo(ocrText).isMgrs, "mgrs");
+  addStableReason(getMozambiqueGeographicInfo(ocrText).isMozambiqueGeographicTable, "mozambique_geographic_table");
+  addStableReason(hasCoteDIvoireGeographicDmsCue(ocrText), "cote_divoire_geographic_dms_table");
+  addStableReason(getWgs84TableCoordinatesInfo(ocrText).isWgs84TableCoordinates, "wgs84_table");
+  addStableReason(getKyrgyzGkInfo(ocrText).isKyrgyzGk, "kyrgyz_gk");
+  addStableReason(hasBftmContext(ocrText) || getBftmLongTableInfo(ocrText, extractCoordinateLines(ocrText)).isBftmLongTable, "bftm");
+  addStableReason(getDmsGroupedCoordinateInfo(ocrText).output, "standard_dms_grouped");
+  addStableReason(getFrenchPerimeterDmsInfo(ocrText).isFrenchPerimeterDms, "french_perimeter_dms");
+  addStableReason(looksLikePointAzDmsTable(ocrText), "point_az_dms_table");
+  addStableReason(looksLikeCoordinateTable(ocrText), "printed_coordinate_table");
+
+  evidence.stableDetectorMatched = evidence.stableDetectorReasons.length > 0;
+  if (evidence.stableDetectorMatched) {
+    evidence.reason = "stable_detector_blocked";
+    return evidence;
+  }
+
+  const lines = normalizeText(ocrText)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  evidence.numericTokenCount = (ocrText.match(/\d+/g) || []).length;
+  evidence.directionTokenCount = (ocrText.match(/[NSEWO]/gi) || []).length;
+  evidence.dmsSymbolCount = (ocrText.match(/[°º'′″"]/g) || []).length;
+  evidence.tableBoundaryHints = countTableBoundaryHints(ocrText);
+
+  for (const line of lines) {
+    const digitCount = (line.match(/\d/g) || []).length;
+    const hasDirection = /[NSEWO]|\\[NW]|\/W|\/N/i.test(line);
+    const hasDegreeLike = /[°º]|(?:\d\s*[oO]\s*[fF])|(?:\b[oO0]F\b)|(?:[Ff]x°)|(?:°\s*\d)|(?:\d+\s*[.]\s*\d+\s*[.]\s*\d+)/.test(line);
+    const looseParts = getLooseDmsPartsFromLine(line);
+
+    if (looseParts.length >= 2) {
+      evidence.dmsPairLineCount += 1;
+    }
+
+    if (digitCount >= 4 && hasDirection && hasDegreeLike) {
+      evidence.damagedDmsLineCount += 1;
+    }
+  }
+
+  if (evidence.hasImageMime) evidence.score += 1;
+  if (evidence.numericTokenCount >= 18) evidence.score += 1;
+  if (evidence.directionTokenCount >= 4) evidence.score += 1;
+  if (evidence.dmsSymbolCount >= 3 || evidence.damagedDmsLineCount >= 2) evidence.score += 1;
+  if (evidence.dmsPairLineCount >= 3) evidence.score += 2;
+  if (evidence.damagedDmsLineCount >= 3) evidence.score += 2;
+  if (evidence.tableBoundaryHints <= 1) evidence.score += 1;
+  if (looksLikeCorrectionContext(ocrText)) evidence.score += 1;
+
+  const hasEnoughDmsStructure = evidence.dmsPairLineCount >= 3 || evidence.damagedDmsLineCount >= 3;
+  evidence.shouldRetry = evidence.score >= 5 && hasEnoughDmsStructure;
+  evidence.reason = evidence.shouldRetry ? "ocr_dms_structure" : "insufficient_evidence";
+  return evidence;
 }
+
+function shouldRetryHandwrittenDmsOnTimeout(file, hint = "", options = {}) {
+  return getHandwrittenDmsTimeoutRoutingEvidence(file, hint, options).shouldRetry;
+}
+
 
 function groupEveryFourLinesWhenLikely(text, sourceText = "") {
   // Stable path: handwritten DMS uses rawText-derived recognizedLines and this four-line grouping.
@@ -12720,13 +12810,45 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         throw error;
       }
 
-      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file && shouldRetryHandwrittenDmsOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")) {
+      let timeoutRoutingOcrFallback = null;
+      let handwrittenTimeoutRoutingEvidence = null;
+      const isAliyunTimeout = error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT";
+      const timeoutRoutingHint = req.body?.rawHint || req.body?.hint || "";
+
+      if (isAliyunTimeout && aliyunApiKey && req.file) {
+        handwrittenTimeoutRoutingEvidence = getHandwrittenDmsTimeoutRoutingEvidence(req.file, timeoutRoutingHint);
+
+        if (!handwrittenTimeoutRoutingEvidence.shouldRetry) {
+          try {
+            timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
+            handwrittenTimeoutRoutingEvidence = getHandwrittenDmsTimeoutRoutingEvidence(req.file, timeoutRoutingHint, {
+              ocrText: timeoutRoutingOcrFallback.rawText
+            });
+            console.log("Handwritten DMS timeout routing evidence:", {
+              fileName: req.file?.originalname || "",
+              ...handwrittenTimeoutRoutingEvidence,
+              ocrPreview: String(timeoutRoutingOcrFallback.rawText || "").slice(0, 300)
+            });
+          } catch (routingOcrError) {
+            console.error("Handwritten DMS timeout routing OCR failed:", routingOcrError.message || routingOcrError);
+          }
+        } else {
+          console.log("Handwritten DMS timeout routing evidence:", {
+            fileName: req.file?.originalname || "",
+            ...handwrittenTimeoutRoutingEvidence
+          });
+        }
+      }
+
+      if (isAliyunTimeout && aliyunApiKey && req.file && handwrittenTimeoutRoutingEvidence?.shouldRetry) {
         const handwrittenDmsDebug = {
           handwrittenDmsRetryStarted: true,
           handwrittenDmsRetrySuccess: false,
           handwrittenDmsRetryTimeoutMs: 80000,
           handwrittenDmsRetryRows: 0,
-          handwrittenDmsFallbackBlocked: true
+          handwrittenDmsFallbackBlocked: true,
+          handwrittenDmsRoutingReason: handwrittenTimeoutRoutingEvidence.reason || "",
+          handwrittenDmsRoutingScore: handwrittenTimeoutRoutingEvidence.score || 0
         };
 
         try {
@@ -12842,7 +12964,7 @@ If fewer than four handwritten DMS coordinate rows are readable, output only: ${
         });
       }
 
-      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file) {
+      if (isAliyunTimeout && aliyunApiKey && req.file) {
         try {
           console.log("Aliyun timed out; retrying Kyrgyzstan GK visual table extraction before local OCR fallback.");
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
@@ -12929,7 +13051,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
         }
       }
 
-      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file && shouldRetryWgs84TableOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")) {
+      if (isAliyunTimeout && aliyunApiKey && req.file && shouldRetryWgs84TableOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")) {
         try {
           console.log("Aliyun timed out; retrying WGS84 longitude/latitude table visual extraction before local OCR fallback.", {
             fileName: req.file?.originalname || "",
@@ -13032,7 +13154,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       }
 
-      const fallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
+      const fallback = timeoutRoutingOcrFallback || await runLocalOcrFallback(req.file.buffer, errorMessage);
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
       const fallbackMgrs = getMgrsInfo(fallback.rawText);
       let fallbackMozambiqueGeographicTable = getMozambiqueGeographicInfo(fallback.rawText);
