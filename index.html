@@ -934,27 +934,24 @@
       box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
     }
 
-    .settings-grid {
+    .format-setting-row {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
-      margin-top: 14px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+      padding: 12px 0 0;
+      border-top: 1px solid #e2e8f0;
     }
 
-    .settings-grid .panel {
-      margin-top: 0;
-    }
-
-    .setting-panel {
-      padding: 12px;
-      border-color: #e2e8f0;
-      background: #f8fafc;
-      box-shadow: none;
-    }
-
-    .setting-panel label {
+    .format-setting-row label {
       color: #475569;
       font-size: 14px;
+      font-weight: 800;
+    }
+
+    .format-setting-row select {
+      min-height: 42px;
+      background: #ffffff;
     }
 
     .upload-box {
@@ -2135,14 +2132,15 @@
     .recognition-status {
       display: none;
       align-items: center;
-      gap: 8px;
+      flex-wrap: wrap;
+      gap: 8px 10px;
       width: 100%;
-      margin: 2px 0 8px;
-      padding: 7px 10px;
-      min-height: 34px;
-      border: 1px solid #cfe0f5;
-      border-radius: 9px;
-      background: #f8fbff;
+      margin: 12px 0 0;
+      padding: 10px 12px;
+      min-height: 48px;
+      border: 1px solid #bbf7d0;
+      border-radius: 12px;
+      background: #f8fff9;
       color: #334155;
       font-size: 14px;
       font-weight: 700;
@@ -2167,16 +2165,28 @@
       border-top-color: #2563eb;
     }
 
-    .recognition-status.success {
+    .recognition-status.success,
+    .recognition-status.summary {
       border-color: #bbf7d0;
       background: #f8fff9;
       color: #166534;
     }
 
-    .recognition-status.success::before {
+    .recognition-status.success::before,
+    .recognition-status.summary::before {
       border: 0;
       background: #16a34a;
       animation: none;
+    }
+
+    .recognition-status.summary.warning {
+      border-color: #fed7aa;
+      background: #fffaf0;
+      color: #9a3412;
+    }
+
+    .recognition-status.summary.warning::before {
+      background: #f59e0b;
     }
 
     .recognition-status.error {
@@ -2193,6 +2203,43 @@
       min-width: 0;
       flex: 1 1 auto;
       overflow-wrap: anywhere;
+    }
+
+    .recognition-summary-label {
+      color: #14532d;
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .recognition-status.summary.warning .recognition-summary-label {
+      color: #9a3412;
+    }
+
+    .recognition-summary-meta {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .recognition-summary-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: rgba(22, 163, 74, 0.08);
+      color: #166534;
+      font-size: 13px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .recognition-status.summary.warning .recognition-summary-pill {
+      background: rgba(245, 158, 11, 0.1);
+      color: #9a3412;
     }
 
     .recognition-copy-button {
@@ -3497,12 +3544,18 @@
     .help {
       margin-top: 18px;
       padding: 14px;
-      border-left: 4px solid #2563eb;
+      border: 1px solid #e2e8f0;
       border-radius: 8px;
       background: #ffffff;
       color: #475569;
       line-height: 1.7;
-      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+      box-shadow: none;
+    }
+
+    .help summary {
+      cursor: pointer;
+      color: #0f172a;
+      font-weight: 900;
     }
 
     .help strong {
@@ -3529,7 +3582,7 @@
       #coordinatePage .cadastral-grid-panel,
       #coordinatePage .kml-download-action,
       #coordinatePage .debug-panel,
-      #coordinatePage .settings-grid {
+      #coordinatePage .format-setting-row {
         width: 100%;
         max-width: 100%;
         margin-left: auto;
@@ -3713,7 +3766,7 @@
       }
 
       .buttons,
-      .settings-grid,
+      .format-setting-row,
       .gold-input-grid,
       .gold-result-main,
       .support-actions {
@@ -3970,7 +4023,7 @@
         <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
       </div>
 
-      <div class="panel coordinate-workspace">
+      <section class="coordinate-workspace">
         <div class="workspace-head">
           <label for="coordinateInput">&#22352;&#26631;&#24037;&#20316;&#21306;</label>
           <p class="workspace-subtitle">&#31896;&#36148;&#22352;&#26631;&#25110;&#19978;&#20256;&#22270;&#29255;&#29983;&#25104; KML</p>
@@ -4001,7 +4054,7 @@
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
       <div id="recognitionStatus" class="recognition-status"></div>
 
@@ -4038,34 +4091,31 @@
     <div id="message" class="message"></div>
     <div id="toast" class="toast"></div>
 
-    <div class="settings-grid">
-      <div class="panel setting-panel">
-        <label for="coordinateFormat">格式转换</label>
-        <select id="coordinateFormat">
-          <option value="dms" selected>转为度分秒（默认）</option>
-          <option value="dm">转为度分</option>
-          <option value="degree">转为度</option>
-          <option value="standard">标准化为经度,纬度</option>
-        </select>
-      </div>
-      <div class="panel setting-panel">
-        <label for="exportType">导出类型</label>
-        <select id="exportType" disabled>
-          <option value="" selected>自动识别：等待坐标</option>
-          <option value="Point">自动识别：Point</option>
-          <option value="LineString">自动识别：LineString</option>
-          <option value="Polygon">自动识别：Polygon</option>
-        </select>
-      </div>
-    </div>
+    <select id="exportType" hidden>
+      <option value="" selected>自动识别：等待坐标</option>
+      <option value="Point">自动识别：Point</option>
+      <option value="LineString">自动识别：LineString</option>
+      <option value="Polygon">自动识别：Polygon</option>
+    </select>
 
-    <section class="help">
-      <strong>坐标说明：</strong><br />
+    <details class="help">
+      <summary>坐标说明</summary>
+      <div class="format-setting-row">
+        <div>
+          <label for="coordinateFormat">格式转换</label>
+          <select id="coordinateFormat">
+            <option value="dms" selected>转为度分秒（默认）</option>
+            <option value="dm">转为度分</option>
+            <option value="degree">转为度</option>
+            <option value="standard">标准化为经度,纬度</option>
+          </select>
+        </div>
+      </div>
       一行就是一个点，按矿区边界顺序放好即可。<br />
       常见写法都可以先放进来：小数、度分、度分秒都支持。<br />
       在“格式转换”里选择“标准化为经度,纬度”，会整理成地图最常用的写法。<br />
       生成矿区范围时，工具会按当前顺序连线，并自动闭合成一个面。
-    </section>
+    </details>
     <div class="manual-support-link">
       <button type="button" class="text-link-button" onclick="toggleManualSupport()">识别不准？点击这里人工协助识别</button>
     </div>
@@ -5717,6 +5767,180 @@ Au值 = 纯度 × 10 后取整数</div>
     function clearUploadMessage() {
       uploadMessage.style.display = "none";
       uploadMessage.innerHTML = "";
+    }
+
+    function formatRecognitionSummaryArea(value) {
+      const area = Number(value);
+      if (!Number.isFinite(area) || area <= 0) {
+        return "";
+      }
+      if (area < 1) {
+        return `${area.toFixed(2)} ha`;
+      }
+      if (area >= 1000) {
+        return `${area.toLocaleString("en-US", { maximumFractionDigits: 1 })} ha`;
+      }
+      return `${Number(area.toFixed(2)).toString()} ha`;
+    }
+
+    function getRecognitionSummaryType(meta = {}) {
+      const value = String(meta.coordinateType || meta.precisionMode || "").trim();
+      const labels = {
+        "mozambique_geographic_table": "Mozambique Geographic Table",
+        "mozambique-geographic-table": "Mozambique Geographic Table",
+        "cote_divoire_geographic_dms_table": "Côte d’Ivoire DMS Table",
+        "cote-divoire-geographic-dms-table": "Côte d’Ivoire DMS Table",
+        "kyrgyzstan_gk": "Kyrgyz GK",
+        "kyrgyz-gk-point-x-y": "Kyrgyzstan GK",
+        "madagascar_cadastral_grid": "Madagascar Grid",
+        "cadastral-grid": "Madagascar Grid",
+        "mgrs_utm_grid_reference": "MGRS",
+        "mgrs-utm-grid-reference": "MGRS",
+        "bftm_xy": "BFTM",
+        "bftm-projected-x-y": "BFTM",
+        "standard_dms_table": "DMS",
+        "dms-grouped-coordinates": "DMS",
+        "decimal_latlon": "经纬度",
+        "wgs84-table-coordinates": "经纬度",
+        "wgs84-chat-coordinates": "经纬度",
+        "handwritten_dms_experimental": "手写 DMS（需核对）",
+        "handwritten-dms-coordinates": "手写 DMS（需核对）"
+      };
+      return labels[value] || "";
+    }
+
+    function normalizeRecognitionSummaryToken(value) {
+      return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[’‘`]/g, "'")
+        .toLowerCase();
+    }
+
+    function getRecognitionSummaryTypeCountry(coordinateType = "") {
+      const value = String(coordinateType || "").toLowerCase();
+      if (/mozambique/.test(value)) return "Mozambique";
+      if (/cote|ivoire/.test(value)) return "Côte d’Ivoire";
+      if (/kyrgyz/.test(value)) return "Kyrgyzstan";
+      if (/madagascar|cadastral/.test(value)) return "Madagascar";
+      if (/bftm|burkina/.test(value)) return "Burkina Faso";
+      return "";
+    }
+
+    function getRecognitionSummaryOrderStatus(engine = {}) {
+      const validation = engine.coordinate_validation_report || {};
+      const statuses = Array.isArray(validation.order_statuses) ? validation.order_statuses : [];
+      return String(engine.order_status || validation.order_status || statuses.find(Boolean) || "");
+    }
+
+    function getRecognitionSummaryCountry(meta = {}) {
+      const engine = meta.engine || {};
+      const validation = engine.coordinate_validation_report || {};
+      const skb = engine.spatial_knowledge_report || {};
+      const typeCountry = getRecognitionSummaryTypeCountry(meta.coordinateType || meta.precisionMode || "");
+      if (!typeCountry || getRecognitionSummaryOrderStatus(engine) === "ambiguous") {
+        return "";
+      }
+
+      const expected = normalizeRecognitionSummaryToken(typeCountry);
+      const validationText = normalizeRecognitionSummaryToken(JSON.stringify(validation));
+      const skbText = normalizeRecognitionSummaryToken(JSON.stringify(skb));
+      const validatorSupports = validationText.includes(expected);
+      const skbSupports = ["ranked", "confident"].includes(String(skb.status || "").toLowerCase()) && skbText.includes(expected);
+
+      return validatorSupports && skbSupports ? typeCountry : "";
+    }
+
+    function getRecognitionSummaryReviewState(meta = {}) {
+      const engine = meta.engine || {};
+      const groups = Array.isArray(engine.groups) ? engine.groups : [];
+      const orderStatus = getRecognitionSummaryOrderStatus(engine);
+      const reviewGroupCount = groups.filter(group => group?.requires_review).length;
+      return {
+        orderStatus,
+        reviewGroupCount,
+        requiresReview: Boolean(meta.requiresReview || engine.requires_review || reviewGroupCount > 0 || orderStatus === "ambiguous")
+      };
+    }
+
+    function isRecognitionSummaryGroupLegal(group = {}) {
+      const validationText = JSON.stringify(group.validation || {}).toLowerCase();
+      const warningText = Array.isArray(group.warnings) ? group.warnings.join(" ") : "";
+      return Boolean(group.kml_ready)
+        && !group.requires_review
+        && !validationText.includes("\"self_intersecting\":true")
+        && !/自交|self.?intersect/i.test(warningText);
+    }
+
+    function getRecognitionSummaryArea(meta = {}) {
+      const engine = meta.engine || {};
+      const groups = Array.isArray(engine.groups) ? engine.groups : [];
+      const review = getRecognitionSummaryReviewState(meta);
+      const geometry = String(meta.geometry || groups[0]?.geometry || "").toLowerCase();
+      if (geometry !== "polygon" || review.requiresReview || groups.length === 0 || !groups.every(isRecognitionSummaryGroupLegal)) {
+        return "";
+      }
+      const areas = groups.map(group => Number(group.calculated_area_ha)).filter(value => Number.isFinite(value) && value > 0);
+      if (areas.length !== groups.length) {
+        return "";
+      }
+      return formatRecognitionSummaryArea(areas.reduce((sum, value) => sum + value, 0));
+    }
+
+    function setRecognitionSummary(meta = {}) {
+      clearTimeout(recognitionStatusHideTimer);
+      const engine = meta.engine || {};
+      const groups = Array.isArray(engine.groups) ? engine.groups : [];
+      const count = Number(meta.count) || 0;
+      const geometryValue = String(meta.geometry || inferGeometry(count) || "").trim();
+      const geometryLabels = {
+        point: "Point",
+        linestring: "LineString",
+        line: "LineString",
+        polygon: "Polygon"
+      };
+      const geometry = geometryLabels[geometryValue.toLowerCase()] || geometryValue;
+      const groupCount = Number(meta.groupCount || groups.length) || 0;
+      const review = getRecognitionSummaryReviewState(meta);
+      const coordinateType = getRecognitionSummaryType(meta);
+      const country = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryCountry(meta);
+      const area = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryArea(meta);
+      const groupText = groupCount > 1 ? `${groupCount} 组矿地` : "";
+      const reviewText = review.orderStatus === "ambiguous"
+        ? "坐标方向需要确认"
+        : review.reviewGroupCount > 0
+          ? `其中 ${review.reviewGroupCount} 组需要核对`
+          : review.requiresReview
+            ? "需要核对"
+            : "";
+      const chips = [
+        geometry || inferGeometry(count),
+        groupText,
+        `${count} 个坐标`,
+        reviewText,
+        coordinateType,
+        country,
+        area
+      ].filter(Boolean).slice(0, 5);
+
+      recognitionStatus.style.display = "flex";
+      recognitionStatus.className = `recognition-status summary${review.requiresReview ? " warning" : ""}`;
+      recognitionStatus.replaceChildren();
+
+      const label = document.createElement("span");
+      label.className = "recognition-summary-label";
+      label.textContent = "已识别";
+      recognitionStatus.appendChild(label);
+
+      const chipWrap = document.createElement("span");
+      chipWrap.className = "recognition-summary-meta";
+      chips.forEach(text => {
+        const chip = document.createElement("span");
+        chip.className = "recognition-summary-pill";
+        chip.textContent = text;
+        chipWrap.appendChild(chip);
+      });
+      recognitionStatus.appendChild(chipWrap);
     }
 
     function setRecognitionStatus(text = "", type = "") {
@@ -11791,7 +12015,30 @@ ${placemarks}
         } else {
           showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。", false, COORDINATE_RECOGNITION_MESSAGE_MS);
         }
-        showRecognitionProgress("识别完成", "success", COORDINATE_RECOGNITION_MESSAGE_MS);
+        const summaryEngine = data.coordinateEngineV2 || data.coordinate_engine_v2 || {};
+        const summaryGroups = Array.isArray(summaryEngine.groups) ? summaryEngine.groups : [];
+        const summaryPointCount = isCadastralGrid
+          ? cadastralGridRows.length
+          : isMgrs
+            ? mgrsRows.length
+            : isMozambiqueGeographicTable
+              ? mozambiqueRows.length
+              : isWgs84TableCoordinates
+                ? wgs84TableRows.length
+                : isChatCoordinates
+                  ? chatRows.length
+                  : isKyrgyzGk
+                    ? kyrgyzGkRows.length
+                    : (summaryGroups.reduce((total, group) => total + (Array.isArray(group?.points) ? group.points.length : 0), 0) || countCoordinatePairsInGroups(getKmlCoordinateGroups()));
+        setRecognitionSummary({
+          count: summaryPointCount,
+          groupCount: summaryGroups.length,
+          geometry: summaryGroups[0]?.geometry || inferGeometry(summaryPointCount),
+          precisionMode: data.precisionMode || "",
+          coordinateType: summaryEngine.coordinate_type || "",
+          requiresReview: Boolean(summaryEngine.requires_review),
+          engine: summaryEngine
+        });
       } catch (error) {
         const publicErrorMessage = sanitizeUserFacingTechMessage(error.message);
         appendDebug(`错误信息：${publicErrorMessage}`);
