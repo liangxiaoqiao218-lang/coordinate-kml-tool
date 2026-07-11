@@ -1,0 +1,274 @@
+{
+  "schema_version": "coordinate_error_library_v1",
+  "status": "active",
+  "purpose": "Machine-readable library of real Coordinate Engine recognition bugs. Regression Runner should treat a matching historical bug recurrence as BLOCKER.",
+  "created_at": "2026-07-11",
+  "matching_policy": {
+    "default_severity_on_recurrence": "BLOCKER",
+    "match_keys": [
+      "sample_id",
+      "coordinate_type",
+      "precisionMode",
+      "pointCount",
+      "groupCount",
+      "requires_review",
+      "kml_ready",
+      "fallback_used",
+      "error_code"
+    ],
+    "notes": [
+      "A fixed bug is considered recurrent when the current actual result matches the library actual.match_conditions for the same sample_id or coordinate_type.",
+      "Open bugs remain visible in reports but should not be marked as regressions until a fix_commit is recorded.",
+      "Every bug that caused wrong KML, fallback takeover, timeout misrouting, point loss, wrong type, or unsafe kml_ready must be registered here."
+    ]
+  },
+  "required_fields": [
+    "error_id",
+    "sample_id",
+    "date",
+    "coordinate_type",
+    "image",
+    "expected",
+    "actual",
+    "root_cause",
+    "fix_commit",
+    "status",
+    "regression_case"
+  ],
+  "errors": [
+    {
+      "error_id": "CER-2026-07-11-001",
+      "sample_id": "handwritten_dms_001",
+      "date": "2026-07-11",
+      "coordinate_type": "handwritten_dms_experimental",
+      "image": "D:/关于西非的业务/测试素材/手写坐标.jpg",
+      "expected": {
+        "precisionMode": "handwritten-dms-coordinates",
+        "coordinate_type": "handwritten_dms_experimental",
+        "pointCount": 16,
+        "fallback_used": false,
+        "kml_ready": false,
+        "message": "Main vision timeout should route to HANDWRITTEN_DMS visual retry or fail clearly."
+      },
+      "actual": {
+        "precisionMode": "local-ocr-dms-fallback",
+        "coordinate_type": "decimal_latlon",
+        "pointCount": 0,
+        "fallback_used": true,
+        "error_code": "ALIYUN_TIMEOUT",
+        "match_conditions": {
+          "precisionMode": "local-ocr-dms-fallback",
+          "fallback_used": true
+        }
+      },
+      "root_cause": "Timeout routing depended too heavily on file.originalname and hint. If the same handwritten image was renamed to image-2.jpg, 03.jpg, or upload.jpg, shouldRetryHandwrittenDmsOnTimeout could miss the handwritten path and allow local OCR fallback.",
+      "fix_commit": "f5c9359",
+      "status": "fixed",
+      "regression_case": {
+        "baseline_sample_id": "handwritten_dms_001",
+        "runner_expectation": "precisionMode=handwritten-dms-coordinates; coordinate_type=handwritten_dms_experimental; pointCount=16; no local OCR final result",
+        "blocker_if_reappears": true
+      }
+    },
+    {
+      "error_id": "CER-2026-07-11-002",
+      "sample_id": "mozambique_tete_001",
+      "date": "2026-07-11",
+      "coordinate_type": "mozambique_geographic_table",
+      "image": "D:/关于西非的业务/测试素材/莫桑比克矿地.jpg",
+      "expected": {
+        "precisionMode": "mozambique-geographic-table",
+        "coordinate_type": "mozambique_geographic_table",
+        "pointCount": 22,
+        "groupCount": 1,
+        "fallback_used": false
+      },
+      "actual": {
+        "precisionMode": "wgs84-chat-coordinates",
+        "coordinate_type": "decimal_latlon",
+        "pointCount": 5,
+        "groupCount": 1,
+        "match_conditions": {
+          "precisionMode": "wgs84-chat-coordinates",
+          "coordinate_type": "decimal_latlon",
+          "pointCount": 5
+        }
+      },
+      "root_cause": "Mozambique pre-route detector relied on context or filename. Without Mozambique/Tete context, the collapsed geographic table could be interpreted as generic WGS84 chat coordinates.",
+      "fix_commit": "fe8fd1f",
+      "status": "fixed",
+      "regression_case": {
+        "baseline_sample_id": "mozambique_tete_001",
+        "runner_expectation": "precisionMode=mozambique-geographic-table; coordinate_type=mozambique_geographic_table; pointCount=22",
+        "blocker_if_reappears": true
+      }
+    },
+    {
+      "error_id": "CER-2026-07-11-003",
+      "sample_id": "cote_divoire_multi_001",
+      "date": "2026-07-11",
+      "coordinate_type": "cote_divoire_geographic_dms_table",
+      "image": "D:/关于西非的业务/测试素材/科特迪瓦4个矿区坐标.jpg",
+      "expected": {
+        "precisionMode": "cote-divoire-geographic-dms-table",
+        "coordinate_type": "cote_divoire_geographic_dms_table",
+        "groupCount": 4,
+        "pointCount": 16,
+        "reviewGroupIndexes": [
+          4
+        ],
+        "requires_review": true,
+        "kml_ready": false
+      },
+      "actual": {
+        "groupCount": 4,
+        "pointCount": 16,
+        "reviewGroupIndexes": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "match_conditions": {
+          "groupCount": 4,
+          "reviewGroupIndexes": [
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      },
+      "root_cause": "V2 top-level requires_review or warnings were effectively propagated into every group during normalization. Group review state was not limited to each group's own geometry and validation result.",
+      "fix_commit": "48d450a",
+      "status": "fixed",
+      "regression_case": {
+        "baseline_sample_id": "cote_divoire_multi_001",
+        "runner_expectation": "reviewGroupIndexes=[4]; first three groups kml_ready=true; fourth group self-intersection blocked",
+        "blocker_if_reappears": true
+      }
+    },
+    {
+      "error_id": "CER-2026-07-11-004",
+      "sample_id": "recognize_coordinates_fallback_timeout",
+      "date": "2026-07-11",
+      "coordinate_type": "unknown",
+      "image": null,
+      "expected": {
+        "error_code": "ALIYUN_TIMEOUT",
+        "message": "Fallback OCR may fail clearly, but must not crash with ReferenceError."
+      },
+      "actual": {
+        "error_code": "ALIYUN_TIMEOUT",
+        "message": "识别服务接口超时；备用OCR也失败：consumeCoordinateUsage is not defined",
+        "match_conditions": {
+          "error_message_contains": "consumeCoordinateUsage is not defined"
+        }
+      },
+      "root_cause": "consumeCoordinateUsage helper was defined in an inner scope and was unavailable to the fallback OCR catch branch.",
+      "fix_commit": "44bf4f4",
+      "status": "fixed",
+      "regression_case": {
+        "baseline_sample_id": null,
+        "runner_expectation": "No ReferenceError in /api/recognize-coordinates fallback OCR timeout path",
+        "blocker_if_reappears": true
+      }
+    },
+    {
+      "error_id": "CER-2026-07-11-005",
+      "sample_id": "cote_divoire_single_01",
+      "date": "2026-07-11",
+      "coordinate_type": "cote_divoire_geographic_dms_table",
+      "image": "D:/关于西非的业务/测试素材/科特迪瓦01.png",
+      "expected": {
+        "precisionMode": "cote-divoire-geographic-dms-table",
+        "coordinate_type": "cote_divoire_geographic_dms_table",
+        "groupCount": 1,
+        "pointCount": 4,
+        "requires_review": false,
+        "kml_ready": true
+      },
+      "actual": {
+        "precisionMode": "preserve-original-decimals-and-parse-dms",
+        "coordinate_type": "cote_divoire_geographic_dms_table",
+        "groupCount": 1,
+        "pointCount": 4,
+        "requires_review": false,
+        "kml_ready": true,
+        "match_conditions": {
+          "precisionMode": "preserve-original-decimals-and-parse-dms",
+          "coordinate_type": "cote_divoire_geographic_dms_table"
+        }
+      },
+      "root_cause": "Regression Runner smoke test shows V2 coordinate_type is correct but legacy precisionMode is not aligned with the Côte d'Ivoire V2 adapter expectation. Root cause not fixed yet.",
+      "fix_commit": null,
+      "status": "open",
+      "regression_case": {
+        "baseline_sample_id": "cote_divoire_single_01",
+        "runner_expectation": "precisionMode=cote-divoire-geographic-dms-table; coordinate_type=cote_divoire_geographic_dms_table",
+        "blocker_if_reappears": false
+      }
+    },
+    {
+      "error_id": "CER-2026-07-11-006",
+      "sample_id": "manual_decimal_lon_lat_ambiguous_001",
+      "date": "2026-07-11",
+      "coordinate_type": "decimal_latlon",
+      "image": null,
+      "expected": {
+        "order_status": "ambiguous",
+        "requires_review": true,
+        "kml_ready": false,
+        "message": "Naked decimal pairs with both axis orders geographically valid must not silently generate trusted KML."
+      },
+      "actual": {
+        "firstPoint": "10.79444444,-6.74805556,0",
+        "order_status": "as_parsed",
+        "requires_review": false,
+        "kml_ready": true,
+        "match_conditions": {
+          "firstPoint": "10.79444444,-6.74805556,0",
+          "requires_review": false,
+          "kml_ready": true
+        }
+      },
+      "root_cause": "Manual textarea input path used old frontend parser/download flow and did not enter Coordinate Engine V2 Order Resolver or Summary state.",
+      "fix_commit": null,
+      "status": "open_architecture",
+      "regression_case": {
+        "baseline_sample_id": null,
+        "runner_expectation": "Future unified text Coordinate Engine entry should return order_status=ambiguous unless strong evidence resolves lon/lat order.",
+        "blocker_if_reappears": false
+      }
+    },
+    {
+      "error_id": "CER-2026-07-11-007",
+      "sample_id": "handwritten_dms_prompt_protocol_001",
+      "date": "2026-07-11",
+      "coordinate_type": "handwritten_dms_experimental",
+      "image": "D:/关于西非的业务/测试素材/手写坐标.jpg",
+      "expected": {
+        "precisionMode": "handwritten-dms-coordinates",
+        "coordinate_type": "handwritten_dms_experimental",
+        "pointCount": 16,
+        "protocol": "stable output format"
+      },
+      "actual": {
+        "success_rate": "0%",
+        "message": "Prompt optimization broke output protocol even though old prompt baseline was 9/16.",
+        "match_conditions": {
+          "pointCount": 0,
+          "coordinate_type": "handwritten_dms_experimental"
+        }
+      },
+      "root_cause": "Complex prompt requiring character-level double-check changed the response protocol enough that parser compatibility collapsed.",
+      "fix_commit": null,
+      "status": "prevented_not_adopted",
+      "regression_case": {
+        "baseline_sample_id": "handwritten_dms_001",
+        "runner_expectation": "Do not change HANDWRITTEN_DMS prompt without full protocol regression; parser-compatible output is higher priority than prompt complexity.",
+        "blocker_if_reappears": true
+      }
+    }
+  ]
+}
