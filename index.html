@@ -793,8 +793,15 @@
     }
 
     .coordinate-workspace .workspace-head {
-      display: block;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
       margin-bottom: 18px;
+    }
+
+    .workspace-heading-copy {
+      min-width: 0;
     }
 
     .coordinate-workspace .workspace-head label {
@@ -1870,12 +1877,58 @@
       line-height: 1.35;
     }
 
+    .coordinate-workspace .quota-entry-row {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      margin: 2px 0 0;
+    }
+
+    .coordinate-workspace .quota-status {
+      margin: 0;
+      padding: 4px 9px;
+      border: 0;
+      background: #f1f5f9;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.25;
+      cursor: pointer;
+      white-space: nowrap;
+      box-shadow: none;
+    }
+
+    .coordinate-workspace .inline-account-action {
+      display: none;
+    }
+
+    .coordinate-workspace .quota-status.quota-ok {
+      background: #f1f5f9;
+      color: #64748b;
+    }
+
+    .coordinate-workspace .quota-status.quota-low {
+      background: #fff7ed;
+      color: #c2410c;
+    }
+
+    .coordinate-workspace .quota-status.quota-empty {
+      background: #f1f5f9;
+      color: #64748b;
+    }
+
+    .coordinate-workspace .quota-status.quota-vip {
+      background: #f1f5f9;
+      color: #64748b;
+    }
+
     .quota-status.quota-ok {
       color: #64748b;
     }
 
     .quota-status.quota-low {
-      color: #64748b;
+      color: #c2410c;
     }
 
     .quota-status.quota-empty {
@@ -1884,13 +1937,13 @@
 
     .quota-status.quota-vip {
       border: 0;
-      background: none;
-      color: #2563eb;
+      background: #f1f5f9;
+      color: #64748b;
       font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.3px;
-      padding: 0;
-      border-radius: 0;
+      font-weight: 800;
+      letter-spacing: 0;
+      padding: 4px 9px;
+      border-radius: 999px;
     }
 
     .page-title-row {
@@ -3718,6 +3771,7 @@
       }
 
       .coordinate-workspace .workspace-head {
+        align-items: flex-start;
         margin-bottom: 18px;
       }
 
@@ -4018,15 +4072,17 @@
         <h1>坐标与 KML 工具</h1>
       </div>
       <p class="intro">图片坐标识别、多格式转换、KML 生成。支持手写坐标、经纬度、BFTM、奥维地图与 Google Earth 导入。</p>
-      <div class="quota-entry-row">
-        <div id="convertQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
-        <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
-      </div>
 
       <section class="coordinate-workspace">
         <div class="workspace-head">
-          <label for="coordinateInput">&#22352;&#26631;&#24037;&#20316;&#21306;</label>
-          <p class="workspace-subtitle">&#31896;&#36148;&#22352;&#26631;&#25110;&#19978;&#20256;&#22270;&#29255;&#29983;&#25104; KML</p>
+          <div class="workspace-heading-copy">
+            <label for="coordinateInput">&#22352;&#26631;&#24037;&#20316;&#21306;</label>
+            <p class="workspace-subtitle">&#31896;&#36148;&#22352;&#26631;&#25110;&#19978;&#20256;&#22270;&#29255;&#29983;&#25104; KML</p>
+          </div>
+          <div class="quota-entry-row">
+            <div id="convertQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
+            <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
+          </div>
           <span id="cadastralGridBadge" class="cadastral-grid-badge">&#30719;&#26435;&#32593;&#26684;&#27169;&#24335;</span>
         </div>
         <div class="textarea-wrap coordinate-input-shell">
@@ -4395,7 +4451,7 @@ Au值 = 纯度 × 10 后取整数</div>
   <div id="quotaModal" class="quota-modal" role="dialog" aria-modal="true">
     <div class="quota-card">
       <button class="quota-close" type="button" onclick="closeQuotaModal()" aria-label="关闭">×</button>
-      <h3 id="quotaTitle">我的次数</h3>
+      <h3 id="quotaTitle">使用情况</h3>
       <div id="quotaAlert" class="quota-alert"></div>
 
       <section class="account-section">
@@ -4475,7 +4531,7 @@ Au值 = 纯度 × 10 后取整数</div>
   </div>
 
   <script>
-    const APP_VERSION = "geokitlab-web-20260527-v1";
+    const APP_VERSION = "v1.0.0";
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
@@ -4844,7 +4900,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function addVersionStamp() {
       const stamp = document.createElement("div");
       stamp.className = "version-stamp";
-      stamp.innerHTML = `<span>版本：${APP_VERSION}</span><span>&copy; 2026 GeoKit Lab</span>`;
+      stamp.textContent = `GeoKit Lab ${APP_VERSION}`;
       document.body.appendChild(stamp);
     }
 
@@ -5113,11 +5169,15 @@ Au值 = 纯度 × 10 后取整数</div>
         is_vip: Boolean(usage?.is_vip || usage?.isVip || currentQuota?.is_vip || currentQuota?.isVip)
       };
 
-      const convertLabel = `\u5269\u4f59 ${convertRemaining} \u6b21`;
-      const judgeLabel = `\u5269\u4f59 ${judgeRemaining} \u6b21`;
+      const convertPaidRemaining = Number(usage?.paid_convert_count ?? usage?.paidConvertCount);
+      const judgePaidRemaining = Number(usage?.paid_judge_count ?? usage?.paidJudgeCount);
+      const convertEntryCount = Number.isFinite(convertPaidRemaining) ? Math.max(0, convertPaidRemaining) : Number.NaN;
+      const judgeEntryCount = Number.isFinite(judgePaidRemaining) ? Math.max(0, judgePaidRemaining) : Number.NaN;
+      const convertLabel = formatQuotaEntryLabel(convertEntryCount, currentQuota.is_vip);
+      const judgeLabel = formatQuotaEntryLabel(judgeEntryCount, currentQuota.is_vip);
 
-      setQuotaStatus(convertQuotaStatus, convertLabel, convertRemaining, false);
-      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeRemaining, false);
+      setQuotaStatus(convertQuotaStatus, convertLabel, convertEntryCount, currentQuota.is_vip);
+      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeEntryCount, currentQuota.is_vip);
       setQuotaAction(convertQuotaAction, convertRemaining, false);
       setQuotaAction(judgeQuotaAction, judgeRemaining, false);
       updateAccountQuotaUI();
@@ -5133,15 +5193,28 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function getQuotaClass(total, isVip) {
-      if (total <= 0) {
-        return "quota-empty";
+      if (isVip) {
+        return "quota-ok";
       }
 
-      if (total <= 3) {
+      if (total >= 1 && total <= 3) {
         return "quota-low";
       }
 
-      return "quota-ok";
+      return total <= 0 ? "quota-empty" : "quota-ok";
+    }
+
+    function formatQuotaEntryLabel(paidRemaining, isVip) {
+      if (isVip) {
+        return "\u4f7f\u7528\u60c5\u51b5";
+      }
+
+      const count = Number(paidRemaining);
+      if (Number.isFinite(count) && count >= 1 && count <= 3) {
+        return `\u5269\u4f59 ${Math.floor(count)} \u6b21`;
+      }
+
+      return "\u4f7f\u7528\u60c5\u51b5";
     }
 
     function setQuotaStatus(element, text, total, isVip) {
@@ -5150,8 +5223,8 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       element.hidden = false;
-      element.textContent = "\u6211\u7684\u6b21\u6570";
-      element.title = total <= 0 ? "\u6b21\u6570\u5df2\u7528\u5b8c" : "\u67e5\u770b\u6211\u7684\u6b21\u6570";
+      element.textContent = text || "\u4f7f\u7528\u60c5\u51b5";
+      element.title = "\u67e5\u770b\u4f7f\u7528\u60c5\u51b5";
       element.classList.remove("quota-ok", "quota-low", "quota-empty", "quota-vip");
       element.classList.add(getQuotaClass(total, isVip));
     }
@@ -5295,12 +5368,15 @@ Au值 = 纯度 × 10 后取整数</div>
       const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
       const convertTotal = Number.isFinite(directConvert) ? Math.max(0, directConvert) : Math.max(0, freeConvert + paidConvert);
       const judgeTotal = Number.isFinite(directJudge) ? Math.max(0, directJudge) : Math.max(0, freeJudge + paidJudge);
-      const convertLabel = `\u5269\u4f59 ${convertTotal} \u6b21`;
-      const judgeLabel = `\u5269\u4f59 ${judgeTotal} \u6b21`;
+      const convertPaidTotal = Math.max(0, paidConvert);
+      const judgePaidTotal = Math.max(0, paidJudge);
+      const quotaIsVip = isQuotaVip(quota);
+      const convertLabel = formatQuotaEntryLabel(convertPaidTotal, quotaIsVip);
+      const judgeLabel = formatQuotaEntryLabel(judgePaidTotal, quotaIsVip);
 
-      setQuotaStatus(convertQuotaStatus, convertLabel, convertTotal, false);
+      setQuotaStatus(convertQuotaStatus, convertLabel, convertPaidTotal, quotaIsVip);
       setQuotaAction(convertQuotaAction, convertTotal, false);
-      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgeTotal, false);
+      setQuotaStatus(judgeQuotaStatus, judgeLabel, judgePaidTotal, quotaIsVip);
       setQuotaAction(judgeQuotaAction, judgeTotal, false);
       updateAccountQuotaUI();
       maybePromptActiveQuota(convertTotal, judgeTotal);
@@ -5381,7 +5457,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       quotaModal.dataset.type = type;
-      quotaTitle.textContent = "我的次数";
+      quotaTitle.textContent = "使用情况";
       updateAccountQuotaUI();
 
       const alertMessage = getQuotaAlertMessage(type, options.alertMessage || "");
@@ -5786,25 +5862,25 @@ Au值 = 纯度 × 10 后取整数</div>
     function getRecognitionSummaryType(meta = {}) {
       const value = String(meta.coordinateType || meta.precisionMode || "").trim();
       const labels = {
-        "mozambique_geographic_table": "Mozambique Geographic Table",
-        "mozambique-geographic-table": "Mozambique Geographic Table",
-        "cote_divoire_geographic_dms_table": "Côte d’Ivoire DMS Table",
-        "cote-divoire-geographic-dms-table": "Côte d’Ivoire DMS Table",
-        "kyrgyzstan_gk": "Kyrgyz GK",
-        "kyrgyz-gk-point-x-y": "Kyrgyzstan GK",
-        "madagascar_cadastral_grid": "Madagascar Grid",
-        "cadastral-grid": "Madagascar Grid",
+        "mozambique_geographic_table": "莫桑比克地理坐标表",
+        "mozambique-geographic-table": "莫桑比克地理坐标表",
+        "cote_divoire_geographic_dms_table": "科特迪瓦度分秒表",
+        "cote-divoire-geographic-dms-table": "科特迪瓦度分秒表",
+        "kyrgyzstan_gk": "吉尔吉斯 GK",
+        "kyrgyz-gk-point-x-y": "吉尔吉斯 GK",
+        "madagascar_cadastral_grid": "马达加斯加矿权网格",
+        "cadastral-grid": "马达加斯加矿权网格",
         "mgrs_utm_grid_reference": "MGRS",
         "mgrs-utm-grid-reference": "MGRS",
         "bftm_xy": "BFTM",
         "bftm-projected-x-y": "BFTM",
-        "standard_dms_table": "DMS",
-        "dms-grouped-coordinates": "DMS",
+        "standard_dms_table": "度分秒",
+        "dms-grouped-coordinates": "度分秒",
         "decimal_latlon": "经纬度",
         "wgs84-table-coordinates": "经纬度",
         "wgs84-chat-coordinates": "经纬度",
-        "handwritten_dms_experimental": "手写 DMS（需核对）",
-        "handwritten-dms-coordinates": "手写 DMS（需核对）"
+        "handwritten_dms_experimental": "手写度分秒（需核对）",
+        "handwritten-dms-coordinates": "手写度分秒（需核对）"
       };
       return labels[value] || "";
     }
@@ -5817,14 +5893,28 @@ Au值 = 纯度 × 10 后取整数</div>
         .toLowerCase();
     }
 
-    function getRecognitionSummaryTypeCountry(coordinateType = "") {
+    function getRecognitionSummaryTypeRegion(coordinateType = "") {
       const value = String(coordinateType || "").toLowerCase();
-      if (/mozambique/.test(value)) return "Mozambique";
-      if (/cote|ivoire/.test(value)) return "Côte d’Ivoire";
-      if (/kyrgyz/.test(value)) return "Kyrgyzstan";
-      if (/madagascar|cadastral/.test(value)) return "Madagascar";
-      if (/bftm|burkina/.test(value)) return "Burkina Faso";
-      return "";
+      if (/mozambique/.test(value)) return { match: "Mozambique", display: "莫桑比克" };
+      if (/cote|ivoire/.test(value)) return { match: "Côte d’Ivoire", display: "科特迪瓦" };
+      if (/kyrgyz/.test(value)) return { match: "Kyrgyzstan", display: "吉尔吉斯斯坦" };
+      if (/madagascar|cadastral/.test(value)) return { match: "Madagascar", display: "马达加斯加" };
+      if (/bftm|burkina/.test(value)) return { match: "Burkina Faso", display: "布基纳法索" };
+      return null;
+    }
+
+    function getRecognitionSummaryKnownRegions() {
+      return [
+        { match: "Guinea", display: "几内亚", detailPattern: /siguiri|siguir[ií]/i, detail: "锡吉里" },
+        { match: "Côte d’Ivoire", display: "科特迪瓦" },
+        { match: "Mozambique", display: "莫桑比克" },
+        { match: "Madagascar", display: "马达加斯加" },
+        { match: "Burkina Faso", display: "布基纳法索" },
+        { match: "Kyrgyzstan", display: "吉尔吉斯斯坦" },
+        { match: "Ghana", display: "加纳" },
+        { match: "Liberia", display: "利比里亚" },
+        { match: "Sierra Leone", display: "塞拉利昂" }
+      ];
     }
 
     function getRecognitionSummaryOrderStatus(engine = {}) {
@@ -5833,22 +5923,41 @@ Au值 = 纯度 × 10 后取整数</div>
       return String(engine.order_status || validation.order_status || statuses.find(Boolean) || "");
     }
 
-    function getRecognitionSummaryCountry(meta = {}) {
+    function getRecognitionSummaryRegion(meta = {}) {
       const engine = meta.engine || {};
       const validation = engine.coordinate_validation_report || {};
       const skb = engine.spatial_knowledge_report || {};
-      const typeCountry = getRecognitionSummaryTypeCountry(meta.coordinateType || meta.precisionMode || "");
-      if (!typeCountry || getRecognitionSummaryOrderStatus(engine) === "ambiguous") {
+      const coordinateType = meta.coordinateType || meta.precisionMode || "";
+      const typeRegion = getRecognitionSummaryTypeRegion(coordinateType);
+      if (getRecognitionSummaryOrderStatus(engine) === "ambiguous") {
         return "";
       }
 
-      const expected = normalizeRecognitionSummaryToken(typeCountry);
       const validationText = normalizeRecognitionSummaryToken(JSON.stringify(validation));
       const skbText = normalizeRecognitionSummaryToken(JSON.stringify(skb));
-      const validatorSupports = validationText.includes(expected);
-      const skbSupports = ["ranked", "confident"].includes(String(skb.status || "").toLowerCase()) && skbText.includes(expected);
+      const skbStatus = String(skb.status || "").toLowerCase();
+      const region = typeRegion || getRecognitionSummaryKnownRegions().find(item => {
+        const expected = normalizeRecognitionSummaryToken(item.match);
+        return validationText.includes(expected) && skbText.includes(expected) && skbStatus === "confident";
+      });
 
-      return validatorSupports && skbSupports ? typeCountry : "";
+      if (!region) {
+        return "";
+      }
+
+      const expected = normalizeRecognitionSummaryToken(region.match);
+      const validatorSupports = validationText.includes(expected);
+      const skbSupports = ["ranked", "confident"].includes(skbStatus) && skbText.includes(expected);
+
+      if (!validatorSupports || !skbSupports) {
+        return "";
+      }
+
+      if (region.detailPattern && region.detailPattern.test(skbText + validationText)) {
+        return `${region.display} · ${region.detail}`;
+      }
+
+      return region.display;
     }
 
     function getRecognitionSummaryReviewState(meta = {}) {
@@ -5894,32 +6003,33 @@ Au值 = 纯度 × 10 后取整数</div>
       const count = Number(meta.count) || 0;
       const geometryValue = String(meta.geometry || inferGeometry(count) || "").trim();
       const geometryLabels = {
-        point: "Point",
-        linestring: "LineString",
-        line: "LineString",
-        polygon: "Polygon"
+        point: "点位",
+        linestring: "线路",
+        line: "线路",
+        polygon: "矿区"
       };
-      const geometry = geometryLabels[geometryValue.toLowerCase()] || geometryValue;
+      const areaType = geometryLabels[geometryValue.toLowerCase()] || geometryValue;
       const groupCount = Number(meta.groupCount || groups.length) || 0;
       const review = getRecognitionSummaryReviewState(meta);
       const coordinateType = getRecognitionSummaryType(meta);
-      const country = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryCountry(meta);
+      const region = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryRegion(meta);
       const area = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryArea(meta);
-      const groupText = groupCount > 1 ? `${groupCount} 组矿地` : "";
+      const countText = groupCount > 1
+        ? `${groupCount} 组矿地 · ${count} 个坐标`
+        : `${count} 个坐标`;
       const reviewText = review.orderStatus === "ambiguous"
         ? "坐标方向需要确认"
         : review.reviewGroupCount > 0
           ? `其中 ${review.reviewGroupCount} 组需要核对`
           : review.requiresReview
-            ? "需要核对"
-            : "";
+             ? "需要核对"
+             : "";
       const chips = [
-        geometry || inferGeometry(count),
-        groupText,
-        `${count} 个坐标`,
         reviewText,
+        areaType ? `区域类型：${areaType}` : "",
+        countText,
         coordinateType,
-        country,
+        region ? `地区：${region}` : "",
         area
       ].filter(Boolean).slice(0, 5);
 
@@ -5929,7 +6039,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
       const label = document.createElement("span");
       label.className = "recognition-summary-label";
-      label.textContent = "已识别";
+      label.textContent = "区域概览";
       recognitionStatus.appendChild(label);
 
       const chipWrap = document.createElement("span");
