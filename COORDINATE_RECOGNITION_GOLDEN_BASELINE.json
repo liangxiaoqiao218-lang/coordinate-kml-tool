@@ -312,15 +312,15 @@
       "input_type": "image",
       "local_path": "D:/关于西非的业务/测试素材/马达加斯加坐标.png",
       "fixture": "regression-samples/Madagascar/expected.json",
-      "baseline_status": "missing",
+      "baseline_status": "locked_candidate",
       "expected_coordinate_type": "madagascar_cadastral_grid",
       "expected_group_count": 1,
       "expected_point_count": 32,
-      "expected_first_point": null,
-      "expected_last_point": null,
-      "expected_geometry": "Polygon",
+      "expected_first_point": "280 | 292812.5 | 360937.5",
+      "expected_last_point": "342 | 294062.5 | 367187.5",
+      "expected_geometry": "polygon",
       "expected_requires_review": false,
-      "expected_kml_ready": true,
+      "expected_kml_ready": false,
       "expected_review_group_indexes": [],
       "expected_country": "Madagascar",
       "expected_area_range": null,
@@ -331,9 +331,174 @@
       ],
       "repeat_count": 10,
       "risk": "high_risk_missing_stable_baseline",
-      "expected_v1_precision_mode": "cadastral-grid-num-xv-yv",
-      "expected_v2_precision_mode": "cadastral-grid-num-xv-yv",
-      "v1_precision_mode_blocker": false
+      "expected_v1_precision_mode": "utm30n-projected-x-y",
+      "expected_v2_precision_mode": "utm30n-projected-x-y",
+      "v1_precision_mode_blocker": false,
+      "tolerance": {
+        "xv_yv": 0.01
+      },
+      "expected_grid_rows": [
+        {
+          "num": "280",
+          "xv": 292812.5,
+          "yv": 360937.5
+        },
+        {
+          "num": "281",
+          "xv": 292812.5,
+          "yv": 361562.5
+        },
+        {
+          "num": "282",
+          "xv": 292812.5,
+          "yv": 362187.5
+        },
+        {
+          "num": "283",
+          "xv": 292812.5,
+          "yv": 362812.5
+        },
+        {
+          "num": "284",
+          "xv": 292812.5,
+          "yv": 363437.5
+        },
+        {
+          "num": "285",
+          "xv": 292812.5,
+          "yv": 364062.5
+        },
+        {
+          "num": "286",
+          "xv": 292812.5,
+          "yv": 364687.5
+        },
+        {
+          "num": "287",
+          "xv": 292812.5,
+          "yv": 365312.5
+        },
+        {
+          "num": "288",
+          "xv": 292812.5,
+          "yv": 365937.5
+        },
+        {
+          "num": "289",
+          "xv": 292812.5,
+          "yv": 366562.5
+        },
+        {
+          "num": "290",
+          "xv": 292812.5,
+          "yv": 367187.5
+        },
+        {
+          "num": "306",
+          "xv": 293437.5,
+          "yv": 360937.5
+        },
+        {
+          "num": "307",
+          "xv": 293437.5,
+          "yv": 361562.5
+        },
+        {
+          "num": "308",
+          "xv": 293437.5,
+          "yv": 362187.5
+        },
+        {
+          "num": "309",
+          "xv": 293437.5,
+          "yv": 362812.5
+        },
+        {
+          "num": "310",
+          "xv": 293437.5,
+          "yv": 363437.5
+        },
+        {
+          "num": "311",
+          "xv": 293437.5,
+          "yv": 364062.5
+        },
+        {
+          "num": "312",
+          "xv": 293437.5,
+          "yv": 364687.5
+        },
+        {
+          "num": "313",
+          "xv": 293437.5,
+          "yv": 365312.5
+        },
+        {
+          "num": "314",
+          "xv": 293437.5,
+          "yv": 365937.5
+        },
+        {
+          "num": "315",
+          "xv": 293437.5,
+          "yv": 366562.5
+        },
+        {
+          "num": "316",
+          "xv": 293437.5,
+          "yv": 367187.5
+        },
+        {
+          "num": "333",
+          "xv": 294062.5,
+          "yv": 361562.5
+        },
+        {
+          "num": "334",
+          "xv": 294062.5,
+          "yv": 362187.5
+        },
+        {
+          "num": "335",
+          "xv": 294062.5,
+          "yv": 362812.5
+        },
+        {
+          "num": "336",
+          "xv": 294062.5,
+          "yv": 363437.5
+        },
+        {
+          "num": "337",
+          "xv": 294062.5,
+          "yv": 364062.5
+        },
+        {
+          "num": "338",
+          "xv": 294062.5,
+          "yv": 364687.5
+        },
+        {
+          "num": "339",
+          "xv": 294062.5,
+          "yv": 365312.5
+        },
+        {
+          "num": "340",
+          "xv": 294062.5,
+          "yv": 365937.5
+        },
+        {
+          "num": "341",
+          "xv": 294062.5,
+          "yv": 366562.5
+        },
+        {
+          "num": "342",
+          "xv": 294062.5,
+          "yv": 367187.5
+        }
+      ]
     },
     {
       "sample_id": "mozambique_tete_001",

@@ -373,6 +373,42 @@ function flattenV2Points(engine) {
   return groups.flatMap((group) => (Array.isArray(group.points) ? group.points : []));
 }
 
+function normalizeGridNumber(value) {
+  const normalized = Number(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+function normalizeGridRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const num = String(row.num ?? row.label ?? row.grid_cell ?? '').trim();
+  const xv = normalizeGridNumber(row.xv ?? row.XV ?? row.x ?? row.X);
+  const yv = normalizeGridNumber(row.yv ?? row.YV ?? row.y ?? row.Y);
+  if (!num || xv === null || yv === null) return null;
+  return { num, xv, yv };
+}
+
+function parseGridRowsFromText(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .map((line) => {
+      if (/^num\s*\|/i.test(line)) return null;
+      const pipe = line.match(/^([A-Za-z0-9-]+)\s*\|\s*([-+]?\d+(?:[.,]\d+)?)\s*\|\s*([-+]?\d+(?:[.,]\d+)?)/);
+      if (!pipe) return null;
+      return normalizeGridRow({ num: pipe[1], xv: pipe[2], yv: pipe[3] });
+    })
+    .filter(Boolean);
+}
+
+function extractGridRows(engine, coordinatesText) {
+  const fromPoints = flattenV2Points(engine).map(normalizeGridRow).filter(Boolean);
+  const fromText = parseGridRowsFromText(coordinatesText);
+  const pointsLookUsable = fromPoints.length > 0 && fromPoints.some((row) => row.xv !== 0 || row.yv !== 0);
+  if (pointsLookUsable) return fromPoints;
+  if (fromText.length) return fromText;
+  return fromPoints;
+}
+
 function sumPointCount(groups, fallbackCount) {
   if (!Array.isArray(groups) || groups.length === 0) return fallbackCount;
   return groups.reduce((sum, group) => sum + (Array.isArray(group.points) ? group.points.length : 0), 0);
@@ -453,6 +489,7 @@ function summarizeApiResponse(data, responseMeta = {}) {
   const engine = data?.coordinateEngineV2 || data?.coordinate_engine_v2 || {};
   const groups = Array.isArray(engine.groups) ? engine.groups : [];
   const coordinatesText = data?.coordinates || data?.formatted || data?.result || '';
+  const gridRows = extractGridRows(engine, coordinatesText);
   const kmlCoordinates = extractKmlCoordinates(coordinatesText);
   const fallbackRows = extractProjectedOrDecimalRows(coordinatesText);
   const textRows = kmlCoordinates.length ? kmlCoordinates : fallbackRows;
@@ -463,8 +500,8 @@ function summarizeApiResponse(data, responseMeta = {}) {
     : Array.isArray(data?.points)
       ? data.points.length
       : coordinateRows.length);
-  const firstPoint = coordinateRows[0] || '';
-  const lastPoint = coordinateRows[coordinateRows.length - 1] || '';
+  const firstPoint = gridRows.length ? formatGridRow(gridRows[0]) : coordinateRows[0] || '';
+  const lastPoint = gridRows.length ? formatGridRow(gridRows[gridRows.length - 1]) : coordinateRows[coordinateRows.length - 1] || '';
   const groupGeometries = groups.map((group) => normalizeGeometry(group?.geometry)).filter(Boolean);
   const uniqueGeometries = [...new Set(groupGeometries)];
   const geometry = uniqueGeometries.length === 1
@@ -492,6 +529,7 @@ function summarizeApiResponse(data, responseMeta = {}) {
     reviewGroupIndexes: getReviewGroupIndexes(groups),
     country: getActualCountry(engine, data),
     areaHa: getActualArea(engine),
+    gridRows,
     orderStatus: engine.order_status || engine.coordinate_validation_report?.order_status || '',
     fallbackUsed: isFallbackUsed(data, engine),
     retryUsed: isRetryUsed(data),
@@ -665,6 +703,54 @@ function compareField(diffs, field, expected, actual, options = {}) {
   }
 }
 
+function formatGridRow(row) {
+  if (!row) return '(missing)';
+  return `${row.num} | ${row.xv} | ${row.yv}`;
+}
+
+function gridRowsEqual(a, b, tolerance) {
+  if (!a || !b) return false;
+  return String(a.num) === String(b.num)
+    && Math.abs(Number(a.xv) - Number(b.xv)) <= tolerance
+    && Math.abs(Number(a.yv) - Number(b.yv)) <= tolerance;
+}
+
+function compareGridRows(diffs, expectedRows, actualRows, tolerance = 0.01) {
+  if (!Array.isArray(expectedRows) || expectedRows.length === 0) return;
+  const expected = expectedRows.map(normalizeGridRow);
+  const actual = Array.isArray(actualRows) ? actualRows.map(normalizeGridRow).filter(Boolean) : [];
+
+  if (actual.length !== expected.length) {
+    addFinding(diffs, 'BLOCKER', 'grid row count', `${expected.length} rows`, `${actual.length} rows`);
+  }
+
+  const actualKeys = new Map();
+  for (const row of actual) {
+    const key = `${row.num}|${row.xv}|${row.yv}`;
+    actualKeys.set(key, (actualKeys.get(key) || 0) + 1);
+  }
+  for (const [key, count] of actualKeys.entries()) {
+    if (count > 1) {
+      addFinding(diffs, 'BLOCKER', 'grid duplicate row', 'no duplicates', `${key} repeated ${count} times`);
+    }
+  }
+
+  const max = Math.max(expected.length, actual.length);
+  for (let index = 0; index < max; index += 1) {
+    const expectedRow = expected[index];
+    const actualRow = actual[index];
+    if (!gridRowsEqual(expectedRow, actualRow, tolerance)) {
+      addFinding(
+        diffs,
+        'BLOCKER',
+        `grid row ${index + 1} mismatch`,
+        formatGridRow(expectedRow),
+        formatGridRow(actualRow),
+      );
+    }
+  }
+}
+
 function compareGolden(sample, actual) {
   const diffs = [];
   const warnings = [];
@@ -690,6 +776,7 @@ function compareGolden(sample, actual) {
   compareField(diffs, 'kml_ready', sample.expected_kml_ready, actual.kmlReady, { normalize: 'boolean' });
   compareField(diffs, 'reviewGroupIndexes', sample.expected_review_group_indexes, actual.reviewGroupIndexes, { normalize: 'array' });
   compareField(diffs, 'country', sample.expected_country, actual.country, { severity: 'WARNING' });
+  compareGridRows(diffs, sample.expected_grid_rows, actual.gridRows, Number(sample.tolerance?.xv_yv ?? 0.01));
 
   const firstCompare = coordinateEquals(actual.firstPoint, sample.expected_first_point);
   if (!firstCompare.matches) {
@@ -1143,6 +1230,7 @@ function formatActualSummary(actual) {
     `coordinate_type=${actual.coordinateType || '(empty)'}`,
     `groups=${actual.groupCount}`,
     `points=${actual.pointCount}`,
+    `gridRows=${Array.isArray(actual.gridRows) ? actual.gridRows.length : 0}`,
     `geometry=${actual.geometry || '(empty)'}`,
     `requires_review=${actual.requiresReview}`,
     `kml_ready=${actual.kmlReady}`,
