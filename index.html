@@ -4674,6 +4674,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let internalNormalizedCoordinateGroups = null;
     let internalKmlSourceDirty = false;
     let activeCoordinatePrecisionMode = "";
+    let activeCoordinateEngineV2 = null;
     const JUDGE_HISTORY_KEY = "judgeHistory";
     const OLD_JUDGE_HISTORY_KEYS = [
       "aiJudgeHistory",
@@ -5987,6 +5988,19 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
+    function isHandwrittenDmsEngineUnsafe(engine = activeCoordinateEngineV2) {
+      const type = String(engine?.coordinate_type || engine?.coordinateType || "").trim();
+      if (type !== "handwritten_dms_experimental") {
+        return false;
+      }
+
+      return engine?.requires_review === true || engine?.kml_ready === false;
+    }
+
+    function shouldBlockHandwrittenDmsKml() {
+      return isHandwrittenDmsEngineUnsafe(activeCoordinateEngineV2);
+    }
+
     function scrollToCoordinateReviewGroup(groupIndex) {
       const marker = `第${groupIndex}组`;
       const text = input.value || "";
@@ -6440,6 +6454,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
       selectedImageUrl = "";
       selectedImageFile = null;
+      activeCoordinateEngineV2 = null;
       closeImageModal();
       imagePreview.style.display = "none";
       imagePreview.innerHTML = "";
@@ -11099,6 +11114,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       rememberState();
       input.value = "";
       clearInternalKmlSource();
+      activeCoordinateEngineV2 = null;
       setCoordinateOrderReviewVisible(false);
       updateCadastralGridPanel();
       trackEvent("clear_content_click");
@@ -11489,6 +11505,12 @@ ${placemarks}
       await loadUserConfig();
 
       if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。")) {
+        return;
+      }
+
+      if (shouldBlockHandwrittenDmsKml()) {
+        showRecognitionProgress("当前坐标需要核对，请核对后再生成。", "warning", 5000);
+        showMessage("当前坐标需要核对，请核对后再生成。", true, 5000);
         return;
       }
 
@@ -11972,6 +11994,7 @@ ${placemarks}
       imageInput.disabled = true;
       supportPanel.style.display = "none";
       clearUploadMessage();
+      activeCoordinateEngineV2 = null;
       setCoordinateOrderReviewVisible(false);
       showRecognitionProgress("正在上传图片...", "loading");
       trackEvent("image_upload_select", {
@@ -12188,6 +12211,7 @@ ${placemarks}
         const summaryEngine = data.coordinateEngineV2 || data.coordinate_engine_v2 || {};
         const summaryGroups = Array.isArray(summaryEngine.groups) ? summaryEngine.groups : [];
         const displayCoordinates = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
+        activeCoordinateEngineV2 = summaryEngine || null;
 
         rememberState();
         input.value = displayCoordinates || finalCoordinates;
