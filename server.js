@@ -7697,6 +7697,43 @@ function hasCoordinateEngineV2ProjectedOrGridPoint(point = {}) {
     || Boolean(point.projection);
 }
 
+const coordinateEngineV2ProjectedReadyTypes = new Set([
+  "bftm_xy",
+  "kyrgyzstan_gk",
+  "projected_xy"
+]);
+
+function getCoordinateEngineV2ReadinessPolicy(coordinateType = "", points = [], warnings = []) {
+  if (!coordinateEngineV2ProjectedReadyTypes.has(String(coordinateType || ""))) {
+    return {
+      readinessPolicy: "wgs84",
+      status: "wgs84_validator",
+      kml_ready: null,
+      requires_review: null
+    };
+  }
+
+  const projectedPoints = Array.isArray(points) ? points : [];
+  const projections = Array.from(new Set(projectedPoints.map(point => String(point?.projection || "").trim()).filter(Boolean)));
+  const hasCompleteProjectedPoints = projectedPoints.length >= 3 && projectedPoints.every(point => (
+    Number.isFinite(Number(point?.x))
+    && Number.isFinite(Number(point?.y))
+    && Boolean(point?.projection)
+  ));
+  const hasPointReview = projectedPoints.some(point => point?.requires_review);
+  const hasWarnings = Array.isArray(warnings) && warnings.length > 0;
+  const ready = Boolean(hasCompleteProjectedPoints && !hasPointReview && !hasWarnings);
+
+  return {
+    readinessPolicy: "projected_or_grid",
+    status: ready ? "projected_or_grid_ready" : "projected_or_grid_incomplete",
+    kml_ready: ready,
+    requires_review: !ready,
+    projectedPointCount: projectedPoints.length,
+    projection: projections.length === 1 ? projections[0] : projections
+  };
+}
+
 function isCoordinateEngineV2ReviewWarning(warning = "") {
   const value = String(warning || "").trim();
   if (!value) {
@@ -7775,9 +7812,11 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
     || validationWarnings.length > 0
   );
   const reviewWarnings = Array.from(new Set([...warnings, ...validationWarnings])).filter(isCoordinateEngineV2ReviewWarning);
+  const readinessPolicy = getCoordinateEngineV2ReadinessPolicy(coordinateType, points, warnings);
   const requiresReview = Boolean(
     resultRequiresReview
     || group.requires_review
+    || readinessPolicy.requires_review === true
     || validatorRequiresReview
     || reviewWarnings.length > 0
     || rawPoints.length === 0
@@ -7795,6 +7834,14 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
     && rawPoints.length > 0
     && !points.some(point => point.requires_review)
   );
+  const groupKmlReady = Boolean((readinessPolicy.kml_ready === true && !requiresReview) || kmlReady);
+  const normalizedValidation = {
+    ...validation,
+    readinessPolicy: readinessPolicy.readinessPolicy,
+    readiness_status: readinessPolicy.status,
+    projectedPointCount: readinessPolicy.projectedPointCount ?? null,
+    projection: readinessPolicy.projection ?? null
+  };
 
   points = points.map(point => ({
     ...point,
@@ -7808,12 +7855,12 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
     geometry: ["point", "line", "polygon"].includes(group.geometry) ? group.geometry : getCoordinateEngineV2Geometry(points),
     confidence: Number.isFinite(Number(group.confidence)) ? Number(group.confidence) : 0,
     requires_review: requiresReview,
-    kml_ready: kmlReady,
+    kml_ready: groupKmlReady,
     declared_area_ha: Number.isFinite(Number(group.declared_area_ha)) ? Number(group.declared_area_ha) : null,
     calculated_area_ha: Number.isFinite(Number(group.calculated_area_ha)) ? Number(group.calculated_area_ha) : null,
     points,
     warnings: Array.from(new Set([...warnings, ...validationWarnings])),
-    validation
+    validation: normalizedValidation
   };
 }
 
