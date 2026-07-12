@@ -35,6 +35,8 @@ const fieldLayerMap = {
   fallback_takeover: 'Vision',
   'grid row count': 'Parser',
   'grid duplicate row': 'Parser',
+  'exact_dms_row_accuracy': 'Vision',
+  'dms row count': 'Vision',
 };
 
 function getFindingLayer(field, explicitLayer = '') {
@@ -42,6 +44,7 @@ function getFindingLayer(field, explicitLayer = '') {
   const key = String(field || '');
   if (fieldLayerMap[key]) return fieldLayerMap[key];
   if (/grid row/i.test(key)) return 'Parser';
+  if (/dms row/i.test(key)) return 'Vision';
   if (/kml/i.test(key)) return 'KML';
   if (/order|axis|swapped|resolver/i.test(key)) return 'Resolver';
   if (/precision|coordinate_type|group|geometry|review/i.test(key)) return 'Engine';
@@ -232,6 +235,10 @@ function normalizePathSeparators(value) {
 }
 
 function getKnownFixturePath(sample) {
+  if (sample?.sample_id === 'handwritten_dms_001') {
+    return 'D:\\关于西非的业务\\测试素材\\手写坐标.jpg';
+  }
+
   const fileName = knownLocalFixtureNames[sample.sample_id];
   return fileName ? path.join(fixtureRoot, fileName) : '';
 }
@@ -353,6 +360,48 @@ function extractCoordinateLines(text) {
       if (/^(label|point|order|num|第\s*\d+\s*组|⚠)/i.test(line)) return false;
       return /[-+]?\d+(?:\.\d+)?/.test(line);
     });
+}
+
+function normalizeDmsRow(value) {
+  const compact = String(value || '')
+    .replace(/[º˚]/g, '°')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, '')
+    .replace(/，/g, ',')
+    .toUpperCase();
+  return compact.replace(/O/g, 'W');
+}
+
+function extractExactDmsRows(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^\s*(?:point|pt|p|no|n[°o]?|#)?\s*[\dA-Z]{1,3}\s*[:.)-]\s*/i, ''))
+    .filter((line) => {
+      const normalized = normalizeDmsRow(line);
+      const digitCount = (normalized.match(/\d/g) || []).length;
+      const directions = (normalized.match(/[NSEW]/g) || []).length;
+      return digitCount >= 8 && directions >= 2 && /[°'"]/.test(normalized);
+    });
+}
+
+function extractExactDmsRowsFromV2Groups(groups) {
+  if (!Array.isArray(groups)) return [];
+  return groups
+    .flatMap((group) => (Array.isArray(group?.points) ? group.points : []))
+    .map((point) => point?.raw || '')
+    .filter(Boolean)
+    .filter((row) => extractExactDmsRows(row).length > 0);
+}
+
+function countCoordinateBlocks(text) {
+  return String(text || '')
+    .split(/\n\s*\n/g)
+    .map((block) => extractCoordinateLines(block).length)
+    .filter((count) => count > 0)
+    .length;
 }
 
 function extractKmlCoordinates(text) {
@@ -528,6 +577,8 @@ function summarizeApiResponse(data, responseMeta = {}) {
   const fallbackRows = extractProjectedOrDecimalRows(coordinatesText);
   const textRows = kmlCoordinates.length ? kmlCoordinates : fallbackRows;
   const v2Rows = flattenV2Points(engine).map(pointToCoordinate).filter(Boolean);
+  const rawTextDmsRows = extractExactDmsRows(data?.rawText || coordinatesText);
+  const exactDmsRows = rawTextDmsRows.length ? rawTextDmsRows : extractExactDmsRowsFromV2Groups(groups);
   const coordinateRows = textRows.length ? textRows : v2Rows;
   const pointCount = sumPointCount(groups, Number.isInteger(data?.pointCount)
     ? data.pointCount
@@ -560,10 +611,14 @@ function summarizeApiResponse(data, responseMeta = {}) {
     kmlReady: typeof engine.kml_ready === 'boolean' ? engine.kml_ready : allGroupsKmlReady,
     firstPoint,
     lastPoint,
+    groupPointCounts: groups.map((group) => (Array.isArray(group?.points) ? group.points.length : 0)),
+    polygonCount: groups.length || countCoordinateBlocks(coordinatesText),
     reviewGroupIndexes: getReviewGroupIndexes(groups),
     country: getActualCountry(engine, data),
     areaHa: getActualArea(engine),
     gridRows,
+    exactDmsRows,
+    coordinateBlockCount: countCoordinateBlocks(coordinatesText),
     orderStatus: engine.order_status || engine.coordinate_validation_report?.order_status || '',
     fallbackUsed: isFallbackUsed(data, engine),
     retryUsed: isRetryUsed(data),
@@ -792,6 +847,24 @@ function compareGridRows(diffs, expectedRows, actualRows, tolerance = 0.01) {
   }
 }
 
+function compareExactDmsRows(diffs, expectedRows, actualRows) {
+  if (!Array.isArray(expectedRows) || expectedRows.length === 0) return;
+  const actual = Array.isArray(actualRows) ? actualRows : [];
+
+  if (actual.length !== expectedRows.length) {
+    addFinding(diffs, 'BLOCKER', 'dms row count', expectedRows.length, actual.length, 'Vision');
+  }
+
+  const max = Math.max(expectedRows.length, actual.length);
+  for (let index = 0; index < max; index += 1) {
+    const expected = expectedRows[index] || null;
+    const actualRow = actual[index] || null;
+    if (normalizeDmsRow(expected) !== normalizeDmsRow(actualRow)) {
+      addFinding(diffs, 'BLOCKER', `dms row ${index + 1} mismatch`, expected, actualRow, 'Vision');
+    }
+  }
+}
+
 function compareGolden(sample, actual) {
   const diffs = [];
   const warnings = [];
@@ -820,6 +893,16 @@ function compareGolden(sample, actual) {
   compareField(diffs, 'reviewGroupIndexes', sample.expected_review_group_indexes, actual.reviewGroupIndexes, { normalize: 'array' });
   compareField(diffs, 'country', sample.expected_country, actual.country, { severity: 'WARNING' });
   compareGridRows(diffs, sample.expected_grid_rows, actual.gridRows, Number(sample.tolerance?.xv_yv ?? 0.01));
+  compareExactDmsRows(diffs, sample.expected_exact_dms_rows, actual.exactDmsRows);
+  compareField(diffs, 'group_point_counts', sample.expected_group_point_counts, actual.groupPointCounts, { normalize: 'array' });
+  compareField(diffs, 'polygon_count', sample.expected_polygon_count, actual.polygonCount);
+
+  if (sample.forbidden_flatten_to_single_group === true && actual.groupCount === 1 && Number(sample.expected_group_count) > 1) {
+    addFinding(diffs, 'BLOCKER', 'flatten_to_single_group', `not 1 group; expected ${sample.expected_group_count}`, actual.groupCount);
+  }
+  if (sample.forbidden_cross_group_edges === true && actual.polygonCount === 1 && Number(sample.expected_polygon_count) > 1) {
+    addFinding(diffs, 'BLOCKER', 'cross_group_edges', `no single polygon across ${sample.expected_group_count} groups`, `${actual.polygonCount} polygon`);
+  }
 
   const firstCompare = coordinateEquals(actual.firstPoint, sample.expected_first_point);
   if (!firstCompare.matches) {

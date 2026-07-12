@@ -713,15 +713,57 @@
       "fixture": "regression-samples/HANDWRITTEN_DMS/baseline.json",
       "baseline_status": "locked_experimental",
       "expected_coordinate_type": "handwritten_dms_experimental",
-      "expected_group_count": 1,
+      "expected_group_count": 4,
+      "expected_group_point_counts": [
+        4,
+        4,
+        4,
+        4
+      ],
       "expected_point_count": 16,
-      "expected_first_point": "-8.678369444444444,11.477016666666668",
-      "expected_last_point": "-8.608544444444444,11.462525",
+      "expected_exact_dms_rows": [
+        "11°28'31.26\"N,08°40'42.13\"W",
+        "11°28'31.60\"N,08°40'32.90\"W",
+        "11°28'18.01\"N,08°40'31.01\"W",
+        "11°28'17.41\"N,08°40'41.36\"W",
+        "11°27'57.74\"N,08°36'46.30\"W",
+        "11°28'05.59\"N,08°36'40.17\"W",
+        "11°27'57.19\"N,08°36'26.21\"W",
+        "11°27'48.03\"N,08°36'30.35\"W",
+        "11°27'54.56\"N,08°36'21.90\"W",
+        "11°27'45.54\"N,08°36'08.06\"W",
+        "11°27'37.17\"N,08°36'10.97\"W",
+        "11°27'45.75\"N,08°36'25.83\"W",
+        "11°27'55.13\"N,08°36'47.30\"W",
+        "11°27'46.12\"N,08°36'50.51\"W",
+        "11°27'36.04\"N,08°36'33.46\"W",
+        "11°27'45.09\"N,08°36'30.76\"W"
+      ],
+      "expected_polygon_count": 4,
+      "expected_first_point_per_group": [
+        "11°28'31.26\"N,08°40'42.13\"W",
+        "11°27'57.74\"N,08°36'46.30\"W",
+        "11°27'54.56\"N,08°36'21.90\"W",
+        "11°27'55.13\"N,08°36'47.30\"W"
+      ],
+      "expected_last_point_per_group": [
+        "11°28'17.41\"N,08°40'41.36\"W",
+        "11°27'48.03\"N,08°36'30.35\"W",
+        "11°27'45.75\"N,08°36'25.83\"W",
+        "11°27'45.09\"N,08°36'30.76\"W"
+      ],
+      "forbidden_flatten_to_single_group": true,
+      "forbidden_cross_group_edges": true,
+      "expected_first_point": null,
+      "expected_last_point": null,
       "expected_geometry": "Polygon",
       "expected_requires_review": true,
       "expected_kml_ready": false,
       "expected_review_group_indexes": [
-        1
+        1,
+        2,
+        3,
+        4
       ],
       "expected_country": null,
       "expected_area_range": null,

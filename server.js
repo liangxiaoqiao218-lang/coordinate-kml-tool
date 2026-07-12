@@ -3276,25 +3276,29 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
   const coordinateText = String(coordinates || "");
   const dmsRows = countDmsCoordinateRows(sourceText);
   const pointRows = countCoordinateRows(coordinateText);
+  const rawDmsRows = getLikelyHandwrittenDmsRawRowCount(sourceText);
   const isOcrImage = Boolean(options.isOcrImage);
+  const hasStrongHandwrittenDmsRows = rawDmsRows >= 8;
+  const hasExplicitHandwrittenDmsContext = Boolean(options.hasExplicitHandwrittenDmsContext);
 
   const isHandwrittenDms = isOcrImage
-    && dmsRows >= 4
-    && pointRows >= 4
-    && looksLikeHandwrittenDmsBlock(sourceText)
-    && !getDmsGroupedCoordinateInfo(sourceText).output
-    && !looksLikeCoordinateTable(sourceText)
-    && !hasDmsGroupedContext(sourceText)
+    && (dmsRows >= 4 || rawDmsRows >= 4)
+    && (pointRows >= 4 || rawDmsRows >= 4)
+    && (looksLikeHandwrittenDmsBlock(sourceText) || hasStrongHandwrittenDmsRows)
+    && (!getDmsGroupedCoordinateInfo(sourceText).output || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
+    && (!looksLikeCoordinateTable(sourceText) || hasStrongHandwrittenDmsRows)
+    && (!hasDmsGroupedContext(sourceText) || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
     && !getFrenchPerimeterDmsInfo(sourceText).isFrenchPerimeterDms
     && !looksLikePointAzDmsTable(sourceText)
     && !hasBftmContext(sourceText)
     && !getMgrsInfo(sourceText).isMgrs
-    && !getWgs84TableCoordinatesInfo(sourceText).isWgs84TableCoordinates
-    && !getChatCoordinatesInfo(sourceText).isChatCoordinates;
+    && (!getWgs84TableCoordinatesInfo(sourceText).isWgs84TableCoordinates || hasStrongHandwrittenDmsRows)
+    && (!getChatCoordinatesInfo(sourceText).isChatCoordinates || hasStrongHandwrittenDmsRows);
 
   return {
     isHandwrittenDms,
     dmsRows,
+    rawDmsRows,
     pointRows
   };
 }
@@ -3416,6 +3420,58 @@ function groupEveryFourLinesWhenLikely(text, sourceText = "") {
   return lines
     .map((line, index) => (index > 0 && index % 4 === 0 ? `\n${line}` : line))
     .join("\n");
+}
+
+function groupHandwrittenDmsCoordinateLines(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 8) {
+    return String(text || "");
+  }
+
+  return lines
+    .map((line, index) => (index > 0 && index % 4 === 0 ? `\n${line}` : line))
+    .join("\n");
+}
+
+function extractHandwrittenDmsRawRows(text) {
+  return String(text || "")
+    .replace(/[º˚]/g, "°")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line.replace(/^\s*(?:point|pt|p|no|n[°o]?|#)?\s*[\dA-Z]{1,3}\s*[:.)-]\s*/i, ""))
+    .filter(line => {
+      const normalized = normalizeText(line);
+      const digitCount = (normalized.match(/\d/g) || []).length;
+      const directions = (normalized.match(/[NSEWO]/gi) || []).length;
+      const dmsSymbolCount = (normalized.match(/[°º'′″"]/g) || []).length;
+      const hasDamagedDmsPair = /\d{1,3}\s*[°º.]\s*\d{1,2}[.'′]\d{2,4}\s*['′]?\s*[NSEWO]/i.test(normalized)
+        && /[,，\s]\s*\d{1,3}\s*[°º.]\s*\d{1,2}[.'′]\d{2,4}\s*['′]?\s*[NSEWO]/i.test(normalized);
+      const dmsLikeParts = getLooseDmsPartsFromLine(normalized);
+      return digitCount >= 8
+        && directions >= 2
+        && (dmsLikeParts.length >= 2 || (dmsSymbolCount >= 2 && hasDamagedDmsPair));
+    });
+}
+
+function getLikelyHandwrittenDmsRawRowCount(text) {
+  return extractHandwrittenDmsRawRows(text).length;
+}
+
+function formatHandwrittenDmsRawRows(text) {
+  return groupHandwrittenDmsCoordinateLines(extractHandwrittenDmsRawRows(text).join("\n"));
+}
+
+function applyHandwrittenDmsCoordinateGrouping(coordinates, handwrittenDms = {}) {
+  if (!handwrittenDms?.isHandwrittenDms) {
+    return coordinates;
+  }
+
+  return groupHandwrittenDmsCoordinateLines(coordinates);
 }
 
 function extractDecimalCoordinateLines(text) {
@@ -3833,6 +3889,10 @@ function getUploadNameSearchText(file, rawHint = "") {
   }
 
   return Array.from(variants).filter(Boolean).join("\n");
+}
+
+function hasExplicitHandwrittenDmsUploadContext(file, rawHint = "") {
+  return /手写|handwritten|manuscript|handwritten\s*dms/i.test(getUploadNameSearchText(file, rawHint));
 }
 
 function shouldUseMozambiqueGeographicPromptFirst(file, rawHint = "") {
@@ -11375,6 +11435,8 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 
     const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
     const coordinateEngineV2ContextHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || req.body?.country || req.body?.projectCountry || "");
+    const coordinateRawHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || "");
+    const handwrittenDmsUploadContext = hasExplicitHandwrittenDmsUploadContext(req.file, coordinateRawHint);
     const prompt = `你是矿业坐标识别助手。请只识别图片中的真实坐标表区域，并只返回坐标行。图片可能是完整文件、手机截图、扫描件、带水印图片、长表、局部表格、同一页多块矿区坐标或带菜单按钮的截图。
 
 必须忽略：
@@ -11394,7 +11456,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 11. Latitude nord = 北纬；Longitude ouest = 西经。
 12. 表格数字可能带空格分组，例如 658 800 和 1 364 200，必须分别理解为 658800 和 1364200。
 13. 手写坐标可能写成 11°28.31.26N、08.40.42.13W、11°27'57.74 N、08 36 46.30 W 等不规范 DMS，请按度分秒理解。
-14. 如果表格里有红色、手写、框选修正标记，例如把打印的 11° 手工改成 10°，优先按修正后的值识别；同时在最后增加一行识别提示，提醒用户核对。
+14. 手写 DMS 是逐字符转写任务。只能输出图中可见数字；不要根据上下文猜测、补全或自动选择所谓修正值。看不清的字符必须保留为需核对信息，不得把 31 猜成 37、41 猜成 47、59 猜成 53、97 猜成 87、12 猜成 22。
 
 输出规则：
 1. 如果表格是矿权网格 / cadastral grid，表头包含 num / XV / YV，则不要把 XV/YV 当 polygon 点，不要转经纬度，不要输出 X,Y。每行只输出：num | XV | YV。
@@ -11412,7 +11474,7 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
 13. 不要压缩小数位，不要改写原始精度。
 14. 如果同一张图片里有多块不同矿区/多组坐标，必须在不同组之间保留一个空行。每组内部仍然按原顺序逐行输出。
 15. 手写坐标如果出现多段明显分开的 1、2、3、4 编号，每一段就是一组坐标，段与段之间必须输出一个空行。
-16. 如果采用了手写、红色或框选修正，坐标行输出完成后，最后额外输出一行：识别提示：发现疑似人工修正，已按修正值识别，请核对。
+16. 如果手写 DMS 中存在涂改、覆盖或多个候选数字，不要替用户决定最终修正值。坐标行输出完成后，最后额外输出一行：识别提示：手写坐标存在需核对字符，请结合原图逐行核对。
 17. 如果原图是 Mining Area / The coordinates are as follows 等 DMS 坐标文本，必须保留原始 DMS 字符串，包括 ° ' " N S E W O。不要提前归一化为小数坐标。不同 Mining Area 之间必须保留一个空行。
 
 示例：
@@ -12027,7 +12089,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     let frenchPerimeterDms = getFrenchPerimeterDmsInfo(rawText);
     let dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
-    let handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, { isOcrImage: Boolean(req.file) });
+    let handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, {
+      isOcrImage: Boolean(req.file),
+      hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
+    });
     let pointAzDmsTableAccepted = false;
     if (dmsGroupedAccepted && shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo)) {
       try {
@@ -12609,7 +12674,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
-    handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, { isOcrImage: Boolean(req.file) });
+    handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, {
+      isOcrImage: Boolean(req.file),
+      hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
+    });
     const finalBftmCoordinateRepair = normalizeBftmProjectedCoordinateText(coordinates);
     if (finalBftmCoordinateRepair.changed && finalBftmCoordinateRepair.rowCount >= 4) {
       coordinates = finalBftmCoordinateRepair.text;
@@ -12628,6 +12696,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         parserTrace.splice(dmsTraceIndex, 1);
       }
       parserTrace.push("HANDWRITTEN_DMS:accepted");
+    }
+    if (handwrittenDms.isHandwrittenDms) {
+      coordinates = formatHandwrittenDmsRawRows(rawText) || applyHandwrittenDmsCoordinateGrouping(coordinates, handwrittenDms);
+    } else {
+      coordinates = applyHandwrittenDmsCoordinateGrouping(coordinates, handwrittenDms);
     }
     if (dmsGroupedAccepted) {
       coordinates = dmsGroupedInfo.output;
@@ -12891,8 +12964,11 @@ If fewer than four handwritten DMS coordinate rows are readable, output only: ${
             timeoutMs: handwrittenDmsDebug.handwrittenDmsRetryTimeoutMs
           });
           const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
-          const retryCoordinates = extractCoordinateLines(retryRawText);
+          let retryCoordinates = extractCoordinateLines(retryRawText);
           const retryHandwrittenDms = getHandwrittenDmsInfo(retryRawText, retryCoordinates, { isOcrImage: true });
+          retryCoordinates = retryHandwrittenDms.isHandwrittenDms
+            ? (formatHandwrittenDmsRawRows(retryRawText) || applyHandwrittenDmsCoordinateGrouping(retryCoordinates, retryHandwrittenDms))
+            : applyHandwrittenDmsCoordinateGrouping(retryCoordinates, retryHandwrittenDms);
           handwrittenDmsDebug.handwrittenDmsRetryRows = retryHandwrittenDms.pointRows || countCoordinateRows(retryCoordinates);
 
           if (retryHandwrittenDms.isHandwrittenDms) {
