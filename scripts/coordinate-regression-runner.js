@@ -13,6 +13,40 @@ const defaultTextApiUrl = 'http://127.0.0.1:3000/api/regression/parse-coordinate
 const apiUrl = process.env.COORDINATE_REGRESSION_API_URL || defaultApiUrl;
 const textApiUrl = process.env.COORDINATE_REGRESSION_TEXT_API_URL || defaultTextApiUrl;
 const coordinateTolerance = Number(process.env.COORDINATE_REGRESSION_TOLERANCE || '1e-6');
+const allowedLayers = new Set(['Vision', 'Parser', 'Engine', 'Resolver', 'KML', 'UI', 'Gate']);
+
+const fieldLayerMap = {
+  api: 'Vision',
+  coordinate_type: 'Engine',
+  v2_precision_mode: 'Engine',
+  v1_precisionMode: 'Gate',
+  groupCount: 'Engine',
+  pointCount: 'Parser',
+  geometry: 'Engine',
+  requires_review: 'Engine',
+  kml_ready: 'KML',
+  reviewGroupIndexes: 'Engine',
+  country: 'Resolver',
+  area: 'Engine',
+  firstPoint: 'Parser',
+  lastPoint: 'Parser',
+  forbidden_v2_precision_mode: 'Engine',
+  forbidden_v1_precisionMode: 'Gate',
+  fallback_takeover: 'Vision',
+  'grid row count': 'Parser',
+  'grid duplicate row': 'Parser',
+};
+
+function getFindingLayer(field, explicitLayer = '') {
+  if (allowedLayers.has(explicitLayer)) return explicitLayer;
+  const key = String(field || '');
+  if (fieldLayerMap[key]) return fieldLayerMap[key];
+  if (/grid row/i.test(key)) return 'Parser';
+  if (/kml/i.test(key)) return 'KML';
+  if (/order|axis|swapped|resolver/i.test(key)) return 'Resolver';
+  if (/precision|coordinate_type|group|geometry|review/i.test(key)) return 'Engine';
+  return 'Gate';
+}
 const fixtureRoot = process.env.COORDINATE_REGRESSION_FIXTURE_ROOT || 'D:\\关于西非的业务\\测试素材';
 
 const knownLocalFixtureNames = {
@@ -659,32 +693,39 @@ async function loadTextFixture(sample) {
   return '';
 }
 
-function addFinding(findings, severity, field, expected, actual) {
-  findings.push({ severity, field, expected, actual });
+function addFinding(findings, severity, field, expected, actual, layer = '') {
+  findings.push({
+    severity,
+    layer: getFindingLayer(field, layer),
+    field,
+    expected,
+    actual,
+  });
 }
 
 function compareField(diffs, field, expected, actual, options = {}) {
   const skipped = expected === undefined || expected === null || expected === '';
   if (skipped && options.skipWhenNull !== false) return;
   const severity = options.severity || 'BLOCKER';
+  const layer = options.layer || '';
 
   if (options.normalize === 'enum') {
     if (normalizeEnum(expected) !== normalizeEnum(actual)) {
-      addFinding(diffs, severity, field, expected, actual || null);
+      addFinding(diffs, severity, field, expected, actual || null, layer);
     }
     return;
   }
 
   if (options.normalize === 'geometry') {
     if (normalizeGeometry(expected) !== normalizeGeometry(actual)) {
-      addFinding(diffs, severity, field, expected, actual || null);
+      addFinding(diffs, severity, field, expected, actual || null, layer);
     }
     return;
   }
 
   if (options.normalize === 'boolean') {
     if (Boolean(expected) !== Boolean(actual)) {
-      addFinding(diffs, severity, field, Boolean(expected), Boolean(actual));
+      addFinding(diffs, severity, field, Boolean(expected), Boolean(actual), layer);
     }
     return;
   }
@@ -693,13 +734,13 @@ function compareField(diffs, field, expected, actual, options = {}) {
     const expectedArray = Array.isArray(expected) ? expected : [];
     const actualArray = Array.isArray(actual) ? actual : [];
     if (JSON.stringify(expectedArray) !== JSON.stringify(actualArray)) {
-      addFinding(diffs, severity, field, expectedArray, actualArray);
+      addFinding(diffs, severity, field, expectedArray, actualArray, layer);
     }
     return;
   }
 
   if (expected !== actual) {
-    addFinding(diffs, severity, field, expected, actual);
+    addFinding(diffs, severity, field, expected, actual, layer);
   }
 }
 
@@ -756,7 +797,9 @@ function compareGolden(sample, actual) {
   const warnings = [];
 
   if (!actual || actual.error) {
-    addFinding(diffs, 'BLOCKER', 'api', 'successful JSON response', actual?.error || 'no response');
+    const errorText = actual?.error || 'no response';
+    const layer = /fixture|runner|sample|path/i.test(errorText) ? 'Gate' : 'Vision';
+    addFinding(diffs, 'BLOCKER', 'api', 'successful JSON response', errorText, layer);
     return { diffs, warnings };
   }
 
@@ -863,6 +906,16 @@ function validateBaseline(baseline) {
   if (baseline.schema_version !== 'coordinate_recognition_golden_baseline_v1') {
     errors.push(`unsupported schema_version: ${baseline.schema_version || '(missing)'}`);
   }
+  const baselineLayers = baseline.layer_classification?.allowed_layers;
+  if (!Array.isArray(baselineLayers) || baselineLayers.length === 0) {
+    errors.push('layer_classification.allowed_layers is required');
+  } else {
+    for (const layer of baselineLayers) {
+      if (!allowedLayers.has(layer)) {
+        errors.push(`layer_classification.allowed_layers contains unsupported layer: ${layer}`);
+      }
+    }
+  }
   if (!Array.isArray(baseline.samples)) {
     errors.push('samples must be an array');
     return errors;
@@ -912,6 +965,7 @@ function validateErrorLibrary(errorLibrary) {
     ? errorLibrary.required_fields
     : [
       'error_id',
+      'layer',
       'sample_id',
       'date',
       'coordinate_type',
@@ -929,6 +983,12 @@ function validateErrorLibrary(errorLibrary) {
     for (const field of requiredFields) {
       if (!(field in entry)) errors.push(`${prefix}.${field} is required`);
     }
+    if (!entry.layer) {
+      errors.push(`${prefix}.layer is required`);
+    }
+    if (entry.layer && !allowedLayers.has(entry.layer)) {
+      errors.push(`${prefix}.layer is unsupported: ${entry.layer}`);
+    }
     if (entry.error_id && ids.has(entry.error_id)) errors.push(`${prefix}.error_id duplicates ${entry.error_id}`);
     if (entry.error_id) ids.add(entry.error_id);
     if (entry.status && !['fixed', 'open', 'open_architecture', 'prevented_not_adopted'].includes(String(entry.status))) {
@@ -945,10 +1005,13 @@ function getErrorLibraryStats(errorLibrary) {
     open: 0,
     prevented_not_adopted: 0,
     open_architecture: 0,
+    layers: {},
   };
   for (const entry of errorLibrary.errors || []) {
     const status = String(entry.status || 'open');
     stats[status] = (stats[status] || 0) + 1;
+    const layer = allowedLayers.has(entry.layer) ? entry.layer : 'Unclassified';
+    stats.layers[layer] = (stats.layers[layer] || 0) + 1;
   }
   return stats;
 }
@@ -956,6 +1019,7 @@ function getErrorLibraryStats(errorLibrary) {
 function printErrorLibraryStats(errorLibrary) {
   const stats = getErrorLibraryStats(errorLibrary);
   console.log(`Error Library: total=${stats.total} fixed=${stats.fixed || 0} open=${stats.open || 0} prevented_not_adopted=${stats.prevented_not_adopted || 0} open_architecture=${stats.open_architecture || 0}`);
+  console.log(`Error Library Layers: ${Object.entries(stats.layers).map(([layer, count]) => `${layer}=${count}`).join(' ') || '(none)'}`);
 }
 
 function printErrorList(errorLibrary, selectedErrorIds = new Set()) {
@@ -964,7 +1028,7 @@ function printErrorList(errorLibrary, selectedErrorIds = new Set()) {
     .filter((entry) => !selectedErrorIds.size || selectedErrorIds.has(String(entry.error_id).toLowerCase()));
   for (const entry of errors) {
     const linkedSample = entry.regression_case?.baseline_sample_id || entry.sample_id || '(none)';
-    console.log(`- ${entry.error_id} | ${entry.status} | sample=${linkedSample} | type=${entry.coordinate_type || '(unknown)'} | fix=${entry.fix_commit || '(none)'}`);
+    console.log(`- ${entry.error_id} | layer=${entry.layer || '(missing)'} | ${entry.status} | sample=${linkedSample} | type=${entry.coordinate_type || '(unknown)'} | fix=${entry.fix_commit || '(none)'}`);
     console.log(`  root_cause: ${entry.root_cause || '(missing)'}`);
   }
 }
@@ -1080,6 +1144,7 @@ function buildHistoricalFinding(errorEntry, actual) {
   const severity = getHistoricalErrorSeverity(errorEntry);
   return {
     severity,
+    layer: getFindingLayer('', errorEntry.layer || 'Gate'),
     code: getHistoricalErrorCode(errorEntry),
     error_id: errorEntry.error_id,
     sample_id: errorEntry.sample_id,
@@ -1270,14 +1335,14 @@ function printResult(result) {
   if (result.diffs.length) {
     console.log('  Diff:');
     for (const diff of result.diffs) {
-      console.log(`    [${diff.severity || 'BLOCKER'}] run ${diff.run} ${diff.field}: expected ${JSON.stringify(diff.expected)}; actual ${JSON.stringify(diff.actual)}`);
+      console.log(`    [${diff.severity || 'BLOCKER'}][${diff.layer || getFindingLayer(diff.field)}] run ${diff.run} ${diff.field}: expected ${JSON.stringify(diff.expected)}; actual ${JSON.stringify(diff.actual)}`);
     }
   }
 
   console.log(`  Historical Error Check: ${result.historicalStatus || 'NOT APPLICABLE'}`);
   if (result.historicalFindings?.length) {
     for (const finding of result.historicalFindings) {
-      console.log(`    [${finding.severity}] ${finding.code}`);
+      console.log(`    [${finding.severity}][${finding.layer || 'Gate'}] ${finding.code}`);
       console.log(`      error_id: ${finding.error_id}`);
       console.log(`      sample_id: ${finding.sample_id}`);
       console.log(`      root_cause: ${finding.root_cause || '(missing)'}`);
@@ -1290,7 +1355,7 @@ function printResult(result) {
   if (result.warnings.length) {
     console.log('  Notes:');
     for (const warning of result.warnings) {
-      console.log(`    [${warning.severity || 'INFO'}] run ${warning.run} ${warning.field}: ${warning.message}`);
+      console.log(`    [${warning.severity || 'INFO'}][${warning.layer || getFindingLayer(warning.field)}] run ${warning.run} ${warning.field}: ${warning.message}`);
     }
   }
 }
@@ -1307,9 +1372,15 @@ function summarizeResults(results) {
     blockerCount: 0,
     warningCount: 0,
     infoCount: 0,
+    layerCounts: {},
     durations: [],
     timeoutCount: 0,
     fallbackCount: 0,
+  };
+
+  const countLayer = (layer) => {
+    const normalizedLayer = allowedLayers.has(layer) ? layer : 'Gate';
+    summary.layerCounts[normalizedLayer] = (summary.layerCounts[normalizedLayer] || 0) + 1;
   };
 
   for (const result of results) {
@@ -1323,15 +1394,18 @@ function summarizeResults(results) {
       if (finding.severity === 'BLOCKER') summary.blockerCount += 1;
       else if (finding.severity === 'WARNING') summary.warningCount += 1;
       else summary.infoCount += 1;
+      countLayer(finding.layer);
     }
     for (const diff of result.diffs) {
       if (diff.severity === 'BLOCKER') summary.blockerCount += 1;
       else if (diff.severity === 'WARNING') summary.warningCount += 1;
       else summary.infoCount += 1;
+      countLayer(diff.layer || getFindingLayer(diff.field));
     }
     for (const warning of result.warnings) {
       if (warning.severity === 'WARNING') summary.warningCount += 1;
       else summary.infoCount += 1;
+      countLayer(warning.layer || getFindingLayer(warning.field));
     }
     for (const run of result.runs) {
       const actual = run.actual?.actual || run.actual;
@@ -1436,6 +1510,7 @@ async function main() {
       result.historicalStatus = result.historicalStatus || 'NOT CHECKED';
       result.diffs.push({
         severity: 'BLOCKER',
+        layer: 'Gate',
         run: 1,
         field: 'gate',
         expected: 'blocking sample executed',
@@ -1460,6 +1535,7 @@ async function main() {
   console.log(`BLOCKER: ${summary.blockerCount}`);
   console.log(`WARNING: ${summary.warningCount}`);
   console.log(`INFO: ${summary.infoCount}`);
+  console.log(`Layers: ${Object.entries(summary.layerCounts).map(([layer, count]) => `${layer}=${count}`).join(' ') || '(none)'}`);
   console.log(`Timeout: ${summary.timeoutCount}`);
   console.log(`Fallback: ${summary.fallbackCount}`);
   console.log(`[INFO] Duration: avg=${summary.avgMs ?? 'n/a'}ms min=${summary.minMs ?? 'n/a'}ms max=${summary.maxMs ?? 'n/a'}ms`);

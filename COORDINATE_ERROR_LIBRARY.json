@@ -22,8 +22,22 @@
       "Every bug that caused wrong KML, fallback takeover, timeout misrouting, point loss, wrong type, or unsafe kml_ready must be registered here."
     ]
   },
+  "layer_classification": {
+    "allowed_layers": [
+      "Vision",
+      "Parser",
+      "Engine",
+      "Resolver",
+      "KML",
+      "UI",
+      "Gate"
+    ],
+    "required": true,
+    "rule": "Each error must identify the primary layer where the regression first became actionable. Secondary layers may be described in root_cause, but layer is the routing key."
+  },
   "required_fields": [
     "error_id",
+    "layer",
     "sample_id",
     "date",
     "coordinate_type",
@@ -38,6 +52,7 @@
   "errors": [
     {
       "error_id": "CER-2026-07-11-001",
+      "layer": "Vision",
       "sample_id": "handwritten_dms_001",
       "date": "2026-07-11",
       "coordinate_type": "handwritten_dms_experimental",
@@ -72,6 +87,7 @@
     },
     {
       "error_id": "CER-2026-07-11-002",
+      "layer": "Engine",
       "sample_id": "mozambique_tete_001",
       "date": "2026-07-11",
       "coordinate_type": "mozambique_geographic_table",
@@ -105,6 +121,7 @@
     },
     {
       "error_id": "CER-2026-07-11-003",
+      "layer": "Engine",
       "sample_id": "cote_divoire_multi_001",
       "date": "2026-07-11",
       "coordinate_type": "cote_divoire_geographic_dms_table",
@@ -150,6 +167,7 @@
     },
     {
       "error_id": "CER-2026-07-11-004",
+      "layer": "Engine",
       "sample_id": "recognize_coordinates_fallback_timeout",
       "date": "2026-07-11",
       "coordinate_type": "unknown",
@@ -176,6 +194,7 @@
     },
     {
       "error_id": "CER-2026-07-11-005",
+      "layer": "Gate",
       "sample_id": "cote_divoire_single_01",
       "date": "2026-07-11",
       "coordinate_type": "cote_divoire_geographic_dms_table",
@@ -212,6 +231,7 @@
     },
     {
       "error_id": "CER-2026-07-11-006",
+      "layer": "UI",
       "sample_id": "manual_decimal_lon_lat_ambiguous_001",
       "date": "2026-07-11",
       "coordinate_type": "decimal_latlon",
@@ -244,6 +264,7 @@
     },
     {
       "error_id": "CER-2026-07-11-007",
+      "layer": "Vision",
       "sample_id": "handwritten_dms_prompt_protocol_001",
       "date": "2026-07-11",
       "coordinate_type": "handwritten_dms_experimental",

@@ -65,6 +65,27 @@
     "frontend_display_only",
     "baseline_incorrect"
   ],
+  "layer_classification": {
+    "allowed_layers": [
+      "Vision",
+      "Parser",
+      "Engine",
+      "Resolver",
+      "KML",
+      "UI",
+      "Gate"
+    ],
+    "rule": "Every regression, historical error, and quality gate finding must be assigned to exactly one primary layer before any fix is attempted.",
+    "layer_definitions": {
+      "Vision": "Image reading, OCR, model transcription, timeout, retry, and fallback source selection.",
+      "Parser": "Text-to-coordinate extraction, DMS conversion, projected row parsing, grid row parsing, and point ordering inside a parser.",
+      "Engine": "Coordinate Engine V2 type routing, normalization, group structure, kml_ready/requires_review state, and shadow schema.",
+      "Resolver": "Coordinate order candidates, axis selection, ambiguity handling, country/profile scoring, and SKB/validator decisions.",
+      "KML": "KML coordinate order, geometry construction, projection conversion for output, and unsafe KML generation.",
+      "UI": "Frontend display, manual input flow, review state, summary, toast, and user-triggered coordinate mutations.",
+      "Gate": "Golden baseline, Error Library, runner comparison logic, test severity, and quality report classification."
+    }
+  },
   "release_gate": {
     "stable_core_samples_must_pass": true,
     "stable_core_required_success_rate": 1,
