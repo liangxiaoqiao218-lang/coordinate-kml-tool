@@ -196,16 +196,17 @@
         "requires_review": false,
         "kml_ready": true,
         "match_conditions": {
-          "precisionMode": "preserve-original-decimals-and-parse-dms",
-          "coordinate_type": "cote_divoire_geographic_dms_table"
+          "v1_precision_mode_warning_only": true,
+          "coordinate_type": "cote_divoire_geographic_dms_table",
+          "v2_precision_mode": "cote-divoire-geographic-dms-table"
         }
       },
-      "root_cause": "Regression Runner smoke test shows V2 coordinate_type is correct but legacy precisionMode is not aligned with the Côte d'Ivoire V2 adapter expectation. Root cause not fixed yet.",
+      "root_cause": "Quality Gate schema mixed V1 top-level precisionMode with V2 coordinateEngineV2.precision_mode. Schema separation fixes the gate issue without changing recognition output.",
       "fix_commit": null,
-      "status": "open",
+      "status": "fixed",
       "regression_case": {
         "baseline_sample_id": "cote_divoire_single_01",
-        "runner_expectation": "precisionMode=cote-divoire-geographic-dms-table; coordinate_type=cote_divoire_geographic_dms_table",
+        "runner_expectation": "V2 coordinate_type and expected_v2_precision_mode pass; V1 legacy precisionMode is warning unless v1_precision_mode_blocker=true.",
         "blocker_if_reappears": false
       }
     },

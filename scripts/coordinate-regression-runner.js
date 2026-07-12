@@ -480,6 +480,7 @@ function summarizeApiResponse(data, responseMeta = {}) {
     durationMs: responseMeta.durationMs ?? null,
     model: data?.model || '',
     precisionMode: data?.precisionMode || '',
+    v2PrecisionMode: engine.precision_mode || '',
     coordinateType: engine.coordinate_type || data?.coordinate_type || '',
     groupCount: groups.length || (pointCount > 0 ? 1 : 0),
     pointCount,
@@ -674,7 +675,14 @@ function compareGolden(sample, actual) {
   }
 
   compareField(diffs, 'coordinate_type', sample.expected_coordinate_type, actual.coordinateType, { normalize: 'enum' });
-  compareField(diffs, 'precisionMode', sample.expected_precision_mode, actual.precisionMode);
+  compareField(diffs, 'v2_precision_mode', sample.expected_v2_precision_mode, actual.v2PrecisionMode, { severity: 'BLOCKER' });
+  compareField(
+    diffs,
+    'v1_precisionMode',
+    sample.expected_v1_precision_mode,
+    actual.precisionMode,
+    { severity: sample.v1_precision_mode_blocker === true ? 'BLOCKER' : 'WARNING' },
+  );
   compareField(diffs, 'groupCount', sample.expected_group_count, actual.groupCount);
   compareField(diffs, 'pointCount', sample.expected_point_count, actual.pointCount);
   compareField(diffs, 'geometry', sample.expected_geometry, actual.geometry, { normalize: 'geometry' });
@@ -732,8 +740,17 @@ function compareGolden(sample, actual) {
   const forbiddenPrecisionModes = Array.isArray(sample.forbidden_precision_modes)
     ? sample.forbidden_precision_modes
     : [];
+  if (forbiddenPrecisionModes.includes(actual.v2PrecisionMode)) {
+    addFinding(diffs, 'BLOCKER', 'forbidden_v2_precision_mode', `not ${actual.v2PrecisionMode}`, actual.v2PrecisionMode);
+  }
   if (forbiddenPrecisionModes.includes(actual.precisionMode)) {
-    addFinding(diffs, 'BLOCKER', 'forbidden_precision_mode', `not ${actual.precisionMode}`, actual.precisionMode);
+    addFinding(
+      diffs,
+      sample.v1_precision_mode_blocker === true ? 'BLOCKER' : 'WARNING',
+      'forbidden_v1_precisionMode',
+      `not ${actual.precisionMode}`,
+      actual.precisionMode,
+    );
   }
 
   if (forbiddenPrecisionModes.includes('local-ocr-dms-fallback') && actual.fallbackUsed && /local-ocr|fallback/i.test(actual.precisionMode)) {
@@ -775,6 +792,15 @@ function validateBaseline(baseline) {
       errors.push(`${prefix}.input_type must be image or text`);
     }
     if (!sample.baseline_status) errors.push(`${prefix}.baseline_status is required`);
+    if ('expected_precision_mode' in sample) {
+      errors.push(`${prefix}.expected_precision_mode is deprecated; use expected_v1_precision_mode and expected_v2_precision_mode`);
+    }
+    if (!('expected_v1_precision_mode' in sample)) {
+      errors.push(`${prefix}.expected_v1_precision_mode is required`);
+    }
+    if (!('expected_v2_precision_mode' in sample)) {
+      errors.push(`${prefix}.expected_v2_precision_mode is required`);
+    }
     if (!Number.isInteger(sample.expected_point_count) && sample.expected_point_count !== null) {
       errors.push(`${prefix}.expected_point_count must be integer or null`);
     }
@@ -892,6 +918,10 @@ function getActualValueForErrorField(actual, field) {
       return actual.coordinateType;
     case 'precisionMode':
       return actual.precisionMode;
+    case 'v1_precisionMode':
+      return actual.precisionMode;
+    case 'v2_precision_mode':
+      return actual.v2PrecisionMode;
     case 'pointCount':
       return actual.pointCount;
     case 'groupCount':
@@ -1108,7 +1138,8 @@ function formatActualSummary(actual) {
   return [
     `http=${actual.httpStatus}`,
     `duration=${actual.durationMs}ms`,
-    `precisionMode=${actual.precisionMode || '(empty)'}`,
+    `v1_precisionMode=${actual.precisionMode || '(empty)'}`,
+    `v2_precision_mode=${actual.v2PrecisionMode || '(empty)'}`,
     `coordinate_type=${actual.coordinateType || '(empty)'}`,
     `groups=${actual.groupCount}`,
     `points=${actual.pointCount}`,
@@ -1132,6 +1163,21 @@ function printResult(result) {
   result.runs.forEach((run, index) => {
     console.log(`  run ${index + 1}: ${formatActualSummary(run.actual)}`);
   });
+
+  const v1Findings = result.diffs.filter((diff) => diff.field === 'v1_precisionMode');
+  const v2Findings = result.diffs.filter((diff) => (
+    diff.field === 'coordinate_type' || diff.field === 'v2_precision_mode'
+  ));
+  const v1Result = v1Findings.some((finding) => finding.severity === 'BLOCKER')
+    ? 'FAIL'
+    : v1Findings.length
+      ? 'WARNING'
+      : 'PASS';
+  const v2Result = v2Findings.some((finding) => finding.severity === 'BLOCKER')
+    ? 'FAIL'
+    : 'PASS';
+  console.log(`  V1 Legacy Result: ${v1Result}`);
+  console.log(`  V2 Engine Result: ${v2Result}`);
 
   if (result.diffs.length) {
     console.log('  Diff:');

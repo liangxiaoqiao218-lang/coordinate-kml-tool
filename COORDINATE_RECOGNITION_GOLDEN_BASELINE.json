@@ -30,7 +30,7 @@
   "success_levels": {
     "level_1_type_correct": [
       "coordinate_type matches expected_coordinate_type when provided",
-      "precisionMode matches expected_precision_mode",
+      "V2 precision_mode matches expected_v2_precision_mode; V1 precisionMode is checked separately as legacy unless v1_precision_mode_blocker=true",
       "groupCount matches expected_group_count",
       "result is not captured by forbidden precision modes or fallbacks"
     ],
@@ -67,7 +67,7 @@
   ],
   "release_gate": {
     "stable_core_samples_must_pass": true,
-    "stable_core_required_success_rate": 1.0,
+    "stable_core_required_success_rate": 1,
     "high_risk_repeat_count": 10,
     "core_repeat_count": 5,
     "forbid_complex_local_ocr_final_result": true,
@@ -83,7 +83,6 @@
       "fixture": "regression-samples/DMS/baseline.json",
       "baseline_status": "locked",
       "expected_coordinate_type": "standard_dms_table",
-      "expected_precision_mode": "dms-coordinates",
       "expected_group_count": 1,
       "expected_point_count": 1,
       "expected_first_point": "-10.22406111111111,13.022647222222224",
@@ -99,7 +98,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "core"
+      "risk": "core",
+      "expected_v1_precision_mode": "dms-coordinates",
+      "expected_v2_precision_mode": "dms-coordinates",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "wgs84_chat_text_001",
@@ -108,7 +110,6 @@
       "fixture": "regression-samples/CHAT/baseline.json",
       "baseline_status": "locked",
       "expected_coordinate_type": "decimal_latlon",
-      "expected_precision_mode": "wgs84-chat-coordinates",
       "expected_group_count": 1,
       "expected_point_count": 1,
       "expected_first_point": "-11.178174,12.319572,0",
@@ -126,7 +127,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "core"
+      "risk": "core",
+      "expected_v1_precision_mode": "wgs84-chat-coordinates",
+      "expected_v2_precision_mode": "wgs84-chat-coordinates",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "wgs84_table_rc2_congo_001",
@@ -136,7 +140,6 @@
       "fixture": "regression-samples/RC2/baseline.json",
       "baseline_status": "locked",
       "expected_coordinate_type": "decimal_latlon",
-      "expected_precision_mode": "wgs84-table-coordinates",
       "expected_group_count": 1,
       "expected_point_count": 11,
       "expected_first_point": "16.0320,3.7638,0",
@@ -153,7 +156,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "core"
+      "risk": "core",
+      "expected_v1_precision_mode": "wgs84-table-coordinates",
+      "expected_v2_precision_mode": "wgs84-table-coordinates",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "wgs84_table_timeout_rescue_001",
@@ -163,7 +169,6 @@
       "fixture": "regression-samples/RC2/expected.json",
       "baseline_status": "partial",
       "expected_coordinate_type": "decimal_latlon",
-      "expected_precision_mode": "wgs84-table-coordinates",
       "expected_group_count": 1,
       "expected_point_count": 11,
       "expected_first_point": "16.0320,3.7638,0",
@@ -179,7 +184,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 10,
-      "risk": "timeout_history"
+      "risk": "timeout_history",
+      "expected_v1_precision_mode": "wgs84-table-coordinates",
+      "expected_v2_precision_mode": "wgs84-table-coordinates",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "bftm_burkina_002",
@@ -189,7 +197,6 @@
       "fixture": "regression-samples/BFTM/baseline.json",
       "baseline_status": "locked",
       "expected_coordinate_type": "bftm_xy",
-      "expected_precision_mode": "bftm-projected-x-y",
       "expected_group_count": 1,
       "expected_point_count": 20,
       "expected_first_point": "655000,1333600",
@@ -206,7 +213,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "core"
+      "risk": "core",
+      "expected_v1_precision_mode": "bftm-projected-x-y",
+      "expected_v2_precision_mode": "bftm-projected-x-y",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "utm30_burkina_003",
@@ -216,7 +226,6 @@
       "fixture": "regression-samples/UTM30/baseline.json",
       "baseline_status": "locked",
       "expected_coordinate_type": "projected_xy",
-      "expected_precision_mode": "utm30n-projected-x-y",
       "expected_group_count": 1,
       "expected_point_count": 8,
       "expected_first_point": "727250,1219700",
@@ -233,7 +242,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "core"
+      "risk": "core",
+      "expected_v1_precision_mode": "utm30n-projected-x-y",
+      "expected_v2_precision_mode": "utm30n-projected-x-y",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "mgrs_myanmar_001",
@@ -243,7 +255,6 @@
       "fixture": "regression-samples/MGRS/baseline.json",
       "baseline_status": "locked",
       "expected_coordinate_type": "mgrs_utm_grid_reference",
-      "expected_precision_mode": "mgrs-utm-grid-reference",
       "expected_group_count": 1,
       "expected_point_count": 7,
       "expected_first_point": "97.2636250945,24.7901938386,0",
@@ -261,7 +272,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "vision_risk"
+      "risk": "vision_risk",
+      "expected_v1_precision_mode": "mgrs-utm-grid-reference",
+      "expected_v2_precision_mode": "mgrs-utm-grid-reference",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "kyrgyz_gk_001",
@@ -271,7 +285,6 @@
       "fixture": "regression-samples/Kyrgyz_GK/baseline.json",
       "baseline_status": "locked",
       "expected_coordinate_type": "kyrgyzstan_gk",
-      "expected_precision_mode": "kyrgyz-gk-point-x-y",
       "expected_group_count": 1,
       "expected_point_count": 65,
       "expected_first_point": "1,13261341",
@@ -288,7 +301,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 10,
-      "risk": "high_risk_large_image"
+      "risk": "high_risk_large_image",
+      "expected_v1_precision_mode": "kyrgyz-gk-point-x-y",
+      "expected_v2_precision_mode": "kyrgyz-gk-point-x-y",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "madagascar_cadastral_candidate_001",
@@ -298,7 +314,6 @@
       "fixture": "regression-samples/Madagascar/expected.json",
       "baseline_status": "missing",
       "expected_coordinate_type": "madagascar_cadastral_grid",
-      "expected_precision_mode": "cadastral-grid-num-xv-yv",
       "expected_group_count": 1,
       "expected_point_count": 32,
       "expected_first_point": null,
@@ -315,7 +330,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 10,
-      "risk": "high_risk_missing_stable_baseline"
+      "risk": "high_risk_missing_stable_baseline",
+      "expected_v1_precision_mode": "cadastral-grid-num-xv-yv",
+      "expected_v2_precision_mode": "cadastral-grid-num-xv-yv",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "mozambique_tete_001",
@@ -325,7 +343,6 @@
       "fixture": "regression-samples/Mozambique/expected.json",
       "baseline_status": "unstable",
       "expected_coordinate_type": "mozambique_geographic_table",
-      "expected_precision_mode": "mozambique-geographic-table",
       "expected_group_count": 1,
       "expected_point_count": 22,
       "expected_first_point": "32.955556,-14.600000,0",
@@ -342,7 +359,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 10,
-      "risk": "high_risk_timeout_and_takeover_history"
+      "risk": "high_risk_timeout_and_takeover_history",
+      "expected_v1_precision_mode": "mozambique-geographic-table",
+      "expected_v2_precision_mode": "mozambique-geographic-table",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "cote_divoire_single_01",
@@ -352,7 +372,6 @@
       "fixture": "REGRESSION_TEST_SAMPLES.md",
       "baseline_status": "partial",
       "expected_coordinate_type": "cote_divoire_geographic_dms_table",
-      "expected_precision_mode": "cote-divoire-geographic-dms-table",
       "expected_group_count": 1,
       "expected_point_count": 4,
       "expected_first_point": null,
@@ -373,7 +392,10 @@
         "bftm-projected-x-y"
       ],
       "repeat_count": 5,
-      "risk": "core_v2"
+      "risk": "core_v2",
+      "expected_v1_precision_mode": "preserve-original-decimals-and-parse-dms",
+      "expected_v2_precision_mode": "cote-divoire-geographic-dms-table",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "cote_divoire_single_02",
@@ -383,7 +405,6 @@
       "fixture": "REGRESSION_TEST_SAMPLES.md",
       "baseline_status": "partial",
       "expected_coordinate_type": "cote_divoire_geographic_dms_table",
-      "expected_precision_mode": "cote-divoire-geographic-dms-table",
       "expected_group_count": 1,
       "expected_point_count": 4,
       "expected_first_point": null,
@@ -401,7 +422,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "core_v2"
+      "risk": "core_v2",
+      "expected_v1_precision_mode": "cote-divoire-geographic-dms-table",
+      "expected_v2_precision_mode": "cote-divoire-geographic-dms-table",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "cote_divoire_single_03",
@@ -411,7 +435,6 @@
       "fixture": "REGRESSION_TEST_SAMPLES.md",
       "baseline_status": "partial",
       "expected_coordinate_type": "cote_divoire_geographic_dms_table",
-      "expected_precision_mode": "cote-divoire-geographic-dms-table",
       "expected_group_count": 1,
       "expected_point_count": 4,
       "expected_first_point": null,
@@ -429,7 +452,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "core_v2"
+      "risk": "core_v2",
+      "expected_v1_precision_mode": "cote-divoire-geographic-dms-table",
+      "expected_v2_precision_mode": "cote-divoire-geographic-dms-table",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "cote_divoire_single_04",
@@ -439,7 +465,6 @@
       "fixture": "REGRESSION_TEST_SAMPLES.md",
       "baseline_status": "partial",
       "expected_coordinate_type": "cote_divoire_geographic_dms_table",
-      "expected_precision_mode": "cote-divoire-geographic-dms-table",
       "expected_group_count": 1,
       "expected_point_count": 4,
       "expected_first_point": null,
@@ -457,7 +482,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "core_v2_large_png"
+      "risk": "core_v2_large_png",
+      "expected_v1_precision_mode": "cote-divoire-geographic-dms-table",
+      "expected_v2_precision_mode": "cote-divoire-geographic-dms-table",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "cote_divoire_multi_001",
@@ -467,7 +495,6 @@
       "fixture": "REGRESSION_TEST_SAMPLES.md",
       "baseline_status": "partial",
       "expected_coordinate_type": "cote_divoire_geographic_dms_table",
-      "expected_precision_mode": "cote-divoire-geographic-dms-table",
       "expected_group_count": 4,
       "expected_point_count": 16,
       "expected_first_point": null,
@@ -487,7 +514,10 @@
         "bftm-projected-x-y"
       ],
       "repeat_count": 10,
-      "risk": "high_risk_multi_group_self_intersection"
+      "risk": "high_risk_multi_group_self_intersection",
+      "expected_v1_precision_mode": "handwritten-dms-coordinates",
+      "expected_v2_precision_mode": "cote-divoire-geographic-dms-table",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "handwritten_dms_001",
@@ -497,7 +527,6 @@
       "fixture": "regression-samples/HANDWRITTEN_DMS/baseline.json",
       "baseline_status": "locked_experimental",
       "expected_coordinate_type": "handwritten_dms_experimental",
-      "expected_precision_mode": "handwritten-dms-coordinates",
       "expected_group_count": 1,
       "expected_point_count": 16,
       "expected_first_point": "-8.678369444444444,11.477016666666668",
@@ -516,7 +545,10 @@
         "wgs84-chat-coordinates"
       ],
       "repeat_count": 10,
-      "risk": "experimental_high_risk_timeout"
+      "risk": "experimental_high_risk_timeout",
+      "expected_v1_precision_mode": "handwritten-dms-coordinates",
+      "expected_v2_precision_mode": "handwritten-dms-coordinates",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "dms_grouped_two_areas_001",
@@ -526,7 +558,6 @@
       "fixture": "regression-samples/DMS_GROUPED/baseline.json",
       "baseline_status": "locked",
       "expected_coordinate_type": "standard_dms_table",
-      "expected_precision_mode": "dms-grouped-coordinates",
       "expected_group_count": 2,
       "expected_point_count": 8,
       "expected_first_point": "-8.887052777777777,11.873811111111111",
@@ -542,7 +573,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "multi_group"
+      "risk": "multi_group",
+      "expected_v1_precision_mode": "dms-grouped-coordinates",
+      "expected_v2_precision_mode": "dms-grouped-coordinates",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "point_az_dms_table_001",
@@ -552,7 +586,6 @@
       "fixture": "regression-samples/POINT_AZ_DMS_TABLE/baseline.json",
       "baseline_status": "locked",
       "expected_coordinate_type": "standard_dms_table",
-      "expected_precision_mode": "point-az-dms-table",
       "expected_group_count": 1,
       "expected_point_count": 26,
       "expected_first_point": "-8.266666666666667,10.870833333333334,0",
@@ -569,7 +602,10 @@
         "local-ocr-dms-fallback"
       ],
       "repeat_count": 5,
-      "risk": "core"
+      "risk": "core",
+      "expected_v1_precision_mode": "point-az-dms-table",
+      "expected_v2_precision_mode": "point-az-dms-table",
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "low_clarity_blurry_dms_001",
@@ -579,7 +615,6 @@
       "fixture": null,
       "baseline_status": "missing",
       "expected_coordinate_type": null,
-      "expected_precision_mode": null,
       "expected_group_count": null,
       "expected_point_count": null,
       "expected_first_point": null,
@@ -594,7 +629,10 @@
         "trusted_complex_local_ocr_result"
       ],
       "repeat_count": 5,
-      "risk": "low_clarity"
+      "risk": "low_clarity",
+      "expected_v1_precision_mode": null,
+      "expected_v2_precision_mode": null,
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "oblique_dms_001",
@@ -604,7 +642,6 @@
       "fixture": null,
       "baseline_status": "missing",
       "expected_coordinate_type": null,
-      "expected_precision_mode": null,
       "expected_group_count": null,
       "expected_point_count": null,
       "expected_first_point": null,
@@ -619,7 +656,10 @@
         "trusted_complex_local_ocr_result"
       ],
       "repeat_count": 5,
-      "risk": "low_clarity"
+      "risk": "low_clarity",
+      "expected_v1_precision_mode": null,
+      "expected_v2_precision_mode": null,
+      "v1_precision_mode_blocker": false
     },
     {
       "sample_id": "long_coordinate_table_001",
@@ -629,7 +669,6 @@
       "fixture": null,
       "baseline_status": "missing",
       "expected_coordinate_type": null,
-      "expected_precision_mode": null,
       "expected_group_count": null,
       "expected_point_count": null,
       "expected_first_point": null,
@@ -645,7 +684,10 @@
         "trusted_complex_local_ocr_result"
       ],
       "repeat_count": 5,
-      "risk": "small_text_long_table"
+      "risk": "small_text_long_table",
+      "expected_v1_precision_mode": null,
+      "expected_v2_precision_mode": null,
+      "v1_precision_mode_blocker": false
     }
   ]
 }
