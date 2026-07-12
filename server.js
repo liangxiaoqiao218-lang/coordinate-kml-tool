@@ -7737,20 +7737,21 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
   const rawPoints = Array.isArray(group.points) ? group.points : [];
   const labels = rawPoints.map(point => String(point?.label || "").trim()).filter(Boolean);
   const duplicateLabel = new Set(labels).size !== labels.length;
+  const usesWgs84TableGeometryPolicy = validationContext.geometryPolicy === "wgs84_table_deduplicated_validation";
   const baseWarnings = normalizeCoordinateEngineV2WarningList(group.warnings);
   const warnings = [...baseWarnings];
 
   if (rawPoints.length === 0) {
     warnings.push("缺少有效坐标点。");
   }
-  if (duplicateLabel) {
+  if (duplicateLabel && !usesWgs84TableGeometryPolicy) {
     warnings.push("存在重复或异常点号，请人工核对。");
   }
 
   let points = rawPoints.map(point => normalizeCoordinateEngineV2Point(point, false, []));
   const hasAllWgs84 = points.length > 0 && points.every(hasCoordinateEngineV2Wgs84Point);
   const hasProjectedOrGrid = points.some(hasCoordinateEngineV2ProjectedOrGridPoint) && !hasAllWgs84;
-  const selfIntersecting = hasAllWgs84 && points.length >= 4 && isCoordinateEngineV2SelfIntersecting(points);
+  const selfIntersecting = !usesWgs84TableGeometryPolicy && hasAllWgs84 && points.length >= 4 && isCoordinateEngineV2SelfIntersecting(points);
 
   if (selfIntersecting) {
     warnings.push("原始点序形成自交多边形，请人工核对点序后再生成 KML。");
@@ -7780,7 +7781,7 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
     || validatorRequiresReview
     || reviewWarnings.length > 0
     || rawPoints.length === 0
-    || duplicateLabel
+    || (duplicateLabel && !usesWgs84TableGeometryPolicy)
     || points.some(point => point.requires_review)
   );
   const kmlReady = Boolean(
@@ -7902,6 +7903,15 @@ function getCoordinateEngineV2ContextualProfile(coordinateType = "", result = {}
 }
 
 function getCoordinateEngineV2AxisEvidence(coordinateType = "", result = {}, options = {}) {
+  const precisionMode = String(result.precision_mode || result.precisionMode || "");
+  if (precisionMode === "wgs84-table-coordinates" || result.wgs84TableCoordinates?.isWgs84TableCoordinates) {
+    return {
+      status: "explicit_header",
+      interpretation: "first_is_lon_second_is_lat",
+      reason: "explicit WGS84 longitude/latitude table"
+    };
+  }
+
   const text = foldSearchText([
     options.fileName || "",
     options.rawHint || "",
@@ -8315,6 +8325,14 @@ function getCoordinateEngineV2EdgeStats(points = []) {
 function parseCoordinateEngineV2RawPair(point = {}) {
   const raw = String(point.raw || "").trim();
   const pipeParts = raw.split("|").map(part => part.trim()).filter(Boolean);
+  const kmlPipePair = [...pipeParts].reverse().find(part => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(part));
+  if (kmlPipePair) {
+    const [first, second] = kmlPipePair.split(",").slice(0, 2).map(value => Number(value.trim()));
+    if (Number.isFinite(first) && Number.isFinite(second)) {
+      return { first, second };
+    }
+  }
+
   const pipePair = pipeParts.find(part => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(part));
 
   if (pipePair) {
@@ -8373,16 +8391,66 @@ function buildCoordinateEngineV2CandidatePoints(points = [], interpretation = "a
   });
 }
 
-function validateCoordinateEngineV2Candidate(points = [], profile = {}, interpretation = "as_parsed") {
+function buildCoordinateEngineV2GeometryPolicyMeta(points = [], geometryPolicy = "") {
+  if (geometryPolicy !== "wgs84_table_deduplicated_validation") {
+    return {
+      geometryPolicy: "",
+      originalPointCount: Array.isArray(points) ? points.length : 0,
+      validationPointCount: Array.isArray(points) ? points.length : 0,
+      duplicateCoordinateCount: 0,
+      duplicateLabels: [],
+      points
+    };
+  }
+
+  const seenCoordinates = new Set();
+  const labelCounts = new Map();
+  const validationPoints = [];
+  let duplicateCoordinateCount = 0;
+
+  (Array.isArray(points) ? points : []).forEach(point => {
+    const label = String(point?.label || "").trim();
+    if (label) {
+      labelCounts.set(label, Number(labelCounts.get(label) || 0) + 1);
+    }
+    const coordinateKey = hasCoordinateEngineV2Wgs84Point(point)
+      ? `${Number(point.lat).toFixed(8)},${Number(point.lon).toFixed(8)}`
+      : "";
+    if (coordinateKey && seenCoordinates.has(coordinateKey)) {
+      duplicateCoordinateCount += 1;
+      return;
+    }
+    if (coordinateKey) {
+      seenCoordinates.add(coordinateKey);
+    }
+    validationPoints.push(point);
+  });
+
+  return {
+    geometryPolicy,
+    originalPointCount: Array.isArray(points) ? points.length : 0,
+    validationPointCount: validationPoints.length,
+    duplicateCoordinateCount,
+    duplicateLabels: Array.from(labelCounts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([label]) => label),
+    points: validationPoints
+  };
+}
+
+function validateCoordinateEngineV2Candidate(points = [], profile = {}, interpretation = "as_parsed", options = {}) {
   const candidatePoints = buildCoordinateEngineV2CandidatePoints(points, interpretation);
   const validPoints = candidatePoints.filter(hasCoordinateEngineV2Wgs84Point);
   const bbox = getCoordinateEngineV2Bbox(candidatePoints);
   const insideCountryCount = validPoints.filter(point => isCoordinateEngineV2PointInsideBbox(point, profile.bbox)).length;
   const allInsideCountry = validPoints.length > 0 && insideCountryCount === validPoints.length;
   const allOutsideCountry = validPoints.length > 0 && insideCountryCount === 0;
-  const selfIntersecting = validPoints.length >= 4 && isCoordinateEngineV2SelfIntersecting(candidatePoints);
-  const areaHa = validPoints.length >= 3 ? Number(getCoordinateEngineV2PolygonAreaHa(candidatePoints).toFixed(2)) : null;
-  const edgeStats = getCoordinateEngineV2EdgeStats(candidatePoints);
+  const geometryPolicyMeta = buildCoordinateEngineV2GeometryPolicyMeta(candidatePoints, options.geometryPolicy || "");
+  const geometryPoints = geometryPolicyMeta.points;
+  const validGeometryPoints = geometryPoints.filter(hasCoordinateEngineV2Wgs84Point);
+  const selfIntersecting = validGeometryPoints.length >= 4 && isCoordinateEngineV2SelfIntersecting(geometryPoints);
+  const areaHa = validGeometryPoints.length >= 3 ? Number(getCoordinateEngineV2PolygonAreaHa(geometryPoints).toFixed(2)) : null;
+  const edgeStats = getCoordinateEngineV2EdgeStats(geometryPoints);
   const areaLimits = profile.expectedAreaHa || {};
   const edgeLimits = profile.expectedEdgeMeters || {};
   const areaAbnormal = areaHa !== null && (
@@ -8449,6 +8517,16 @@ function validateCoordinateEngineV2Candidate(points = [], profile = {}, interpre
     edge_stats: edgeStats,
     self_intersecting: selfIntersecting,
     geometry_reasonable: geometryReasonable,
+    geometry_policy: geometryPolicyMeta.geometryPolicy || null,
+    original_point_count: geometryPolicyMeta.originalPointCount,
+    validation_point_count: geometryPolicyMeta.validationPointCount,
+    duplicate_coordinate_count: geometryPolicyMeta.duplicateCoordinateCount,
+    duplicate_labels: geometryPolicyMeta.duplicateLabels,
+    geometryPolicy: geometryPolicyMeta.geometryPolicy || null,
+    originalPointCount: geometryPolicyMeta.originalPointCount,
+    validationPointCount: geometryPolicyMeta.validationPointCount,
+    duplicateCoordinateCount: geometryPolicyMeta.duplicateCoordinateCount,
+    duplicateLabels: geometryPolicyMeta.duplicateLabels,
     warnings
   };
 }
@@ -8478,7 +8556,9 @@ function buildCoordinateEngineV2ValidationReport(group = {}, coordinateType = ""
     ? ["as_parsed", "swapped_lat_lon"]
     : ["first_is_lon_second_is_lat", "first_is_lat_second_is_lon"];
   const candidates = candidateInterpretations
-    .map(interpretation => validateCoordinateEngineV2Candidate(points, profile, interpretation))
+    .map(interpretation => validateCoordinateEngineV2Candidate(points, profile, interpretation, {
+      geometryPolicy: validationContext.geometryPolicy || ""
+    }))
     .sort((a, b) => b.score - a.score);
   const best = candidates[0] || null;
   const runnerUp = candidates[1] || null;
@@ -8568,7 +8648,8 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
   const reviewWarnings = warnings.filter(isCoordinateEngineV2ReviewWarning);
   const validationContext = {
     profile: getCoordinateEngineV2ContextualProfile(coordinateType, result, options),
-    axisEvidence: getCoordinateEngineV2AxisEvidence(coordinateType, result, options)
+    axisEvidence: getCoordinateEngineV2AxisEvidence(coordinateType, result, options),
+    geometryPolicy: precisionMode === "wgs84-table-coordinates" ? "wgs84_table_deduplicated_validation" : ""
   };
   const forcedReview = coordinateType === "handwritten_dms_experimental"
     || precisionMode === "local-ocr-dms-fallback"
