@@ -32,9 +32,12 @@ const fieldLayerMap = {
   lastPoint: 'Parser',
   forbidden_v2_precision_mode: 'Engine',
   forbidden_v1_precisionMode: 'Gate',
+  forbidden_coordinate_type: 'Engine',
   fallback_takeover: 'Vision',
   'grid row count': 'Parser',
   'grid duplicate row': 'Parser',
+  'mozambique row count': 'Parser',
+  'mozambique duplicate row': 'Parser',
   'exact_dms_row_accuracy': 'Vision',
   'dms row count': 'Vision',
 };
@@ -44,6 +47,7 @@ function getFindingLayer(field, explicitLayer = '') {
   const key = String(field || '');
   if (fieldLayerMap[key]) return fieldLayerMap[key];
   if (/grid row/i.test(key)) return 'Parser';
+  if (/mozambique row/i.test(key)) return 'Parser';
   if (/dms row/i.test(key)) return 'Vision';
   if (/kml/i.test(key)) return 'KML';
   if (/order|axis|swapped|resolver/i.test(key)) return 'Resolver';
@@ -484,12 +488,47 @@ function parseGridRowsFromText(text) {
 }
 
 function extractGridRows(engine, coordinatesText) {
+  if (normalizeEnum(engine?.coordinate_type) !== 'madagascar_cadastral_grid') return [];
   const fromPoints = flattenV2Points(engine).map(normalizeGridRow).filter(Boolean);
   const fromText = parseGridRowsFromText(coordinatesText);
   const pointsLookUsable = fromPoints.length > 0 && fromPoints.some((row) => row.xv !== 0 || row.yv !== 0);
   if (pointsLookUsable) return fromPoints;
   if (fromText.length) return fromText;
   return fromPoints;
+}
+
+function normalizeMozambiqueRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const order = Number(row.order ?? row.label ?? row.num);
+  const latitude = Number(row.latitude ?? row.lat);
+  const longitude = Number(row.longitude ?? row.lon);
+  if (!Number.isInteger(order) || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { order, latitude, longitude };
+}
+
+function parseMozambiqueRowsFromText(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .map((line) => {
+      if (/^Mozambique\s+Geographic\s+Table/i.test(line)) return null;
+      const pipe = line.match(/^(\d{1,3})\s*\|\s*([-+]?\d+(?:[.,]\d+)?)\s*\|\s*([-+]?\d+(?:[.,]\d+)?)/);
+      if (!pipe) return null;
+      return normalizeMozambiqueRow({
+        order: pipe[1],
+        latitude: String(pipe[2]).replace(',', '.'),
+        longitude: String(pipe[3]).replace(',', '.'),
+      });
+    })
+    .filter(Boolean);
+}
+
+function extractMozambiqueRows(engine, coordinatesText) {
+  if (normalizeEnum(engine?.coordinate_type) !== 'mozambique_geographic_table') return [];
+  const fromPoints = flattenV2Points(engine).map(normalizeMozambiqueRow).filter(Boolean);
+  const fromText = parseMozambiqueRowsFromText(coordinatesText);
+  if (fromPoints.length) return fromPoints;
+  return fromText;
 }
 
 function sumPointCount(groups, fallbackCount) {
@@ -573,6 +612,7 @@ function summarizeApiResponse(data, responseMeta = {}) {
   const groups = Array.isArray(engine.groups) ? engine.groups : [];
   const coordinatesText = data?.coordinates || data?.formatted || data?.result || '';
   const gridRows = extractGridRows(engine, coordinatesText);
+  const mozambiqueRows = extractMozambiqueRows(engine, coordinatesText);
   const kmlCoordinates = extractKmlCoordinates(coordinatesText);
   const fallbackRows = extractProjectedOrDecimalRows(coordinatesText);
   const textRows = kmlCoordinates.length ? kmlCoordinates : fallbackRows;
@@ -617,6 +657,7 @@ function summarizeApiResponse(data, responseMeta = {}) {
     country: getActualCountry(engine, data),
     areaHa: getActualArea(engine),
     gridRows,
+    mozambiqueRows,
     exactDmsRows,
     coordinateBlockCount: countCoordinateBlocks(coordinatesText),
     orderStatus: engine.order_status || engine.coordinate_validation_report?.order_status || '',
@@ -847,6 +888,54 @@ function compareGridRows(diffs, expectedRows, actualRows, tolerance = 0.01) {
   }
 }
 
+function formatMozambiqueRow(row) {
+  if (!row) return '(missing)';
+  return `${row.order} | ${row.latitude} | ${row.longitude}`;
+}
+
+function mozambiqueRowsEqual(a, b, tolerance) {
+  if (!a || !b) return false;
+  return Number(a.order) === Number(b.order)
+    && Math.abs(Number(a.latitude) - Number(b.latitude)) <= tolerance
+    && Math.abs(Number(a.longitude) - Number(b.longitude)) <= tolerance;
+}
+
+function compareMozambiqueRows(diffs, expectedRows, actualRows, tolerance = 0.0008) {
+  if (!Array.isArray(expectedRows) || expectedRows.length === 0) return;
+  const expected = expectedRows.map(normalizeMozambiqueRow).filter(Boolean);
+  const actual = Array.isArray(actualRows) ? actualRows.map(normalizeMozambiqueRow).filter(Boolean) : [];
+
+  if (actual.length !== expected.length) {
+    addFinding(diffs, 'BLOCKER', 'mozambique row count', `${expected.length} rows`, `${actual.length} rows`);
+  }
+
+  const actualKeys = new Map();
+  for (const row of actual) {
+    const key = `${row.order}|${row.latitude.toFixed(6)}|${row.longitude.toFixed(6)}`;
+    actualKeys.set(key, (actualKeys.get(key) || 0) + 1);
+  }
+  for (const [key, count] of actualKeys.entries()) {
+    if (count > 1) {
+      addFinding(diffs, 'BLOCKER', 'mozambique duplicate row', 'no duplicates', `${key} repeated ${count} times`);
+    }
+  }
+
+  const max = Math.max(expected.length, actual.length);
+  for (let index = 0; index < max; index += 1) {
+    const expectedRow = expected[index];
+    const actualRow = actual[index];
+    if (!mozambiqueRowsEqual(expectedRow, actualRow, tolerance)) {
+      addFinding(
+        diffs,
+        'BLOCKER',
+        `mozambique row ${index + 1} mismatch`,
+        formatMozambiqueRow(expectedRow),
+        formatMozambiqueRow(actualRow),
+      );
+    }
+  }
+}
+
 function compareExactDmsRows(diffs, expectedRows, actualRows) {
   if (!Array.isArray(expectedRows) || expectedRows.length === 0) return;
   const actual = Array.isArray(actualRows) ? actualRows : [];
@@ -893,6 +982,7 @@ function compareGolden(sample, actual) {
   compareField(diffs, 'reviewGroupIndexes', sample.expected_review_group_indexes, actual.reviewGroupIndexes, { normalize: 'array' });
   compareField(diffs, 'country', sample.expected_country, actual.country, { severity: 'WARNING' });
   compareGridRows(diffs, sample.expected_grid_rows, actual.gridRows, Number(sample.tolerance?.xv_yv ?? 0.01));
+  compareMozambiqueRows(diffs, sample.expected_rows, actual.mozambiqueRows, Number(sample.tolerance?.lat_lon ?? 0.0008));
   compareExactDmsRows(diffs, sample.expected_exact_dms_rows, actual.exactDmsRows);
   compareField(diffs, 'group_point_counts', sample.expected_group_point_counts, actual.groupPointCounts, { normalize: 'array' });
   compareField(diffs, 'polygon_count', sample.expected_polygon_count, actual.polygonCount);
@@ -953,6 +1043,12 @@ function compareGolden(sample, actual) {
   const forbiddenPrecisionModes = Array.isArray(sample.forbidden_precision_modes)
     ? sample.forbidden_precision_modes
     : [];
+  const forbiddenCoordinateTypes = Array.isArray(sample.forbidden_coordinate_types)
+    ? sample.forbidden_coordinate_types
+    : [];
+  if (forbiddenCoordinateTypes.includes(actual.coordinateType)) {
+    addFinding(diffs, 'BLOCKER', 'forbidden_coordinate_type', `not ${actual.coordinateType}`, actual.coordinateType);
+  }
   if (forbiddenPrecisionModes.includes(actual.v2PrecisionMode)) {
     addFinding(diffs, 'BLOCKER', 'forbidden_v2_precision_mode', `not ${actual.v2PrecisionMode}`, actual.v2PrecisionMode);
   }
@@ -1379,6 +1475,7 @@ function formatActualSummary(actual) {
     `groups=${actual.groupCount}`,
     `points=${actual.pointCount}`,
     `gridRows=${Array.isArray(actual.gridRows) ? actual.gridRows.length : 0}`,
+    `mozambiqueRows=${Array.isArray(actual.mozambiqueRows) ? actual.mozambiqueRows.length : 0}`,
     `geometry=${actual.geometry || '(empty)'}`,
     `requires_review=${actual.requiresReview}`,
     `kml_ready=${actual.kmlReady}`,

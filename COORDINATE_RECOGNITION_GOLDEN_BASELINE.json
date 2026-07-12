@@ -537,8 +537,35 @@
       "expected_requires_review": false,
       "expected_kml_ready": true,
       "expected_review_group_indexes": [],
+      "expected_rows": [
+        { "order": 1, "latitude": -14.6, "longitude": 32.955556 },
+        { "order": 2, "latitude": -14.6, "longitude": 33.1 },
+        { "order": 3, "latitude": -14.655556, "longitude": 33.1 },
+        { "order": 4, "latitude": -14.655556, "longitude": 33.055556 },
+        { "order": 5, "latitude": -14.683333, "longitude": 33.055556 },
+        { "order": 6, "latitude": -14.683333, "longitude": 32.986111 },
+        { "order": 7, "latitude": -14.680556, "longitude": 32.986111 },
+        { "order": 8, "latitude": -14.680556, "longitude": 32.938889 },
+        { "order": 9, "latitude": -14.677778, "longitude": 32.938889 },
+        { "order": 10, "latitude": -14.677778, "longitude": 32.911111 },
+        { "order": 11, "latitude": -14.680556, "longitude": 32.911111 },
+        { "order": 12, "latitude": -14.680556, "longitude": 32.902778 },
+        { "order": 13, "latitude": -14.683333, "longitude": 32.902778 },
+        { "order": 14, "latitude": -14.683333, "longitude": 32.891667 },
+        { "order": 15, "latitude": -14.686111, "longitude": 32.891667 },
+        { "order": 16, "latitude": -14.686111, "longitude": 32.883333 },
+        { "order": 17, "latitude": -14.688889, "longitude": 32.883333 },
+        { "order": 18, "latitude": -14.688889, "longitude": 32.875 },
+        { "order": 19, "latitude": -14.691667, "longitude": 32.875 },
+        { "order": 20, "latitude": -14.691667, "longitude": 32.869444 },
+        { "order": 21, "latitude": -14.633333, "longitude": 32.869444 },
+        { "order": 22, "latitude": -14.633333, "longitude": 32.955556 }
+      ],
       "expected_country": "Mozambique",
       "expected_area_range": null,
+      "tolerance": {
+        "lat_lon": 0.0008
+      },
       "forbidden_precision_modes": [
         "wgs84-chat-coordinates",
         "wgs84-table-coordinates",
@@ -548,7 +575,10 @@
       "risk": "high_risk_timeout_and_takeover_history",
       "expected_v1_precision_mode": "mozambique-geographic-table",
       "expected_v2_precision_mode": "mozambique-geographic-table",
-      "v1_precision_mode_blocker": false
+      "v1_precision_mode_blocker": false,
+      "forbidden_coordinate_types": [
+        "decimal_latlon"
+      ]
     },
     {
       "sample_id": "cote_divoire_single_01",
