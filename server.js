@@ -481,7 +481,8 @@ function getProtectedEndpointType(pathname = "") {
 
 const allowedRequestOrigins = new Set([
   "https://geokitlab.com",
-  "https://www.geokitlab.com"
+  "https://www.geokitlab.com",
+  "https://coordinate-kml-tool.onrender.com"
 ]);
 
 function parseRequestOrigin(value) {
