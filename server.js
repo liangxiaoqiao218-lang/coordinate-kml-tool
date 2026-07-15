@@ -407,7 +407,7 @@ app.use((req, res, next) => {
   const hostHeader = forwardedHost.split(",")[0].trim() || req.get("host") || "";
   const hostname = hostHeader.split(":")[0].toLowerCase();
 
-  if (hostname === legacyRenderHost || hostname === `www.${canonicalHost}`) {
+  if (hostname === `www.${canonicalHost}`) {
     const pathWithQuery = req.originalUrl && req.originalUrl.startsWith("/") ? req.originalUrl : `/${req.originalUrl || ""}`;
     return res.redirect(301, `${shareMetaOrigin}${pathWithQuery}`);
   }
