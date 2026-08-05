@@ -3040,7 +3040,14 @@ function parseLooseDmsPart(part, fallbackDirection) {
       const secondsEnd = groups[2].replace(/^0\./, "");
       parts = [groups[0], minutes, `${secondsStart}.${secondsEnd}`];
     } else if (/\s/.test(rest.replace(/['"]/g, " "))) {
-      parts = [degrees, ...groups];
+      if (groups.length >= 3) {
+        const secondsTail = groups[2].includes(".")
+          ? groups[2].split(".").slice(1).join("")
+          : groups.slice(2).join("");
+        parts = [degrees, groups[0], secondsTail ? `${groups[1]}.${secondsTail}` : groups[1]];
+      } else {
+        parts = [degrees, ...groups];
+      }
     } else {
       if (groups.length >= 3) {
         parts = [degrees, groups[0], `${groups[1]}.${groups.slice(2).join("")}`];
