@@ -5827,6 +5827,45 @@ Au值 = 纯度 × 10 后取整数</div>
       });
     }
 
+    /**
+     * @typedef {Object} KmlFailureDiagnostic
+     * @property {string} code
+     * @property {string} title
+     * @property {string} reason
+     * @property {string} suggestion
+     */
+
+    function createKmlFailureDiagnostic(failure = {}) {
+      return Object.freeze({
+        code: String(failure.code || "KML_DOWNLOAD_FAILED"),
+        title: String(failure.title || "KML 生成失败"),
+        reason: String(failure.reason || "生成或下载 KML 文件时发生异常。"),
+        suggestion: String(failure.suggestion || "请重试；如果仍然失败，请复制识别详情联系管理员。")
+      });
+    }
+
+    function showKmlFailure(failure = {}) {
+      const diagnostic = createKmlFailureDiagnostic(failure);
+      showRecognitionProgress(diagnostic.title, "error", 8000);
+      showToast({
+        type: "error",
+        title: diagnostic.title,
+        message: `原因：${diagnostic.reason} 建议：${diagnostic.suggestion}`,
+        duration: 10000
+      });
+      appendDebug(`KML失败：${diagnostic.code}\n原因：${diagnostic.reason}\n建议：${diagnostic.suggestion}`);
+      return diagnostic;
+    }
+
+    function showKmlPermissionFailure(reason = "当前账户的 KML 导出权限或使用次数检查未通过。") {
+      return showKmlFailure({
+        code: "KML_PERMISSION_DENIED",
+        title: "无法导出 KML",
+        reason,
+        suggestion: "请检查账户权限和剩余次数，必要时联系管理员。"
+      });
+    }
+
     function rememberState() {
       if (!input.value.trim()) {
         return;
@@ -11540,15 +11579,35 @@ ${placemarks}
     }
 
     async function downloadKml() {
+      try {
+        return await downloadKmlInternal();
+      } catch (error) {
+        console.error("KML generation or download failed:", error);
+        showKmlFailure({
+          code: "KML_DOWNLOAD_FAILED",
+          title: "KML 生成失败",
+          reason: sanitizeUserFacingTechMessage(error?.message) || "生成或下载 KML 文件时发生异常。",
+          suggestion: "请重试；如果仍然失败，请复制识别详情联系管理员。"
+        });
+        return null;
+      }
+    }
+
+    async function downloadKmlInternal() {
       await loadUserConfig();
 
       if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。")) {
+        showKmlPermissionFailure("当前账户暂未开通 KML 导出权限。");
         return;
       }
 
       if (shouldBlockHandwrittenDmsKml()) {
-        showRecognitionProgress("当前坐标需要核对，请核对后再生成。", "warning", 5000);
-        showMessage("当前坐标需要核对，请核对后再生成。", true, 5000);
+        showKmlFailure({
+          code: "KML_REVIEW_REQUIRED",
+          title: "坐标需要核对",
+          reason: "当前手写 DMS 识别结果尚未通过人工核对，不能安全生成 KML。",
+          suggestion: "请对照原图核对坐标，确认无误后再生成。"
+        });
         return;
       }
 
@@ -11559,14 +11618,24 @@ ${placemarks}
         const selectedRows = parseCadastralGridSelection(cadastralGridSelection?.value, allRows);
 
         if (selectedRows.length === 0) {
-          showMessage("没有找到匹配的矿权网格编号，请检查输入范围。", true);
+          showKmlFailure({
+            code: "KML_INSUFFICIENT_POINTS",
+            title: "没有可生成的矿权网格",
+            reason: "没有找到与当前输入范围匹配的矿权网格编号。",
+            suggestion: "请检查矿权网格编号和输入范围。"
+          });
           return;
         }
 
         const gridResult = buildCadastralGridPolygonRows(selectedRows);
 
         if (gridResult.polygons.length === 0) {
-          showMessage("无法自动判断网格间距。请确认表格中至少包含相邻的 XV 和 YV 网格值。", true);
+          showKmlFailure({
+            code: "KML_GEOMETRY_INVALID",
+            title: "矿权网格几何无效",
+            reason: "无法根据当前数据判断网格间距并构建有效 Polygon。",
+            suggestion: "请确认表格中至少包含相邻的 XV 和 YV 网格值。"
+          });
           return;
         }
 
@@ -11575,12 +11644,18 @@ ${placemarks}
           wgs84Polygons = await convertCadastralGridPolygonsToWgs84(gridResult.polygons);
         } catch (error) {
           console.warn("Madagascar cadastral grid projection conversion failed:", error);
-          showMessage("已识别矿权网格，但缺少投影参数或转换组件加载失败，不能直接生成 Google Earth KML。请确认网络后重试，或结合对应投影坐标系人工转换。", true, 8000);
+          showKmlFailure({
+            code: "KML_PROJECTION_FAILED",
+            title: "投影转换失败",
+            reason: "已识别矿权网格，但缺少投影参数或转换组件加载失败，未能转换为 WGS84。",
+            suggestion: "请确认网络和投影参数后重试，或结合对应投影坐标系人工转换。"
+          });
           return;
         }
 
         const usageAllowed = await consumeUsage("convert");
         if (!usageAllowed) {
+          showKmlPermissionFailure();
           return;
         }
 
@@ -11620,6 +11695,7 @@ ${placemarks}
 
         const usageAllowed = await consumeUsage("convert");
         if (!usageAllowed) {
+          showKmlPermissionFailure();
           return;
         }
 
@@ -11678,6 +11754,7 @@ ${placemarks}
 
           const usageAllowed = await consumeUsage("convert");
           if (!usageAllowed) {
+            showKmlPermissionFailure();
             return;
           }
 
@@ -11725,6 +11802,7 @@ ${placemarks}
 
         const usageAllowed = await consumeUsage("convert");
         if (!usageAllowed) {
+          showKmlPermissionFailure();
           return;
         }
 
@@ -11790,6 +11868,7 @@ ${placemarks}
 
         const usageAllowed = await consumeUsage("convert");
         if (!usageAllowed) {
+          showKmlPermissionFailure();
           return;
         }
 
@@ -11836,6 +11915,7 @@ ${placemarks}
 
         const usageAllowed = await consumeUsage("convert");
         if (!usageAllowed) {
+          showKmlPermissionFailure();
           return;
         }
 
@@ -11875,7 +11955,12 @@ ${placemarks}
         let wgs84Pairs;
 
         if (!integrity.allowKml) {
-          showMessage(`Kyrgyzstan GK 点号不连续或存在异常点号，需人工校正后再生成 KML。缺失点号：${integrity.missingPoints.slice(0, 30).join("、") || "未能确认"}。异常点号：${integrity.abnormalPoints.join("、") || "无"}。`, true, 9000);
+          showKmlFailure({
+            code: "KML_GEOMETRY_INVALID",
+            title: "坐标几何需要校正",
+            reason: `Kyrgyzstan GK 点号不连续或存在异常点号。缺失点号：${integrity.missingPoints.slice(0, 30).join("、") || "未能确认"}。异常点号：${integrity.abnormalPoints.join("、") || "无"}。`,
+            suggestion: "请对照原图补齐或校正点号后再生成 KML。"
+          });
           return;
         }
 
@@ -11883,17 +11968,28 @@ ${placemarks}
           wgs84Pairs = await buildKyrgyzGkWgs84PolygonRows(rows);
         } catch (error) {
           console.warn("Kyrgyzstan Gauss-Kruger projection conversion failed:", error);
-          showMessage("已识别吉尔吉斯斯坦高斯克吕格平面坐标，但投影转换失败，不能生成 KML。请结合原图和坐标系人工校核。", true, 8000);
+          showKmlFailure({
+            code: "KML_PROJECTION_FAILED",
+            title: "投影转换失败",
+            reason: "已识别 Kyrgyzstan GK 平面坐标，但未能转换为有效 WGS84 坐标。",
+            suggestion: "请结合原图确认坐标系和投影参数后重试。"
+          });
           return;
         }
 
         if (wgs84Pairs.length < 4) {
-          showMessage("吉尔吉斯斯坦 GK 坐标点不足，至少需要 3 个点才能生成 polygon KML。", true);
+          showKmlFailure({
+            code: "KML_INSUFFICIENT_POINTS",
+            title: "坐标点不足",
+            reason: "Kyrgyzstan GK 有效坐标点不足，无法生成 Polygon KML。",
+            suggestion: "请至少提供 3 个有效边界点，并检查是否存在漏识别坐标。"
+          });
           return;
         }
 
         const usageAllowed = await consumeUsage("convert");
         if (!usageAllowed) {
+          showKmlPermissionFailure();
           return;
         }
 
@@ -11921,6 +12017,7 @@ ${placemarks}
       }
 
       if (hasProjectedCoordinateRows(input.value) && !canUse("xyConvertEnabled", "当前用户暂未开通标准化坐标功能。")) {
+        showKmlPermissionFailure("当前账户暂未开通平面坐标转换功能，无法完成 KML 导出。");
         return;
       }
 
@@ -11931,11 +12028,21 @@ ${placemarks}
 
       if (pairs.length === 0) {
         if (hasProjectedCoordinateRows(input.value)) {
-          showMessage("识别到 X/Y 平面坐标，不能直接生成 KML。请先确认坐标系或使用人工协助转换。", true);
+          showKmlFailure({
+            code: "KML_CRS_REQUIRED",
+            title: "需要确认坐标系",
+            reason: "识别结果是 X/Y 平面坐标，但尚未确认 CRS，不能直接写入 KML。",
+            suggestion: "请先确认坐标系并转换为 WGS84，或使用人工协助转换。"
+          });
           return;
         }
 
-        showMessage("没有找到可生成 KML 的坐标。", true);
+        showKmlFailure({
+          code: "KML_INSUFFICIENT_POINTS",
+          title: "没有可生成的坐标",
+          reason: "当前工作区没有解析出可用于生成 KML 的有效坐标。",
+          suggestion: "请检查坐标格式、点数和识别结果是否完整。"
+        });
         return;
       }
 
@@ -11945,6 +12052,7 @@ ${placemarks}
 
       const usageAllowed = await consumeUsage("convert");
       if (!usageAllowed) {
+        showKmlPermissionFailure();
         return;
       }
 
