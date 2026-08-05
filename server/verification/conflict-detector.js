@@ -1,4 +1,5 @@
 import { parseDmsRows } from "./dms-utils.js";
+import { findEvidenceForObservation } from "../evidence/recognition-evidence-adapter.js";
 
 export const CONFLICT_DETECTOR_SUPPORTED_SCOPE = Object.freeze([
   "handwritten_dms",
@@ -46,7 +47,7 @@ function getComponentSeverity(component) {
   return "medium";
 }
 
-export function detectCoordinateConflicts({ recognitionResult = {} } = {}) {
+export function detectCoordinateConflicts({ recognitionResult = {}, evidence = {} } = {}) {
   const sources = collectRecognitionSources(recognitionResult)
     .map(source => ({ ...source, rows: parseDmsRows(source.text) }))
     .filter(source => source.rows.length > 0);
@@ -65,10 +66,17 @@ export function detectCoordinateConflicts({ recognitionResult = {} } = {}) {
         ["degrees", "minutes", "seconds", "direction"].forEach(component => {
           const key = `${rowIndex}|${pointId}|${field}|${component}`;
           if (!observations.has(key)) observations.set(key, []);
+          const imageEvidence = findEvidenceForObservation(evidence, {
+            source: source.id,
+            rowIndex,
+            field
+          });
           observations.get(key).push({
             source: source.id,
+            type: imageEvidence?.source || source.id,
             value: String(token[component]),
-            raw: token.raw
+            raw: token.raw,
+            evidence_id: imageEvidence?.evidence_id || null
           });
         });
       });

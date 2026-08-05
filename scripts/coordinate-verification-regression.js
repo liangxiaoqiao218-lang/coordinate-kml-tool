@@ -148,6 +148,7 @@ const projectedResults = projectedCases.map(item => {
   assert.equal(result.status, "REVIEW", `${item.id} must not pass before projected geometry validation`);
   assert.equal(result.validation_scope, "format_only", `${item.id} must declare format-only validation`);
   assert.equal(result.geometry_validation, "NOT_EVALUATED", `${item.id} geometry must be not evaluated`);
+  assert.ok(result.groups[0].points.every(point => point.evidence_ids.length > 0), `${item.id} points must retain logical source evidence`);
   return { id: item.id, result };
 });
 
@@ -184,8 +185,9 @@ const responseAfterVerification = buildCoordinateVerificationResponse(
   responseBeforeVerification,
   responseBeforeVerification.coordinateEngineV2
 );
-const { verification, ...responseWithoutVerification } = responseAfterVerification;
+const { verification, evidence, ...responseWithoutVerification } = responseAfterVerification;
 assert.ok(verification, "response wrapper should append verification");
+assert.ok(evidence, "response wrapper should append evidence shadow data");
 assert.deepEqual(responseWithoutVerification, responseSnapshot, "removing verification must restore the exact legacy response");
 assert.deepEqual(responseBeforeVerification, responseSnapshot, "response wrapper must not mutate the legacy response");
 

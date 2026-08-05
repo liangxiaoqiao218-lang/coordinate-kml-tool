@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "regression": "node scripts/coordinate-regression-runner.js",
+    "evidence-regression": "node scripts/evidence-regression.js",
     "verification-regression": "node scripts/coordinate-verification-regression.js",
     "start": "node server.js"
   },

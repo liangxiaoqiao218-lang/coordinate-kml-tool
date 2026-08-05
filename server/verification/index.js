@@ -1,6 +1,10 @@
 import { CONFLICT_DETECTOR_SUPPORTED_SCOPE, detectCoordinateConflicts } from "./conflict-detector.js";
 import { calculateCoordinateVerificationScore } from "./coordinate-confidence.js";
 import { validateCoordinateGeometry } from "./geo-validator.js";
+import {
+  attachEvidenceToVerificationGroups,
+  buildRecognitionEvidence
+} from "../evidence/recognition-evidence-adapter.js";
 
 function uniqueWarnings(values) {
   return Array.from(new Set(values.map(value => String(value || "").trim()).filter(Boolean)));
@@ -65,8 +69,9 @@ function getProjectedValidationState(recognitionResult = {}, coordinateEngineV2 
       };
 }
 
-export function buildCoordinateVerification({ recognitionResult = {}, coordinateEngineV2 = {} } = {}) {
-  const conflicts = detectCoordinateConflicts({ recognitionResult, coordinateEngineV2 });
+export function buildCoordinateVerification({ recognitionResult = {}, coordinateEngineV2 = {}, evidence = null } = {}) {
+  const evidenceLayer = evidence || buildRecognitionEvidence({ recognitionResult, coordinateEngineV2 });
+  const conflicts = detectCoordinateConflicts({ recognitionResult, coordinateEngineV2, evidence: evidenceLayer });
   const geometryWarnings = validateCoordinateGeometry({ recognitionResult, coordinateEngineV2 });
   const scoreResult = calculateCoordinateVerificationScore({
     recognitionResult,
@@ -108,7 +113,8 @@ export function buildCoordinateVerification({ recognitionResult = {}, coordinate
     warnings,
     conflicts,
     geometryWarnings,
-    groups: scoreResult.groups,
+    groups: attachEvidenceToVerificationGroups(scoreResult.groups, evidenceLayer),
+    evidence_schema_version: evidenceLayer.schema_version,
     shadow_only: true,
     affects_coordinates: false,
     affects_kml: false
@@ -117,12 +123,18 @@ export function buildCoordinateVerification({ recognitionResult = {}, coordinate
 
 export function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null) {
   const engine = coordinateEngineV2 || payload.coordinateEngineV2 || {};
+  const evidence = buildRecognitionEvidence({
+    recognitionResult: payload,
+    coordinateEngineV2: engine
+  });
   return {
     ...payload,
     coordinateEngineV2: engine,
+    evidence,
     verification: buildCoordinateVerification({
       recognitionResult: payload,
-      coordinateEngineV2: engine
+      coordinateEngineV2: engine,
+      evidence
     })
   };
 }
