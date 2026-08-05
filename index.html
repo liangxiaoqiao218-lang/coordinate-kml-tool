@@ -4123,7 +4123,8 @@
         </div>
       </section>
 
-      <div id="recognitionStatus" class="recognition-status"></div>
+      <div id="recognitionSummary" class="recognition-status" aria-live="polite"></div>
+      <div id="recognitionProgress" class="recognition-status" aria-live="polite"></div>
 
     <div id="cadastralGridPanel" class="panel cadastral-grid-panel">
       <label for="cadastralGridSelection">矿权网格编号</label>
@@ -4555,7 +4556,8 @@ Au值 = 纯度 × 10 后取整数</div>
     const message = document.getElementById("message");
     const toast = document.getElementById("toast");
     const uploadMessage = document.getElementById("uploadMessage");
-    const recognitionStatus = document.getElementById("recognitionStatus");
+    const recognitionSummary = document.getElementById("recognitionSummary");
+    const recognitionProgress = document.getElementById("recognitionProgress");
     const imagePreview = document.getElementById("imagePreview");
     const imageModal = document.getElementById("imageModal");
     const imageModalImg = document.getElementById("imageModalImg");
@@ -4670,7 +4672,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let selectedJudgeImageUrls = [];
     let selectedJudgeImageFiles = [];
     let currentJudgeImageDataUrl = "";
-    let recognitionStatusHideTimer = null;
+    let recognitionProgressHideTimer = null;
     let internalNormalizedCoordinateGroups = null;
     let internalKmlSourceDirty = false;
     let activeCoordinatePrecisionMode = "";
@@ -4692,6 +4694,7 @@ Au值 = 纯度 × 10 后取整数</div>
     input.addEventListener("input", () => {
       activeCoordinatePrecisionMode = "";
       activeCoordinateEngineV2 = null;
+      clearRecognitionSummary();
       internalKmlSourceDirty = true;
       setCoordinateOrderReviewVisible(false);
       updateCadastralGridPanel();
@@ -6069,7 +6072,6 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function setRecognitionSummary(meta = {}) {
-      clearTimeout(recognitionStatusHideTimer);
       const engine = meta.engine || {};
       const groups = Array.isArray(engine.groups) ? engine.groups : [];
       const count = Number(meta.count) || 0;
@@ -6084,7 +6086,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const groupCount = Number(meta.groupCount || groups.length) || 0;
       const review = getRecognitionSummaryReviewState(meta);
       const coordinateType = getRecognitionSummaryType(meta);
-      const region = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryRegion(meta);
+      const country = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryRegion(meta);
       const area = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryArea(meta);
       const reviewSummary = getCoordinateReviewSummary(meta, review);
       const countText = groupCount > 1
@@ -6093,20 +6095,20 @@ Au值 = 纯度 × 10 后取整数</div>
       const chips = [
         reviewSummary.text,
         areaType ? `区域类型：${areaType}` : "",
+        `所属国家：${country || "待确认"}`,
         countText,
-        coordinateType,
-        region ? `地区：${region}` : "",
+        `坐标类型：${coordinateType || "待确认"}`,
         area
       ].filter(Boolean).slice(0, 5);
 
-      recognitionStatus.style.display = "flex";
-      recognitionStatus.className = `recognition-status summary${review.requiresReview ? " warning" : ""}`;
-      recognitionStatus.replaceChildren();
+      recognitionSummary.style.display = "flex";
+      recognitionSummary.className = `recognition-status summary${review.requiresReview ? " warning" : ""}`;
+      recognitionSummary.replaceChildren();
 
       const label = document.createElement("span");
       label.className = "recognition-summary-label";
       label.textContent = "区域概览";
-      recognitionStatus.appendChild(label);
+      recognitionSummary.appendChild(label);
 
       const chipWrap = document.createElement("span");
       chipWrap.className = "recognition-summary-meta";
@@ -6128,26 +6130,32 @@ Au值 = 纯度 × 10 后取整数</div>
         chip.textContent = text;
         chipWrap.appendChild(chip);
       });
-      recognitionStatus.appendChild(chipWrap);
+      recognitionSummary.appendChild(chipWrap);
+    }
+
+    function clearRecognitionSummary() {
+      recognitionSummary.style.display = "none";
+      recognitionSummary.textContent = "";
+      recognitionSummary.className = "recognition-status";
     }
 
     function setRecognitionStatus(text = "", type = "") {
-      clearTimeout(recognitionStatusHideTimer);
+      clearTimeout(recognitionProgressHideTimer);
       if (!text) {
-        recognitionStatus.style.display = "none";
-        recognitionStatus.textContent = "";
-        recognitionStatus.className = "recognition-status";
+        recognitionProgress.style.display = "none";
+        recognitionProgress.textContent = "";
+        recognitionProgress.className = "recognition-status";
         return;
       }
 
-      recognitionStatus.style.display = "flex";
-      recognitionStatus.className = `recognition-status ${type}`.trim();
-      recognitionStatus.replaceChildren();
+      recognitionProgress.style.display = "flex";
+      recognitionProgress.className = `recognition-status ${type}`.trim();
+      recognitionProgress.replaceChildren();
 
       const statusText = document.createElement("span");
       statusText.className = "recognition-status-text";
       statusText.textContent = text;
-      recognitionStatus.appendChild(statusText);
+      recognitionProgress.appendChild(statusText);
 
       if (type === "success") {
         const copyButton = document.createElement("button");
@@ -6155,7 +6163,7 @@ Au值 = 纯度 × 10 后取整数</div>
         copyButton.className = "recognition-copy-button";
         copyButton.textContent = "复制";
         copyButton.addEventListener("click", copyContent);
-        recognitionStatus.appendChild(copyButton);
+        recognitionProgress.appendChild(copyButton);
       }
     }
 
@@ -6187,7 +6195,7 @@ Au值 = 纯度 × 10 后取整数</div>
       setRecognitionStatus(text, type);
 
       if (hideDelay > 0) {
-        recognitionStatusHideTimer = setTimeout(() => {
+        recognitionProgressHideTimer = setTimeout(() => {
           setRecognitionStatus("", "");
         }, hideDelay);
       }
@@ -6456,6 +6464,7 @@ Au值 = 纯度 × 10 后取整数</div>
       selectedImageUrl = "";
       selectedImageFile = null;
       activeCoordinateEngineV2 = null;
+      clearRecognitionSummary();
       closeImageModal();
       imagePreview.style.display = "none";
       imagePreview.innerHTML = "";
@@ -11143,6 +11152,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       input.value = "";
       clearInternalKmlSource();
       activeCoordinateEngineV2 = null;
+      clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
       updateCadastralGridPanel();
       trackEvent("clear_content_click");
@@ -12023,6 +12033,7 @@ ${placemarks}
       supportPanel.style.display = "none";
       clearUploadMessage();
       activeCoordinateEngineV2 = null;
+      clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
       showRecognitionProgress("正在上传图片...", "loading");
       trackEvent("image_upload_select", {
