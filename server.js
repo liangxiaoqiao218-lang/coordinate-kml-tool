@@ -3404,6 +3404,92 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   return evidence;
 }
 
+function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", options = {}) {
+  const text = String(rawText || "");
+  const coordinateText = String(coordinates || "");
+  const hint = String(options.hint || "");
+  const file = options.file;
+  const explicitHandwrittenContext = hasExplicitHandwrittenDmsUploadContext(file, hint);
+  const evidence = {
+    shouldRetry: false,
+    reason: "",
+    explicitHandwrittenContext,
+    score: 0,
+    coordinateRowCount: countCoordinateRows(coordinateText),
+    dmsPairLineCount: 0,
+    dmsLikeTokenCount: 0,
+    damagedMergedDmsLineCount: 0,
+    directionTokenCount: (text.match(/[NSEWO]/gi) || []).length,
+    numericTokenCount: (text.match(/\d+/g) || []).length,
+    stableDetectorMatched: false,
+    stableDetectorReasons: []
+  };
+
+  if (!text.trim()) {
+    evidence.reason = "empty_raw_text";
+    return evidence;
+  }
+
+  const addStableReason = (condition, reason) => {
+    if (condition) evidence.stableDetectorReasons.push(reason);
+  };
+
+  addStableReason(getCadastralGridInfo(text).isCadastralGrid, "madagascar_cadastral_grid");
+  addStableReason(getMgrsInfo(text).isMgrs, "mgrs");
+  addStableReason(getMozambiqueGeographicInfo(text).isMozambiqueGeographicTable, "mozambique_geographic_table");
+  addStableReason(hasCoteDIvoireGeographicDmsCue(text), "cote_divoire_geographic_dms_table");
+  addStableReason(getWgs84TableCoordinatesInfo(text).isWgs84TableCoordinates, "wgs84_table");
+  addStableReason(getKyrgyzGkInfo(text).isKyrgyzGk, "kyrgyz_gk");
+  addStableReason(hasBftmContext(text) || getBftmLongTableInfo(text, coordinateText).isBftmLongTable, "bftm");
+  addStableReason(getDmsGroupedCoordinateInfo(text).output && !explicitHandwrittenContext, "standard_dms_grouped");
+  addStableReason(getFrenchPerimeterDmsInfo(text).isFrenchPerimeterDms, "french_perimeter_dms");
+  addStableReason(looksLikePointAzDmsTable(text), "point_az_dms_table");
+  addStableReason(looksLikeCoordinateTable(text) && !explicitHandwrittenContext, "printed_coordinate_table");
+
+  evidence.stableDetectorMatched = evidence.stableDetectorReasons.length > 0;
+  if (evidence.stableDetectorMatched) {
+    evidence.reason = "stable_detector_blocked";
+    return evidence;
+  }
+
+  const lines = normalizeText(text)
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const damagedMergedDmsPart = /\b\d{1,3}\s*[°º]\s*\d{1,2}\.\d{3,5}\s*['′]?\s*[NSEWO]\b/i;
+
+  for (const line of lines) {
+    const looseParts = getLooseDmsPartsFromLine(line);
+    const damagedParts = line.match(new RegExp(damagedMergedDmsPart.source, "gi")) || [];
+    evidence.dmsLikeTokenCount += looseParts.length;
+    if (looseParts.length >= 2) {
+      evidence.dmsPairLineCount += 1;
+    }
+    if (damagedParts.length >= 1) {
+      evidence.damagedMergedDmsLineCount += 1;
+    }
+  }
+
+  if (explicitHandwrittenContext) evidence.score += 3;
+  if (evidence.coordinateRowCount >= 4) evidence.score += 1;
+  if (evidence.dmsLikeTokenCount >= 8) evidence.score += 2;
+  if (evidence.dmsPairLineCount >= 4) evidence.score += 2;
+  if (evidence.damagedMergedDmsLineCount >= 1) evidence.score += 2;
+  if (evidence.damagedMergedDmsLineCount >= 4) evidence.score += 2;
+  if (evidence.directionTokenCount >= 8) evidence.score += 1;
+  if (looksLikeCorrectionContext(text)) evidence.score += 1;
+
+  const hasDamagedHandwrittenShape = evidence.damagedMergedDmsLineCount >= 1
+    && (explicitHandwrittenContext || evidence.coordinateRowCount >= 4 || evidence.dmsPairLineCount >= 3);
+  const hasMultiLineDmsShape = evidence.coordinateRowCount >= 4
+    && evidence.dmsLikeTokenCount >= 8
+    && evidence.dmsPairLineCount >= 3;
+
+  evidence.shouldRetry = evidence.score >= 5 && (hasDamagedHandwrittenShape || hasMultiLineDmsShape);
+  evidence.reason = evidence.shouldRetry ? "handwritten_dms_evidence" : "insufficient_evidence";
+  return evidence;
+}
+
 function shouldRetryHandwrittenDmsOnTimeout(file, hint = "", options = {}) {
   return getHandwrittenDmsTimeoutRoutingEvidence(file, hint, options).shouldRetry;
 }
@@ -7072,6 +7158,72 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
   }
 
   return data;
+}
+
+function getHandwrittenDmsTranscriptionPrompt() {
+  return `Read ONLY handwritten DMS coordinate lines in this image.
+This is a character-level transcription task for handwritten coordinates, NOT a coordinate understanding or conversion task.
+
+Target content:
+- Numbered handwritten DMS coordinate lines.
+- Lines may look like 11°28.31.26N, 08.40.42.13W, 11°27'57.74 N, 08 36 46.30 W.
+- Coordinates may appear in groups of 1, 2, 3, 4; preserve blank lines between groups if visible.
+
+Critical rules:
+- Copy every visible digit exactly as written.
+- Preserve degree, minute, and second values separately.
+- Do NOT convert coordinates.
+- Do NOT normalize coordinates.
+- Do NOT correct coordinates.
+- Do NOT choose a "more reasonable" digit from context.
+- Do NOT merge minute and second values into a decimal minute.
+- Do NOT rewrite 28'31.26" as 28.3126'.
+- Do NOT change digits such as 31 to 37, 41 to 47, 59 to 53, 12 to 22, or 97 to 87.
+- Preserve the visible DMS numbers as written.
+- Do NOT infer missing rows.
+- Do NOT read printed body text, signatures, phone UI, watermarks, or unrelated numbers.
+- Do NOT output explanations, markdown, confidence, bbox, or OCR metadata.
+- Each output line must contain exactly one latitude DMS and one longitude DMS coordinate.
+- Keep N/S/E/W/O direction letters when visible. O/Ouest means W.
+- If a digit is unclear, copy the most visually literal digit and keep the row in the output; do not replace it with a guessed geographic correction.
+
+Before final answer:
+- For every coordinate, verify each digit against the image one more time.
+- Verify that degrees, minutes, and seconds are still separated in the output.
+- Verify that no digit was changed to make the coordinate look smoother or more consistent.
+
+Output only coordinate lines. Examples:
+1. 11°28'31.26"N, 08°40'42.13"W
+2. 11°27'57.74"N, 08°36'46.30"W
+
+If fewer than four handwritten DMS coordinate rows are readable, output only: ${noCoordinatesText}`;
+}
+
+async function readHandwrittenDmsWithPrompt({ imageItems, modelName = aliyunVisionModel, timeoutMs = 80000 } = {}) {
+  const response = await callAliyunVision({
+    modelName,
+    prompt: getHandwrittenDmsTranscriptionPrompt(),
+    imageItems,
+    temperature: 0,
+    maxTokens: 2200,
+    timeoutMs
+  });
+  const rawText = response.choices?.[0]?.message?.content || "";
+  let coordinates = extractCoordinateLines(rawText);
+  const handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, {
+    isOcrImage: true,
+    hasExplicitHandwrittenDmsContext: true
+  });
+  coordinates = handwrittenDms.isHandwrittenDms
+    ? (formatHandwrittenDmsRawRows(rawText) || applyHandwrittenDmsCoordinateGrouping(coordinates, handwrittenDms))
+    : applyHandwrittenDmsCoordinateGrouping(coordinates, handwrittenDms);
+
+  return {
+    response,
+    rawText,
+    coordinates,
+    handwrittenDms
+  };
 }
 
 async function runLocalOcrFallback(imageBuffer, reason = "") {
@@ -12607,6 +12759,60 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let warning = extractRecognitionWarning(rawText);
     let usedModel = aliyunVisionModel;
     const parserTrace = ["OCR"];
+    const generalVisionRawText = rawText;
+    let handwrittenVisionRawText = "";
+    let handwrittenVisionRouting = getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates, {
+      file: req.file,
+      hint: coordinateRawHint
+    });
+    if (handwrittenVisionRouting.shouldRetry) {
+      try {
+        parserTrace.push("HANDWRITTEN_DMS:evidence_retry");
+        console.log("Handwritten DMS evidence detected; retrying with literal transcription prompt.", {
+          fileName: uploadedFileName || req.file?.originalname || "",
+          reason: handwrittenVisionRouting.reason,
+          score: handwrittenVisionRouting.score,
+          damagedMergedDmsLineCount: handwrittenVisionRouting.damagedMergedDmsLineCount,
+          dmsPairLineCount: handwrittenVisionRouting.dmsPairLineCount,
+          timeoutMs: 80000
+        });
+        const handwrittenRead = await readHandwrittenDmsWithPrompt({
+          imageItems,
+          modelName: aliyunVisionModel,
+          timeoutMs: 80000
+        });
+        handwrittenVisionRawText = handwrittenRead.rawText;
+
+        if (handwrittenRead.handwrittenDms.isHandwrittenDms) {
+          rawText = handwrittenRead.rawText;
+          coordinates = handwrittenRead.coordinates;
+          warning = extractRecognitionWarning(rawText) || "识别到手写 DMS 坐标，请结合原图逐行核对。";
+          usedModel = `${aliyunVisionModel}+handwritten-dms-evidence-retry`;
+          handwrittenVisionRouting = {
+            ...handwrittenVisionRouting,
+            retrySuccess: true,
+            retryRows: handwrittenRead.handwrittenDms.pointRows || countCoordinateRows(handwrittenRead.coordinates)
+          };
+          console.log("Handwritten DMS evidence retry success rows=", handwrittenVisionRouting.retryRows);
+        } else {
+          handwrittenVisionRouting = {
+            ...handwrittenVisionRouting,
+            retrySuccess: false,
+            retryRows: countCoordinateRows(handwrittenRead.coordinates)
+          };
+          parserTrace.push("HANDWRITTEN_DMS:evidence_retry_unstable");
+          console.log("Handwritten DMS evidence retry did not return stable rows:", handwrittenRead.rawText.slice(0, 500));
+        }
+      } catch (handwrittenEvidenceRetryError) {
+        handwrittenVisionRouting = {
+          ...handwrittenVisionRouting,
+          retrySuccess: false,
+          retryError: handwrittenEvidenceRetryError.message || String(handwrittenEvidenceRetryError || "")
+        };
+        parserTrace.push("HANDWRITTEN_DMS:evidence_retry_failed");
+        console.error("Handwritten DMS evidence visual retry failed:", handwrittenEvidenceRetryError.message || handwrittenEvidenceRetryError);
+      }
+    }
     let cadastralGrid = getCadastralGridInfo(rawText);
     let mgrs = getMgrsInfo(rawText);
     let mozambiqueGeographicTable = getMozambiqueGeographicInfo(rawText);
@@ -13353,6 +13559,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       chatCoordinates,
       kyrgyzGk,
       bftmLongTable,
+      handwrittenVisionRouting: {
+        ...handwrittenVisionRouting,
+        generalVisionRawText,
+        handwrittenVisionRawText,
+        finalRawText: rawText
+      },
       parserTrace,
       quota: consumeResult.quota
     };
@@ -13506,45 +13718,17 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             timeoutMs: handwrittenDmsDebug.handwrittenDmsRetryTimeoutMs
           });
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
-          const handwrittenDmsTimeoutRetryPrompt = `Read ONLY handwritten DMS coordinate lines in this image.
-This is a literal transcription task for handwritten coordinates, NOT a coordinate conversion task.
-
-Target content:
-- Numbered handwritten DMS coordinate lines.
-- Lines may look like 11°28.31.26N, 08.40.42.13W, 11°27'57.74 N, 08 36 46.30 W.
-- Coordinates may appear in groups of 1, 2, 3, 4; preserve blank lines between groups if visible.
-
-Critical rules:
-- Preserve the visible DMS numbers as written.
-- Do NOT convert to decimal degrees.
-- Do NOT infer missing rows.
-- Do NOT read printed body text, signatures, phone UI, watermarks, or unrelated numbers.
-- Do NOT output explanations, markdown, confidence, bbox, or OCR metadata.
-- Each output line must contain exactly one latitude DMS and one longitude DMS coordinate.
-- Keep N/S/E/W/O direction letters when visible. O/Ouest means W.
-
-Output only coordinate lines. Examples:
-1. 11°28'31.26"N, 08°40'42.13"W
-2. 11°27'57.74"N, 08°36'46.30"W
-
-If fewer than four handwritten DMS coordinate rows are readable, output only: ${noCoordinatesText}`;
-          const retryResponse = await callAliyunVision({
+          const handwrittenRead = await readHandwrittenDmsWithPrompt({
             modelName: aliyunVisionModel,
-            prompt: handwrittenDmsTimeoutRetryPrompt,
             imageItems: [{
               type: "image_url",
               image_url: { url: imageDataUrl }
             }],
-            temperature: 0,
-            maxTokens: 2200,
             timeoutMs: handwrittenDmsDebug.handwrittenDmsRetryTimeoutMs
           });
-          const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
-          let retryCoordinates = extractCoordinateLines(retryRawText);
-          const retryHandwrittenDms = getHandwrittenDmsInfo(retryRawText, retryCoordinates, { isOcrImage: true });
-          retryCoordinates = retryHandwrittenDms.isHandwrittenDms
-            ? (formatHandwrittenDmsRawRows(retryRawText) || applyHandwrittenDmsCoordinateGrouping(retryCoordinates, retryHandwrittenDms))
-            : applyHandwrittenDmsCoordinateGrouping(retryCoordinates, retryHandwrittenDms);
+          const retryRawText = handwrittenRead.rawText;
+          const retryCoordinates = handwrittenRead.coordinates;
+          const retryHandwrittenDms = handwrittenRead.handwrittenDms;
           handwrittenDmsDebug.handwrittenDmsRetryRows = retryHandwrittenDms.pointRows || countCoordinateRows(retryCoordinates);
 
           if (retryHandwrittenDms.isHandwrittenDms) {
