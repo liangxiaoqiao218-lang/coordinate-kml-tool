@@ -76,11 +76,21 @@ function flattenEnginePoints(coordinateEngineV2 = {}) {
   return points;
 }
 
-function getProvidedBbox(recognitionResult = {}, sourceType, rowIndex, field) {
+function getProvidedBbox(recognitionResult = {}, context = {}, sourceType, rowIndex, field, pointMeta = {}) {
   const sourceRows = recognitionResult.imageEvidence?.sources?.[sourceType]?.rows;
   const row = Array.isArray(sourceRows) ? sourceRows[rowIndex] : null;
-  if (!row) return null;
-  return row.fields?.[field]?.bbox || row.bbox || null;
+  const legacyBbox = row?.fields?.[field]?.bbox || row?.bbox || null;
+  if (legacyBbox) return legacyBbox;
+  if (field !== "coordinate") return null;
+  const bindings = Array.isArray(context.evidenceAcquisition?.rowBindings)
+    ? context.evidenceAcquisition.rowBindings
+    : [];
+  const binding = bindings.find(item => (
+    String(item.group_id) === String(pointMeta.group_id)
+    && String(item.point_id) === String(pointMeta.point_id)
+    && item.location_status === "PIXEL_BBOX"
+  ));
+  return binding?.bbox || null;
 }
 
 function parseEvidenceRows(source = {}) {
@@ -99,7 +109,7 @@ function parseEvidenceRows(source = {}) {
     }));
 }
 
-function createRowEvidence({ recognitionResult, imageId, source, row, rowIndex, pointMeta, field, rawText }) {
+function createRowEvidence({ recognitionResult, context, imageId, source, row, rowIndex, pointMeta, field, rawText }) {
   return createImageEvidence({
     image_id: imageId,
     page: recognitionResult.imageEvidence?.page || 1,
@@ -108,7 +118,7 @@ function createRowEvidence({ recognitionResult, imageId, source, row, rowIndex, 
     row_id: `row_${rowIndex + 1}`,
     point_id: pointMeta?.point_id || row.label || String(rowIndex + 1),
     field,
-    bbox: getProvidedBbox(recognitionResult, source.type, rowIndex, field),
+    bbox: getProvidedBbox(recognitionResult, context, source.type, rowIndex, field, pointMeta),
     source: source.type,
     raw_text: rawText
   });
@@ -124,6 +134,7 @@ function buildEvidenceItems(recognitionResult = {}, coordinateEngineV2 = {}, con
       const meta = pointMeta[rowIndex];
       items.push(createRowEvidence({
         recognitionResult,
+        context,
         imageId,
         source,
         row,
@@ -137,6 +148,7 @@ function buildEvidenceItems(recognitionResult = {}, coordinateEngineV2 = {}, con
         if (!token) return;
         items.push(createRowEvidence({
           recognitionResult,
+          context,
           imageId,
           source,
           row,
@@ -202,15 +214,19 @@ export function findEvidenceForObservation(evidenceLayer = {}, { source, rowInde
   const sourceType = SOURCE_TYPES[source] || source;
   const targetRowId = `row_${Number(rowIndex) + 1}`;
   const items = Array.isArray(evidenceLayer.items) ? evidenceLayer.items : [];
-  return items.find(item => (
+  const fieldEvidence = items.find(item => (
     item.source === sourceType
     && item.row_id === targetRowId
     && item.field === field
-  )) || items.find(item => (
+  ));
+  const rowEvidence = items.find(item => (
     item.source === sourceType
     && item.row_id === targetRowId
     && item.field === "coordinate"
-  )) || null;
+  ));
+  if (fieldEvidence?.bbox) return fieldEvidence;
+  if (rowEvidence?.bbox) return rowEvidence;
+  return fieldEvidence || rowEvidence || null;
 }
 
 export function attachEvidenceToVerificationGroups(groups = [], evidenceLayer = {}) {

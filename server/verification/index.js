@@ -5,6 +5,7 @@ import {
   attachEvidenceToVerificationGroups,
   buildRecognitionEvidence
 } from "../evidence/recognition-evidence-adapter.js";
+import { buildEvidenceAcquisition } from "../evidence-acquisition/index.js";
 
 function uniqueWarnings(values) {
   return Array.from(new Set(values.map(value => String(value || "").trim()).filter(Boolean)));
@@ -123,13 +124,19 @@ export function buildCoordinateVerification({ recognitionResult = {}, coordinate
 
 export function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null) {
   const engine = coordinateEngineV2 || payload.coordinateEngineV2 || {};
-  const evidence = buildRecognitionEvidence({
+  const evidenceAcquisition = buildEvidenceAcquisition({
     recognitionResult: payload,
     coordinateEngineV2: engine
+  });
+  const evidence = buildRecognitionEvidence({
+    recognitionResult: payload,
+    coordinateEngineV2: engine,
+    context: { evidenceAcquisition }
   });
   return {
     ...payload,
     coordinateEngineV2: engine,
+    evidenceAcquisition,
     evidence,
     verification: buildCoordinateVerification({
       recognitionResult: payload,

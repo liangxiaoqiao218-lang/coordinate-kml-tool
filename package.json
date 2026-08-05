@@ -6,6 +6,7 @@
   "scripts": {
     "regression": "node scripts/coordinate-regression-runner.js",
     "evidence-regression": "node scripts/evidence-regression.js",
+    "evidence-acquisition-regression": "node scripts/evidence-acquisition-regression.js",
     "verification-regression": "node scripts/coordinate-verification-regression.js",
     "start": "node server.js"
   },

@@ -107,7 +107,8 @@ const legacyResponse = {
 };
 const legacySnapshot = structuredClone(legacyResponse);
 const evidenceResponse = buildCoordinateVerificationResponse(legacyResponse, legacyResponse.coordinateEngineV2);
-const { evidence, verification, ...responseWithoutShadowLayers } = evidenceResponse;
+const { evidenceAcquisition, evidence, verification, ...responseWithoutShadowLayers } = evidenceResponse;
+assert.ok(evidenceAcquisition, "response must append evidence acquisition shadow data");
 assert.ok(evidence, "response must append evidence shadow data");
 assert.ok(verification, "response must preserve verification shadow data");
 assert.deepEqual(responseWithoutShadowLayers, legacySnapshot, "removing shadow layers must restore the legacy response");
