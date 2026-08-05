@@ -2306,6 +2306,49 @@
       background: #fef3c7;
     }
 
+    .handwritten-dms-review-panel {
+      display: none;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px 10px;
+      width: 100%;
+      margin: 10px 0 0;
+      padding: 10px 12px;
+      border: 1px solid #fde68a;
+      border-radius: 12px;
+      background: #fffbeb;
+      color: #92400e;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .handwritten-dms-review-panel.is-confirmed {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+      color: #166534;
+    }
+
+    .handwritten-dms-review-text {
+      flex: 1 1 240px;
+    }
+
+    .handwritten-dms-review-button {
+      flex: 0 0 auto;
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid #d97706;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #92400e;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .handwritten-dms-review-button:hover {
+      background: #fef3c7;
+    }
+
     .recognition-copy-button {
       flex: 0 0 auto;
       min-height: 34px;
@@ -4125,6 +4168,7 @@
 
       <div id="recognitionSummary" class="recognition-status" aria-live="polite"></div>
       <div id="recognitionProgress" class="recognition-status" aria-live="polite"></div>
+      <div id="handwrittenDmsReviewPanel" class="handwritten-dms-review-panel" aria-live="polite"></div>
 
     <div id="cadastralGridPanel" class="panel cadastral-grid-panel">
       <label for="cadastralGridSelection">矿权网格编号</label>
@@ -4558,6 +4602,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const uploadMessage = document.getElementById("uploadMessage");
     const recognitionSummary = document.getElementById("recognitionSummary");
     const recognitionProgress = document.getElementById("recognitionProgress");
+    const handwrittenDmsReviewPanel = document.getElementById("handwrittenDmsReviewPanel");
     const imagePreview = document.getElementById("imagePreview");
     const imageModal = document.getElementById("imageModal");
     const imageModalImg = document.getElementById("imageModalImg");
@@ -4677,6 +4722,14 @@ Au值 = 纯度 × 10 后取整数</div>
     let internalKmlSourceDirty = false;
     let activeCoordinatePrecisionMode = "";
     let activeCoordinateEngineV2 = null;
+    const HANDWRITTEN_DMS_REVIEW_STATUS = Object.freeze({
+      NOT_APPLICABLE: "NOT_APPLICABLE",
+      PENDING: "PENDING",
+      EDITED_PENDING: "EDITED_PENDING",
+      CONFIRMED: "CONFIRMED"
+    });
+    const HANDWRITTEN_DMS_REVIEW_GUARD_KEY = "handwrittenDmsReviewRequired";
+    let handwrittenDmsReviewState = createHandwrittenDmsReviewState();
     const JUDGE_HISTORY_KEY = "judgeHistory";
     const OLD_JUDGE_HISTORY_KEYS = [
       "aiJudgeHistory",
@@ -4691,12 +4744,12 @@ Au值 = 纯度 × 10 后取整数</div>
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
     judgeImageInput.multiple = false;
+    window.addEventListener("pageshow", () => {
+      restoreHandwrittenReviewGuard();
+      setTimeout(restoreHandwrittenReviewGuard, 0);
+    });
     input.addEventListener("input", () => {
-      activeCoordinatePrecisionMode = "";
-      activeCoordinateEngineV2 = null;
-      clearRecognitionSummary();
-      internalKmlSourceDirty = true;
-      setCoordinateOrderReviewVisible(false);
+      markCoordinateTextChanged();
       updateCadastralGridPanel();
     });
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
@@ -4845,7 +4898,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const meta = getPageRouteMeta(pageName);
       const nextPath = meta.path;
       const currentPath = location.pathname || "/";
-      const state = { pageName, focusTarget };
+      const previousState = history.state && typeof history.state === "object" ? history.state : {};
+      const state = { ...previousState, pageName, focusTarget };
       const method = mode === "replace" ? "replaceState" : "pushState";
 
       if (currentPath === nextPath) {
@@ -4904,7 +4958,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const route = resolvePageFromPath();
       showPage(route.pageName, route.focusTarget, false);
       if (options.replaceState) {
-        history.replaceState(route, "", `${location.pathname || "/"}${location.search || ""}${location.hash || ""}`);
+        const previousState = history.state && typeof history.state === "object" ? history.state : {};
+        history.replaceState({ ...previousState, ...route }, "", `${location.pathname || "/"}${location.search || ""}${location.hash || ""}`);
       }
     }
 
@@ -5889,6 +5944,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       input.value = historyStack.pop();
+      markCoordinateTextChanged();
       updateCadastralGridPanel();
       input.focus();
       trackEvent("undo_click");
@@ -6031,17 +6087,153 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
-    function isHandwrittenDmsEngineUnsafe(engine = activeCoordinateEngineV2) {
-      const type = String(engine?.coordinate_type || engine?.coordinateType || "").trim();
-      if (type !== "handwritten_dms_experimental") {
+    function createHandwrittenDmsReviewState(overrides = {}) {
+      return {
+        required: false,
+        status: HANDWRITTEN_DMS_REVIEW_STATUS.NOT_APPLICABLE,
+        revision: 0,
+        confirmedRevision: null,
+        ...overrides
+      };
+    }
+
+    function setHandwrittenDmsReviewGuardContext(required) {
+      const currentState = history.state && typeof history.state === "object" ? history.state : {};
+      const nextState = { ...currentState };
+
+      if (required) {
+        nextState[HANDWRITTEN_DMS_REVIEW_GUARD_KEY] = true;
+      } else {
+        delete nextState[HANDWRITTEN_DMS_REVIEW_GUARD_KEY];
+      }
+
+      history.replaceState(
+        nextState,
+        "",
+        `${location.pathname || "/"}${location.search || ""}${location.hash || ""}`
+      );
+    }
+
+    function restoreHandwrittenReviewGuard() {
+      const text = String(input?.value || "").trim();
+      const currentState = history.state && typeof history.state === "object" ? history.state : {};
+      const hasReviewContext = currentState[HANDWRITTEN_DMS_REVIEW_GUARD_KEY] === true;
+
+      if (!text || !hasReviewContext || !hasHandwrittenDmsStructure(text)) {
         return false;
       }
 
-      return engine?.requires_review === true || engine?.kml_ready === false;
+      handwrittenDmsReviewState = createHandwrittenDmsReviewState({
+        required: true,
+        status: HANDWRITTEN_DMS_REVIEW_STATUS.PENDING
+      });
+      renderHandwrittenDmsReviewState();
+      return true;
+    }
+
+    function getHandwrittenDmsReviewStateAfterTextChange(state) {
+      if (!state?.required) {
+        return createHandwrittenDmsReviewState();
+      }
+
+      return createHandwrittenDmsReviewState({
+        ...state,
+        status: state.status === HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED
+          ? HANDWRITTEN_DMS_REVIEW_STATUS.EDITED_PENDING
+          : state.status,
+        revision: Number(state.revision || 0) + 1,
+        confirmedRevision: state.status === HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED
+          ? null
+          : state.confirmedRevision
+      });
+    }
+
+    function renderHandwrittenDmsReviewState() {
+      if (!handwrittenDmsReviewPanel) return;
+
+      if (!handwrittenDmsReviewState.required) {
+        handwrittenDmsReviewPanel.style.display = "none";
+        handwrittenDmsReviewPanel.replaceChildren();
+        handwrittenDmsReviewPanel.className = "handwritten-dms-review-panel";
+        return;
+      }
+
+      const isConfirmed = handwrittenDmsReviewState.status === HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED
+        && handwrittenDmsReviewState.confirmedRevision === handwrittenDmsReviewState.revision;
+      handwrittenDmsReviewPanel.style.display = "flex";
+      handwrittenDmsReviewPanel.className = `handwritten-dms-review-panel${isConfirmed ? " is-confirmed" : ""}`;
+      handwrittenDmsReviewPanel.replaceChildren();
+
+      const statusText = document.createElement("span");
+      statusText.className = "handwritten-dms-review-text";
+      statusText.textContent = isConfirmed
+        ? "已确认当前手写 DMS 坐标；再次修改后需要重新核对。"
+        : handwrittenDmsReviewState.status === HANDWRITTEN_DMS_REVIEW_STATUS.EDITED_PENDING
+          ? "手写 DMS 坐标已修改，请对照原图重新核对。"
+          : "手写 DMS 识别结果需要对照原图人工核对。";
+      handwrittenDmsReviewPanel.appendChild(statusText);
+
+      if (!isConfirmed) {
+        const confirmButton = document.createElement("button");
+        confirmButton.type = "button";
+        confirmButton.className = "handwritten-dms-review-button";
+        confirmButton.textContent = "我已对照原图核对当前坐标";
+        confirmButton.addEventListener("click", confirmHandwrittenDmsReview);
+        handwrittenDmsReviewPanel.appendChild(confirmButton);
+      }
+    }
+
+    function resetHandwrittenDmsReviewState() {
+      handwrittenDmsReviewState = createHandwrittenDmsReviewState();
+      setHandwrittenDmsReviewGuardContext(false);
+      renderHandwrittenDmsReviewState();
+    }
+
+    function initializeHandwrittenDmsReviewState(engine = {}) {
+      const type = String(engine?.coordinate_type || engine?.coordinateType || "").trim();
+      const required = type === "handwritten_dms_experimental" && engine?.requires_review === true;
+      handwrittenDmsReviewState = required
+        ? createHandwrittenDmsReviewState({
+            required: true,
+            status: HANDWRITTEN_DMS_REVIEW_STATUS.PENDING
+          })
+        : createHandwrittenDmsReviewState();
+      setHandwrittenDmsReviewGuardContext(required);
+      renderHandwrittenDmsReviewState();
+    }
+
+    function confirmHandwrittenDmsReview() {
+      if (!handwrittenDmsReviewState.required) return;
+
+      handwrittenDmsReviewState = createHandwrittenDmsReviewState({
+        ...handwrittenDmsReviewState,
+        status: HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED,
+        confirmedRevision: handwrittenDmsReviewState.revision
+      });
+      renderHandwrittenDmsReviewState();
+      trackEvent("handwritten_dms_review_confirm", {
+        revision: handwrittenDmsReviewState.revision
+      });
+      showMessage("已记录当前手写 DMS 坐标的人工核对确认。再次修改后需要重新核对。", false, 5000);
+    }
+
+    function markCoordinateTextChanged() {
+      activeCoordinatePrecisionMode = "";
+      activeCoordinateEngineV2 = null;
+      handwrittenDmsReviewState = getHandwrittenDmsReviewStateAfterTextChange(handwrittenDmsReviewState);
+      renderHandwrittenDmsReviewState();
+      clearRecognitionSummary();
+      internalKmlSourceDirty = true;
+      setCoordinateOrderReviewVisible(false);
     }
 
     function shouldBlockHandwrittenDmsKml() {
-      return isHandwrittenDmsEngineUnsafe(activeCoordinateEngineV2);
+      if (!handwrittenDmsReviewState.required) {
+        return false;
+      }
+
+      return handwrittenDmsReviewState.status !== HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED
+        || handwrittenDmsReviewState.confirmedRevision !== handwrittenDmsReviewState.revision;
     }
 
     function scrollToCoordinateReviewGroup(groupIndex) {
@@ -6503,6 +6695,7 @@ Au值 = 纯度 × 10 后取整数</div>
       selectedImageUrl = "";
       selectedImageFile = null;
       activeCoordinateEngineV2 = null;
+      resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
       closeImageModal();
       imagePreview.style.display = "none";
@@ -10802,6 +10995,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
       rememberState();
       input.value = swappedLines.join("\n");
+      markCoordinateTextChanged();
       coordinateOrder.value = "lnglat";
       setInternalKmlSourceFromText(input.value);
       setCoordinateOrderReviewVisible(false);
@@ -10848,6 +11042,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       input.value = pairs
         .map(pair => formatPairForDisplay(pair, coordinateFormat.value))
         .join("\n");
+      markCoordinateTextChanged();
       setInternalKmlSourceFromGroups(coordinateGroups);
       updateCadastralGridPanel();
       trackEvent("format_convert_click", {
@@ -11191,6 +11386,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       input.value = "";
       clearInternalKmlSource();
       activeCoordinateEngineV2 = null;
+      resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
       updateCadastralGridPanel();
@@ -11231,6 +11427,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
 
       rememberState();
       input.value = pairs.map(pair => `${pair.longitude},${pair.latitude}`).join("\n");
+      markCoordinateTextChanged();
       coordinateFormat.value = "standard";
       coordinateOrder.value = "lnglat";
       setInternalKmlSourceFromGroups(coordinateGroups);
@@ -12141,6 +12338,7 @@ ${placemarks}
       supportPanel.style.display = "none";
       clearUploadMessage();
       activeCoordinateEngineV2 = null;
+      resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
       showRecognitionProgress("正在上传图片...", "loading");
@@ -12362,6 +12560,7 @@ ${placemarks}
 
         rememberState();
         input.value = displayCoordinates || finalCoordinates;
+        initializeHandwrittenDmsReviewState(summaryEngine);
         coordinateOrder.value = "auto";
         setCoordinateOrderReviewVisible(hasOrderReview);
         updateCadastralGridPanel();
