@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import Tesseract from "tesseract.js";
+import { buildCoordinateVerificationResponse } from "./server/verification/index.js";
 
 const app = express();
 const upload = multer({
@@ -4491,7 +4492,7 @@ function buildMozambiqueLockedReviewPayload({
     }
   }, { forceRequiresReview: true });
 
-  return payload;
+  return buildCoordinateVerificationResponse(payload, payload.coordinateEngineV2);
 }
 
 function getMozambiqueGeographicRowsQuality(rows) {
@@ -11813,18 +11814,20 @@ app.post("/api/regression/parse-coordinate-text", (req, res) => {
 
   const parsed = buildRegressionTextCoordinateResult(text);
 
-  return res.json({
+  const regressionPayload = {
     success: true,
     rawText: text,
-    ...parsed,
-    coordinateEngineV2: buildCoordinateEngineV2ShadowResult({
+    ...parsed
+  };
+  const coordinateEngineV2 = buildCoordinateEngineV2ShadowResult({
       model: "regression-text",
       rawText: text,
       ...parsed
     }, {
       rawHint: String(req.body?.rawHint || req.body?.hint || req.body?.context || "")
-    })
-  });
+    });
+
+  return res.json(buildCoordinateVerificationResponse(regressionPayload, coordinateEngineV2));
 });
 
 /*
@@ -12471,10 +12474,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             quota: consumeResult.quota
           };
 
-          return res.json({
-            ...kyrgyzDirectPayload,
-            coordinateEngineV2: buildCoordinateEngineV2ShadowResult(kyrgyzDirectPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint })
-          });
+          return res.json(buildCoordinateVerificationResponse(
+            kyrgyzDirectPayload,
+            buildCoordinateEngineV2ShadowResult(kyrgyzDirectPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint })
+          ));
         }
 
         console.log("Kyrgyz GK direct prompt failed reason=no_parsable_rows", {
@@ -12584,14 +12587,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               quota: consumeResult.quota
             };
 
-            return res.json({
-              ...mozambiqueDirectPayload,
-              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(mozambiqueDirectPayload, {
+            return res.json(buildCoordinateVerificationResponse(
+              mozambiqueDirectPayload,
+              buildCoordinateEngineV2ShadowResult(mozambiqueDirectPayload, {
                 fileName: uploadedFileName,
                 rawHint: coordinateEngineV2ContextHint,
                 candidateTypeLock: mozambiqueTypeLock
               })
-            });
+            ));
           }
         }
 
@@ -12700,14 +12703,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                 quota: consumeResult.quota
               };
 
-              return res.json({
-                ...mozambiqueRetryPayload,
-                coordinateEngineV2: buildCoordinateEngineV2ShadowResult(mozambiqueRetryPayload, {
+              return res.json(buildCoordinateVerificationResponse(
+                mozambiqueRetryPayload,
+                buildCoordinateEngineV2ShadowResult(mozambiqueRetryPayload, {
                   fileName: uploadedFileName,
                   rawHint: coordinateEngineV2ContextHint,
                   candidateTypeLock: mozambiqueTypeLock
                 })
-              });
+              ));
             }
           } catch (mozambiqueRetryError) {
             console.error("Mozambique type lock transcription retry failed reason=", mozambiqueRetryError.message || mozambiqueRetryError);
@@ -13625,10 +13628,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    res.json({
-      ...recognitionPayload,
-      coordinateEngineV2
-    });
+    res.json(buildCoordinateVerificationResponse(recognitionPayload, coordinateEngineV2));
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
     console.error("阿里云识别失败，尝试备用OCR。真实错误信息：", {
@@ -13771,10 +13771,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               ...handwrittenDmsDebug
             };
 
-            return res.json({
-              ...handwrittenRetryPayload,
-              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(handwrittenRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
-            });
+            return res.json(buildCoordinateVerificationResponse(
+              handwrittenRetryPayload,
+              buildCoordinateEngineV2ShadowResult(handwrittenRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
+            ));
           }
 
           console.log("Handwritten DMS timeout retry did not return stable rows:", retryRawText.slice(0, 500));
@@ -13794,10 +13794,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ...handwrittenDmsDebug
         };
 
-        return res.status(504).json({
-          ...handwrittenTimeoutPayload,
-          coordinateEngineV2: buildCoordinateEngineV2ShadowResult(handwrittenTimeoutPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
-        });
+        return res.status(504).json(buildCoordinateVerificationResponse(
+          handwrittenTimeoutPayload,
+          buildCoordinateEngineV2ShadowResult(handwrittenTimeoutPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
+        ));
       }
 
       if (isAliyunTimeout && aliyunApiKey && req.file) {
@@ -13875,10 +13875,10 @@ If the table is not readable, output only: ${noCoordinatesText}`;
               quota: consumeResult.quota
             };
 
-            return res.json({
-              ...kyrgyzRetryPayload,
-              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(kyrgyzRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
-            });
+            return res.json(buildCoordinateVerificationResponse(
+              kyrgyzRetryPayload,
+              buildCoordinateEngineV2ShadowResult(kyrgyzRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
+            ));
           }
 
           console.log("Kyrgyzstan GK timeout retry did not return parsable rows:", retryRawText.slice(0, 500));
@@ -13978,10 +13978,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               quota: consumeResult.quota
             };
 
-            return res.json({
-              ...wgs84TableRetryPayload,
-              coordinateEngineV2: buildCoordinateEngineV2ShadowResult(wgs84TableRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
-            });
+            return res.json(buildCoordinateVerificationResponse(
+              wgs84TableRetryPayload,
+              buildCoordinateEngineV2ShadowResult(wgs84TableRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
+            ));
           }
 
           console.log("WGS84 lon/lat table timeout retry did not return parsable rows:", retryRawText.slice(0, 500));
@@ -14275,7 +14275,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
       fallback.quota = consumeResult.quota;
       fallback.coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(fallback, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") });
 
-      res.json(fallback);
+      res.json(buildCoordinateVerificationResponse(fallback, fallback.coordinateEngineV2));
     } catch (fallbackError) {
       console.error(fallbackError);
       res.status(500).json({
