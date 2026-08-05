@@ -4691,6 +4691,7 @@ Au值 = 纯度 × 10 后取整数</div>
     judgeImageInput.multiple = false;
     input.addEventListener("input", () => {
       activeCoordinatePrecisionMode = "";
+      activeCoordinateEngineV2 = null;
       internalKmlSourceDirty = true;
       setCoordinateOrderReviewVisible(false);
       updateCadastralGridPanel();
