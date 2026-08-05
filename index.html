@@ -10861,7 +10861,15 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         const rest = restText.trim();
 
         if (/\s/.test(rest.replace(/['"]/g, " "))) {
-          parts = [degrees, ...((rest.match(/\d+(?:\.\d+)?/g) || []))];
+          const groups = rest.match(/\d+(?:\.\d+)?/g) || [];
+          if (groups.length >= 3) {
+            const secondsTail = groups[2].includes(".")
+              ? groups[2].split(".").slice(1).join("")
+              : groups.slice(2).join("");
+            parts = [degrees, groups[0], secondsTail ? `${groups[1]}.${secondsTail}` : groups[1]];
+          } else {
+            parts = [degrees, ...groups];
+          }
         } else {
           const groups = rest.match(/\d+/g) || [];
           if (groups.length >= 3) {
