@@ -9553,6 +9553,10 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return null;
       }
 
+      if (hasHandwrittenDmsStructure(original)) {
+        return null;
+      }
+
       const formattedMatch = original.match(/^\s*([A-Za-z0-9_-]+)\s*\|\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*(?:\||$)/);
       if (formattedMatch) {
         const lat = Number(formattedMatch[2]);
@@ -9603,10 +9607,25 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       };
     }
 
+    function hasHandwrittenDmsStructure(text) {
+      const value = normalizeDmsLineForParsing(text)
+        .replace(/OUEST/gi, "O")
+        .replace(/WEST/gi, "W");
+      const compact = value.replace(/\s+/g, " ");
+      const directionCount = (compact.match(/[NSEWO]\b/gi) || []).length;
+      const hasDmsSymbol = /[°º˚掳潞'′’"″”]/.test(compact);
+      const hasDotDms = /[-+]?\d{1,3}\s*(?:[°º˚掳潞]\s*)?\d{1,2}\.\d{1,2}\.\d{1,2}(?:\.\d+)?\s*[NSEWO]\b/i.test(compact);
+      const hasSpaceDms = /[-+]?\d{1,3}\s*(?:[°º˚掳潞]\s*)?\d{1,2}\s+\d{1,2}(?:\s+\d{1,2}(?:\.\d+)?|\.\d+)?\s*[NSEWO]\b/i.test(compact);
+      const hasStandardDms = /[-+]?\d{1,3}\s*[°º˚掳潞]\s*\d{1,2}\s*['′’]\s*\d{1,2}(?:\.\d+)?\s*(?:"|''|″|”)?\s*[NSEWO]\b/i.test(compact);
+
+      return directionCount >= 2 && (hasDmsSymbol || hasDotDms || hasSpaceDms || hasStandardDms);
+    }
+
     function extractChatCoordinateRows(text) {
       const value = String(text || "");
 
       if (!value.trim()
+        || hasHandwrittenDmsStructure(value)
         || hasDmsGroupedContext(value)
         || hasMgrsRows(value)
         || hasCadastralGridRows(value)
