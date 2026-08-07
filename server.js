@@ -4302,6 +4302,93 @@ function extractMgrsRows(text) {
   });
 }
 
+function validateMgrsIntegrity(rows = []) {
+  const mgrsRows = Array.isArray(rows) ? rows : [];
+  const labels = mgrsRows.map(row => String(row?.label || "").trim().toUpperCase());
+  const sourceLabels = mgrsRows
+    .map((row, index) => ({
+      label: String(row?.label || "").trim().toUpperCase(),
+      order: Number.isFinite(Number(row?.order)) ? Number(row.order) : index
+    }))
+    .sort((a, b) => a.order - b.order)
+    .map(item => item.label);
+  const labelsPresent = mgrsRows.length > 0 && labels.every(label => /^[A-Z]$/.test(label));
+  const uniqueLabels = new Set(labels.filter(label => /^[A-Z]$/.test(label)));
+  const labelsUnique = labelsPresent && uniqueLabels.size === labels.length;
+  const sortedLabels = Array.from(uniqueLabels).sort((a, b) => a.localeCompare(b));
+  const highestLabelCode = sortedLabels.length > 0
+    ? Math.max(...sortedLabels.map(label => label.charCodeAt(0)))
+    : null;
+  const expectedLabels = labelsPresent && highestLabelCode !== null
+    ? Array.from({ length: highestLabelCode - 64 }, (_, index) => String.fromCharCode(65 + index))
+    : [];
+  const missingLabels = expectedLabels.filter(label => !uniqueLabels.has(label));
+  const labelsContinuous = Boolean(
+    labelsPresent
+    && labelsUnique
+    && sortedLabels[0] === "A"
+    && missingLabels.length === 0
+    && sortedLabels.length === expectedLabels.length
+  );
+  const allRowsConverted = mgrsRows.length > 0 && mgrsRows.every(row => {
+    const latitude = row?.latitude ?? row?.lat;
+    const longitude = row?.longitude ?? row?.lon;
+    return Number.isFinite(Number(latitude))
+      && Number.isFinite(Number(longitude))
+      && Number(latitude) >= -90
+      && Number(latitude) <= 90
+      && Number(longitude) >= -180
+      && Number(longitude) <= 180;
+  });
+  const pointKeys = mgrsRows.map(row => {
+    const latitude = row?.latitude ?? row?.lat;
+    const longitude = row?.longitude ?? row?.lon;
+    if (!Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) {
+      return "";
+    }
+    return `${Number(latitude).toFixed(8)},${Number(longitude).toFixed(8)}`;
+  }).filter(Boolean);
+  const duplicatePointCount = pointKeys.length - new Set(pointKeys).size;
+  const rowsComplete = mgrsRows.length >= 3
+    && expectedLabels.length === mgrsRows.length;
+  const passed = Boolean(
+    rowsComplete
+    && labelsPresent
+    && labelsUnique
+    && labelsContinuous
+    && allRowsConverted
+    && duplicatePointCount === 0
+  );
+  const failures = [];
+
+  if (!labelsPresent) failures.push("labels_missing");
+  if (labelsPresent && !labelsUnique) failures.push("labels_duplicate");
+  if (labelsPresent && labelsUnique && !labelsContinuous) failures.push("labels_not_continuous");
+  if (!rowsComplete) failures.push("rows_incomplete");
+  if (!allRowsConverted) failures.push("row_conversion_failed");
+  if (duplicatePointCount > 0) failures.push("duplicate_points");
+
+  return {
+    status: passed ? "pass" : "review",
+    passed,
+    labelsPresent,
+    labelsUnique,
+    labelsContinuous,
+    labelsInSourceOrder: sourceLabels.every((label, index) => index === 0 || label.localeCompare(sourceLabels[index - 1]) > 0),
+    sourceLabels,
+    labels,
+    normalizedLabels: sortedLabels,
+    expectedLabels,
+    missingLabels,
+    rowsCount: mgrsRows.length,
+    expectedRows: expectedLabels.length || null,
+    rowsComplete,
+    allRowsConverted,
+    duplicatePointCount,
+    failures
+  };
+}
+
 function formatMgrsRows(rows) {
   return ["label | MGRS | WGS84 | KML", ...rows.map((row, index) => {
     const label = row.label || String(index + 1);
@@ -5236,14 +5323,19 @@ function getUtm30ProjectedXyInfo(rawText, coordinates) {
 }
 
 function shouldRetryMgrsVisualRead(rawText, reqFile, rawHint = "") {
-  if (!reqFile || getMgrsInfo(rawText).isMgrs) {
+  if (!reqFile) {
     return false;
   }
 
+  const mgrsInfo = getMgrsInfo(rawText);
   const uploadText = getUploadNameSearchText(reqFile, rawHint);
   const text = `${uploadText}\n${rawText || ""}`;
   const hasMgrsCue = /MGRS|UTM\s*Grid|Grid\s+Reference|Map\s*Ref|47R\s*LH|47RLH|缅甸|Myanmar|Lamu\s+Ga\s+Madi/i.test(text);
   const noUsefulCoordinates = countCoordinateRows(rawText) < 2 || String(rawText || "").includes(noCoordinatesText);
+
+  if (mgrsInfo.isMgrs) {
+    return hasMgrsCue && (!mgrsInfo.integrity.passed || !mgrsInfo.integrity.labelsInSourceOrder);
+  }
 
   return hasMgrsCue && noUsefulCoordinates;
 }
@@ -5408,6 +5500,18 @@ function formatChatCoordinateRows(points) {
 function buildRegressionTextCoordinateResult(text) {
   const value = String(text || "").trim();
 
+  const mgrs = getMgrsInfo(value);
+  if (mgrs.isMgrs) {
+    return {
+      precisionMode: "mgrs-utm-grid-reference",
+      parserTrace: [mgrs.integrity.passed ? "TEXT" : "TEXT_REVIEW", mgrs.integrity.passed ? "MGRS:accepted" : "MGRS:integrity_failed"],
+      coordinates: formatMgrsRows(mgrs.rows),
+      pointCount: mgrs.rows.length,
+      geometry: getCoordinateEngineV2Geometry(mgrs.rows),
+      mgrs
+    };
+  }
+
   const dmsLines = extractDmsCoordinateLines(value);
   if (dmsLines.length > 0) {
     return {
@@ -5441,11 +5545,13 @@ function buildRegressionTextCoordinateResult(text) {
 
 function getMgrsInfo(text) {
   const rows = extractMgrsRows(text);
+  const integrity = validateMgrsIntegrity(rows);
 
   return {
     isMgrs: rows.length > 0,
     rows,
-    rowCount: rows.length
+    rowCount: rows.length,
+    integrity
   };
 }
 
@@ -7925,6 +8031,33 @@ const coordinateEngineV2ProjectedReadyTypes = new Set([
 ]);
 
 function getCoordinateEngineV2ReadinessPolicy(coordinateType = "", points = [], warnings = []) {
+  if (String(coordinateType || "") === "mgrs_utm_grid_reference") {
+    const mgrsPoints = Array.isArray(points) ? points : [];
+    const integrity = validateMgrsIntegrity(mgrsPoints);
+    const hasAllWgs84 = mgrsPoints.length > 0 && mgrsPoints.every(hasCoordinateEngineV2Wgs84Point);
+    const hasPointReview = mgrsPoints.some(point => point?.requires_review);
+    const hasReviewWarnings = Array.isArray(warnings) && warnings.some(isCoordinateEngineV2ReviewWarning);
+    const geometryValid = hasAllWgs84
+      && mgrsPoints.length >= 3
+      && !isCoordinateEngineV2SelfIntersecting(mgrsPoints);
+    const ready = Boolean(
+      integrity.passed
+      && hasAllWgs84
+      && !hasPointReview
+      && !hasReviewWarnings
+      && geometryValid
+    );
+
+    return {
+      readinessPolicy: "mgrs_grid_reference_ready",
+      status: ready ? "mgrs_grid_reference_ready" : "mgrs_grid_reference_review",
+      kml_ready: ready,
+      requires_review: !ready,
+      mgrsIntegrity: integrity,
+      geometryValid
+    };
+  }
+
   if (!coordinateEngineV2ProjectedReadyTypes.has(String(coordinateType || ""))) {
     return {
       readinessPolicy: "wgs84",
@@ -8055,13 +8188,17 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
     && rawPoints.length > 0
     && !points.some(point => point.requires_review)
   );
-  const groupKmlReady = Boolean((readinessPolicy.kml_ready === true && !requiresReview) || kmlReady);
+  const groupKmlReady = coordinateType === "mgrs_utm_grid_reference"
+    ? Boolean(readinessPolicy.kml_ready === true && kmlReady && !requiresReview)
+    : Boolean((readinessPolicy.kml_ready === true && !requiresReview) || kmlReady);
   const normalizedValidation = {
     ...validation,
     readinessPolicy: readinessPolicy.readinessPolicy,
     readiness_status: readinessPolicy.status,
     projectedPointCount: readinessPolicy.projectedPointCount ?? null,
-    projection: readinessPolicy.projection ?? null
+    projection: readinessPolicy.projection ?? null,
+    mgrsIntegrity: readinessPolicy.mgrsIntegrity ?? null,
+    geometryValid: readinessPolicy.geometryValid ?? null
   };
 
   points = points.map(point => ({
@@ -13160,7 +13297,6 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       && !frenchPerimeterDms.isFrenchPerimeterDms
       && !bftmAccepted
       && !cadastralGrid.isCadastralGrid
-      && !mgrs.isMgrs
       && !mozambiqueGeographicTable.isMozambiqueGeographicTable
       && !wgs84TableCoordinates.isWgs84TableCoordinates
       && !chatCoordinates.isChatCoordinates
@@ -13184,7 +13320,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         const mgrsRetryRawText = mgrsRetryResponse.choices?.[0]?.message?.content || "";
         const mgrsRetryInfo = getMgrsInfo(mgrsRetryRawText);
 
-        if (mgrsRetryInfo.isMgrs) {
+        if (mgrsRetryInfo.isMgrs && mgrsRetryInfo.integrity.passed) {
           rawText = mgrsRetryRawText;
           mgrs = mgrsRetryInfo;
           coordinates = formatMgrsRows(mgrs.rows);
@@ -13192,7 +13328,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           usedModel = `${aliyunOcrModel}+mgrs-direct`;
           console.log("MGRS direct prompt success rows=", mgrs.rows.length);
         } else {
-          console.log("MGRS direct prompt did not return parsable rows", {
+          parserTrace.push("MGRS:retry_integrity_failed");
+          console.log("MGRS direct prompt did not return complete labeled rows", {
+            integrity: mgrsRetryInfo.integrity,
             preview: mgrsRetryRawText.slice(0, 500)
           });
         }
@@ -13238,8 +13376,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     } else if (mgrs.isMgrs) {
       coordinates = formatMgrsRows(mgrs.rows);
       usedModel = `${usedModel}+mgrs`;
-      parserTrace.push("MGRS:accepted");
-      warning = warning || "识别到 MGRS / UTM Grid Reference，已转换为 WGS84 经纬度并可生成 KML。";
+      if (mgrs.integrity.passed) {
+        parserTrace.push("MGRS:accepted");
+        warning = warning || "识别到 MGRS / UTM Grid Reference，标签与行完整性校验通过，已转换为 WGS84 经纬度并可生成 KML。";
+      } else {
+        parserTrace.push("MGRS:integrity_failed");
+        warning = warning || `MGRS 标签或行完整性校验未通过（${mgrs.integrity.failures.join(", ") || "unknown"}），请人工核对；系统不会生成 KML。`;
+      }
     } else if (kyrgyzGk.isKyrgyzGk) {
       coordinates = formatKyrgyzGkRows(kyrgyzGk.rows);
       usedModel = `${usedModel}+kyrgyz-gk`;
