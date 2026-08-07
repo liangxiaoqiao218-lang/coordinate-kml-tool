@@ -1120,6 +1120,140 @@
       background: #f8fbff;
     }
 
+    .crs-confirmation-panel {
+      display: none;
+      margin-top: 14px;
+      padding: 16px;
+      border: 1px solid #f59e0b;
+      border-radius: 12px;
+      background: #fffbeb;
+      color: #422006;
+    }
+
+    .crs-confirmation-panel.is-active {
+      display: block;
+    }
+
+    .crs-confirmation-panel.is-confirmed {
+      border-color: #14b8a6;
+      background: #f0fdfa;
+      color: #134e4a;
+    }
+
+    .crs-confirmation-heading {
+      margin: 0 0 12px;
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .crs-confirmation-grid {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      gap: 6px 14px;
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .crs-confirmation-grid dt {
+      color: #92400e;
+      font-weight: 800;
+    }
+
+    .crs-confirmation-panel.is-confirmed .crs-confirmation-grid dt {
+      color: #0f766e;
+    }
+
+    .crs-confirmation-grid dd {
+      margin: 0;
+      font-weight: 700;
+    }
+
+    .crs-confirmation-note {
+      margin: 10px 0 0;
+      color: #78350f;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .crs-confirmation-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .crs-confirmation-actions button {
+      min-height: 40px;
+      padding: 9px 14px;
+      border: 1px solid #d97706;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #92400e;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .crs-confirmation-actions .crs-confirm-primary {
+      border-color: #0f766e;
+      background: #0f766e;
+      color: #ffffff;
+    }
+
+    .crs-confirm-primary {
+      min-height: 40px;
+      padding: 9px 14px;
+      border: 1px solid #0f766e;
+      border-radius: 8px;
+      background: #0f766e;
+      color: #ffffff;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .crs-manual-form {
+      display: none;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #fcd34d;
+    }
+
+    .crs-manual-form.is-active {
+      display: grid;
+    }
+
+    .crs-manual-field label {
+      display: block;
+      margin-bottom: 5px;
+      color: #78350f;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .crs-manual-field input,
+    .crs-manual-field select {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 1px solid #fbbf24;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #0f172a;
+      font-size: 14px;
+    }
+
+    .crs-manual-submit {
+      align-self: end;
+    }
+
+    @media (max-width: 640px) {
+      .crs-manual-form {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .cadastral-grid-panel.is-active {
       display: block;
     }
@@ -4169,6 +4303,7 @@
       <div id="recognitionSummary" class="recognition-status" aria-live="polite"></div>
       <div id="recognitionProgress" class="recognition-status" aria-live="polite"></div>
       <div id="handwrittenDmsReviewPanel" class="handwritten-dms-review-panel" aria-live="polite"></div>
+      <section id="crsConfirmationPanel" class="crs-confirmation-panel" aria-live="polite"></section>
 
     <div id="cadastralGridPanel" class="panel cadastral-grid-panel">
       <label for="cadastralGridSelection">矿权网格编号</label>
@@ -4722,6 +4857,13 @@ Au值 = 纯度 × 10 后取整数</div>
     let internalKmlSourceDirty = false;
     let activeCoordinatePrecisionMode = "";
     let activeCoordinateEngineV2 = null;
+    const CRS_CONFIRMATION_STATUS = Object.freeze({
+      NOT_APPLICABLE: "NOT_APPLICABLE",
+      REQUIRED: "REQUIRED",
+      DETECTED: "DETECTED",
+      CONFIRMED: "CONFIRMED"
+    });
+    let activeCrsConfirmationState = createCrsConfirmationState();
     const HANDWRITTEN_DMS_REVIEW_STATUS = Object.freeze({
       NOT_APPLICABLE: "NOT_APPLICABLE",
       PENDING: "PENDING",
@@ -6217,9 +6359,310 @@ Au值 = 纯度 × 10 后取整数</div>
       showMessage("已记录当前手写 DMS 坐标的人工核对确认。再次修改后需要重新核对。", false, 5000);
     }
 
+    function createCrsConfirmationState(overrides = {}) {
+      return {
+        status: CRS_CONFIRMATION_STATUS.NOT_APPLICABLE,
+        intent: null,
+        manualOpen: false,
+        ...overrides
+      };
+    }
+
+    function getWgs84UtmEpsg(zone, hemisphere) {
+      const numericZone = Number(zone);
+      if (!Number.isInteger(numericZone) || numericZone < 1 || numericZone > 60) return "";
+      if (hemisphere !== "north" && hemisphere !== "south") return "";
+      return `EPSG:${(hemisphere === "north" ? 32600 : 32700) + numericZone}`;
+    }
+
+    function normalizeEpsgCode(value) {
+      const match = String(value ?? "").toUpperCase().match(/(?:EPSG\s*:\s*)?(\d{5})/);
+      return match ? `EPSG:${match[1]}` : "";
+    }
+
+    function normalizeWgs84UtmIntent(candidate, { typedResult = false } = {}) {
+      if (!candidate || typeof candidate !== "object") return null;
+
+      const coordinateType = String(candidate.coordinateType || candidate.coordinate_type || "").toLowerCase();
+      const projection = String(candidate.projection || "").toLowerCase();
+      const datum = String(candidate.datum || "").toUpperCase().replace(/[\s_-]+/g, "");
+      const hemisphere = String(candidate.hemisphere || "").toLowerCase();
+      const zone = Number(candidate.zone);
+      const epsg = normalizeEpsgCode(candidate.epsg || candidate.epsgCode || candidate.epsg_code);
+      const conflicts = Array.isArray(candidate.conflicts) ? candidate.conflicts : [];
+      const isUtm = projection === "utm" || coordinateType === "utm_projected_xy";
+      const isConfirmed = typedResult || String(candidate.confidence || "").toLowerCase() === "confirmed";
+      const expectedEpsg = getWgs84UtmEpsg(zone, hemisphere);
+
+      if (!isUtm || !isConfirmed || datum !== "WGS84" || conflicts.length > 0) return null;
+      if (!expectedEpsg || epsg !== expectedEpsg) return null;
+
+      return {
+        coordinateType: "utm_projected_xy",
+        datum: "WGS84",
+        zone,
+        hemisphere,
+        epsg,
+        source: "图纸 CRS 标注"
+      };
+    }
+
+    function getTypedCrsIntentFromRecognitionData(data = {}) {
+      const engine = data.coordinateEngineV2 || data.coordinate_engine_v2 || {};
+      const candidates = [
+        { value: data.typedCrsIntent || data.typed_crs_intent, typedResult: true },
+        { value: data.typedUtmIntent || data.typed_utm_intent, typedResult: true },
+        { value: data.typedResult?.typedUtmIntent || data.typed_result?.typed_utm_intent, typedResult: true },
+        { value: data.utmIntentShadow?.typedResult?.typedUtmIntent, typedResult: true },
+        { value: engine.typedCrsIntent || engine.typed_crs_intent, typedResult: true },
+        { value: engine.typedUtmIntent || engine.typed_utm_intent, typedResult: true },
+        { value: data.shadowIntent || data.shadow_intent },
+        { value: data.utmIntentShadow?.shadowIntent || data.utm_intent_shadow?.shadow_intent },
+        { value: data.crsEvidence?.shadowIntent || data.crs_evidence?.shadow_intent },
+        { value: engine.shadowIntent || engine.shadow_intent }
+      ];
+
+      for (const candidate of candidates) {
+        const intent = normalizeWgs84UtmIntent(candidate.value, { typedResult: candidate.typedResult });
+        if (intent) return intent;
+      }
+
+      return null;
+    }
+
+    function formatUtmCrsName(intent) {
+      const hemisphere = intent?.hemisphere === "south" ? "S" : "N";
+      return `WGS84 / UTM Zone ${intent?.zone}${hemisphere}`;
+    }
+
+    function appendCrsDetailRow(list, label, value) {
+      const term = document.createElement("dt");
+      const detail = document.createElement("dd");
+      term.textContent = label;
+      detail.textContent = value;
+      list.append(term, detail);
+    }
+
+    function renderCrsConfirmationPanel() {
+      const panel = document.getElementById("crsConfirmationPanel");
+      if (!panel) return;
+
+      panel.replaceChildren();
+      panel.className = "crs-confirmation-panel";
+      const state = activeCrsConfirmationState;
+      if (state.status === CRS_CONFIRMATION_STATUS.NOT_APPLICABLE) return;
+
+      panel.classList.add("is-active");
+      if (state.status === CRS_CONFIRMATION_STATUS.CONFIRMED) panel.classList.add("is-confirmed");
+
+      const heading = document.createElement("h3");
+      heading.className = "crs-confirmation-heading";
+      heading.textContent = state.status === CRS_CONFIRMATION_STATUS.CONFIRMED
+        ? "已确认投影坐标系"
+        : state.status === CRS_CONFIRMATION_STATUS.DETECTED
+          ? "检测到投影坐标"
+          : "需要确认坐标系";
+      panel.appendChild(heading);
+
+      if (state.intent) {
+        const details = document.createElement("dl");
+        details.className = "crs-confirmation-grid";
+        appendCrsDetailRow(details, "坐标系", formatUtmCrsName(state.intent));
+        appendCrsDetailRow(details, "EPSG", state.intent.epsg);
+        appendCrsDetailRow(details, "来源", state.intent.source);
+        panel.appendChild(details);
+      }
+
+      const note = document.createElement("p");
+      note.className = "crs-confirmation-note";
+      note.textContent = state.status === CRS_CONFIRMATION_STATUS.CONFIRMED
+        ? "当前 X/Y 已按确认的 CRS 转换为 WGS84，可继续生成 KML。修改坐标后需要重新确认。"
+        : state.status === CRS_CONFIRMATION_STATUS.DETECTED
+          ? "系统不会仅凭 X/Y 数值范围猜测坐标系。请核对图纸标注后确认。"
+          : "识别结果是 X/Y 平面坐标，但没有完整、无冲突的 CRS 证据。请选择图纸明确标注的坐标系。";
+      panel.appendChild(note);
+
+      if (state.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
+        const actions = document.createElement("div");
+        actions.className = "crs-confirmation-actions";
+
+        if (state.status === CRS_CONFIRMATION_STATUS.DETECTED) {
+          const confirmButton = document.createElement("button");
+          confirmButton.type = "button";
+          confirmButton.className = "crs-confirm-primary";
+          confirmButton.textContent = "确认使用此坐标系";
+          confirmButton.addEventListener("click", confirmDetectedCrsIntent);
+          actions.appendChild(confirmButton);
+        }
+
+        const manualButton = document.createElement("button");
+        manualButton.type = "button";
+        manualButton.textContent = "手动选择坐标系";
+        manualButton.addEventListener("click", openManualCrsSelection);
+        actions.appendChild(manualButton);
+        panel.appendChild(actions);
+      }
+
+      if (state.manualOpen && state.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
+        const form = document.createElement("form");
+        form.className = "crs-manual-form is-active";
+        form.addEventListener("submit", confirmManualCrsSelection);
+        form.innerHTML = `
+          <div class="crs-manual-field">
+            <label for="manualCrsDatum">Datum</label>
+            <select id="manualCrsDatum"><option value="WGS84">WGS84</option></select>
+          </div>
+          <div class="crs-manual-field">
+            <label for="manualCrsZone">UTM Zone (1-60)</label>
+            <input id="manualCrsZone" type="number" min="1" max="60" step="1" required>
+          </div>
+          <div class="crs-manual-field">
+            <label for="manualCrsHemisphere">Hemisphere</label>
+            <select id="manualCrsHemisphere"><option value="north">North</option><option value="south">South</option></select>
+          </div>
+          <button type="submit" class="crs-confirm-primary crs-manual-submit">确认并转换为 WGS84</button>`;
+        if (state.intent) {
+          form.querySelector("#manualCrsZone").value = String(state.intent.zone);
+          form.querySelector("#manualCrsHemisphere").value = state.intent.hemisphere;
+        }
+        panel.appendChild(form);
+      }
+    }
+
+    async function initializeCrsConfirmationState(data = {}, { required = false } = {}) {
+      if (!required) {
+        activeCrsConfirmationState = createCrsConfirmationState();
+        renderCrsConfirmationPanel();
+        return;
+      }
+
+      let intent = getTypedCrsIntentFromRecognitionData(data);
+      if (!intent) {
+        try {
+          const { resolveShadowUtmIntent } = await import("/server/utm-intent/shadow-resolver.js");
+          const resolved = resolveShadowUtmIntent({ rawText: String(data.rawText || "") });
+          intent = normalizeWgs84UtmIntent(resolved?.shadowIntent);
+        } catch (error) {
+          console.warn("CRS confirmation UI could not load the existing shadow intent resolver:", error);
+        }
+      }
+
+      activeCrsConfirmationState = createCrsConfirmationState({
+        status: intent ? CRS_CONFIRMATION_STATUS.DETECTED : CRS_CONFIRMATION_STATUS.REQUIRED,
+        intent
+      });
+      renderCrsConfirmationPanel();
+    }
+
+    function openManualCrsSelection() {
+      activeCrsConfirmationState = createCrsConfirmationState({
+        ...activeCrsConfirmationState,
+        status: activeCrsConfirmationState.status === CRS_CONFIRMATION_STATUS.NOT_APPLICABLE
+          ? CRS_CONFIRMATION_STATUS.REQUIRED
+          : activeCrsConfirmationState.status,
+        manualOpen: true
+      });
+      renderCrsConfirmationPanel();
+      document.getElementById("manualCrsZone")?.focus();
+    }
+
+    function getConfirmedUtmCoordinateGroups(intent) {
+      const points = String(input.value || "")
+        .split(/\r?\n/)
+        .map(line => extractProjectedNumberPair(line.trim()))
+        .filter(Boolean)
+        .map(pair => ({ easting: Number(pair[0]), northing: Number(pair[1]) }));
+
+      if (points.length === 0) return [];
+      if (points.some(point => !Number.isFinite(point.easting) || !Number.isFinite(point.northing))) return [];
+      if (points.some(point => point.easting < 100000 || point.easting > 900000 || point.northing < 0 || point.northing > 10000000)) return [];
+
+      const converted = points.map(point => utmToWgs84(
+        point.easting,
+        point.northing,
+        intent.zone,
+        intent.hemisphere === "north"
+      )).map(point => normalizeKmlPair({
+        longitude: trimNumber(point.longitude),
+        latitude: trimNumber(point.latitude)
+      }));
+
+      if (converted.some(point => !Number.isFinite(Number(point.longitude)) || !Number.isFinite(Number(point.latitude)))) return [];
+      return [converted];
+    }
+
+    function confirmCrsIntent(intent) {
+      const groups = getConfirmedUtmCoordinateGroups(intent);
+      if (groups.length === 0 || groups[0].length === 0) {
+        showKmlFailure({
+          code: "KML_PROJECTION_FAILED",
+          title: "投影转换失败",
+          reason: "当前 X/Y 坐标无法按所选 UTM 参数转换为有效 WGS84 坐标。",
+          suggestion: "请核对 Zone、Hemisphere、Datum 和坐标列顺序。"
+        });
+        return false;
+      }
+
+      setInternalKmlSourceFromGroups(groups);
+      activeCrsConfirmationState = createCrsConfirmationState({
+        status: CRS_CONFIRMATION_STATUS.CONFIRMED,
+        intent
+      });
+      renderCrsConfirmationPanel();
+      trackEvent("crs_confirmation_complete", {
+        epsg: intent.epsg,
+        source: intent.source,
+        pointCount: groups[0].length
+      });
+      showMessage(`已确认 ${formatUtmCrsName(intent)}（${intent.epsg}），可生成 KML。`, false, 6000);
+      return true;
+    }
+
+    function confirmDetectedCrsIntent() {
+      if (!activeCrsConfirmationState.intent) return;
+      confirmCrsIntent(activeCrsConfirmationState.intent);
+    }
+
+    function confirmManualCrsSelection(event) {
+      event.preventDefault();
+      const zone = Number(document.getElementById("manualCrsZone")?.value);
+      const hemisphere = String(document.getElementById("manualCrsHemisphere")?.value || "");
+      const datum = String(document.getElementById("manualCrsDatum")?.value || "");
+      const epsg = getWgs84UtmEpsg(zone, hemisphere);
+
+      if (datum !== "WGS84" || !epsg) {
+        showMessage("请选择有效的 WGS84 UTM Zone 和 Hemisphere。", true, 6000);
+        return;
+      }
+
+      confirmCrsIntent({
+        coordinateType: "utm_projected_xy",
+        datum,
+        zone,
+        hemisphere,
+        epsg,
+        source: "用户手动选择"
+      });
+    }
+
+    function requiresCrsConfirmationForCurrentInput() {
+      if (!hasProjectedCoordinateRows(input.value)) return false;
+      return activeCoordinatePrecisionMode !== "bftm-projected-x-y" && projectionType.value !== "bftm";
+    }
+
+    function showCrsConfirmationRequired() {
+      if (activeCrsConfirmationState.status === CRS_CONFIRMATION_STATUS.NOT_APPLICABLE) {
+        activeCrsConfirmationState = createCrsConfirmationState({ status: CRS_CONFIRMATION_STATUS.REQUIRED });
+      }
+      renderCrsConfirmationPanel();
+      document.getElementById("crsConfirmationPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
     function markCoordinateTextChanged() {
       activeCoordinatePrecisionMode = "";
       activeCoordinateEngineV2 = null;
+      activeCrsConfirmationState = createCrsConfirmationState();
+      renderCrsConfirmationPanel();
       handwrittenDmsReviewState = getHandwrittenDmsReviewStateAfterTextChange(handwrittenDmsReviewState);
       renderHandwrittenDmsReviewState();
       clearRecognitionSummary();
@@ -11386,6 +11829,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       input.value = "";
       clearInternalKmlSource();
       activeCoordinateEngineV2 = null;
+      activeCrsConfirmationState = createCrsConfirmationState();
+      renderCrsConfirmationPanel();
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
@@ -12218,6 +12663,21 @@ ${placemarks}
         return;
       }
 
+      if (requiresCrsConfirmationForCurrentInput() && activeCrsConfirmationState.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
+        showCrsConfirmationRequired();
+        showKmlFailure({
+          code: "KML_CRS_REQUIRED",
+          title: "需要确认坐标系",
+          reason: activeCrsConfirmationState.intent
+            ? "已检测到图纸 CRS 标注，但尚未获得用户确认，不能直接写入 KML。"
+            : "识别结果是 X/Y 平面坐标，但尚未确认 CRS，不能直接写入 KML。",
+          suggestion: activeCrsConfirmationState.intent
+            ? "请核对坐标系确认卡片并点击“确认使用此坐标系”。"
+            : "请在坐标系确认卡片中手动选择 UTM Zone、Hemisphere 和 Datum。"
+        });
+        return;
+      }
+
       const coordinateGroups = getKmlCoordinateGroups();
       const pairs = coordinateGroups.flat();
       const selectedType = inferGeometry(pairs);
@@ -12225,6 +12685,7 @@ ${placemarks}
 
       if (pairs.length === 0) {
         if (hasProjectedCoordinateRows(input.value)) {
+          showCrsConfirmationRequired();
           showKmlFailure({
             code: "KML_CRS_REQUIRED",
             title: "需要确认坐标系",
@@ -12561,6 +13022,13 @@ ${placemarks}
         rememberState();
         input.value = displayCoordinates || finalCoordinates;
         initializeHandwrittenDmsReviewState(summaryEngine);
+        await initializeCrsConfirmationState(data, {
+          required: hasProjectedCoordinateRows(finalCoordinates)
+            && !isBftmProjected
+            && !isCadastralGrid
+            && !isMgrs
+            && !isKyrgyzGk
+        });
         coordinateOrder.value = "auto";
         setCoordinateOrderReviewVisible(hasOrderReview);
         updateCadastralGridPanel();
