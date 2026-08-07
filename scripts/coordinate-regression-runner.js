@@ -1,4 +1,5 @@
 import { access, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
@@ -8,6 +9,9 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const defaultBaselinePath = path.join(repoRoot, 'COORDINATE_RECOGNITION_GOLDEN_BASELINE.json');
 const defaultErrorLibraryPath = path.join(repoRoot, 'COORDINATE_ERROR_LIBRARY.json');
+const defaultFixtureRoot = path.join(repoRoot, 'test-fixtures', 'coordinate-recognition');
+const fixtureManifestFileName = 'manifest.json';
+const fixtureManifestSchemaVersion = 'coordinate_fixture_manifest_v1';
 const defaultApiUrl = 'http://127.0.0.1:3000/api/recognize-coordinates';
 const defaultTextApiUrl = 'http://127.0.0.1:3000/api/regression/parse-coordinate-text';
 const apiUrl = process.env.COORDINATE_REGRESSION_API_URL || defaultApiUrl;
@@ -54,38 +58,12 @@ function getFindingLayer(field, explicitLayer = '') {
   if (/precision|coordinate_type|group|geometry|review/i.test(key)) return 'Engine';
   return 'Gate';
 }
-const fixtureRoot = process.env.COORDINATE_REGRESSION_FIXTURE_ROOT || 'D:\\关于西非的业务\\测试素材';
-
-const knownLocalFixtureNames = {
-  wgs84_table_rc2_congo_001: '刚果，两个坐标在同一张图.jpg',
-  wgs84_table_timeout_rescue_001: '微信图片_20260503091216_182_19.jpg',
-  bftm_burkina_002: '布基纳法索02.jpg',
-  utm30_burkina_003: '布基纳法索03.png',
-  mgrs_myanmar_001: '缅甸坐标.jpg',
-  kyrgyz_gk_001: '吉尔吉斯斯坦矿地坐标.png',
-  madagascar_cadastral_candidate_001: '马达加斯加坐标.png',
-  mozambique_tete_001: '莫桑比克矿地.jpg',
-  cote_divoire_single_01: '科特迪瓦01.png',
-  cote_divoire_single_02: '科特迪瓦02.png',
-  cote_divoire_single_03: '科特迪瓦03.png',
-  cote_divoire_single_04: '科特迪瓦04.png',
-  cote_divoire_multi_001: '科特迪瓦4个矿区坐标.jpg',
-  handwritten_dms_001: '手写坐标.jpg',
-  dms_grouped_two_areas_001: '两块矿地.jpg',
-  point_az_dms_table_001: '微信图片_20260427122118_114_19.jpg',
-  low_clarity_blurry_dms_001: '模糊坐标.jpg',
-  oblique_dms_001: '斜拍坐标.jpg',
-  long_coordinate_table_001: '长坐标.png',
-  multi_group_two_plots_001: '两块矿地.jpg',
-  low_clarity_blurry_001: '模糊坐标.jpg',
-  oblique_photo_001: '斜拍坐标.jpg',
-  small_text_long_table_001: '长坐标.png',
-};
 
 function parseArgs(argv) {
   const options = {
     baselinePath: defaultBaselinePath,
     errorLibraryPath: defaultErrorLibraryPath,
+    fixtureRoot: '',
     sampleIds: new Set(),
     errorIds: new Set(),
     types: new Set(),
@@ -96,6 +74,7 @@ function parseArgs(argv) {
     gate: false,
     includeText: false,
     dryRun: false,
+    uploadFilenameOverride: '',
     maxSamples: null,
     list: false,
     listErrors: false,
@@ -128,6 +107,14 @@ function parseArgs(argv) {
       options.errorLibraryPath = path.resolve(repoRoot, readValue('--error-library'));
     } else if (arg.startsWith('--error-library=')) {
       options.errorLibraryPath = path.resolve(repoRoot, arg.slice('--error-library='.length));
+    } else if (arg === '--fixture-root') {
+      options.fixtureRoot = path.resolve(repoRoot, readValue('--fixture-root'));
+    } else if (arg.startsWith('--fixture-root=')) {
+      options.fixtureRoot = path.resolve(repoRoot, arg.slice('--fixture-root='.length));
+    } else if (arg === '--upload-filename') {
+      options.uploadFilenameOverride = readValue('--upload-filename');
+    } else if (arg.startsWith('--upload-filename=')) {
+      options.uploadFilenameOverride = arg.slice('--upload-filename='.length);
     } else if (arg === '--sample') {
       addCsv(options.sampleIds, readValue('--sample'));
     } else if (arg.startsWith('--sample=')) {
@@ -185,6 +172,10 @@ function parseArgs(argv) {
     throw new Error('--max-samples must be a positive integer');
   }
 
+  if (options.uploadFilenameOverride && path.basename(options.uploadFilenameOverride) !== options.uploadFilenameOverride) {
+    throw new Error('--upload-filename must be a filename without directory components');
+  }
+
   if (options.gate) {
     options.includeText = true;
   }
@@ -212,11 +203,14 @@ Options:
   --max-samples <n>            Limit samples for smoke runs
   --baseline <file>            Baseline file, default: COORDINATE_RECOGNITION_GOLDEN_BASELINE.json
   --error-library <file>       Error library file, default: COORDINATE_ERROR_LIBRARY.json
+  --fixture-root <directory>   Fixture root containing manifest.json
+  --upload-filename <name>     Override multipart filename for controlled routing tests
   --list-errors                List historical error cases without API calls
   --error <error_ids>          Comma-separated error_id filter; runs linked regression samples
 
 Examples:
   npm run regression -- --dry-run
+  npm run regression -- --dry-run --fixture-root test-fixtures/coordinate-recognition
   npm run regression -- --sample handwritten_dms_001 --repeat 1
   npm run regression -- --list-errors
   npm run regression -- --error CER-2026-07-11-002 --repeat 1
@@ -238,13 +232,20 @@ function normalizePathSeparators(value) {
   return String(value || '').replace(/\//g, path.sep);
 }
 
-function getKnownFixturePath(sample) {
-  if (sample?.sample_id === 'handwritten_dms_001') {
-    return 'D:\\关于西非的业务\\测试素材\\手写坐标.jpg';
+function resolveFixtureRoot(options) {
+  if (options.fixtureRoot) {
+    return { root: options.fixtureRoot, source: 'cli' };
   }
 
-  const fileName = knownLocalFixtureNames[sample.sample_id];
-  return fileName ? path.join(fixtureRoot, fileName) : '';
+  const environmentRoot = String(process.env.COORDINATE_REGRESSION_FIXTURE_ROOT || '').trim();
+  if (environmentRoot) {
+    return {
+      root: path.resolve(repoRoot, normalizePathSeparators(environmentRoot)),
+      source: 'environment',
+    };
+  }
+
+  return { root: defaultFixtureRoot, source: 'default' };
 }
 
 async function fileExists(filePath) {
@@ -257,11 +258,129 @@ async function fileExists(filePath) {
   }
 }
 
-async function resolveImageFixture(sample) {
-  const candidates = [];
+function isPathInsideRoot(rootPath, candidatePath) {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative !== '' && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
+}
 
-  const knownFixture = getKnownFixturePath(sample);
-  if (knownFixture) candidates.push(knownFixture);
+async function loadAndValidateFixtureManifest(rootConfig, baseline) {
+  const fixtureRoot = path.resolve(rootConfig.root);
+  const manifestPath = path.join(fixtureRoot, fixtureManifestFileName);
+  let manifest;
+
+  try {
+    manifest = await readJson(manifestPath);
+  } catch (error) {
+    throw new Error(`Fixture manifest load failed: ${manifestPath}\n${error.message || String(error)}`);
+  }
+
+  const errors = [];
+  if (manifest.schema_version !== fixtureManifestSchemaVersion) {
+    errors.push(`unsupported schema_version: ${manifest.schema_version || '(missing)'}`);
+  }
+  if (!Array.isArray(manifest.samples)) {
+    errors.push('samples must be an array');
+  }
+
+  const baselineSamples = new Map(
+    (Array.isArray(baseline.samples) ? baseline.samples : [])
+      .map((sample) => [String(sample.sample_id || ''), sample]),
+  );
+  const entries = new Map();
+
+  for (const [index, entry] of (Array.isArray(manifest.samples) ? manifest.samples : []).entries()) {
+    const prefix = `samples[${index}]`;
+    const sampleId = String(entry?.sample_id || '').trim();
+    const relativePath = String(entry?.relative_path || '').trim();
+    const uploadFilename = String(entry?.upload_filename || '').trim();
+
+    if (!sampleId) {
+      errors.push(`${prefix}.sample_id is required`);
+      continue;
+    }
+    if (entries.has(sampleId)) {
+      errors.push(`${prefix}.sample_id duplicates ${sampleId}`);
+      continue;
+    }
+
+    const baselineSample = baselineSamples.get(sampleId);
+    if (!baselineSample) {
+      errors.push(`${prefix}.sample_id is not present in the golden baseline: ${sampleId}`);
+    } else if (String(baselineSample.input_type || '').toLowerCase() !== 'image') {
+      errors.push(`${prefix}.sample_id is not an image fixture in the golden baseline: ${sampleId}`);
+    }
+
+    if (!relativePath) {
+      errors.push(`${prefix}.relative_path is required`);
+      continue;
+    }
+    if (path.isAbsolute(relativePath) || isWindowsAbsolutePath(relativePath)) {
+      errors.push(`${prefix}.relative_path must be relative: ${relativePath}`);
+      continue;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(entry || {}, 'upload_filename')) {
+      if (!uploadFilename) {
+        errors.push(`${prefix}.upload_filename must not be empty when provided`);
+      } else if (path.basename(uploadFilename) !== uploadFilename || isWindowsAbsolutePath(uploadFilename)) {
+        errors.push(`${prefix}.upload_filename must be a filename without directory components: ${uploadFilename}`);
+      }
+    }
+
+    const absolutePath = path.resolve(fixtureRoot, normalizePathSeparators(relativePath));
+    if (!isPathInsideRoot(fixtureRoot, absolutePath)) {
+      errors.push(`${prefix}.relative_path escapes fixture root: ${relativePath}`);
+      continue;
+    }
+
+    if (!Number.isInteger(entry.file_size) || entry.file_size < 0) {
+      errors.push(`${prefix}.file_size must be a non-negative integer`);
+    }
+    const expectedHash = String(entry.sha256 || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(expectedHash)) {
+      errors.push(`${prefix}.sha256 must be a 64-character lowercase hex digest`);
+    }
+
+    let fileBuffer;
+    try {
+      fileBuffer = await readFile(absolutePath);
+    } catch (error) {
+      errors.push(`${prefix}.relative_path file is unavailable: ${relativePath} (${error.code || error.message})`);
+      entries.set(sampleId, { ...entry, absolutePath });
+      continue;
+    }
+
+    if (fileBuffer.length !== entry.file_size) {
+      errors.push(`${prefix}.file_size mismatch for ${relativePath}: expected ${entry.file_size}, actual ${fileBuffer.length}`);
+    }
+    const actualHash = createHash('sha256').update(fileBuffer).digest('hex');
+    if (actualHash !== expectedHash) {
+      errors.push(`${prefix}.sha256 mismatch for ${relativePath}: expected ${expectedHash}, actual ${actualHash}`);
+    }
+
+    entries.set(sampleId, { ...entry, absolutePath, actualHash });
+  }
+
+  if (errors.length) {
+    throw new Error(`Fixture manifest validation failed:\n${errors.map((error) => `- ${error}`).join('\n')}`);
+  }
+
+  return {
+    fixtureRoot,
+    manifestPath,
+    source: rootConfig.source,
+    manifest,
+    entries,
+  };
+}
+
+async function resolveImageFixture(sample, fixtureContext) {
+  const manifestEntry = fixtureContext?.entries?.get(sample.sample_id);
+  if (manifestEntry?.absolutePath) {
+    return manifestEntry.absolutePath;
+  }
+
+  const candidates = [];
 
   if (sample.local_path) {
     const localPath = String(sample.local_path);
@@ -640,6 +759,7 @@ function summarizeApiResponse(data, responseMeta = {}) {
   return {
     httpStatus: responseMeta.httpStatus ?? null,
     durationMs: responseMeta.durationMs ?? null,
+    uploadFilename: responseMeta.uploadFilename || '',
     model: data?.model || '',
     precisionMode: data?.precisionMode || '',
     v2PrecisionMode: engine.precision_mode || '',
@@ -670,8 +790,8 @@ function summarizeApiResponse(data, responseMeta = {}) {
   };
 }
 
-async function callImageApi(sample) {
-  const inputFile = await resolveImageFixture(sample);
+async function callImageApi(sample, fixtureContext, options = {}) {
+  const inputFile = await resolveImageFixture(sample, fixtureContext);
   if (!inputFile) {
     return {
       skipped: true,
@@ -681,10 +801,11 @@ async function callImageApi(sample) {
   }
 
   const fileBuffer = await readFile(inputFile);
+  const uploadFilename = resolveUploadFilename(sample, inputFile, fixtureContext, options);
   const visitorId = `coordinate-regression-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const form = new FormData();
   const blob = new Blob([fileBuffer], { type: getMimeType(inputFile) });
-  form.append('image', blob, path.basename(inputFile));
+  form.append('image', blob, uploadFilename);
   form.append('visitorId', visitorId);
   form.append('regressionSampleId', sample.sample_id);
 
@@ -717,11 +838,11 @@ async function callImageApi(sample) {
       httpStatus: response.status,
       durationMs,
       error: data?.error || data?.message || responseText.slice(0, 240),
-      actual: summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText }),
+      actual: summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText, uploadFilename }),
     };
   }
 
-  return summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText });
+  return summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText, uploadFilename });
 }
 
 async function callTextApi(sample) {
@@ -1357,7 +1478,7 @@ function isBlockingSample(sample, options) {
   return ['locked', 'locked_experimental'].includes(String(sample.baseline_status || '').toLowerCase());
 }
 
-async function runSample(sample, options, errorLibrary) {
+async function runSample(sample, options, errorLibrary, fixtureContext) {
   const repeatCount = getRepeatCount(sample, options);
   const runs = [];
   const sampleErrors = getErrorsForSample(errorLibrary, sample, options);
@@ -1401,7 +1522,7 @@ async function runSample(sample, options, errorLibrary) {
   for (let runIndex = 0; runIndex < repeatCount; runIndex += 1) {
     const actual = sample.input_type === 'text'
       ? await callTextApi(sample)
-      : await callImageApi(sample);
+      : await callImageApi(sample, fixtureContext, options);
     const { diffs, warnings } = compareGolden(sample, actual.actual || actual);
     runs.push({ actual, diffs, warnings });
     diffs.forEach((diff) => allDiffs.push({ run: runIndex + 1, ...diff }));
@@ -1461,6 +1582,31 @@ function printSampleList(samples) {
   }
 }
 
+function resolveUploadFilename(sample, inputFile, fixtureContext, options = {}) {
+  const override = String(options.uploadFilenameOverride || '').trim();
+  if (override) return override;
+
+  const manifestEntry = fixtureContext?.entries?.get(sample.sample_id);
+  const manifestFilename = String(manifestEntry?.upload_filename || '').trim();
+  return manifestFilename || path.basename(inputFile);
+}
+
+function printFixtureSummary(fixtureContext, { detailed = false } = {}) {
+  const rootLabel = path.relative(repoRoot, fixtureContext.fixtureRoot) || '.';
+  const manifestLabel = path.relative(repoRoot, fixtureContext.manifestPath);
+  console.log('Coordinate Regression Fixtures');
+  console.log(`- Root: ${rootLabel}`);
+  console.log(`- Root source: ${fixtureContext.source}`);
+  console.log(`- Manifest: ${manifestLabel}`);
+  console.log(`- Manifest schema: ${fixtureContext.manifest.schema_version}`);
+  console.log(`- Validated fixtures: ${fixtureContext.entries.size}`);
+  if (detailed) {
+    for (const entry of fixtureContext.entries.values()) {
+      console.log(`  - ${entry.sample_id} | ${entry.relative_path} | ${entry.file_size} bytes | sha256=${entry.sha256}`);
+    }
+  }
+}
+
 function formatActualSummary(actual) {
   if (!actual) return 'no actual result';
   if (actual.actual) return formatActualSummary(actual.actual);
@@ -1469,6 +1615,7 @@ function formatActualSummary(actual) {
   return [
     `http=${actual.httpStatus}`,
     `duration=${actual.durationMs}ms`,
+    `upload_filename=${actual.uploadFilename || '(text)'}`,
     `v1_precisionMode=${actual.precisionMode || '(empty)'}`,
     `v2_precision_mode=${actual.v2PrecisionMode || '(empty)'}`,
     `coordinate_type=${actual.coordinateType || '(empty)'}`,
@@ -1642,6 +1789,15 @@ async function main() {
     return;
   }
 
+  let fixtureContext;
+  try {
+    fixtureContext = await loadAndValidateFixtureManifest(resolveFixtureRoot(options), baseline);
+  } catch (error) {
+    console.error(error.message || String(error));
+    process.exitCode = 1;
+    return;
+  }
+
   if (options.errorIds.size) {
     const linkedSampleIds = new Set(
       (errorLibrary.errors || [])
@@ -1661,8 +1817,13 @@ async function main() {
   if (options.maxSamples !== null) samples = samples.slice(0, options.maxSamples);
 
   if (options.list || options.dryRun) {
+    printFixtureSummary(fixtureContext, { detailed: options.dryRun });
+    console.log('');
     printSampleList(samples);
     console.log(`\nBaseline OK: ${baseline.samples.length} total samples; ${samples.length} selected.`);
+    if (options.dryRun) {
+      console.log(`Fixture manifest OK: ${fixtureContext.entries.size} image fixtures validated; no API calls made.`);
+    }
     if (options.list || options.dryRun) return;
   }
 
@@ -1676,6 +1837,7 @@ async function main() {
   console.log(`Baseline: ${path.relative(repoRoot, options.baselinePath)}`);
   console.log(`Error Library: ${path.relative(repoRoot, options.errorLibraryPath)}`);
   printErrorLibraryStats(errorLibrary);
+  printFixtureSummary(fixtureContext);
   console.log(`API: ${apiUrl}`);
   console.log(`Path: ${options.pathId}`);
   console.log(`Mode: ${options.gate ? 'gate' : options.full ? 'full' : 'smoke'}`);
@@ -1683,7 +1845,7 @@ async function main() {
 
   const results = [];
   for (const sample of samples) {
-    const result = await runSample(sample, options, errorLibrary);
+    const result = await runSample(sample, options, errorLibrary, fixtureContext);
 
     if (result.status === 'SKIP' && isBlockingSample(sample, options)) {
       result.status = 'FAIL';
