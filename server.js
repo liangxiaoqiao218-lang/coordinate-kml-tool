@@ -8,6 +8,19 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import Tesseract from "tesseract.js";
 import { buildCoordinateVerificationResponse } from "./server/verification/index.js";
+import { runCrsVisionPass } from "./server/crs-evidence/crs-vision-pass.js";
+import { buildShadowIntentFromCrsVision } from "./server/crs-evidence/shadow-pipeline.js";
+import {
+  buildStructuredUtmTableRetryPrompt,
+  buildProjectedXyRetryPrompt,
+  buildStructuredUtmPriority,
+  mergeStructuredUtmTableRows,
+  mergeProjectedXyRows,
+  parseStructuredUtmTableModelText,
+  runProjectedXyOnlyPass,
+  runStructuredUtmTablePass
+} from "./server/utm-intent/structured-projected-priority.js";
+import { buildProjectedTableVisionTiles } from "./server/utm-intent/projected-table-image-tiles.js";
 
 const app = express();
 const upload = multer({
@@ -12763,6 +12776,124 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let usedModel = aliyunVisionModel;
     const parserTrace = ["OCR"];
     const generalVisionRawText = rawText;
+    let crsEvidenceShadow = null;
+    let structuredUtmPriority = null;
+    const crsImageItems = imageItems.map(item => ({
+      ...item,
+      image_url: item?.image_url ? { ...item.image_url, detail: "high" } : item?.image_url
+    }));
+
+    try {
+      const crsVision = await runCrsVisionPass({
+        imageItems: crsImageItems,
+        invokeVision: async ({ prompt: crsPrompt, imageItems: crsImageItems }) => {
+          const crsResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: crsPrompt,
+            imageItems: crsImageItems,
+            temperature: 0,
+            maxTokens: 1200,
+            timeoutMs: 60000
+          });
+          return crsResponse.choices?.[0]?.message?.content || "";
+        }
+      });
+      crsEvidenceShadow = buildShadowIntentFromCrsVision(crsVision);
+      const shadowIntent = crsEvidenceShadow.shadowIntent;
+      const explicitConfirmedUtm = shadowIntent?.confidence === "confirmed"
+        && shadowIntent?.projection === "utm"
+        && (!Array.isArray(shadowIntent?.conflicts) || shadowIntent.conflicts.length === 0);
+
+      if (explicitConfirmedUtm) {
+        const structuredTable = await runStructuredUtmTablePass({
+          imageItems: crsImageItems,
+          invokeVision: async ({ prompt: tablePrompt, imageItems: tableImageItems }) => {
+            const tableResponse = await callAliyunVision({
+              modelName: aliyunVisionModel,
+              prompt: tablePrompt,
+              imageItems: tableImageItems,
+              temperature: 0,
+              maxTokens: 3200,
+              timeoutMs: 80000
+            });
+            return tableResponse.choices?.[0]?.message?.content || "";
+          }
+        });
+        const xyOnlyTable = await runProjectedXyOnlyPass({
+          imageItems: crsImageItems,
+          invokeVision: async ({ prompt: xyPrompt, imageItems: xyImageItems }) => {
+            const xyResponse = await callAliyunVision({
+              modelName: aliyunVisionModel,
+              prompt: xyPrompt,
+              imageItems: xyImageItems,
+              temperature: 0,
+              maxTokens: 2200,
+              timeoutMs: 80000
+            });
+            return xyResponse.choices?.[0]?.message?.content || "";
+          }
+        });
+        const mergedInitialTable = mergeProjectedXyRows(structuredTable, xyOnlyTable, { shadowIntent });
+        structuredUtmPriority = buildStructuredUtmPriority({ shadowIntent, table: mergedInitialTable });
+        let tableTiles = [];
+
+        if (structuredUtmPriority?.reason === "transformation_verification_failed") {
+          tableTiles = await buildProjectedTableVisionTiles(req.file?.buffer);
+          const xyRetryResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: buildProjectedXyRetryPrompt(structuredUtmPriority),
+            imageItems: tableTiles.length > 0 ? tableTiles : crsImageItems,
+            temperature: 0,
+            maxTokens: 1200,
+            timeoutMs: 80000
+          });
+          const xyRetryRows = parseStructuredUtmTableModelText(xyRetryResponse.choices?.[0]?.message?.content || "");
+          const xyRetryTable = mergeProjectedXyRows(structuredUtmPriority.table, xyRetryRows, { shadowIntent });
+          structuredUtmPriority = buildStructuredUtmPriority({ shadowIntent, table: xyRetryTable });
+          parserTrace.push("UTM_PROJECTED_XY:targeted_retry");
+        }
+
+        const verificationRetryModels = [aliyunOcrModel, aliyunVisionModel];
+        for (const retryModel of verificationRetryModels) {
+          if (structuredUtmPriority?.reason !== "transformation_verification_failed") break;
+          const retryResponse = await callAliyunVision({
+            modelName: retryModel,
+            prompt: buildStructuredUtmTableRetryPrompt(structuredUtmPriority),
+            imageItems: tableTiles.length > 0 ? tableTiles : crsImageItems,
+            temperature: 0,
+            maxTokens: 3200,
+            timeoutMs: 80000
+          });
+          const retryRows = parseStructuredUtmTableModelText(retryResponse.choices?.[0]?.message?.content || "");
+          const mergedTable = mergeStructuredUtmTableRows(structuredUtmPriority.table, retryRows, { shadowIntent });
+          structuredUtmPriority = buildStructuredUtmPriority({ shadowIntent, table: mergedTable });
+          parserTrace.push("UTM_REFERENCE_LATLON:verification_retry");
+        }
+
+        if (structuredUtmPriority?.accepted) {
+          rawText = structuredUtmPriority.coordinates;
+          coordinates = structuredUtmPriority.coordinates;
+          warning = structuredUtmPriority.transformationVerification.status === "match"
+            ? "识别到明确 WGS84 UTM CRS 与结构化 X/Y 表；图中 Latitude/Longitude 仅用于转换校验，校验已通过。"
+            : "识别到明确 WGS84 UTM CRS 与结构化 X/Y 表；图中未提供可比较的 Latitude/Longitude，需用户确认 CRS 后导出。";
+          usedModel = `${aliyunVisionModel}+crs-evidence+structured-utm-table`;
+          parserTrace.push("UTM_TYPED_XY:accepted");
+          parserTrace.push(structuredUtmPriority.transformationVerification.status === "match"
+            ? "UTM_REFERENCE_LATLON:verified"
+            : "UTM_REFERENCE_LATLON:not_available");
+        } else if (structuredUtmPriority?.reason === "transformation_verification_failed") {
+          rawText = structuredUtmPriority.coordinates;
+          coordinates = structuredUtmPriority.coordinates;
+          warning = "已确认图纸为 WGS84 UTM，但部分 X/Y 与图中 Latitude/Longitude 参考值校验不一致；已阻止 DMS 抢占，需核对异常行后再导出。";
+          usedModel = `${aliyunVisionModel}+crs-evidence+structured-utm-table-review`;
+          parserTrace.push("UTM_TYPED_XY:blocked_transformation_mismatch");
+        }
+      }
+    } catch (crsEvidenceError) {
+      parserTrace.push("CRS_EVIDENCE:unavailable");
+      console.error("CRS evidence / structured UTM pass failed; preserving legacy route:", crsEvidenceError.message || crsEvidenceError);
+    }
+
     let handwrittenVisionRawText = "";
     let handwrittenVisionRouting = getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates, {
       file: req.file,
@@ -13519,9 +13650,16 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       });
     }
 
-    const finalPrecisionMode = dmsGroupedAccepted
-      ? "dms-grouped-coordinates"
-      : frenchPerimeterDms.isFrenchPerimeterDms
+    const structuredUtmAccepted = Boolean(structuredUtmPriority?.accepted);
+    const structuredUtmRouted = structuredUtmAccepted
+      || structuredUtmPriority?.reason === "transformation_verification_failed";
+    const finalPrecisionMode = structuredUtmAccepted
+      ? "utm-projected-x-y"
+      : structuredUtmRouted
+        ? "utm-projected-x-y-review"
+        : dmsGroupedAccepted
+        ? "dms-grouped-coordinates"
+        : frenchPerimeterDms.isFrenchPerimeterDms
         ? "french-perimeter-dms-prose"
         : pointAzDmsTableAccepted
           ? "point-az-dms-table"
@@ -13551,8 +13689,17 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       coordinates,
       precisionMode: finalPrecisionMode,
       warning: finalWarning,
-      projection: utm30Accepted ? "utm30n" : undefined,
-      pointCount: utm30Accepted ? countCoordinateRows(coordinates) : undefined,
+      projection: structuredUtmRouted ? "utm" : (utm30Accepted ? "utm30n" : undefined),
+      pointCount: structuredUtmRouted || utm30Accepted ? countCoordinateRows(coordinates) : undefined,
+      typedUtmIntent: structuredUtmAccepted ? structuredUtmPriority.typedUtmIntent : undefined,
+      crsConfirmationBlocked: structuredUtmRouted && !structuredUtmAccepted,
+      crsEvidence: crsEvidenceShadow || undefined,
+      structuredUtmTable: structuredUtmPriority ? {
+        accepted: Boolean(structuredUtmPriority.accepted),
+        reason: structuredUtmPriority.reason,
+        rowCount: structuredUtmPriority.table?.rows?.length || 0,
+        transformationVerification: structuredUtmPriority.transformationVerification
+      } : undefined,
       cadastralGrid,
       mgrs,
       mozambiqueGeographicTable,
