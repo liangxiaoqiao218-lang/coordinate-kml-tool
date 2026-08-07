@@ -1,0 +1,20 @@
+{
+  "name": "coordinate-kml-ai-tool",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "regression": "node scripts/coordinate-regression-runner.js",
+    "evidence-regression": "node scripts/evidence-regression.js",
+    "evidence-acquisition-regression": "node scripts/evidence-acquisition-regression.js",
+    "verification-regression": "node scripts/coordinate-verification-regression.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.105.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "tesseract.js": "^7.0.0"
+  }
+}
