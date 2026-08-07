@@ -92,6 +92,8 @@ const requiresConfirmation = new Function(
 );
 assert.equal(requiresConfirmation("projected-x-y", { value: "auto" }, () => true, { value: "779271,9720912" }), true);
 assert.equal(requiresConfirmation("bftm-projected-x-y", { value: "bftm" }, () => true, { value: "655000,1333600" }), false);
+assert.equal(requiresConfirmation("utm30n-projected-x-y", { value: "utm30n" }, () => true, { value: "727250,1219700" }), false);
+assert.equal(requiresConfirmation("utm-projected-x-y", { value: "auto" }, () => true, { value: "779271,9720912" }), true);
 
 for (const requiredUiText of [
   "确认使用此坐标系",
@@ -99,12 +101,15 @@ for (const requiredUiText of [
   "manualCrsZone",
   "manualCrsHemisphere",
   "manualCrsDatum",
+  "crsConfirmationBlocked",
+  "CRS_CONFIRMATION_STATUS.BLOCKED",
   "import(\"/server/utm-intent/shadow-resolver.js\")"
 ]) {
   assert.ok(html.includes(requiredUiText), `missing UI control: ${requiredUiText}`);
 }
 
-console.log("CRS Confirmation UI Regression: 3/3 PASS");
+console.log("CRS Confirmation UI Regression: 4/4 PASS");
 console.log("PASS Indonesia UTM50S typed intent confirmation and WGS84 conversion");
 console.log("PASS unknown/conflicted CRS remains blocked with manual selection controls");
 console.log("PASS BFTM bypass remains unchanged");
+console.log("PASS legacy UTM30 bypass remains unchanged while typed UTM requires confirmation");

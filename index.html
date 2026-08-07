@@ -4861,6 +4861,7 @@ Au值 = 纯度 × 10 后取整数</div>
       NOT_APPLICABLE: "NOT_APPLICABLE",
       REQUIRED: "REQUIRED",
       DETECTED: "DETECTED",
+      BLOCKED: "BLOCKED",
       CONFIRMED: "CONFIRMED"
     });
     let activeCrsConfirmationState = createCrsConfirmationState();
@@ -6459,6 +6460,8 @@ Au值 = 纯度 × 10 后取整数</div>
       heading.className = "crs-confirmation-heading";
       heading.textContent = state.status === CRS_CONFIRMATION_STATUS.CONFIRMED
         ? "已确认投影坐标系"
+        : state.status === CRS_CONFIRMATION_STATUS.BLOCKED
+          ? "CRS 转换校验未通过"
         : state.status === CRS_CONFIRMATION_STATUS.DETECTED
           ? "检测到投影坐标"
           : "需要确认坐标系";
@@ -6477,12 +6480,14 @@ Au值 = 纯度 × 10 后取整数</div>
       note.className = "crs-confirmation-note";
       note.textContent = state.status === CRS_CONFIRMATION_STATUS.CONFIRMED
         ? "当前 X/Y 已按确认的 CRS 转换为 WGS84，可继续生成 KML。修改坐标后需要重新确认。"
+        : state.status === CRS_CONFIRMATION_STATUS.BLOCKED
+          ? "X/Y 与图中 Latitude/Longitude 参考值不一致。请核对异常行；系统不会改走 DMS，也不会允许直接导出。"
         : state.status === CRS_CONFIRMATION_STATUS.DETECTED
           ? "系统不会仅凭 X/Y 数值范围猜测坐标系。请核对图纸标注后确认。"
           : "识别结果是 X/Y 平面坐标，但没有完整、无冲突的 CRS 证据。请选择图纸明确标注的坐标系。";
       panel.appendChild(note);
 
-      if (state.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
+      if (state.status !== CRS_CONFIRMATION_STATUS.CONFIRMED && state.status !== CRS_CONFIRMATION_STATUS.BLOCKED) {
         const actions = document.createElement("div");
         actions.className = "crs-confirmation-actions";
 
@@ -6503,7 +6508,7 @@ Au值 = 纯度 × 10 后取整数</div>
         panel.appendChild(actions);
       }
 
-      if (state.manualOpen && state.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
+      if (state.manualOpen && state.status !== CRS_CONFIRMATION_STATUS.CONFIRMED && state.status !== CRS_CONFIRMATION_STATUS.BLOCKED) {
         const form = document.createElement("form");
         form.className = "crs-manual-form is-active";
         form.addEventListener("submit", confirmManualCrsSelection);
@@ -6532,6 +6537,12 @@ Au值 = 纯度 × 10 后取整数</div>
     async function initializeCrsConfirmationState(data = {}, { required = false } = {}) {
       if (!required) {
         activeCrsConfirmationState = createCrsConfirmationState();
+        renderCrsConfirmationPanel();
+        return;
+      }
+
+      if (data.crsConfirmationBlocked === true) {
+        activeCrsConfirmationState = createCrsConfirmationState({ status: CRS_CONFIRMATION_STATUS.BLOCKED });
         renderCrsConfirmationPanel();
         return;
       }
@@ -6647,6 +6658,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function requiresCrsConfirmationForCurrentInput() {
       if (!hasProjectedCoordinateRows(input.value)) return false;
+      if (activeCoordinatePrecisionMode === "utm30n-projected-x-y" || projectionType.value === "utm30n") return false;
       return activeCoordinatePrecisionMode !== "bftm-projected-x-y" && projectionType.value !== "bftm";
     }
 
@@ -13025,6 +13037,7 @@ ${placemarks}
         await initializeCrsConfirmationState(data, {
           required: hasProjectedCoordinateRows(finalCoordinates)
             && !isBftmProjected
+            && data.precisionMode !== "utm30n-projected-x-y"
             && !isCadastralGrid
             && !isMgrs
             && !isKyrgyzGk
