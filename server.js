@@ -3179,6 +3179,24 @@ function foldSearchText(text) {
     .toLowerCase();
 }
 
+function normalizeCoteDIvoireCueText(text = "") {
+  const raw = String(text || "");
+  const folded = foldSearchText(raw);
+  const spaced = folded
+    .replace(/[’'`]/g, " ")
+    .replace(/[_\-–—]+/g, " ")
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return {
+    raw,
+    folded,
+    spaced,
+    compact: spaced.replace(/\s+/g, "")
+  };
+}
+
 function looksLikeCoordinateTable(text) {
   const value = foldSearchText(text);
 
@@ -3411,10 +3429,16 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
   const hint = String(options.hint || "");
   const file = options.file;
   const explicitHandwrittenContext = hasExplicitHandwrittenDmsUploadContext(file, hint);
+  const coteDIvoireCandidate = hasCoteDIvoireGeographicDmsCue([
+    getUploadedFileDisplayName(file),
+    hint,
+    text
+  ].filter(Boolean).join("\n"));
   const evidence = {
     shouldRetry: false,
     reason: "",
     explicitHandwrittenContext,
+    coteDIvoireCandidate,
     score: 0,
     coordinateRowCount: countCoordinateRows(coordinateText),
     dmsPairLineCount: 0,
@@ -3438,7 +3462,7 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
   addStableReason(getCadastralGridInfo(text).isCadastralGrid, "madagascar_cadastral_grid");
   addStableReason(getMgrsInfo(text).isMgrs, "mgrs");
   addStableReason(getMozambiqueGeographicInfo(text).isMozambiqueGeographicTable, "mozambique_geographic_table");
-  addStableReason(hasCoteDIvoireGeographicDmsCue(text), "cote_divoire_geographic_dms_table");
+  addStableReason(coteDIvoireCandidate, "cote_divoire_geographic_dms_table");
   addStableReason(getWgs84TableCoordinatesInfo(text).isWgs84TableCoordinates, "wgs84_table");
   addStableReason(getKyrgyzGkInfo(text).isKyrgyzGk, "kyrgyz_gk");
   addStableReason(hasBftmContext(text) || getBftmLongTableInfo(text, coordinateText).isBftmLongTable, "bftm");
@@ -7281,12 +7305,48 @@ function getUploadedFileDisplayName(file) {
 }
 
 function hasCoteDIvoireGeographicDmsCue(text = "") {
-  const value = String(text || "");
-  const folded = foldSearchText(value);
+  const normalized = normalizeCoteDIvoireCueText(text);
+  const hasCountryName = normalized.spaced.includes("cote d ivoire")
+    || normalized.compact.includes("cotedivoire")
+    || normalized.spaced.includes("ivory coast")
+    || normalized.raw.includes("科特迪瓦");
+  const hasExplicitRouteHint = /route\s*hint\s*cote\s*d\s*ivoire/i.test(normalized.spaced)
+    || normalized.compact.includes("routehintcotedivoire");
+  const hasFrenchDmsHeaders = /points?/i.test(normalized.folded)
+    && /latitude\s*(?:n|nord)|longitude\s*(?:w|ouest)/i.test(normalized.folded);
+  const hasFrenchAreaHeaders = /superficies?\s*\(ha\)|superficie|hectares?/i.test(normalized.folded)
+    && /latitude|longitude/i.test(normalized.folded);
 
-  return /C[ôo]te\s+d[’']?Ivoire|Cote\s+d[’']?Ivoire|Ivory\s+Coast|科特迪瓦/i.test(value)
-    || /points?/i.test(value) && /latitude\s*(?:n|nord)|longitude\s*(?:w|ouest)/i.test(folded)
-    || /superficies?\s*\(ha\)|superficie|hectares?/i.test(folded) && /latitude|longitude/i.test(folded);
+  return hasCountryName || hasExplicitRouteHint || hasFrenchDmsHeaders || hasFrenchAreaHeaders;
+}
+
+function shouldProbeCoteDIvoireFromImage(rawText, coordinates = "", options = {}) {
+  const text = String(rawText || "");
+  const coordinateText = String(coordinates || "");
+  const uploadContext = [
+    options.fileName || "",
+    options.hint || "",
+    text
+  ].filter(Boolean).join("\n");
+
+  if (hasCoteDIvoireGeographicDmsCue(uploadContext) || options.explicitHandwrittenContext) {
+    return false;
+  }
+
+  const coordinateRowCount = Math.max(countCoordinateRows(coordinateText), countCoordinateRows(text));
+  if (coordinateRowCount < 4) {
+    return false;
+  }
+
+  return !getCadastralGridInfo(text).isCadastralGrid
+    && !getMgrsInfo(text).isMgrs
+    && !getMozambiqueGeographicInfo(text).isMozambiqueGeographicTable
+    && !getWgs84TableCoordinatesInfo(text).isWgs84TableCoordinates
+    && !getKyrgyzGkInfo(text).isKyrgyzGk
+    && !getBftmLongTableInfo(text, coordinateText).isBftmLongTable
+    && !getDmsGroupedCoordinateInfo(text).output
+    && !getFrenchPerimeterDmsInfo(text).isFrenchPerimeterDms
+    && !looksLikePointAzDmsTable(text);
 }
 
 function parseCoteDIvoireAreaHa(line = "") {
@@ -11989,6 +12049,11 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
     const handwrittenDmsUploadContext = hasExplicitHandwrittenDmsUploadContext(req.file, coordinateRawHint);
     const prompt = `你是矿业坐标识别助手。请只识别图片中的真实坐标表区域，并只返回坐标行。图片可能是完整文件、手机截图、扫描件、带水印图片、长表、局部表格、同一页多块矿区坐标或带菜单按钮的截图。
 
+路由标记规则（这是唯一允许输出的非坐标行）：
+- 如果图片中清楚可见法语地理 DMS 表格证据，例如 POINT/POINTS、Latitude N/Nord、Longitude W/Ouest，或者 Superficie/Superficies (ha) 与 Latitude/Longitude 同时出现，必须在所有坐标之前先输出一行：ROUTE_HINT: COTE_DIVOIRE
+- 只根据图片中真实可见的表头和表格结构输出该标记；不要仅根据坐标位于西非或使用 N/W 方向猜测。
+- 普通 DMS、手写 DMS、WGS84 表、葡语 Mozambique 表不得输出该标记。
+
 必须忽略：
 水印、背景字、页眉页脚、表格线、手机状态栏、底部菜单、Annoter、Tourner、Rechercher、Partager、Hectares、签名、正文段落、图片像素位置、文字框坐标、识别框坐标和碎数字。
 
@@ -12311,6 +12376,11 @@ Target cues:
 - Superficie / Superficies (ha) / hectares
 - Cote d'Ivoire / Côte d'Ivoire / 科特迪瓦
 
+Candidate gate:
+- Accept the image only when French printed-table evidence is visibly present: POINT/POINTS together with Latitude N/Nord and Longitude W/Ouest, or Superficie/Superficies (ha) together with Latitude and Longitude.
+- DMS coordinates, N/W directions, West Africa geography, or four polygon points alone are NOT sufficient evidence.
+- If those printed French table cues are not visible, output only: ${noCoordinatesText}
+
 Rules:
 - Preserve each mine area as a separate GROUP.
 - If a company heading is visible, include it in the group name as COMPANY_矿区N.
@@ -12324,11 +12394,13 @@ Rules:
 - Preserve decimal comma seconds, for example 05°35'08,00"N.
 
 Output only these pipe-separated lines:
+ROUTE_HINT: COTE_DIVOIRE
 GROUP | group name
 AREA_HA | declared area number
 POINT | label | latitude DMS | longitude DMS
 
 Examples:
+ROUTE_HINT: COTE_DIVOIRE
 GROUP | CONNEXION RESSOURCES_矿区1
 AREA_HA | 89.93
 POINT | 1 | 6 45 20N | 4 22 56W
@@ -12764,9 +12836,48 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const parserTrace = ["OCR"];
     const generalVisionRawText = rawText;
     let handwrittenVisionRawText = "";
+    let coteDIvoireContentProbeV2 = null;
+    const shouldProbeCoteDIvoire = shouldProbeCoteDIvoireFromImage(rawText, coordinates, {
+      fileName: uploadedFileName,
+      hint: coordinateRawHint,
+      explicitHandwrittenContext: handwrittenDmsUploadContext
+    });
+
+    if (shouldProbeCoteDIvoire) {
+      try {
+        parserTrace.push("COTE_DIVOIRE:content_probe");
+        const coteDIvoireProbeResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: coteDIvoireGeographicDmsV2Prompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 2400,
+          timeoutMs: 70000
+        });
+        const coteDIvoireProbeRawText = coteDIvoireProbeResponse.choices?.[0]?.message?.content || "";
+        coteDIvoireContentProbeV2 = buildCoteDIvoireGeographicDmsV2Result({
+          model: `${aliyunVisionModel}+cote-divoire-content-probe`,
+          rawText: coteDIvoireProbeRawText,
+          coordinates: "",
+          precisionMode: "cote-divoire-geographic-dms-table"
+        }, { fileName: "ROUTE_HINT: COTE_DIVOIRE" });
+
+        if (coteDIvoireContentProbeV2?.coordinate_type === "cote_divoire_geographic_dms_table") {
+          parserTrace.push("COTE_DIVOIRE:content_probe_accepted");
+        } else {
+          coteDIvoireContentProbeV2 = null;
+          parserTrace.push("COTE_DIVOIRE:content_probe_rejected");
+        }
+      } catch (coteDIvoireProbeError) {
+        parserTrace.push("COTE_DIVOIRE:content_probe_failed");
+        console.error("Cote d'Ivoire content probe failed:", coteDIvoireProbeError.message || coteDIvoireProbeError);
+      }
+    }
     let handwrittenVisionRouting = getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates, {
       file: req.file,
-      hint: coordinateRawHint
+      hint: coteDIvoireContentProbeV2
+        ? `${coordinateRawHint}\nROUTE_HINT: COTE_DIVOIRE`
+        : coordinateRawHint
     });
     if (handwrittenVisionRouting.shouldRetry) {
       try {
@@ -13573,7 +13684,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     };
 
     let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(recognitionPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });
-    const shouldReadCoteDIvoireV2 = hasCoteDIvoireGeographicDmsCue([
+    const shouldReadCoteDIvoireV2 = Boolean(coteDIvoireContentProbeV2) || hasCoteDIvoireGeographicDmsCue([
       uploadedFileName,
       rawText,
       req.body?.rawHint || "",
@@ -13582,28 +13693,39 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
     if (shouldReadCoteDIvoireV2) {
       try {
-        console.log("Cote d'Ivoire V2 geographic DMS prompt started", {
-          fileName: uploadedFileName,
-          timeoutMs: 70000
-        });
-        const coteDIvoireResponse = await callAliyunVision({
-          modelName: aliyunVisionModel,
-          prompt: coteDIvoireGeographicDmsV2Prompt,
-          imageItems,
-          temperature: 0,
-          maxTokens: 2400,
-          timeoutMs: 70000
-        });
-        const coteDIvoireRawText = coteDIvoireResponse.choices?.[0]?.message?.content || "";
-        const coteDIvoireV2 = buildCoteDIvoireGeographicDmsV2Result({
-          model: `${aliyunVisionModel}+cote-divoire-geographic-dms-v2`,
-          rawText: coteDIvoireRawText,
-          coordinates: "",
-          precisionMode: "cote-divoire-geographic-dms-table"
-        }, { fileName: uploadedFileName });
+        let coteDIvoireV2 = coteDIvoireContentProbeV2;
+        let coteDIvoireRawText = "";
+        if (!coteDIvoireV2) {
+          console.log("Cote d'Ivoire V2 geographic DMS prompt started", {
+            fileName: uploadedFileName,
+            timeoutMs: 70000
+          });
+          const coteDIvoireResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: coteDIvoireGeographicDmsV2Prompt,
+            imageItems,
+            temperature: 0,
+            maxTokens: 2400,
+            timeoutMs: 70000
+          });
+          coteDIvoireRawText = coteDIvoireResponse.choices?.[0]?.message?.content || "";
+          coteDIvoireV2 = buildCoteDIvoireGeographicDmsV2Result({
+            model: `${aliyunVisionModel}+cote-divoire-geographic-dms-v2`,
+            rawText: coteDIvoireRawText,
+            coordinates: "",
+            precisionMode: "cote-divoire-geographic-dms-table"
+          }, { fileName: uploadedFileName });
+        }
 
         if (coteDIvoireV2?.coordinate_type === "cote_divoire_geographic_dms_table") {
           coordinateEngineV2 = normalizeCoordinateEngineV2Result(coteDIvoireV2, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });
+          coordinateEngineV2.debug = {
+            ...(coordinateEngineV2.debug || {}),
+            blocked_fallbacks: Array.from(new Set([
+              ...((coordinateEngineV2.debug?.blocked_fallbacks) || []),
+              "handwritten_due_to_cote_candidate"
+            ]))
+          };
           console.log("Cote d'Ivoire V2 geographic DMS prompt success", {
             groups: coteDIvoireV2.groups.length,
             points: coteDIvoireV2.groups.reduce((sum, group) => sum + (group.points || []).length, 0)
