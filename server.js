@@ -22,6 +22,7 @@ import {
 } from "./server/utm-intent/structured-projected-priority.js";
 import { buildProjectedTableVisionTiles } from "./server/utm-intent/projected-table-image-tiles.js";
 import { arbitrateCoordinateType } from "./server/coordinate-type/arbitration.js";
+import { buildVersionResponse } from "./server/release-identity/index.js";
 
 const app = express();
 const upload = multer({
@@ -699,9 +700,8 @@ app.use(express.static(__dirname, {
 }));
 
 app.get("/api/version", (req, res) => {
-  res.json({
-    version: appVersion
-  });
+  res.setHeader("Cache-Control", "no-store");
+  res.json(buildVersionResponse(appVersion));
 });
 
 app.get("/api/pricing-config", async (req, res) => {
