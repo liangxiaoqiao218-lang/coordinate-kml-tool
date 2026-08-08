@@ -6,6 +6,7 @@ import {
   buildRecognitionEvidence
 } from "../evidence/recognition-evidence-adapter.js";
 import { buildEvidenceAcquisition } from "../evidence-acquisition/index.js";
+import { finalizeCoordinateResponse } from "../coordinate-type/response-finalizer.js";
 
 function uniqueWarnings(values) {
   return Array.from(new Set(values.map(value => String(value || "").trim()).filter(Boolean)));
@@ -144,4 +145,10 @@ export function buildCoordinateVerificationResponse(payload = {}, coordinateEngi
       evidence
     })
   };
+}
+
+export function buildFinalizedCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null) {
+  const engine = coordinateEngineV2 || payload.coordinateEngineV2 || {};
+  const finalizedPayload = finalizeCoordinateResponse(payload, { coordinateEngineV2: engine });
+  return buildCoordinateVerificationResponse(finalizedPayload, engine);
 }

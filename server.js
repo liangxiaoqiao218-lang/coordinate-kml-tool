@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import Tesseract from "tesseract.js";
-import { buildCoordinateVerificationResponse } from "./server/verification/index.js";
+import { buildFinalizedCoordinateVerificationResponse } from "./server/verification/index.js";
 import { runCrsVisionPass } from "./server/crs-evidence/crs-vision-pass.js";
 import { buildShadowIntentFromCrsVision } from "./server/crs-evidence/shadow-pipeline.js";
 import {
@@ -21,6 +21,7 @@ import {
   runStructuredUtmTablePass
 } from "./server/utm-intent/structured-projected-priority.js";
 import { buildProjectedTableVisionTiles } from "./server/utm-intent/projected-table-image-tiles.js";
+import { arbitrateCoordinateType } from "./server/coordinate-type/arbitration.js";
 
 const app = express();
 const upload = multer({
@@ -4505,7 +4506,7 @@ function buildMozambiqueLockedReviewPayload({
     }
   }, { forceRequiresReview: true });
 
-  return buildCoordinateVerificationResponse(payload, payload.coordinateEngineV2);
+  return buildFinalizedCoordinateVerificationResponse(payload, payload.coordinateEngineV2);
 }
 
 function getMozambiqueGeographicRowsQuality(rows) {
@@ -11840,7 +11841,7 @@ app.post("/api/regression/parse-coordinate-text", (req, res) => {
       rawHint: String(req.body?.rawHint || req.body?.hint || req.body?.context || "")
     });
 
-  return res.json(buildCoordinateVerificationResponse(regressionPayload, coordinateEngineV2));
+  return res.json(buildFinalizedCoordinateVerificationResponse(regressionPayload, coordinateEngineV2));
 });
 
 /*
@@ -12487,7 +12488,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             quota: consumeResult.quota
           };
 
-          return res.json(buildCoordinateVerificationResponse(
+          return res.json(buildFinalizedCoordinateVerificationResponse(
             kyrgyzDirectPayload,
             buildCoordinateEngineV2ShadowResult(kyrgyzDirectPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint })
           ));
@@ -12600,7 +12601,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               quota: consumeResult.quota
             };
 
-            return res.json(buildCoordinateVerificationResponse(
+            return res.json(buildFinalizedCoordinateVerificationResponse(
               mozambiqueDirectPayload,
               buildCoordinateEngineV2ShadowResult(mozambiqueDirectPayload, {
                 fileName: uploadedFileName,
@@ -12716,7 +12717,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                 quota: consumeResult.quota
               };
 
-              return res.json(buildCoordinateVerificationResponse(
+              return res.json(buildFinalizedCoordinateVerificationResponse(
                 mozambiqueRetryPayload,
                 buildCoordinateEngineV2ShadowResult(mozambiqueRetryPayload, {
                   fileName: uploadedFileName,
@@ -13650,44 +13651,40 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       });
     }
 
-    const structuredUtmAccepted = Boolean(structuredUtmPriority?.accepted);
-    const structuredUtmRouted = structuredUtmAccepted
-      || structuredUtmPriority?.reason === "transformation_verification_failed";
-    const finalPrecisionMode = structuredUtmAccepted
-      ? "utm-projected-x-y"
-      : structuredUtmRouted
-        ? "utm-projected-x-y-review"
-        : dmsGroupedAccepted
-        ? "dms-grouped-coordinates"
-        : frenchPerimeterDms.isFrenchPerimeterDms
-        ? "french-perimeter-dms-prose"
-        : pointAzDmsTableAccepted
-          ? "point-az-dms-table"
-          : handwrittenDms.isHandwrittenDms
-            ? "handwritten-dms-coordinates"
-            : bftmAccepted
-            ? "bftm-projected-x-y"
-            : utm30Accepted
-              ? "utm30n-projected-x-y"
-            : mgrs.isMgrs
-              ? "mgrs-utm-grid-reference"
-              : kyrgyzGk.isKyrgyzGk
-                ? "kyrgyz-gk-point-x-y"
-                : cadastralGrid.isCadastralGrid
-                  ? "cadastral-grid-num-xv-yv"
-                  : mozambiqueGeographicTable.isMozambiqueGeographicTable
-                    ? "mozambique-geographic-table"
-                    : wgs84TableCoordinates.isWgs84TableCoordinates
-                      ? "wgs84-table-coordinates"
-                      : chatCoordinates.isChatCoordinates
-                        ? "wgs84-chat-coordinates"
-                        : "preserve-original-decimals-and-parse-dms";
     const finalWarning = wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning);
+    let coordinateArbitration = arbitrateCoordinateType({
+      structuredUtmPriority,
+      bftmAccepted,
+      utm30Accepted,
+      mgrs,
+      kyrgyzGk,
+      cadastralGrid,
+      dmsGroupedAccepted,
+      frenchPerimeterDms,
+      pointAzDmsTableAccepted,
+      handwrittenDms,
+      dmsAccepted,
+      mozambiqueGeographicTable,
+      wgs84TableCoordinates,
+      chatCoordinates,
+      crsEvidenceShadow,
+      warning: finalWarning
+    });
+    const structuredUtmAccepted = Boolean(structuredUtmPriority?.accepted);
+    const structuredUtmRouted = coordinateArbitration.coordinateType === "utm_projected_xy"
+      && coordinateArbitration.authority === "explicit_crs_evidence";
     const recognitionPayload = {
       model: usedModel,
       rawText,
       coordinates,
-      precisionMode: finalPrecisionMode,
+      coordinateType: coordinateArbitration.coordinateType,
+      precisionMode: coordinateArbitration.precisionMode,
+      requires_review: coordinateArbitration.requires_review,
+      arbitrationEligible: coordinateArbitration.arbitrationEligible,
+      confirmationStatus: coordinateArbitration.confirmationStatus,
+      qualityGateStatus: coordinateArbitration.qualityGateStatus,
+      kml_ready: coordinateArbitration.kml_ready,
+      coordinateArbitration,
       warning: finalWarning,
       projection: structuredUtmRouted ? "utm" : (utm30Accepted ? "utm30n" : undefined),
       pointCount: structuredUtmRouted || utm30Accepted ? countCoordinateRows(coordinates) : undefined,
@@ -13775,7 +13772,35 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    res.json(buildCoordinateVerificationResponse(recognitionPayload, coordinateEngineV2));
+    coordinateArbitration = arbitrateCoordinateType({
+      structuredUtmPriority,
+      bftmAccepted,
+      utm30Accepted,
+      mgrs,
+      kyrgyzGk,
+      cadastralGrid,
+      dmsGroupedAccepted,
+      frenchPerimeterDms,
+      pointAzDmsTableAccepted,
+      handwrittenDms,
+      dmsAccepted,
+      mozambiqueGeographicTable,
+      wgs84TableCoordinates,
+      chatCoordinates,
+      coordinateEngineV2,
+      crsEvidenceShadow,
+      warning: finalWarning
+    });
+    recognitionPayload.coordinateType = coordinateArbitration.coordinateType;
+    recognitionPayload.precisionMode = coordinateArbitration.precisionMode;
+    recognitionPayload.requires_review = coordinateArbitration.requires_review;
+    recognitionPayload.arbitrationEligible = coordinateArbitration.arbitrationEligible;
+    recognitionPayload.confirmationStatus = coordinateArbitration.confirmationStatus;
+    recognitionPayload.qualityGateStatus = coordinateArbitration.qualityGateStatus;
+    recognitionPayload.kml_ready = coordinateArbitration.kml_ready;
+    recognitionPayload.coordinateArbitration = coordinateArbitration;
+
+    res.json(buildFinalizedCoordinateVerificationResponse(recognitionPayload, coordinateEngineV2));
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
     console.error("阿里云识别失败，尝试备用OCR。真实错误信息：", {
@@ -13918,7 +13943,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               ...handwrittenDmsDebug
             };
 
-            return res.json(buildCoordinateVerificationResponse(
+            return res.json(buildFinalizedCoordinateVerificationResponse(
               handwrittenRetryPayload,
               buildCoordinateEngineV2ShadowResult(handwrittenRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
             ));
@@ -13941,7 +13966,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ...handwrittenDmsDebug
         };
 
-        return res.status(504).json(buildCoordinateVerificationResponse(
+        return res.status(504).json(buildFinalizedCoordinateVerificationResponse(
           handwrittenTimeoutPayload,
           buildCoordinateEngineV2ShadowResult(handwrittenTimeoutPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
         ));
@@ -14022,7 +14047,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
               quota: consumeResult.quota
             };
 
-            return res.json(buildCoordinateVerificationResponse(
+            return res.json(buildFinalizedCoordinateVerificationResponse(
               kyrgyzRetryPayload,
               buildCoordinateEngineV2ShadowResult(kyrgyzRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
             ));
@@ -14125,7 +14150,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               quota: consumeResult.quota
             };
 
-            return res.json(buildCoordinateVerificationResponse(
+            return res.json(buildFinalizedCoordinateVerificationResponse(
               wgs84TableRetryPayload,
               buildCoordinateEngineV2ShadowResult(wgs84TableRetryPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
             ));
@@ -14422,7 +14447,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
       fallback.quota = consumeResult.quota;
       fallback.coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(fallback, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") });
 
-      res.json(buildCoordinateVerificationResponse(fallback, fallback.coordinateEngineV2));
+      res.json(buildFinalizedCoordinateVerificationResponse(fallback, fallback.coordinateEngineV2));
     } catch (fallbackError) {
       console.error(fallbackError);
       res.status(500).json({
