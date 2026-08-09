@@ -6548,6 +6548,14 @@ Au值 = 纯度 × 10 后取整数</div>
       return null;
     }
 
+    function isVerifiedUtmAutoExportResult(data = {}) {
+      const coordinateResult = data.coordinateResult || {};
+      const coordinate = coordinateResult.coordinate || {};
+      return String(coordinateResult.state || "").trim() === "AUTO_EXPORT"
+        && String(data.coordinateType || coordinate.type || "").trim() === "utm_projected_xy"
+        && String(data.precisionMode || coordinate.precision || "").trim() === "utm-projected-x-y";
+    }
+
     function formatUtmCrsName(intent) {
       const hemisphere = intent?.hemisphere === "south" ? "S" : "N";
       return `WGS84 / UTM Zone ${intent?.zone}${hemisphere}`;
@@ -6735,8 +6743,9 @@ Au值 = 纯度 × 10 后取整数</div>
       document.getElementById("manualCrsZone")?.focus();
     }
 
-    function getConfirmedUtmCoordinateGroups(intent) {
-      const points = String(input.value || "")
+    function getConfirmedUtmCoordinateGroupsFromText(text, intent) {
+      if (!intent) return [];
+      const points = String(text || "")
         .split(/\r?\n/)
         .map(line => extractProjectedNumberPair(line.trim()))
         .filter(Boolean)
@@ -6758,6 +6767,20 @@ Au值 = 纯度 × 10 后取整数</div>
 
       if (converted.some(point => !Number.isFinite(Number(point.longitude)) || !Number.isFinite(Number(point.latitude)))) return [];
       return [converted];
+    }
+
+    function getConfirmedUtmCoordinateGroups(intent) {
+      return getConfirmedUtmCoordinateGroupsFromText(input.value, intent);
+    }
+
+    function tryInitializeVerifiedUtmAutoExportSource(data = {}, text = "") {
+      if (!isVerifiedUtmAutoExportResult(data)) return false;
+      const intent = getTypedCrsIntentFromRecognitionData(data);
+      if (!intent) return false;
+      const groups = getConfirmedUtmCoordinateGroupsFromText(text, intent);
+      if (groups.length === 0 || groups[0].length === 0) return false;
+      setInternalKmlSourceFromGroups(groups);
+      return true;
     }
 
     function confirmCrsIntent(intent) {
@@ -6820,6 +6843,16 @@ Au值 = 纯度 × 10 后取整数</div>
       if (!hasProjectedCoordinateRows(input.value)) return false;
       if (activeCoordinatePrecisionMode === "utm30n-projected-x-y" || projectionType.value === "utm30n") return false;
       return activeCoordinatePrecisionMode !== "bftm-projected-x-y" && projectionType.value !== "bftm";
+    }
+
+    function isVerifiedUtmAutoExportSourceReady() {
+      const coordinate = activeCoordinateResult?.coordinate || {};
+      return String(activeCoordinateResult?.state || "").trim() === "AUTO_EXPORT"
+        && String(coordinate.type || activeCoordinateArbitration?.coordinateType || "").trim() === "utm_projected_xy"
+        && String(coordinate.precision || activeCoordinatePrecisionMode || activeCoordinateArbitration?.precisionMode || "").trim() === "utm-projected-x-y"
+        && Array.isArray(internalNormalizedCoordinateGroups)
+        && internalNormalizedCoordinateGroups.length > 0
+        && !internalKmlSourceDirty;
     }
 
     function showCrsConfirmationRequired() {
@@ -12905,7 +12938,9 @@ ${placemarks}
         return;
       }
 
-      if (requiresCrsConfirmationForCurrentInput() && activeCrsConfirmationState.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
+      if (!isVerifiedUtmAutoExportSourceReady()
+        && requiresCrsConfirmationForCurrentInput()
+        && activeCrsConfirmationState.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
         showCrsConfirmationRequired();
         showKmlFailure({
           code: "KML_CRS_REQUIRED",
@@ -13280,8 +13315,10 @@ ${placemarks}
         rememberState();
         input.value = displayCoordinates || finalCoordinates;
         initializeHandwrittenDmsReviewState(summaryEngine);
+        const verifiedUtmAutoSourceReady = tryInitializeVerifiedUtmAutoExportSource(data, finalCoordinates);
         await initializeCrsConfirmationState(data, {
           required: hasProjectedCoordinateRows(finalCoordinates)
+            && !verifiedUtmAutoSourceReady
             && !isBftmProjected
             && data.precisionMode !== "utm30n-projected-x-y"
             && !isCadastralGrid
@@ -13295,6 +13332,8 @@ ${placemarks}
           setInternalKmlSourceFromGroups(getDelimitedCoordinateGroupsFromText(finalCoordinates));
         } else if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isFrenchPerimeterDms || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk) {
           clearInternalKmlSource();
+        } else if (verifiedUtmAutoSourceReady) {
+          // Keep the verified UTM -> WGS84 source initialized above.
         } else {
           setInternalKmlSourceFromText(finalCoordinates);
         }
