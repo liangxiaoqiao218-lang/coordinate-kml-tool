@@ -6286,19 +6286,38 @@ Au值 = 纯度 × 10 后取整数</div>
       return region.display;
     }
 
+    function isUtmReviewKmlBlockedState(meta = {}) {
+      const arbitration = meta.coordinateArbitration || activeCoordinateArbitration || {};
+      const precisionMode = String(meta.precisionMode || activeCoordinatePrecisionMode || arbitration.precisionMode || "").trim();
+      const coordinateType = String(meta.coordinateType || arbitration.coordinateType || "").trim();
+      const confirmationStatus = String(meta.confirmationStatus || arbitration.confirmationStatus || "").trim();
+      const qualityGateStatus = String(meta.qualityGateStatus || arbitration.qualityGateStatus || "").trim();
+      const reason = String(meta.coordinateArbitrationReason || arbitration.reason || "").trim();
+      const isUtmReview = precisionMode === "utm-projected-x-y-review"
+        || Boolean(meta.crsConfirmationBlocked)
+        || (coordinateType === "utm_projected_xy" && (
+          qualityGateStatus === "blocked"
+          || confirmationStatus === "blocked"
+          || /utm_.*(?:failed|without_validated|blocked)|transformation_verification_failed/i.test(reason)
+        ));
+      return Boolean(isUtmReview);
+    }
+
     function getRecognitionSummaryReviewState(meta = {}) {
       const engine = meta.engine || {};
       const groups = Array.isArray(engine.groups) ? engine.groups : [];
       const orderStatus = getRecognitionSummaryOrderStatus(engine);
+      const kmlBlocked = isUtmReviewKmlBlockedState(meta);
       const reviewGroupIndexes = groups
         .map((group, index) => group?.requires_review ? index + 1 : null)
         .filter(Boolean);
       const reviewGroupCount = reviewGroupIndexes.length;
       return {
         orderStatus,
+        kmlBlocked,
         reviewGroupIndexes,
         reviewGroupCount,
-        requiresReview: Boolean(meta.requiresReview || engine.requires_review || reviewGroupCount > 0 || orderStatus === "ambiguous")
+        requiresReview: Boolean(kmlBlocked || meta.requiresReview || engine.requires_review || reviewGroupCount > 0 || orderStatus === "ambiguous")
       };
     }
 
@@ -6850,6 +6869,10 @@ Au值 = 纯度 × 10 后取整数</div>
       const groupCount = Number(meta.groupCount || groups.length) || 0;
       const targetGroupIndex = review.reviewGroupIndexes?.[0] || 0;
 
+      if (review.kmlBlocked) {
+        return { text: "当前识别结果需核对", targetGroupIndex: 0 };
+      }
+
       if (review.orderStatus === "ambiguous") {
         return { text: "坐标方向需要确认", targetGroupIndex: 0 };
       }
@@ -6892,6 +6915,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function getRecognitionSummaryKmlState(meta = {}, review = getRecognitionSummaryReviewState(meta)) {
+      if (review.kmlBlocked) return "\u9700\u6838\u5bf9\u540e\u751f\u6210";
       if (review.requiresReview) return "需核对";
       if (requiresCrsConfirmationForCurrentInput()
         && activeCrsConfirmationState.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
@@ -12438,6 +12462,22 @@ ${placemarks}
         return;
       }
 
+      if (isUtmReviewKmlBlockedState({
+        precisionMode: activeCoordinatePrecisionMode,
+        coordinateType: activeCoordinateArbitration?.coordinateType,
+        confirmationStatus: activeCoordinateArbitration?.confirmationStatus,
+        qualityGateStatus: activeCoordinateArbitration?.qualityGateStatus,
+        coordinateArbitrationReason: activeCoordinateArbitration?.reason,
+        coordinateArbitration: activeCoordinateArbitration
+      }) || activeCrsConfirmationState.status === CRS_CONFIRMATION_STATUS.BLOCKED) {
+        showKmlFailure({
+          code: "KML_UTM_REVIEW_REQUIRED",
+          title: "\u9700\u8981\u6838\u5bf9\u8bc6\u522b\u7ed3\u679c",
+          reason: "\u8bc6\u522b\u5230 UTM \u5750\u6807\uff0c\u4f46\u8f6c\u6362\u6821\u9a8c\u672a\u901a\u8fc7\u3002\u7cfb\u7edf\u5df2\u963b\u6b62\u81ea\u52a8\u751f\u6210 KML\uff0c\u8bf7\u6838\u5bf9\u539f\u56fe\u4fe1\u606f\u3002",
+          suggestion: "\u8bf7\u6838\u5bf9 X/Y \u5750\u6807\u3001UTM Zone\u3001\u5357\u5317\u534a\u7403\u548c\u539f\u56fe\u53c2\u8003\u7ecf\u7eac\u5ea6\uff1b\u4fee\u6b63\u540e\u518d\u91cd\u65b0\u8bc6\u522b\u6216\u786e\u8ba4\u3002"
+        });
+        return;
+      }
       const chatOrderWarnings = hasChatCoordinateRows(input.value)
         ? getChatCoordinateWarnings(extractChatCoordinateRows(input.value).map(row => ({ lat: row.lat, lon: row.lon })))
         : [];
@@ -13288,8 +13328,14 @@ ${placemarks}
           groupCount: summaryGroups.length,
           geometry: summaryGroups[0]?.geometry || inferGeometry(summaryPointCount),
           precisionMode: data.precisionMode || "",
-          coordinateType: summaryEngine.coordinate_type || "",
-          requiresReview: Boolean(summaryEngine.requires_review),
+          coordinateType: data.coordinateType || summaryEngine.coordinate_type || "",
+          confirmationStatus: data.confirmationStatus || data.coordinateArbitration?.confirmationStatus || "",
+          qualityGateStatus: data.qualityGateStatus || data.coordinateArbitration?.qualityGateStatus || "",
+          kml_ready: data.kml_ready,
+          coordinateArbitrationReason: data.coordinateArbitration?.reason || "",
+          coordinateArbitration: data.coordinateArbitration || null,
+          crsConfirmationBlocked: Boolean(data.crsConfirmationBlocked),
+          requiresReview: Boolean(data.requires_review || summaryEngine.requires_review),
           engine: summaryEngine
         });
       } catch (error) {
