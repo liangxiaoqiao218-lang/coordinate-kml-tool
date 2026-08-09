@@ -20,6 +20,10 @@ import {
   runProjectedXyOnlyPass,
   runStructuredUtmTablePass
 } from "./server/utm-intent/structured-projected-priority.js";
+import {
+  hasExplicitUtmEvidenceLock,
+  suppressGeographicFallbacksForUtmEvidenceLock
+} from "./server/utm-intent/evidence-lock.js";
 import { buildProjectedTableVisionTiles } from "./server/utm-intent/projected-table-image-tiles.js";
 import { arbitrateCoordinateType } from "./server/coordinate-type/arbitration.js";
 import { buildVersionResponse } from "./server/release-identity/index.js";
@@ -11936,6 +11940,8 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
     }
     return consumeUsage(visitorId, "convert", req, metadata);
   };
+  let explicitUtmEvidenceLock = false;
+  let lockedUtmCrsEvidenceShadow = null;
 
   try {
     if (regressionTestMode.rejectReason) {
@@ -12835,9 +12841,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       });
       crsEvidenceShadow = buildShadowIntentFromCrsVision(crsVision);
       const shadowIntent = crsEvidenceShadow.shadowIntent;
-      const explicitConfirmedUtm = shadowIntent?.confidence === "confirmed"
-        && shadowIntent?.projection === "utm"
-        && (!Array.isArray(shadowIntent?.conflicts) || shadowIntent.conflicts.length === 0);
+      const explicitConfirmedUtm = hasExplicitUtmEvidenceLock(crsEvidenceShadow);
+      explicitUtmEvidenceLock = explicitConfirmedUtm;
+      if (explicitUtmEvidenceLock) {
+        lockedUtmCrsEvidenceShadow = crsEvidenceShadow;
+      }
 
       if (explicitConfirmedUtm) {
         const structuredTable = await runStructuredUtmTablePass({
@@ -12934,7 +12942,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       file: req.file,
       hint: coordinateRawHint
     });
-    if (handwrittenVisionRouting.shouldRetry) {
+    if (!explicitUtmEvidenceLock && handwrittenVisionRouting.shouldRetry) {
       try {
         parserTrace.push("HANDWRITTEN_DMS:evidence_retry");
         console.log("Handwritten DMS evidence detected; retrying with literal transcription prompt.", {
@@ -13001,7 +13009,28 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
     });
     let pointAzDmsTableAccepted = false;
-    if (dmsGroupedAccepted && shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo)) {
+    if (explicitUtmEvidenceLock) {
+      const lockedCandidates = suppressGeographicFallbacksForUtmEvidenceLock({
+        dmsGroupedAccepted,
+        frenchPerimeterDms,
+        pointAzDmsTableAccepted,
+        handwrittenDms,
+        dmsAccepted,
+        wgs84TableCoordinates,
+        chatCoordinates
+      }, { enabled: true });
+      dmsGroupedAccepted = lockedCandidates.dmsGroupedAccepted;
+      frenchPerimeterDms = lockedCandidates.frenchPerimeterDms;
+      pointAzDmsTableAccepted = lockedCandidates.pointAzDmsTableAccepted;
+      handwrittenDms = lockedCandidates.handwrittenDms;
+      dmsAccepted = lockedCandidates.dmsAccepted;
+      wgs84TableCoordinates = lockedCandidates.wgs84TableCoordinates;
+      chatCoordinates = lockedCandidates.chatCoordinates;
+      if (lockedCandidates.suppressedFallbacks.length > 0) {
+        parserTrace.push(`UTM_EVIDENCE_LOCK:verification_only(${lockedCandidates.suppressedFallbacks.join(",")})`);
+      }
+    }
+    if (!explicitUtmEvidenceLock && dmsGroupedAccepted && shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo)) {
       try {
         parserTrace.push("DMS_GROUPED:retry_vision");
         console.log("DMS grouped direct prompt started because generic output appears reordered", {
@@ -13045,6 +13074,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       && !mozambiqueGeographicTable.isMozambiqueGeographicTable
       && !wgs84TableCoordinates.isWgs84TableCoordinates
       && !kyrgyzGk.isKyrgyzGk
+      && !explicitUtmEvidenceLock
       && shouldRetryFrenchPerimeterDmsVisualRead(rawText, coordinates, req.file, warning)
     ) {
       try {
@@ -13084,7 +13114,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         console.error("French perimeter DMS direct prompt failed:", frenchPerimeterError.message || frenchPerimeterError);
       }
     }
-    if (!mozambiqueGeographicTable.isMozambiqueGeographicTable && (useMozambiqueGeographicPromptFirst || req.file)) {
+    if (!explicitUtmEvidenceLock && !mozambiqueGeographicTable.isMozambiqueGeographicTable && (useMozambiqueGeographicPromptFirst || req.file)) {
       const mozambiqueCoordinateRows = extractMozambiqueLonLatCoordinateRows(rawText);
       if (mozambiqueCoordinateRows.length >= 4) {
         if (!useMozambiqueGeographicPromptFirst && req.file) {
@@ -13168,6 +13198,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       && !mgrs.isMgrs
       && !mozambiqueGeographicTable.isMozambiqueGeographicTable
       && !wgs84TableCoordinates.isWgs84TableCoordinates
+      && !explicitUtmEvidenceLock
       && shouldRetryWgs84TableVisualRead(rawText, chatCoordinates, req.file)
     ) {
       try {
@@ -13604,6 +13635,27 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       isOcrImage: Boolean(req.file),
       hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
     });
+    if (explicitUtmEvidenceLock) {
+      const lockedCandidates = suppressGeographicFallbacksForUtmEvidenceLock({
+        dmsGroupedAccepted,
+        frenchPerimeterDms,
+        pointAzDmsTableAccepted,
+        handwrittenDms,
+        dmsAccepted,
+        wgs84TableCoordinates,
+        chatCoordinates
+      }, { enabled: true });
+      dmsGroupedAccepted = lockedCandidates.dmsGroupedAccepted;
+      frenchPerimeterDms = lockedCandidates.frenchPerimeterDms;
+      pointAzDmsTableAccepted = lockedCandidates.pointAzDmsTableAccepted;
+      handwrittenDms = lockedCandidates.handwrittenDms;
+      dmsAccepted = lockedCandidates.dmsAccepted;
+      wgs84TableCoordinates = lockedCandidates.wgs84TableCoordinates;
+      chatCoordinates = lockedCandidates.chatCoordinates;
+      if (lockedCandidates.suppressedFallbacks.length > 0) {
+        parserTrace.push(`UTM_EVIDENCE_LOCK:final_verification_only(${lockedCandidates.suppressedFallbacks.join(",")})`);
+      }
+    }
     const finalBftmCoordinateRepair = normalizeBftmProjectedCoordinateText(coordinates);
     if (finalBftmCoordinateRepair.changed && finalBftmCoordinateRepair.rowCount >= 4) {
       coordinates = finalBftmCoordinateRepair.text;
@@ -13857,9 +13909,44 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       let handwrittenTimeoutRoutingEvidence = null;
       const isAliyunTimeout = error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT";
       const timeoutRoutingHint = req.body?.rawHint || req.body?.hint || "";
+      let timeoutExplicitUtmEvidenceLock = explicitUtmEvidenceLock;
+      let timeoutUtmCrsEvidenceShadow = lockedUtmCrsEvidenceShadow;
       const timeoutMozambiqueTypeLock = getMozambiqueTypeLockEvidence(req.file, timeoutRoutingHint, {
         detectorMatched: shouldUseMozambiqueGeographicPromptFirst(req.file, timeoutRoutingHint)
       });
+
+      if (!timeoutExplicitUtmEvidenceLock && isAliyunTimeout && aliyunApiKey && req.file) {
+        try {
+          const timeoutImageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+          const timeoutCrsVision = await runCrsVisionPass({
+            imageItems: [{
+              type: "image_url",
+              image_url: { url: timeoutImageDataUrl, detail: "high" }
+            }],
+            invokeVision: async ({ prompt: crsPrompt, imageItems: timeoutCrsImageItems }) => {
+              const crsResponse = await callAliyunVision({
+                modelName: aliyunVisionModel,
+                prompt: crsPrompt,
+                imageItems: timeoutCrsImageItems,
+                temperature: 0,
+                maxTokens: 1200,
+                timeoutMs: 60000
+              });
+              return crsResponse.choices?.[0]?.message?.content || "";
+            }
+          });
+          timeoutUtmCrsEvidenceShadow = buildShadowIntentFromCrsVision(timeoutCrsVision);
+          timeoutExplicitUtmEvidenceLock = hasExplicitUtmEvidenceLock(timeoutUtmCrsEvidenceShadow);
+          if (timeoutExplicitUtmEvidenceLock) {
+            console.log("Explicit UTM evidence lock active after timeout; geographic fallback takeover disabled.", {
+              fileName: req.file?.originalname || "",
+              shadowIntent: timeoutUtmCrsEvidenceShadow.shadowIntent
+            });
+          }
+        } catch (timeoutCrsError) {
+          console.error("Timeout CRS evidence lock check failed; preserving existing fallback routing:", timeoutCrsError.message || timeoutCrsError);
+        }
+      }
 
       if (isAliyunTimeout && aliyunApiKey && req.file && timeoutMozambiqueTypeLock.level === "strict") {
         const mozambiqueTimeoutDebug = {
@@ -13908,7 +13995,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       }
 
-      if (isAliyunTimeout && aliyunApiKey && req.file && handwrittenTimeoutRoutingEvidence?.shouldRetry) {
+      if (isAliyunTimeout && aliyunApiKey && req.file && !timeoutExplicitUtmEvidenceLock && handwrittenTimeoutRoutingEvidence?.shouldRetry) {
         const handwrittenDmsDebug = {
           handwrittenDmsRetryStarted: true,
           handwrittenDmsRetrySuccess: false,
@@ -14096,7 +14183,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
         }
       }
 
-      if (isAliyunTimeout && aliyunApiKey && req.file && shouldRetryWgs84TableOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")) {
+      if (isAliyunTimeout && aliyunApiKey && req.file && !timeoutExplicitUtmEvidenceLock && shouldRetryWgs84TableOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")) {
         try {
           console.log("Aliyun timed out; retrying WGS84 longitude/latitude table visual extraction before local OCR fallback.", {
             fileName: req.file?.originalname || "",
@@ -14381,7 +14468,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         || countDmsCoordinateRows(fallback.rawText) > 0
         || countDmsCoordinateRows(fallback.coordinates) > 0;
 
-      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file && !fallbackHasStableCoordinateResult) {
+      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file && !timeoutExplicitUtmEvidenceLock && !fallbackHasStableCoordinateResult) {
         try {
           console.log("Fallback OCR produced no stable coordinates after timeout; running WGS84 table timeout rescue.", {
             fileName: req.file?.originalname || "",
@@ -14451,6 +14538,32 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         } catch (rescueError) {
           console.error("WGS84 table timeout rescue failed:", rescueError.message || rescueError);
         }
+      }
+
+      if (timeoutExplicitUtmEvidenceLock) {
+        fallback.coordinates = "";
+        fallback.model = `${fallback.model || "local-ocr-fallback"}+utm-evidence-lock`;
+        fallback.precisionMode = "utm-projected-x-y-review";
+        fallback.warning = "已确认图纸包含明确 WGS84 UTM CRS；主视觉或备用 OCR 未获得稳定 X/Y 结果，已阻止 WGS84/DMS fallback 抢占。请重试原图识别或人工核对 UTM 坐标行。";
+        fallback.crsEvidence = timeoutUtmCrsEvidenceShadow || undefined;
+        fallback.structuredUtmTable = {
+          accepted: false,
+          reason: "utm_evidence_locked_fallback_unavailable",
+          rowCount: 0,
+          transformationVerification: {
+            status: "not_available",
+            rows: []
+          }
+        };
+        fallback.parserTrace = [
+          ...new Set([
+            ...((Array.isArray(fallback.parserTrace) ? fallback.parserTrace : ["OCR"])),
+            "UTM_EVIDENCE_LOCK:timeout_fallback_blocked"
+          ])
+        ];
+        delete fallback.wgs84TableCoordinates;
+        delete fallback.chatCoordinates;
+        delete fallback.handwrittenDms;
       }
 
       if (bftmIncompleteWarning) {
