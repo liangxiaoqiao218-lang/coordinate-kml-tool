@@ -1176,6 +1176,36 @@
       line-height: 1.5;
     }
 
+    .crs-confirmation-details,
+    .crs-confirmation-advanced {
+      margin-top: 12px;
+      font-size: 13px;
+    }
+
+    .crs-confirmation-details summary,
+    .crs-confirmation-advanced summary {
+      color: #92400e;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .crs-confirmation-panel.is-confirmed .crs-confirmation-details summary,
+    .crs-confirmation-panel.is-confirmed .crs-confirmation-advanced summary {
+      color: #0f766e;
+    }
+
+    .crs-confirmation-advanced > button {
+      margin-top: 10px;
+      min-height: 36px;
+      padding: 8px 12px;
+      border: 1px solid #d97706;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #92400e;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
     .crs-confirmation-actions {
       display: flex;
       flex-wrap: wrap;
@@ -4858,6 +4888,8 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeCoordinatePrecisionMode = "";
     let activeCoordinateEngineV2 = null;
     let activeCoordinateArbitration = null;
+    let activeRecognitionSummaryMeta = null;
+    let currentRecognitionSession = loadRecognitionSession();
     const CRS_CONFIRMATION_STATUS = Object.freeze({
       NOT_APPLICABLE: "NOT_APPLICABLE",
       REQUIRED: "REQUIRED",
@@ -5140,6 +5172,43 @@ Au值 = 纯度 × 10 后取整数</div>
         visitorId = "";
       }
       return visitorId;
+    }
+
+    function normalizeRecognitionSession(data = {}) {
+      const sessionId = String(data.recognitionSessionId || data.recognition_session_id || data.recognitionSession?.id || "").trim();
+      if (!sessionId) return null;
+
+      return {
+        id: sessionId,
+        quotaCharged: Boolean(data.quotaCharged ?? data.recognitionSession?.quotaCharged),
+        quotaChargeType: String(data.quotaChargeType || data.recognitionSession?.quotaChargeType || "convert"),
+        quotaChargeReason: String(data.quotaChargeReason || data.recognitionSession?.quotaChargeReason || "coordinate_recognition"),
+        createdAt: String(data.recognitionSessionCreatedAt || data.recognitionSession?.createdAt || new Date().toISOString())
+      };
+    }
+
+    function loadRecognitionSession() {
+      try {
+        const raw = localStorage.getItem("coordinateRecognitionSession");
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && parsed.id ? parsed : null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function saveRecognitionSession(session) {
+      currentRecognitionSession = session || null;
+      try {
+        if (currentRecognitionSession) {
+          localStorage.setItem("coordinateRecognitionSession", JSON.stringify(currentRecognitionSession));
+        } else {
+          localStorage.removeItem("coordinateRecognitionSession");
+        }
+      } catch (error) {
+        // localStorage may be unavailable in private or restricted browser contexts.
+      }
     }
 
     function normalizeUserCode(value) {
@@ -6127,6 +6196,8 @@ Au值 = 纯度 × 10 后取整数</div>
         "cadastral-grid": "马达加斯加矿权网格",
         "mgrs_utm_grid_reference": "MGRS",
         "mgrs-utm-grid-reference": "MGRS",
+        "utm_projected_xy": "投影坐标（UTM）",
+        "utm-projected-x-y": "投影坐标（UTM）",
         "bftm_xy": "BFTM",
         "bftm-projected-x-y": "BFTM",
         "standard_dms_table": "度分秒",
@@ -6365,9 +6436,16 @@ Au值 = 纯度 × 10 后取整数</div>
       return {
         status: CRS_CONFIRMATION_STATUS.NOT_APPLICABLE,
         intent: null,
+        recognitionSessionId: currentRecognitionSession?.id || "",
         manualOpen: false,
         ...overrides
       };
+    }
+
+    function isCurrentCrsConfirmationSession() {
+      const confirmedSessionId = String(activeCrsConfirmationState?.recognitionSessionId || "").trim();
+      if (!confirmedSessionId) return true;
+      return confirmedSessionId === String(currentRecognitionSession?.id || "").trim();
     }
 
     function getWgs84UtmEpsg(zone, hemisphere) {
@@ -6405,7 +6483,7 @@ Au值 = 纯度 × 10 后取整数</div>
         zone,
         hemisphere,
         epsg,
-        source: "图纸 CRS 标注"
+        source: "图纸坐标系标注"
       };
     }
 
@@ -6437,6 +6515,14 @@ Au值 = 纯度 × 10 后取整数</div>
       return `WGS84 / UTM Zone ${intent?.zone}${hemisphere}`;
     }
 
+    function getProjectedCoordinateCountFromText(text = input.value) {
+      return String(text || "")
+        .split(/\r?\n/)
+        .map(line => extractProjectedNumberPair(line.trim()))
+        .filter(Boolean)
+        .length;
+    }
+
     function appendCrsDetailRow(list, label, value) {
       const term = document.createElement("dt");
       const detail = document.createElement("dd");
@@ -6460,33 +6546,54 @@ Au值 = 纯度 × 10 后取整数</div>
       const heading = document.createElement("h3");
       heading.className = "crs-confirmation-heading";
       heading.textContent = state.status === CRS_CONFIRMATION_STATUS.CONFIRMED
-        ? "已确认投影坐标系"
+        ? "已确认识别结果"
         : state.status === CRS_CONFIRMATION_STATUS.BLOCKED
-          ? "CRS 转换校验未通过"
+          ? "识别结果需要核对"
         : state.status === CRS_CONFIRMATION_STATUS.DETECTED
-          ? "检测到投影坐标"
-          : "需要确认坐标系";
+          ? "确认识别结果"
+          : "需要补充坐标信息";
       panel.appendChild(heading);
 
-      if (state.intent) {
-        const details = document.createElement("dl");
-        details.className = "crs-confirmation-grid";
-        appendCrsDetailRow(details, "坐标系", formatUtmCrsName(state.intent));
-        appendCrsDetailRow(details, "EPSG", state.intent.epsg);
-        appendCrsDetailRow(details, "来源", state.intent.source);
-        panel.appendChild(details);
-      }
+      const coordinateCount = getProjectedCoordinateCountFromText();
+      const userSummary = document.createElement("dl");
+      userSummary.className = "crs-confirmation-grid";
+      appendCrsDetailRow(userSummary, "识别类型", state.intent ? "投影坐标（UTM）" : "X/Y 平面坐标");
+      appendCrsDetailRow(userSummary, "坐标数量", coordinateCount > 0 ? `${coordinateCount} 个` : "待确认");
+      appendCrsDetailRow(userSummary, "KML 状态", state.status === CRS_CONFIRMATION_STATUS.CONFIRMED
+        ? "可生成"
+        : state.status === CRS_CONFIRMATION_STATUS.BLOCKED
+          ? "暂不可生成"
+          : "确认后可生成");
+      panel.appendChild(userSummary);
 
       const note = document.createElement("p");
       note.className = "crs-confirmation-note";
       note.textContent = state.status === CRS_CONFIRMATION_STATUS.CONFIRMED
-        ? "当前 X/Y 已按确认的 CRS 转换为 WGS84，可继续生成 KML。修改坐标后需要重新确认。"
+        ? "当前识别结果已确认。系统已将 X/Y 转换为经纬度，可继续生成 KML。修改坐标后需要重新确认。"
         : state.status === CRS_CONFIRMATION_STATUS.BLOCKED
-          ? "X/Y 与图中 Latitude/Longitude 参考值不一致。请核对异常行；系统不会改走 DMS，也不会允许直接导出。"
+          ? "图片中的 X/Y 与经纬度参考值不一致。请先核对坐标；系统不会自动猜测，也不会强行导出。"
         : state.status === CRS_CONFIRMATION_STATUS.DETECTED
-          ? "系统不会仅凭 X/Y 数值范围猜测坐标系。请核对图纸标注后确认。"
-          : "识别结果是 X/Y 平面坐标，但没有完整、无冲突的 CRS 证据。请选择图纸明确标注的坐标系。";
+          ? "系统已识别图片中的坐标信息。请确认识别结果无误后继续生成 KML。"
+          : "识别结果是 X/Y 平面坐标，但缺少完整坐标信息。请在高级设置中选择图纸标注的坐标系。";
       panel.appendChild(note);
+
+      if (state.intent) {
+        const technicalDetails = document.createElement("details");
+        technicalDetails.className = "crs-confirmation-details";
+        const summary = document.createElement("summary");
+        summary.textContent = "查看技术详情";
+        technicalDetails.appendChild(summary);
+        const details = document.createElement("dl");
+        details.className = "crs-confirmation-grid";
+        appendCrsDetailRow(details, "坐标系统", formatUtmCrsName(state.intent));
+        appendCrsDetailRow(details, "EPSG", state.intent.epsg);
+        appendCrsDetailRow(details, "基准", state.intent.datum);
+        appendCrsDetailRow(details, "UTM 分区", `Zone ${state.intent.zone}`);
+        appendCrsDetailRow(details, "南北半球", state.intent.hemisphere === "south" ? "南半球" : "北半球");
+        appendCrsDetailRow(details, "来源", state.intent.source);
+        technicalDetails.appendChild(details);
+        panel.appendChild(technicalDetails);
+      }
 
       if (state.status !== CRS_CONFIRMATION_STATUS.CONFIRMED && state.status !== CRS_CONFIRMATION_STATUS.BLOCKED) {
         const actions = document.createElement("div");
@@ -6496,42 +6603,53 @@ Au值 = 纯度 × 10 后取整数</div>
           const confirmButton = document.createElement("button");
           confirmButton.type = "button";
           confirmButton.className = "crs-confirm-primary";
-          confirmButton.textContent = "确认使用此坐标系";
+          confirmButton.textContent = "确认并继续生成 KML";
           confirmButton.addEventListener("click", confirmDetectedCrsIntent);
           actions.appendChild(confirmButton);
         }
 
+        if (actions.children.length > 0) {
+          panel.appendChild(actions);
+        }
+
+        const advanced = document.createElement("details");
+        advanced.className = "crs-confirmation-advanced";
+        advanced.open = Boolean(state.manualOpen);
+        const advancedSummary = document.createElement("summary");
+        advancedSummary.textContent = "高级设置";
+        advanced.appendChild(advancedSummary);
         const manualButton = document.createElement("button");
         manualButton.type = "button";
         manualButton.textContent = "手动选择坐标系";
         manualButton.addEventListener("click", openManualCrsSelection);
-        actions.appendChild(manualButton);
-        panel.appendChild(actions);
-      }
+        advanced.appendChild(manualButton);
 
-      if (state.manualOpen && state.status !== CRS_CONFIRMATION_STATUS.CONFIRMED && state.status !== CRS_CONFIRMATION_STATUS.BLOCKED) {
-        const form = document.createElement("form");
-        form.className = "crs-manual-form is-active";
-        form.addEventListener("submit", confirmManualCrsSelection);
-        form.innerHTML = `
-          <div class="crs-manual-field">
-            <label for="manualCrsDatum">Datum</label>
-            <select id="manualCrsDatum"><option value="WGS84">WGS84</option></select>
-          </div>
-          <div class="crs-manual-field">
-            <label for="manualCrsZone">UTM Zone (1-60)</label>
-            <input id="manualCrsZone" type="number" min="1" max="60" step="1" required>
-          </div>
-          <div class="crs-manual-field">
-            <label for="manualCrsHemisphere">Hemisphere</label>
-            <select id="manualCrsHemisphere"><option value="north">North</option><option value="south">South</option></select>
-          </div>
-          <button type="submit" class="crs-confirm-primary crs-manual-submit">确认并转换为 WGS84</button>`;
-        if (state.intent) {
-          form.querySelector("#manualCrsZone").value = String(state.intent.zone);
-          form.querySelector("#manualCrsHemisphere").value = state.intent.hemisphere;
+        if (state.manualOpen) {
+          const form = document.createElement("form");
+          form.className = "crs-manual-form is-active";
+          form.addEventListener("submit", confirmManualCrsSelection);
+          form.innerHTML = `
+            <div class="crs-manual-field">
+              <label for="manualCrsDatum">坐标基准</label>
+              <select id="manualCrsDatum"><option value="WGS84">WGS84</option></select>
+            </div>
+            <div class="crs-manual-field">
+              <label for="manualCrsZone">UTM 分区（1-60）</label>
+              <input id="manualCrsZone" type="number" min="1" max="60" step="1" required>
+            </div>
+            <div class="crs-manual-field">
+              <label for="manualCrsHemisphere">南北半球</label>
+              <select id="manualCrsHemisphere"><option value="north">北半球</option><option value="south">南半球</option></select>
+            </div>
+            <button type="submit" class="crs-confirm-primary crs-manual-submit">确认并转换为经纬度</button>`;
+          if (state.intent) {
+            form.querySelector("#manualCrsZone").value = String(state.intent.zone);
+            form.querySelector("#manualCrsHemisphere").value = state.intent.hemisphere;
+          }
+          advanced.appendChild(form);
         }
-        panel.appendChild(form);
+
+        panel.appendChild(advanced);
       }
     }
 
@@ -6561,7 +6679,8 @@ Au值 = 纯度 × 10 后取整数</div>
 
       activeCrsConfirmationState = createCrsConfirmationState({
         status: intent ? CRS_CONFIRMATION_STATUS.DETECTED : CRS_CONFIRMATION_STATUS.REQUIRED,
-        intent
+        intent,
+        recognitionSessionId: currentRecognitionSession?.id || ""
       });
       renderCrsConfirmationPanel();
     }
@@ -6610,7 +6729,7 @@ Au值 = 纯度 × 10 后取整数</div>
           code: "KML_PROJECTION_FAILED",
           title: "投影转换失败",
           reason: "当前 X/Y 坐标无法按所选 UTM 参数转换为有效 WGS84 坐标。",
-          suggestion: "请核对 Zone、Hemisphere、Datum 和坐标列顺序。"
+          suggestion: "请核对 UTM 分区、南北半球、坐标基准和坐标列顺序。"
         });
         return false;
       }
@@ -6618,9 +6737,11 @@ Au值 = 纯度 × 10 后取整数</div>
       setInternalKmlSourceFromGroups(groups);
       activeCrsConfirmationState = createCrsConfirmationState({
         status: CRS_CONFIRMATION_STATUS.CONFIRMED,
-        intent
+        intent,
+        recognitionSessionId: currentRecognitionSession?.id || activeCrsConfirmationState.recognitionSessionId || ""
       });
       renderCrsConfirmationPanel();
+      refreshRecognitionSummaryState();
       trackEvent("crs_confirmation_complete", {
         epsg: intent.epsg,
         source: intent.source,
@@ -6643,7 +6764,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const epsg = getWgs84UtmEpsg(zone, hemisphere);
 
       if (datum !== "WGS84" || !epsg) {
-        showMessage("请选择有效的 WGS84 UTM Zone 和 Hemisphere。", true, 6000);
+        showMessage("请选择有效的 WGS84 UTM 分区和南北半球。", true, 6000);
         return;
       }
 
@@ -6672,6 +6793,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function markCoordinateTextChanged() {
+      const previousRecognitionSummaryMeta = activeRecognitionSummaryMeta;
       activeCoordinatePrecisionMode = "";
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
@@ -6679,7 +6801,17 @@ Au值 = 纯度 × 10 后取整数</div>
       renderCrsConfirmationPanel();
       handwrittenDmsReviewState = getHandwrittenDmsReviewStateAfterTextChange(handwrittenDmsReviewState);
       renderHandwrittenDmsReviewState();
-      clearRecognitionSummary();
+      if (previousRecognitionSummaryMeta && hasProjectedCoordinateRows(input.value)) {
+        const projectedCoordinateCount = getProjectedCoordinateCountFromText();
+        setRecognitionSummary({
+          ...previousRecognitionSummaryMeta,
+          count: projectedCoordinateCount || previousRecognitionSummaryMeta.count,
+          geometry: previousRecognitionSummaryMeta.geometry || inferGeometry(projectedCoordinateCount || previousRecognitionSummaryMeta.count || 0),
+          requiresReview: false
+        });
+      } else {
+        clearRecognitionSummary();
+      }
       internalKmlSourceDirty = true;
       setCoordinateOrderReviewVisible(false);
     }
@@ -6759,7 +6891,21 @@ Au值 = 纯度 × 10 后取整数</div>
       return formatRecognitionSummaryArea(areas.reduce((sum, value) => sum + value, 0));
     }
 
+    function getRecognitionSummaryKmlState(meta = {}, review = getRecognitionSummaryReviewState(meta)) {
+      if (review.requiresReview) return "需核对";
+      if (requiresCrsConfirmationForCurrentInput()
+        && activeCrsConfirmationState.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
+        return "需确认识别结果";
+      }
+      return "可生成";
+    }
+
     function setRecognitionSummary(meta = {}) {
+      activeRecognitionSummaryMeta = {
+        ...meta,
+        engine: meta.engine || {}
+      };
+      meta = activeRecognitionSummaryMeta;
       const engine = meta.engine || {};
       const groups = Array.isArray(engine.groups) ? engine.groups : [];
       const count = Number(meta.count) || 0;
@@ -6773,20 +6919,18 @@ Au值 = 纯度 × 10 后取整数</div>
       const areaType = geometryLabels[geometryValue.toLowerCase()] || geometryValue;
       const groupCount = Number(meta.groupCount || groups.length) || 0;
       const review = getRecognitionSummaryReviewState(meta);
-      const coordinateType = getRecognitionSummaryType(meta);
-      const country = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryRegion(meta);
       const area = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryArea(meta);
       const reviewSummary = getCoordinateReviewSummary(meta, review);
       const countText = groupCount > 1
         ? `${groupCount} 组矿地 · ${count} 个坐标`
         : `${count} 个坐标`;
+      const kmlState = getRecognitionSummaryKmlState(meta, review);
       const chips = [
-        reviewSummary.text,
+        reviewSummary.text ? `识别状态：${review.requiresReview ? reviewSummary.text : "已完成"}` : "识别状态：已完成",
+        `坐标点：${countText}`,
         areaType ? `区域类型：${areaType}` : "",
-        `所属国家：${country || "待确认"}`,
-        countText,
-        `坐标类型：${coordinateType || "待确认"}`,
-        area
+        `面积：${area || "待计算"}`,
+        `KML：${kmlState}`
       ].filter(Boolean).slice(0, 5);
 
       recognitionSummary.style.display = "flex";
@@ -6821,7 +6965,13 @@ Au值 = 纯度 × 10 后取整数</div>
       recognitionSummary.appendChild(chipWrap);
     }
 
+    function refreshRecognitionSummaryState() {
+      if (!activeRecognitionSummaryMeta) return;
+      setRecognitionSummary(activeRecognitionSummaryMeta);
+    }
+
     function clearRecognitionSummary() {
+      activeRecognitionSummaryMeta = null;
       recognitionSummary.style.display = "none";
       recognitionSummary.textContent = "";
       recognitionSummary.className = "recognition-status";
@@ -7154,6 +7304,7 @@ Au值 = 纯度 × 10 后取整数</div>
       selectedImageFile = null;
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
+      saveRecognitionSession(null);
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
       closeImageModal();
@@ -11852,6 +12003,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       clearInternalKmlSource();
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
+      saveRecognitionSession(null);
       activeCrsConfirmationState = createCrsConfirmationState();
       renderCrsConfirmationPanel();
       resetHandwrittenDmsReviewState();
@@ -12280,7 +12432,7 @@ ${placemarks}
         showKmlFailure({
           code: "KML_CRS_CONFLICT",
           title: "坐标系证据冲突",
-          reason: "当前图片包含互相冲突的明确 CRS 证据，系统不能选择安全的转换路径。",
+          reason: "当前图片包含互相冲突的明确坐标系证据，系统不能选择安全的转换路径。",
           suggestion: "请核对图纸坐标系标注，消除冲突后重新识别；不要根据数值范围选择坐标系。"
         });
         return;
@@ -12298,7 +12450,7 @@ ${placemarks}
         showKmlFailure({
           code: "KML_COORDINATE_ORDER_REVIEW_REQUIRED",
           title: "需要确认经纬度顺序",
-          reason: "当前坐标存在 possible swapped lat/lon 风险，尚不能安全生成 KML。",
+          reason: "当前坐标的经纬度顺序可能存在问题，尚不能安全生成 KML。",
           suggestion: "请对照原始资料确认 Latitude/Longitude 顺序并修正后再导出。"
         });
         return;
@@ -12346,12 +12498,6 @@ ${placemarks}
           return;
         }
 
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
-
         const kml = buildCadastralGridKml(wgs84Polygons, gridResult.dx, gridResult.dy);
         const blob = new Blob([kml], {
           type: "application/vnd.google-earth.kml+xml;charset=utf-8"
@@ -12385,12 +12531,6 @@ ${placemarks}
         }));
         const selectedType = inferGeometry(pairs);
         exportType.value = selectedType;
-
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
 
         let placemarks = "";
         let documentName = "MGRS / UTM Grid Reference";
@@ -12445,12 +12585,6 @@ ${placemarks}
           const selectedType = inferGeometry(pairs);
           exportType.value = selectedType;
 
-          const usageAllowed = await consumeUsage("convert");
-          if (!usageAllowed) {
-            showKmlPermissionFailure();
-            return;
-          }
-
           const kml = buildChatCoordinatesKml(pairs, selectedType, {
             documentName: "French Perimeter DMS",
             sourceDescription: "Source interpreted from French perimeter DMS prose. Ouest is negative longitude and Nord is positive latitude. KML coordinates are written as longitude,latitude,0."
@@ -12492,12 +12626,6 @@ ${placemarks}
         const pairs = pairGroups.flat();
         const selectedType = inferGeometry(pairs);
         exportType.value = selectedType;
-
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
 
         let kml = "";
         if (pairGroups.length > 1) {
@@ -12559,12 +12687,6 @@ ${placemarks}
       if (dmsGroupedGroupsForExport.length > 1) {
         const pairs = dmsGroupedGroupsForExport.flat();
 
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
-
         const placemarks = dmsGroupedGroupsForExport
           .map((group, index) => buildNamedPolygonKml(group, `Mining Area ${index + 1}`, index + 1))
           .join("\n");
@@ -12606,12 +12728,6 @@ ${placemarks}
         const selectedType = inferGeometry(pairs);
         exportType.value = selectedType;
 
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
-
         const kml = buildChatCoordinatesKml(pairs, selectedType);
         const blob = new Blob([kml], {
           type: "application/vnd.google-earth.kml+xml;charset=utf-8"
@@ -12634,7 +12750,7 @@ ${placemarks}
         const warnings = getChatCoordinateWarnings(pairs);
         if (warnings.includes("possible swapped lat/lon")) {
           setCoordinateOrderReviewVisible(true);
-          showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 聊天坐标点；存在 possible swapped lat/lon 风险，请核对经纬度顺序。`, true, 7000);
+          showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 聊天坐标点；经纬度顺序可能存在问题，请核对后再使用。`, true, 7000);
         } else {
           setCoordinateOrderReviewVisible(false);
           showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 聊天坐标点。`);
@@ -12680,12 +12796,6 @@ ${placemarks}
           return;
         }
 
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
-
         const kml = buildKyrgyzGkKml(wgs84Pairs);
         const blob = new Blob([kml], {
           type: "application/vnd.google-earth.kml+xml;charset=utf-8"
@@ -12718,13 +12828,25 @@ ${placemarks}
         showCrsConfirmationRequired();
         showKmlFailure({
           code: "KML_CRS_REQUIRED",
-          title: "需要确认坐标系",
+          title: "需要确认识别结果",
           reason: activeCrsConfirmationState.intent
-            ? "已检测到图纸 CRS 标注，但尚未获得用户确认，不能直接写入 KML。"
-            : "识别结果是 X/Y 平面坐标，但尚未确认 CRS，不能直接写入 KML。",
+            ? "已检测到图纸坐标系标注，但尚未获得用户确认，不能直接写入 KML。"
+            : "识别结果是 X/Y 平面坐标，但尚未确认完整坐标信息，不能直接写入 KML。",
           suggestion: activeCrsConfirmationState.intent
-            ? "请核对坐标系确认卡片并点击“确认使用此坐标系”。"
-            : "请在坐标系确认卡片中手动选择 UTM Zone、Hemisphere 和 Datum。"
+            ? "请核对识别结果确认卡片并点击“确认并继续生成 KML”。"
+            : "请在高级设置中手动选择图纸标注的 UTM 分区、南北半球和坐标基准。"
+        });
+        return;
+      }
+
+      if (activeCrsConfirmationState.status === CRS_CONFIRMATION_STATUS.CONFIRMED && !isCurrentCrsConfirmationSession()) {
+        activeCrsConfirmationState = createCrsConfirmationState({ status: CRS_CONFIRMATION_STATUS.REQUIRED });
+        renderCrsConfirmationPanel();
+        showKmlFailure({
+          code: "KML_CRS_CONFIRMATION_STALE",
+          title: "识别确认已失效",
+          reason: "当前坐标结果与已确认的识别任务不一致，不能沿用旧确认生成 KML。",
+          suggestion: "请重新确认当前识别结果后再生成 KML。"
         });
         return;
       }
@@ -12739,9 +12861,9 @@ ${placemarks}
           showCrsConfirmationRequired();
           showKmlFailure({
             code: "KML_CRS_REQUIRED",
-            title: "需要确认坐标系",
-            reason: "识别结果是 X/Y 平面坐标，但尚未确认 CRS，不能直接写入 KML。",
-            suggestion: "请先确认坐标系并转换为 WGS84，或使用人工协助转换。"
+            title: "需要确认识别结果",
+            reason: "识别结果是 X/Y 平面坐标，但尚未确认完整坐标信息，不能直接写入 KML。",
+            suggestion: "请先确认识别结果并转换为经纬度，或使用人工协助转换。"
           });
           return;
         }
@@ -12758,12 +12880,6 @@ ${placemarks}
       const validGroups = selectedType === "Point"
         ? coordinateGroups
         : (coordinateGroups.length > 1 ? coordinateGroups : [pairs]);
-
-      const usageAllowed = await consumeUsage("convert");
-      if (!usageAllowed) {
-        showKmlPermissionFailure();
-        return;
-      }
 
       let placemarks = "";
       let documentName = "";
@@ -12851,6 +12967,7 @@ ${placemarks}
       clearUploadMessage();
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
+      saveRecognitionSession(null);
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
@@ -13075,6 +13192,7 @@ ${placemarks}
         const summaryGroups = Array.isArray(summaryEngine.groups) ? summaryEngine.groups : [];
         const displayCoordinates = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
         activeCoordinateEngineV2 = summaryEngine || null;
+        saveRecognitionSession(normalizeRecognitionSession(data));
 
         rememberState();
         input.value = displayCoordinates || finalCoordinates;
@@ -13131,7 +13249,7 @@ ${placemarks}
         } else if (isChatCoordinates) {
           const chatWarning = data.chatCoordinates?.warning || "";
           if (chatWarning === "possible swapped lat/lon") {
-            showMessage(`已识别 ${chatRows.length} 个 WGS84 聊天坐标点，但存在 possible swapped lat/lon 风险，请核对经纬度顺序。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
+            showMessage(`已识别 ${chatRows.length} 个 WGS84 聊天坐标点，但经纬度顺序可能存在问题，请核对后再导出。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
           } else {
             showMessage(`已识别 ${chatRows.length} 个 WGS84 聊天坐标点；生成 KML 时将使用 longitude,latitude,0。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
           }
