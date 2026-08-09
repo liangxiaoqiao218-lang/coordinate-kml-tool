@@ -4768,6 +4768,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const recognitionSummary = document.getElementById("recognitionSummary");
     const recognitionProgress = document.getElementById("recognitionProgress");
     const handwrittenDmsReviewPanel = document.getElementById("handwrittenDmsReviewPanel");
+    const kmlDownloadAction = document.querySelector(".kml-download-action");
     const imagePreview = document.getElementById("imagePreview");
     const imageModal = document.getElementById("imageModal");
     const imageModalImg = document.getElementById("imageModalImg");
@@ -6924,6 +6925,16 @@ Au值 = 纯度 × 10 后取整数</div>
       return "可生成";
     }
 
+    function refreshKmlButtonState(meta = activeRecognitionSummaryMeta || {}, { forceDefault = false } = {}) {
+      if (!kmlDownloadAction) return;
+      const blocked = !forceDefault && isUtmReviewKmlBlockedState(meta);
+      const label = blocked
+        ? "\u9700\u6838\u5bf9\u540e\u751f\u6210 KML"
+        : "\u751f\u6210 KML";
+      kmlDownloadAction.textContent = label;
+      kmlDownloadAction.dataset.reviewBlocked = blocked ? "true" : "false";
+      kmlDownloadAction.setAttribute("aria-label", label);
+    }
     function setRecognitionSummary(meta = {}) {
       activeRecognitionSummaryMeta = {
         ...meta,
@@ -6987,6 +6998,7 @@ Au值 = 纯度 × 10 后取整数</div>
         chipWrap.appendChild(chip);
       });
       recognitionSummary.appendChild(chipWrap);
+      refreshKmlButtonState(meta);
     }
 
     function refreshRecognitionSummaryState() {
@@ -6999,6 +7011,7 @@ Au值 = 纯度 × 10 后取整数</div>
       recognitionSummary.style.display = "none";
       recognitionSummary.textContent = "";
       recognitionSummary.className = "recognition-status";
+      refreshKmlButtonState({}, { forceDefault: true });
     }
 
     function setRecognitionStatus(text = "", type = "") {
