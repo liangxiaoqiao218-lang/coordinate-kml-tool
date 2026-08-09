@@ -1,4 +1,5 @@
 import { arbitrateCoordinateType } from "./arbitration.js";
+import { buildCoordinateResultV1 } from "./coordinate-result.js";
 
 function inferArbitrationContext(payload = {}, coordinateEngineV2 = {}) {
   const precisionMode = String(payload.precisionMode || coordinateEngineV2.precision_mode || "");
@@ -128,6 +129,7 @@ export function finalizeCoordinateResponse(payload = {}, { coordinateEngineV2 = 
     confirmationStatus: finalizedDecision.confirmationStatus,
     qualityGateStatus: finalizedDecision.qualityGateStatus,
     kml_ready: finalizedDecision.kml_ready,
-    coordinateArbitration: finalizedDecision
+    coordinateArbitration: finalizedDecision,
+    coordinateResult: buildCoordinateResultV1(finalizedDecision)
   };
 }
