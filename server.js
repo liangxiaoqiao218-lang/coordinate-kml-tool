@@ -4887,6 +4887,78 @@ function makeWgs84Point({ label, lat, lon, raw }) {
   };
 }
 
+function getDecimalCoordinateEvidence(line = "", numbers = [], coordinateOrderEvidence = "unknown") {
+  const original = String(line || "");
+  const values = Array.isArray(numbers) ? numbers.map(value => String(value || "")) : [];
+  const hasExplicitHemisphere = /\d\s*[NSEWO]\b/i.test(original);
+  const hasSignedValue = values.some(value => /^[+-]/.test(value.trim()));
+  const hemisphereEvidence = hasExplicitHemisphere
+    ? "explicit"
+    : hasSignedValue
+      ? "signed"
+      : "absent";
+  const hemisphereAmbiguous = hemisphereEvidence === "absent";
+  const orderAmbiguous = coordinateOrderEvidence === "unknown";
+
+  return Object.freeze({
+    hemisphereEvidence,
+    coordinateOrderEvidence,
+    ambiguity: Object.freeze({
+      hemisphere: hemisphereAmbiguous,
+      order: orderAmbiguous,
+      reason: hemisphereAmbiguous
+        ? "decimal_pair_without_hemisphere"
+        : orderAmbiguous
+          ? "coordinate_order_unknown"
+          : null
+    })
+  });
+}
+
+function createEmptyGeographicEvidence(coordinateOrderEvidence = "unknown") {
+  return Object.freeze({
+    hemisphereEvidence: "absent",
+    coordinateOrderEvidence,
+    ambiguity: Object.freeze({
+      hemisphere: false,
+      order: false,
+      reason: null
+    })
+  });
+}
+
+function summarizeGeographicEvidence(points = [], coordinateOrderEvidence = "unknown") {
+  const normalizedPoints = Array.isArray(points) ? points : [];
+  if (normalizedPoints.length === 0) {
+    return createEmptyGeographicEvidence(coordinateOrderEvidence);
+  }
+
+  const hemisphereEvidenceValues = new Set(normalizedPoints.map(point => point.hemisphereEvidence || "absent"));
+  const hasAbsentHemisphere = hemisphereEvidenceValues.has("absent");
+  const hasMixedHemisphereEvidence = hemisphereEvidenceValues.size > 1;
+  const hemisphereEvidence = hasMixedHemisphereEvidence
+    ? "mixed"
+    : [...hemisphereEvidenceValues][0] || "absent";
+  const hemisphereAmbiguous = hasAbsentHemisphere || hasMixedHemisphereEvidence;
+  const orderEvidenceValues = new Set(normalizedPoints.map(point => point.coordinateOrderEvidence || coordinateOrderEvidence || "unknown"));
+  const orderEvidence = orderEvidenceValues.size === 1 ? [...orderEvidenceValues][0] : "mixed";
+  const orderAmbiguous = orderEvidence === "unknown" || orderEvidence === "mixed";
+
+  return Object.freeze({
+    hemisphereEvidence,
+    coordinateOrderEvidence: orderEvidence,
+    ambiguity: Object.freeze({
+      hemisphere: hemisphereAmbiguous,
+      order: orderAmbiguous,
+      reason: hemisphereAmbiguous
+        ? "decimal_pair_without_hemisphere"
+        : orderAmbiguous
+          ? "coordinate_order_unknown"
+          : null
+    })
+  });
+}
+
 function parseChatCoordinateLine(line, fallbackIndex = 1) {
   const original = String(line || "").trim();
 
@@ -4908,12 +4980,16 @@ function parseChatCoordinateLine(line, fallbackIndex = 1) {
       && Math.abs(lon) < 100000
     ) {
       const label = String(formattedMatch[1]).trim().toUpperCase() || String(fallbackIndex);
-      return makeWgs84Point({
-        label,
-        lat,
-        lon,
-        raw: original
-      });
+      const evidence = getDecimalCoordinateEvidence(original, [formattedMatch[2], formattedMatch[3]], "default_latlon");
+      return {
+        ...makeWgs84Point({
+          label,
+          lat,
+          lon,
+          raw: original
+        }),
+        ...evidence
+      };
     }
 
     return null;
@@ -4943,12 +5019,16 @@ function parseChatCoordinateLine(line, fallbackIndex = 1) {
     return null;
   }
 
-  return makeWgs84Point({
-    label,
-    lat,
-    lon,
-    raw: original
-  });
+  const evidence = getDecimalCoordinateEvidence(original, numbers, "default_latlon");
+  return {
+    ...makeWgs84Point({
+      label,
+      lat,
+      lon,
+      raw: original
+    }),
+    ...evidence
+  };
 }
 
 function hasLongitudeLatitudeHeaderContext(text) {
@@ -5014,11 +5094,13 @@ function parseLonLatTableCoordinateLine(line, fallbackIndex = 1) {
     return null;
   }
 
+  const evidence = getDecimalCoordinateEvidence(original, [lonText, latText], "explicit_header_lonlat");
   return {
     ...makeWgs84Point({ label, lat, lon, raw: original }),
     latitude: latText,
     longitude: lonText,
-    kmlCoordinate: `${lonText},${latText},0`
+    kmlCoordinate: `${lonText},${latText},0`,
+    ...evidence
   };
 }
 
@@ -5033,6 +5115,9 @@ function getWgs84TableCoordinatesInfo(text, options = {}) {
       type: "WGS84_TABLE_COORDINATES",
       coordinateOrder: "",
       sourceHint: "",
+      hemisphereEvidence: "absent",
+      coordinateOrderEvidence: "",
+      ambiguity: createEmptyGeographicEvidence("").ambiguity,
       points: [],
       geometry: "Point",
       warning: "",
@@ -5064,12 +5149,16 @@ function getWgs84TableCoordinatesInfo(text, options = {}) {
 
   const warnings = getChatCoordinateWarnings(points)
     .filter(warning => warning !== "possible swapped lat/lon");
+  const geographicEvidence = summarizeGeographicEvidence(points, "explicit_header_lonlat");
 
   return {
     isWgs84TableCoordinates: points.length > 0,
     type: "WGS84_TABLE_COORDINATES",
     coordinateOrder: "lonlat",
     sourceHint: "table_header_longitude_latitude",
+    hemisphereEvidence: geographicEvidence.hemisphereEvidence,
+    coordinateOrderEvidence: geographicEvidence.coordinateOrderEvidence,
+    ambiguity: geographicEvidence.ambiguity,
     points,
     geometry: inferGeometry(points),
     warning: warnings[0] || "",
@@ -5357,6 +5446,9 @@ function getChatCoordinatesInfo(text) {
       type: "WGS84_CHAT_COORDINATES",
       rejected: true,
       rejectionReason,
+      hemisphereEvidence: "absent",
+      coordinateOrderEvidence: "",
+      ambiguity: createEmptyGeographicEvidence("").ambiguity,
       points: [],
       geometry: "Point",
       warning: "",
@@ -5408,12 +5500,16 @@ function getChatCoordinatesInfo(text) {
   }
 
   const warnings = getChatCoordinateWarnings(points);
+  const geographicEvidence = summarizeGeographicEvidence(points, "default_latlon");
 
   return {
     isChatCoordinates: points.length > 0,
     type: "WGS84_CHAT_COORDINATES",
     rejected: false,
     rejectionReason: "",
+    hemisphereEvidence: geographicEvidence.hemisphereEvidence,
+    coordinateOrderEvidence: geographicEvidence.coordinateOrderEvidence,
+    ambiguity: geographicEvidence.ambiguity,
     points,
     geometry: inferGeometry(points),
     warning: warnings.includes("possible swapped lat/lon") ? "possible swapped lat/lon" : (warnings[0] || ""),
