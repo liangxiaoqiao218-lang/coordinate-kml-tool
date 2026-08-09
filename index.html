@@ -4889,6 +4889,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeCoordinatePrecisionMode = "";
     let activeCoordinateEngineV2 = null;
     let activeCoordinateArbitration = null;
+    let activeCoordinateResult = null;
     let activeRecognitionSummaryMeta = null;
     let currentRecognitionSession = loadRecognitionSession();
     const CRS_CONFIRMATION_STATUS = Object.freeze({
@@ -6304,11 +6305,28 @@ Au值 = 纯度 × 10 后取整数</div>
       return Boolean(isUtmReview);
     }
 
+    function getCoordinateResult(meta = {}) {
+      return meta.coordinateResult || activeCoordinateResult || null;
+    }
+
+    function getCoordinateResultState(meta = {}) {
+      const result = getCoordinateResult(meta);
+      return String(result?.state || "").trim();
+    }
+
+    function isCoordinateResultBlockedReview(meta = {}) {
+      return getCoordinateResultState(meta) === "BLOCKED_REVIEW";
+    }
+
+    function isCoordinateResultConfirmRequired(meta = {}) {
+      return getCoordinateResultState(meta) === "CONFIRM_REQUIRED";
+    }
+
     function getRecognitionSummaryReviewState(meta = {}) {
       const engine = meta.engine || {};
       const groups = Array.isArray(engine.groups) ? engine.groups : [];
       const orderStatus = getRecognitionSummaryOrderStatus(engine);
-      const kmlBlocked = isUtmReviewKmlBlockedState(meta);
+      const kmlBlocked = isCoordinateResultBlockedReview(meta) || isUtmReviewKmlBlockedState(meta);
       const reviewGroupIndexes = groups
         .map((group, index) => group?.requires_review ? index + 1 : null)
         .filter(Boolean);
@@ -6817,6 +6835,7 @@ Au值 = 纯度 × 10 后取整数</div>
       activeCoordinatePrecisionMode = "";
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
+      activeCoordinateResult = null;
       activeCrsConfirmationState = createCrsConfirmationState();
       renderCrsConfirmationPanel();
       handwrittenDmsReviewState = getHandwrittenDmsReviewStateAfterTextChange(handwrittenDmsReviewState);
@@ -6916,6 +6935,8 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function getRecognitionSummaryKmlState(meta = {}, review = getRecognitionSummaryReviewState(meta)) {
+      if (isCoordinateResultBlockedReview(meta)) return "\u9700\u6838\u5bf9\u540e\u751f\u6210";
+      if (isCoordinateResultConfirmRequired(meta)) return "\u9700\u6838\u5bf9\u8bc6\u522b\u7ed3\u679c";
       if (review.kmlBlocked) return "\u9700\u6838\u5bf9\u540e\u751f\u6210";
       if (review.requiresReview) return "需核对";
       if (requiresCrsConfirmationForCurrentInput()
@@ -6927,12 +6948,17 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function refreshKmlButtonState(meta = activeRecognitionSummaryMeta || {}, { forceDefault = false } = {}) {
       if (!kmlDownloadAction) return;
-      const blocked = !forceDefault && isUtmReviewKmlBlockedState(meta);
+      const resultState = forceDefault ? "" : getCoordinateResultState(meta);
+      const blocked = !forceDefault && (resultState === "BLOCKED_REVIEW" || isUtmReviewKmlBlockedState(meta));
+      const confirmRequired = !forceDefault && resultState === "CONFIRM_REQUIRED";
       const label = blocked
         ? "\u9700\u6838\u5bf9\u540e\u751f\u6210 KML"
+        : confirmRequired
+          ? "\u9700\u6838\u5bf9\u8bc6\u522b\u7ed3\u679c"
         : "\u751f\u6210 KML";
       kmlDownloadAction.textContent = label;
       kmlDownloadAction.dataset.reviewBlocked = blocked ? "true" : "false";
+      kmlDownloadAction.dataset.coordinateResultState = resultState;
       kmlDownloadAction.setAttribute("aria-label", label);
     }
     function setRecognitionSummary(meta = {}) {
@@ -7341,6 +7367,7 @@ Au值 = 纯度 × 10 后取整数</div>
       selectedImageFile = null;
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
+      activeCoordinateResult = null;
       saveRecognitionSession(null);
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
@@ -12040,6 +12067,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       clearInternalKmlSource();
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
+      activeCoordinateResult = null;
       saveRecognitionSession(null);
       activeCrsConfirmationState = createCrsConfirmationState();
       renderCrsConfirmationPanel();
@@ -13019,6 +13047,7 @@ ${placemarks}
       supportPanel.style.display = "none";
       clearUploadMessage();
       activeCoordinateEngineV2 = null;
+      activeCoordinateResult = null;
       activeCoordinateArbitration = null;
       saveRecognitionSession(null);
       resetHandwrittenDmsReviewState();
@@ -13072,6 +13101,7 @@ ${placemarks}
 
         activeCoordinatePrecisionMode = data.precisionMode || "";
         activeCoordinateArbitration = data.coordinateArbitration || null;
+        activeCoordinateResult = data.coordinateResult || null;
         const isTypedUtmProjected = data.coordinateType === "utm_projected_xy"
           && /^utm(?:30n)?-projected-x-y(?:-review)?$/.test(activeCoordinatePrecisionMode);
         const preservedCoordinates = extractCoordinatesPreservePrecision(data.rawText);
@@ -13347,6 +13377,7 @@ ${placemarks}
           kml_ready: data.kml_ready,
           coordinateArbitrationReason: data.coordinateArbitration?.reason || "",
           coordinateArbitration: data.coordinateArbitration || null,
+          coordinateResult: data.coordinateResult || null,
           crsConfirmationBlocked: Boolean(data.crsConfirmationBlocked),
           requiresReview: Boolean(data.requires_review || summaryEngine.requires_review),
           engine: summaryEngine
