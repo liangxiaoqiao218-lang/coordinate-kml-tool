@@ -19,6 +19,13 @@ export {
 } from "./sanitize.js";
 
 export {
+  PRE_DECISION_EVIDENCE_CONTEXT_SCHEMA_VERSION,
+  createPreDecisionEvidenceContext,
+  sanitizePreDecisionEvidenceContext,
+  snapshotPreSuppressionCandidates
+} from "./context.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
