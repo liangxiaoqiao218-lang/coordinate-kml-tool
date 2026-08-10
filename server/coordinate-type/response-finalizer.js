@@ -80,6 +80,39 @@ function passthroughDecision(payload = {}, coordinateEngineV2 = {}) {
   });
 }
 
+function hasStrongerVerifiedSource(decision = {}) {
+  const coordinateType = String(decision.coordinateType || "");
+  const precisionMode = String(decision.precisionMode || "");
+  const reason = String(decision.reason || "");
+
+  if (
+    coordinateType === "utm_projected_xy"
+    && precisionMode === "utm-projected-x-y"
+    && reason === "explicit_utm_crs_and_structured_xy"
+  ) {
+    return true;
+  }
+
+  return coordinateType === "mgrs_utm_grid_reference"
+    || coordinateType === "bftm_projected_xy"
+    || coordinateType === "kyrgyz_gk_projected_xy";
+}
+
+function shouldPropagateEngineReview(decision = {}, engine = {}) {
+  return engine?.requires_review === true && !hasStrongerVerifiedSource(decision);
+}
+
+function appendReason(reason = "", addition = "") {
+  const existing = String(reason || "").trim();
+  const next = String(addition || "").trim();
+
+  if (!next || existing.includes(next)) {
+    return existing;
+  }
+
+  return existing ? `${existing}+${next}` : next;
+}
+
 export function finalizeCoordinateResponse(payload = {}, { coordinateEngineV2 = null } = {}) {
   const engine = coordinateEngineV2 || payload.coordinateEngineV2 || {};
   let decision = payload.coordinateArbitration;
@@ -94,10 +127,12 @@ export function finalizeCoordinateResponse(payload = {}, { coordinateEngineV2 = 
   const engineReviewAuthoritative = decision.coordinateType === "cote_divoire_geographic_dms_table"
     || decision.coordinateType === "mozambique_geographic_table"
     || decision.authority === "legacy_compatibility";
+  const propagateEngineReview = shouldPropagateEngineReview(decision, engine);
   const requiresReview = Boolean(
     decision.requires_review
     || payload.requires_review
     || (engineReviewAuthoritative && engine.requires_review)
+    || propagateEngineReview
   );
   const canonicalUtmAwaitingConfirmation = decision.coordinateType === "utm_projected_xy"
     && decision.precisionMode === "utm-projected-x-y"
@@ -117,7 +152,9 @@ export function finalizeCoordinateResponse(payload = {}, { coordinateEngineV2 = 
     arbitrationEligible: Boolean(decision.arbitrationEligible && !requiresReview),
     confirmationStatus,
     qualityGateStatus: requiresReview ? "blocked" : decision.qualityGateStatus,
-    kml_ready: kmlReady
+    kml_allowed: Boolean(decision.kml_allowed && !requiresReview),
+    kml_ready: kmlReady,
+    reason: propagateEngineReview ? appendReason(decision.reason, "engine_review_required") : decision.reason
   });
 
   return {
