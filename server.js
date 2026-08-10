@@ -27,6 +27,13 @@ import {
 import { buildProjectedTableVisionTiles } from "./server/utm-intent/projected-table-image-tiles.js";
 import { arbitrateCoordinateType } from "./server/coordinate-type/arbitration.js";
 import { buildVersionResponse } from "./server/release-identity/index.js";
+import {
+  createRecognitionMetrics,
+  finishAttempt,
+  markFallback,
+  sanitizeRecognitionMetricsForResponse,
+  startAttempt
+} from "./server/recognition-metrics/index.js";
 
 const app = express();
 const upload = multer({
@@ -7387,6 +7394,29 @@ async function runLocalOcrFallback(imageBuffer, reason = "") {
   };
 }
 
+function isRecognitionVisionTimeout(error = {}) {
+  return error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT";
+}
+
+function getRecognitionVisionErrorCode(error = {}) {
+  if (isRecognitionVisionTimeout(error)) return "VISION_TIMEOUT";
+  if (error?.code === "ALIYUN_API_KEY_MISSING") return "MODEL_UNAVAILABLE";
+  return "VISION_ERROR";
+}
+
+function getRecognitionFallbackReason(error = {}) {
+  if (isRecognitionVisionTimeout(error)) return "VISION_TIMEOUT";
+  if (error?.code === "ALIYUN_API_KEY_MISSING") return "MODEL_UNAVAILABLE";
+  return "VISION_ERROR";
+}
+
+function shouldIncludeRecognitionMetricAttempts(req = {}) {
+  const queryDebug = String(req.query?.debug || req.query?.recognitionDebug || "").trim().toLowerCase();
+  const headerDebug = String(req.get?.("x-debug-trace") || req.get?.("x-recognition-debug") || "").trim().toLowerCase();
+  return ["1", "true", "yes", "recognition"].includes(queryDebug)
+    || ["1", "true", "yes", "recognition"].includes(headerDebug);
+}
+
 function normalizeCoordinateEngineV2WarningList(value) {
   if (!value) {
     return [];
@@ -12030,6 +12060,37 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
   let visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || req.query?.visitorId || "").trim();
   const recognitionSessionId = createRecognitionSessionId();
   const regressionTestMode = getRegressionTestMode(req);
+  const recognitionMetrics = createRecognitionMetrics();
+  const includeRecognitionMetricAttempts = shouldIncludeRecognitionMetricAttempts(req);
+  const serializeRecognitionMetrics = () => sanitizeRecognitionMetricsForResponse(recognitionMetrics, {
+    includeAttempts: includeRecognitionMetricAttempts
+  });
+  const runInstrumentedLocalOcrFallback = async (imageBuffer, reason = "", stage = "local_ocr_fallback") => {
+    const ocrAttempt = startAttempt(recognitionMetrics, {
+      stage,
+      provider: "ocr",
+      model: "local_tesseract"
+    });
+    try {
+      const fallback = await runLocalOcrFallback(imageBuffer, reason);
+      const fallbackRows = Math.max(
+        countCoordinateRows(fallback.coordinates),
+        countCoordinateRows(fallback.rawText)
+      );
+      finishAttempt(recognitionMetrics, ocrAttempt, {
+        status: fallback.rawText ? "success" : "error",
+        errorCode: fallback.rawText ? null : "OCR_EMPTY_RESPONSE",
+        resultCount: fallbackRows
+      });
+      return fallback;
+    } catch (ocrError) {
+      finishAttempt(recognitionMetrics, ocrAttempt, {
+        status: "error",
+        errorCode: "OCR_TIMEOUT"
+      });
+      throw ocrError;
+    }
+  };
   const consumeCoordinateUsage = async (metadata = {}) => {
     if (regressionTestMode.active) {
       return { success: true, reason: "regression_test", skipped: true };
@@ -12895,12 +12956,35 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
     // Start table recognition with the visual model. OCR is only a retry/fallback because it can
     // lose table row relationships or return bbox metadata instead of coordinate pairs.
-    const response = await callAliyunVision({
-      modelName: aliyunVisionModel,
-      prompt,
-      imageItems,
-      temperature: 0.1
+    const mainVisionTimeoutMs = 35000;
+    const mainVisionAttempt = startAttempt(recognitionMetrics, {
+      stage: "main_vision",
+      provider: "vision",
+      model: aliyunVisionModel,
+      timeoutMs: mainVisionTimeoutMs
     });
+    let response;
+    try {
+      response = await callAliyunVision({
+        modelName: aliyunVisionModel,
+        prompt,
+        imageItems,
+        temperature: 0.1,
+        timeoutMs: mainVisionTimeoutMs
+      });
+      const mainVisionRawText = response.choices?.[0]?.message?.content || "";
+      finishAttempt(recognitionMetrics, mainVisionAttempt, {
+        status: mainVisionRawText ? "success" : "error",
+        errorCode: mainVisionRawText ? null : "MODEL_EMPTY_RESPONSE",
+        resultCount: countCoordinateRows(extractCoordinateLines(mainVisionRawText))
+      });
+    } catch (visionError) {
+      finishAttempt(recognitionMetrics, mainVisionAttempt, {
+        status: isRecognitionVisionTimeout(visionError) ? "timeout" : "error",
+        errorCode: getRecognitionVisionErrorCode(visionError)
+      });
+      throw visionError;
+    }
 
     let rawText = response.choices?.[0]?.message?.content || "";
     let coordinates = extractCoordinateLines(rawText);
@@ -13895,6 +13979,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         finalRawText: rawText
       },
       parserTrace,
+      recognitionMetrics: serializeRecognitionMetrics(),
       quota: consumeResult.quota
     };
     Object.assign(recognitionPayload, attachRecognitionSessionMetadata({}, recognitionSessionId, consumeResult));
@@ -14071,7 +14156,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
         if (!handwrittenTimeoutRoutingEvidence.shouldRetry) {
           try {
-            timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
+            timeoutRoutingOcrFallback = await runInstrumentedLocalOcrFallback(req.file.buffer, errorMessage, "local_ocr_timeout_routing");
+            markFallback(recognitionMetrics, {
+              used: true,
+              type: "local_tesseract",
+              reason: getRecognitionFallbackReason(error)
+            });
             handwrittenTimeoutRoutingEvidence = getHandwrittenDmsTimeoutRoutingEvidence(req.file, timeoutRoutingHint, {
               ocrText: timeoutRoutingOcrFallback.rawText
             });
@@ -14383,7 +14473,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       }
 
-      const fallback = timeoutRoutingOcrFallback || await runLocalOcrFallback(req.file.buffer, errorMessage);
+      const fallback = timeoutRoutingOcrFallback || await runInstrumentedLocalOcrFallback(req.file.buffer, errorMessage, "local_ocr_fallback");
+      if (!timeoutRoutingOcrFallback) {
+        markFallback(recognitionMetrics, {
+          used: true,
+          type: "local_tesseract",
+          reason: getRecognitionFallbackReason(error)
+        });
+      }
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
       const fallbackMgrs = getMgrsInfo(fallback.rawText);
       let fallbackMozambiqueGeographicTable = getMozambiqueGeographicInfo(fallback.rawText);
@@ -14692,6 +14789,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         });
       }
       fallback.quota = consumeResult.quota;
+      fallback.recognitionMetrics = serializeRecognitionMetrics();
       Object.assign(fallback, attachRecognitionSessionMetadata({}, recognitionSessionId, consumeResult));
       fallback.coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(fallback, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") });
 
