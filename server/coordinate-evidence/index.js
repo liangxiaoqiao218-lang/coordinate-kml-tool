@@ -17,3 +17,13 @@ export {
   sanitizeCandidateForResponse,
   sanitizeShadowDecisionForResponse
 } from "./sanitize.js";
+
+export {
+  buildCoordinateEvidenceCandidates,
+  buildCoordinateEvidenceShadowModel,
+  buildDmsGeographicEvidenceCandidate,
+  buildStructuredCadastralEvidenceCandidate,
+  buildUtmCrsTextEvidenceCandidate,
+  buildUtmEvidenceCandidates,
+  buildVerifiedUtmTransformationEvidenceCandidate
+} from "./builders/index.js";
