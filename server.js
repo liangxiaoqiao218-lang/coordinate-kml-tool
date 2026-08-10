@@ -7417,6 +7417,10 @@ function shouldIncludeRecognitionMetricAttempts(req = {}) {
     || ["1", "true", "yes", "recognition"].includes(headerDebug);
 }
 
+function shouldIncludeCoordinateEvidenceDebug(req = {}) {
+  return shouldIncludeRecognitionMetricAttempts(req);
+}
+
 function normalizeCoordinateEngineV2WarningList(value) {
   if (!value) {
     return [];
@@ -12001,7 +12005,9 @@ app.post("/api/regression/parse-coordinate-text", (req, res) => {
       rawHint: String(req.body?.rawHint || req.body?.hint || req.body?.context || "")
     });
 
-  return res.json(buildFinalizedCoordinateVerificationResponse(regressionPayload, coordinateEngineV2));
+  return res.json(buildFinalizedCoordinateVerificationResponse(regressionPayload, coordinateEngineV2, {
+    includeCoordinateEvidenceDebug: shouldIncludeCoordinateEvidenceDebug(req)
+  }));
 });
 
 /*
@@ -12062,9 +12068,15 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
   const regressionTestMode = getRegressionTestMode(req);
   const recognitionMetrics = createRecognitionMetrics();
   const includeRecognitionMetricAttempts = shouldIncludeRecognitionMetricAttempts(req);
+  const includeCoordinateEvidenceDebug = shouldIncludeCoordinateEvidenceDebug(req);
   const serializeRecognitionMetrics = () => sanitizeRecognitionMetricsForResponse(recognitionMetrics, {
     includeAttempts: includeRecognitionMetricAttempts
   });
+  const buildDebuggableCoordinateResponse = (payload, engine = null) => buildFinalizedCoordinateVerificationResponse(
+    payload,
+    engine,
+    { includeCoordinateEvidenceDebug }
+  );
   const runInstrumentedLocalOcrFallback = async (imageBuffer, reason = "", stage = "local_ocr_fallback") => {
     const ocrAttempt = startAttempt(recognitionMetrics, {
       stage,
@@ -12683,7 +12695,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           };
 
           const kyrgyzDirectSessionPayload = attachRecognitionSessionMetadata(kyrgyzDirectPayload, recognitionSessionId, consumeResult);
-          return res.json(buildFinalizedCoordinateVerificationResponse(
+          return res.json(buildDebuggableCoordinateResponse(
             kyrgyzDirectSessionPayload,
             buildCoordinateEngineV2ShadowResult(kyrgyzDirectSessionPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint })
           ));
@@ -12797,7 +12809,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             };
 
             const mozambiqueDirectSessionPayload = attachRecognitionSessionMetadata(mozambiqueDirectPayload, recognitionSessionId, consumeResult);
-            return res.json(buildFinalizedCoordinateVerificationResponse(
+            return res.json(buildDebuggableCoordinateResponse(
               mozambiqueDirectSessionPayload,
               buildCoordinateEngineV2ShadowResult(mozambiqueDirectSessionPayload, {
                 fileName: uploadedFileName,
@@ -12914,7 +12926,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               };
 
               const mozambiqueRetrySessionPayload = attachRecognitionSessionMetadata(mozambiqueRetryPayload, recognitionSessionId, consumeResult);
-              return res.json(buildFinalizedCoordinateVerificationResponse(
+              return res.json(buildDebuggableCoordinateResponse(
                 mozambiqueRetrySessionPayload,
                 buildCoordinateEngineV2ShadowResult(mozambiqueRetrySessionPayload, {
                   fileName: uploadedFileName,
@@ -14068,7 +14080,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     recognitionPayload.kml_ready = coordinateArbitration.kml_ready;
     recognitionPayload.coordinateArbitration = coordinateArbitration;
 
-    res.json(buildFinalizedCoordinateVerificationResponse(recognitionPayload, coordinateEngineV2));
+    res.json(buildDebuggableCoordinateResponse(recognitionPayload, coordinateEngineV2));
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
     console.error("阿里云识别失败，尝试备用OCR。真实错误信息：", {
@@ -14252,7 +14264,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             };
 
             const handwrittenRetrySessionPayload = attachRecognitionSessionMetadata(handwrittenRetryPayload, recognitionSessionId, consumeResult);
-            return res.json(buildFinalizedCoordinateVerificationResponse(
+            return res.json(buildDebuggableCoordinateResponse(
               handwrittenRetrySessionPayload,
               buildCoordinateEngineV2ShadowResult(handwrittenRetrySessionPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
             ));
@@ -14275,7 +14287,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ...handwrittenDmsDebug
         };
 
-        return res.status(504).json(buildFinalizedCoordinateVerificationResponse(
+        return res.status(504).json(buildDebuggableCoordinateResponse(
           handwrittenTimeoutPayload,
           buildCoordinateEngineV2ShadowResult(handwrittenTimeoutPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
         ));
@@ -14357,7 +14369,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
             };
 
             const kyrgyzRetrySessionPayload = attachRecognitionSessionMetadata(kyrgyzRetryPayload, recognitionSessionId, consumeResult);
-            return res.json(buildFinalizedCoordinateVerificationResponse(
+            return res.json(buildDebuggableCoordinateResponse(
               kyrgyzRetrySessionPayload,
               buildCoordinateEngineV2ShadowResult(kyrgyzRetrySessionPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
             ));
@@ -14461,7 +14473,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             };
 
             const wgs84TableRetrySessionPayload = attachRecognitionSessionMetadata(wgs84TableRetryPayload, recognitionSessionId, consumeResult);
-            return res.json(buildFinalizedCoordinateVerificationResponse(
+            return res.json(buildDebuggableCoordinateResponse(
               wgs84TableRetrySessionPayload,
               buildCoordinateEngineV2ShadowResult(wgs84TableRetrySessionPayload, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") })
             ));
@@ -14793,7 +14805,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
       Object.assign(fallback, attachRecognitionSessionMetadata({}, recognitionSessionId, consumeResult));
       fallback.coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(fallback, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") });
 
-      res.json(buildFinalizedCoordinateVerificationResponse(fallback, fallback.coordinateEngineV2));
+      res.json(buildDebuggableCoordinateResponse(fallback, fallback.coordinateEngineV2));
     } catch (fallbackError) {
       console.error(fallbackError);
       res.status(500).json({

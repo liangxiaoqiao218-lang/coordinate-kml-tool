@@ -7,6 +7,13 @@ import {
 } from "../evidence/recognition-evidence-adapter.js";
 import { buildEvidenceAcquisition } from "../evidence-acquisition/index.js";
 import { finalizeCoordinateResponse } from "../coordinate-type/response-finalizer.js";
+import {
+  buildCoordinateEvidenceShadowModel,
+  sanitizeCandidateForResponse,
+  sanitizeShadowDecisionForResponse
+} from "../coordinate-evidence/index.js";
+
+const COORDINATE_EVIDENCE_SUMMARY_SCHEMA_VERSION = "coordinate_evidence_summary_v1";
 
 function uniqueWarnings(values) {
   return Array.from(new Set(values.map(value => String(value || "").trim()).filter(Boolean)));
@@ -147,8 +154,70 @@ export function buildCoordinateVerificationResponse(payload = {}, coordinateEngi
   };
 }
 
-export function buildFinalizedCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null) {
+function stripInternalCoordinateEvidenceContext(payload = {}) {
+  const { _coordinateEvidenceContext, ...publicPayload } = payload;
+  return {
+    publicPayload,
+    coordinateEvidenceContext: _coordinateEvidenceContext && typeof _coordinateEvidenceContext === "object"
+      ? _coordinateEvidenceContext
+      : {}
+  };
+}
+
+function buildCoordinateEvidenceAttachment(response = {}, engine = {}, options = {}) {
+  const evidenceSource = {
+    ...response,
+    ...(options.coordinateEvidenceContext || {}),
+    coordinateEngineV2: engine,
+    crsEvidenceShadow: options.coordinateEvidenceContext?.crsEvidenceShadow
+      || response.crsEvidenceShadow
+      || response.crsEvidence
+  };
+  const currentWinner = response.coordinateArbitration || {
+    coordinateType: response.coordinateType,
+    precisionMode: response.precisionMode
+  };
+  const shadowModel = buildCoordinateEvidenceShadowModel(evidenceSource, currentWinner);
+  const sanitizedCandidates = shadowModel.coordinateEvidenceCandidates.map(sanitizeCandidateForResponse);
+  const sanitizedDecision = sanitizeShadowDecisionForResponse(shadowModel.shadowEvidenceDecision);
+  const coordinateEvidenceSummary = Object.freeze({
+    schemaVersion: COORDINATE_EVIDENCE_SUMMARY_SCHEMA_VERSION,
+    available: true,
+    candidateCount: sanitizedCandidates.length,
+    shadowDecisionAvailable: Boolean(sanitizedDecision.winnerEvidenceType),
+    differenceFromCurrentWinner: sanitizedDecision.differenceFromCurrentWinner === true,
+    blockedByShadowOnly: sanitizedDecision.blockedByShadowOnly === true,
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+
+  if (options.includeCoordinateEvidenceDebug === true) {
+    return {
+      coordinateEvidenceSummary,
+      coordinateEvidenceCandidates: sanitizedCandidates,
+      shadowEvidenceDecision: sanitizedDecision
+    };
+  }
+
+  return { coordinateEvidenceSummary };
+}
+
+export function buildFinalizedCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null, options = {}) {
   const engine = coordinateEngineV2 || payload.coordinateEngineV2 || {};
-  const finalizedPayload = finalizeCoordinateResponse(payload, { coordinateEngineV2: engine });
-  return buildCoordinateVerificationResponse(finalizedPayload, engine);
+  const { publicPayload, coordinateEvidenceContext } = stripInternalCoordinateEvidenceContext(payload);
+  const finalizedPayload = finalizeCoordinateResponse(publicPayload, { coordinateEngineV2: engine });
+  const response = buildCoordinateVerificationResponse(finalizedPayload, engine);
+  const coordinateEvidenceAttachment = buildCoordinateEvidenceAttachment(response, engine, {
+    includeCoordinateEvidenceDebug: options.includeCoordinateEvidenceDebug === true,
+    coordinateEvidenceContext: {
+      ...coordinateEvidenceContext,
+      ...(options.coordinateEvidenceContext || {})
+    }
+  });
+
+  return {
+    ...response,
+    ...coordinateEvidenceAttachment
+  };
 }
