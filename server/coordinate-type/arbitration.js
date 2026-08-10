@@ -12,6 +12,11 @@ function hasWarning(value, warning) {
   return values.some(item => String(item || "").toLowerCase().includes(warning));
 }
 
+function hasHemisphereAmbiguity(value = {}) {
+  return value?.ambiguity?.hemisphere === true
+    || String(value?.hemisphereEvidence || "").toLowerCase() === "absent";
+}
+
 function result({
   coordinateType,
   precisionMode,
@@ -222,13 +227,16 @@ export function arbitrateCoordinateType(context = {}) {
   }
   if (wgs84TableCoordinates?.isWgs84TableCoordinates) {
     const swapped = hasWarning([wgs84TableCoordinates.warning, wgs84TableCoordinates.warnings, warning], "possible swapped lat/lon");
+    const hemisphereAmbiguous = hasHemisphereAmbiguity(wgs84TableCoordinates);
     return result({
       coordinateType: "wgs84_geographic_table",
       precisionMode: "wgs84-table-coordinates",
       authority: "validated_wgs84",
       requiresReview: swapped,
-      kmlAllowed: !swapped,
-      reason: swapped ? "possible_swapped_lat_lon" : "validated_wgs84_table"
+      kmlAllowed: !swapped && !hemisphereAmbiguous,
+      confirmationStatus: hemisphereAmbiguous && !swapped ? "required" : "not_required",
+      qualityGateStatus: swapped ? "blocked" : "passed",
+      reason: swapped ? "possible_swapped_lat_lon" : (hemisphereAmbiguous ? "hemisphere_ambiguous" : "validated_wgs84_table")
     });
   }
   if (dmsAccepted) {
@@ -239,13 +247,16 @@ export function arbitrateCoordinateType(context = {}) {
   }
   if (chatCoordinates?.isChatCoordinates) {
     const swapped = hasWarning([chatCoordinates.warning, chatCoordinates.warnings, warning], "possible swapped lat/lon");
+    const hemisphereAmbiguous = hasHemisphereAmbiguity(chatCoordinates);
     return result({
       coordinateType: "wgs84_chat_coordinates",
       precisionMode: "wgs84-chat-coordinates",
       authority: "chat",
       requiresReview: swapped,
-      kmlAllowed: !swapped,
-      reason: swapped ? "possible_swapped_lat_lon" : "wgs84_chat_coordinates"
+      kmlAllowed: !swapped && !hemisphereAmbiguous,
+      confirmationStatus: hemisphereAmbiguous && !swapped ? "required" : "not_required",
+      qualityGateStatus: swapped ? "blocked" : "passed",
+      reason: swapped ? "possible_swapped_lat_lon" : (hemisphereAmbiguous ? "hemisphere_ambiguous" : "wgs84_chat_coordinates")
     });
   }
 
