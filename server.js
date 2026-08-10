@@ -5603,6 +5603,35 @@ function buildPreSuppressionEvidenceSnapshotInput({
   };
 }
 
+function listFallbackEvidenceSuppressedByUtmLock({
+  dmsGroupedAccepted = false,
+  frenchPerimeterDms = {},
+  pointAzDmsTableAccepted = false,
+  handwrittenDms = {},
+  dmsAccepted = false,
+  cadastralGrid = {},
+  wgs84TableCoordinates = {},
+  chatCoordinates = {}
+} = {}) {
+  const suppressed = [];
+  if (dmsAccepted || dmsGroupedAccepted || pointAzDmsTableAccepted || frenchPerimeterDms?.isFrenchPerimeterDms) {
+    suppressed.push("DMS");
+  }
+  if (handwrittenDms?.isHandwrittenDms) {
+    suppressed.push("HANDWRITTEN_DMS");
+  }
+  if (cadastralGrid?.isCadastralGrid) {
+    suppressed.push("CADASTRAL");
+  }
+  if (wgs84TableCoordinates?.isWgs84TableCoordinates) {
+    suppressed.push("WGS84_TABLE");
+  }
+  if (chatCoordinates?.isChatCoordinates) {
+    suppressed.push("WGS84_CHAT");
+  }
+  return [...new Set(suppressed)];
+}
+
 function formatChatCoordinateRows(points) {
   return ["label | WGS84 | KML", ...points.map((point, index) => {
     const label = point.label || String(index + 1);
@@ -14847,7 +14876,43 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         }
       }
 
+      const fallbackDmsAccepted = !Boolean(fallbackDmsGroupedInfo.output)
+        && !fallbackFrenchPerimeterDms.isFrenchPerimeterDms
+        && (countDmsCoordinateRows(fallback.rawText) > 0 || countDmsCoordinateRows(fallback.coordinates) > 0);
+      const fallbackPreSuppressionEvidenceCandidates = buildPreSuppressionEvidenceSnapshotInput({
+        rawText: fallback.rawText,
+        coordinates: fallback.coordinates,
+        dmsGroupedAccepted: Boolean(fallbackDmsGroupedInfo.output),
+        frenchPerimeterDms: fallbackFrenchPerimeterDms,
+        pointAzDmsTableAccepted: false,
+        handwrittenDms: fallback.handwrittenDms || {},
+        dmsAccepted: fallbackDmsAccepted,
+        cadastralGrid: fallbackCadastralGrid,
+        crsEvidenceShadow: timeoutUtmCrsEvidenceShadow,
+        structuredUtmPriority: fallback.structuredUtmTable,
+        explicitUtmEvidenceLock: timeoutExplicitUtmEvidenceLock
+      });
+      let fallbackPreDecisionEvidenceContext = snapshotPreSuppressionCandidates(fallbackPreSuppressionEvidenceCandidates, {
+        utmEvidenceLockApplied: false,
+        suppressedFallbacks: [],
+        reason: "fallback_route_pre_decision_snapshot"
+      });
+
       if (timeoutExplicitUtmEvidenceLock) {
+        fallbackPreDecisionEvidenceContext = snapshotPreSuppressionCandidates(fallbackPreSuppressionEvidenceCandidates, {
+          utmEvidenceLockApplied: true,
+          suppressedFallbacks: listFallbackEvidenceSuppressedByUtmLock({
+            dmsGroupedAccepted: Boolean(fallbackDmsGroupedInfo.output),
+            frenchPerimeterDms: fallbackFrenchPerimeterDms,
+            pointAzDmsTableAccepted: false,
+            handwrittenDms: fallback.handwrittenDms || {},
+            dmsAccepted: fallbackDmsAccepted,
+            cadastralGrid: fallbackCadastralGrid,
+            wgs84TableCoordinates: fallbackWgs84TableCoordinates,
+            chatCoordinates: fallbackChatCoordinates
+          }),
+          reason: "utm_evidence_lock_timeout_fallback_blocked"
+        });
         fallback.coordinates = "";
         fallback.model = `${fallback.model || "local-ocr-fallback"}+utm-evidence-lock`;
         fallback.precisionMode = "utm-projected-x-y-review";
@@ -14872,6 +14937,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         delete fallback.chatCoordinates;
         delete fallback.handwrittenDms;
       }
+      fallback._coordinateEvidenceContext = fallbackPreDecisionEvidenceContext;
 
       if (bftmIncompleteWarning) {
         fallback.warning = fallback.warning ? `${fallback.warning} ${bftmIncompleteWarning}` : bftmIncompleteWarning;
