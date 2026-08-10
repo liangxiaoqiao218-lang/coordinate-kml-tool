@@ -5,7 +5,9 @@ import {
 } from "../schema.js";
 
 function getShadowIntent(value = {}) {
-  return value.crsEvidenceShadow?.shadowIntent
+  return value.utm?.crsEvidenceShadow?.shadowIntent
+    || value.utm?.crsEvidence?.shadowIntent
+    || value.crsEvidenceShadow?.shadowIntent
     || value.crsEvidence?.shadowIntent
     || value.shadowIntent
     || {};
@@ -26,14 +28,21 @@ function hasCrsConflict(intent = {}) {
 }
 
 function getTransformationVerification(value = {}) {
-  return value.structuredUtmPriority?.transformationVerification
+  return value.utm?.structuredUtmTable?.transformationVerification
+    || value.utm?.structuredUtmTable
+    || value.utm?.structuredUtmPriority?.transformationVerification
+    || value.structuredUtmPriority?.transformationVerification
     || value.structuredUtmTable?.transformationVerification
+    || value.structuredUtmTable
     || {};
 }
 
 function getStructuredRowCount(value = {}) {
   return Number(
-    value.structuredUtmPriority?.table?.rows?.length
+    value.utm?.structuredUtmPriority?.table?.rows?.length
+    || value.utm?.structuredUtmTable?.rowCount
+    || value.utm?.structuredUtmTable?.table?.rows?.length
+    || value.structuredUtmPriority?.table?.rows?.length
     || value.structuredUtmTable?.rowCount
     || value.rowCount
     || 0
@@ -41,7 +50,7 @@ function getStructuredRowCount(value = {}) {
 }
 
 function isTransformPass(verification = {}) {
-  return /match|passed|pass|verified/i.test(String(verification.status || ""));
+  return /match|passed|pass|verified/i.test(String(verification.status || verification.transformationStatus || ""));
 }
 
 export function buildUtmCrsTextEvidenceCandidate(value = {}) {
@@ -89,7 +98,12 @@ export function buildVerifiedUtmTransformationEvidenceCandidate(value = {}) {
   const intent = getShadowIntent(value);
   const verification = getTransformationVerification(value);
   const rowCount = getStructuredRowCount(value);
-  const accepted = Boolean(value.structuredUtmPriority?.accepted || value.structuredUtmTable?.accepted);
+  const accepted = Boolean(
+    value.utm?.structuredUtmPriority?.accepted
+    || value.utm?.structuredUtmTable?.accepted
+    || value.structuredUtmPriority?.accepted
+    || value.structuredUtmTable?.accepted
+  );
 
   if (!isValidUtmIntent(intent) || !accepted || rowCount <= 0 || !isTransformPass(verification)) {
     return null;

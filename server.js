@@ -34,6 +34,9 @@ import {
   sanitizeRecognitionMetricsForResponse,
   startAttempt
 } from "./server/recognition-metrics/index.js";
+import {
+  snapshotPreSuppressionCandidates
+} from "./server/coordinate-evidence/index.js";
 
 const app = express();
 const upload = multer({
@@ -5522,6 +5525,81 @@ function getChatCoordinatesInfo(text) {
     warning: warnings.includes("possible swapped lat/lon") ? "possible swapped lat/lon" : (warnings[0] || ""),
     warnings,
     kml: points.length > 0 ? buildChatCoordinatesKml(points) : ""
+  };
+}
+
+function hasExplicitGeographicHemisphereCue(text = "") {
+  const value = normalizeText(text);
+  return /\d\s*[NSEWO]\b/i.test(value)
+    || /\b(?:nord|ouest|sud|est|north|south|east|west)\b/i.test(value)
+    || /\b(?:longitude|long|lon|latitude|lat)\s*(?:n|s|e|w|o|nord|ouest|sud|est|north|south|east|west)\b/i.test(value)
+    || /\b(?:n|s|e|w|o|nord|ouest|sud|est|north|south|east|west)\s*(?:longitude|long|lon|latitude|lat)\b/i.test(value);
+}
+
+function hasExplicitCoordinateOrderCue(text = "") {
+  const value = normalizeText(text);
+  return hasLongitudeLatitudeHeaderContext(value)
+    || (
+      /\b(?:longitude|long|lon|经度|东经)\b/i.test(value)
+      && /\b(?:latitude|lat|纬度|北纬)\b/i.test(value)
+    );
+}
+
+function getPreDecisionDmsSourceHint(text = "", candidates = {}) {
+  const hints = [];
+  if (hasExplicitGeographicHemisphereCue(text)) hints.push("explicit_hemisphere_marker");
+  if (hasExplicitCoordinateOrderCue(text)) hints.push("coordinate_order_header");
+  if (candidates.dmsGroupedAccepted) hints.push("dms_grouped");
+  if (candidates.pointAzDmsTableAccepted) hints.push("point_az_dms_table");
+  if (candidates.handwrittenDms?.isHandwrittenDms) hints.push("handwritten_dms");
+  if (candidates.frenchPerimeterDms?.isFrenchPerimeterDms) hints.push("french_perimeter_dms");
+  return hints.join("|");
+}
+
+function buildPreSuppressionEvidenceSnapshotInput({
+  rawText = "",
+  coordinates = "",
+  dmsGroupedAccepted = false,
+  frenchPerimeterDms = {},
+  pointAzDmsTableAccepted = false,
+  handwrittenDms = {},
+  dmsAccepted = false,
+  cadastralGrid = {},
+  crsEvidenceShadow = null,
+  structuredUtmPriority = null,
+  explicitUtmEvidenceLock = false
+} = {}) {
+  const hasDmsEvidence = Boolean(
+    dmsAccepted
+    || dmsGroupedAccepted
+    || pointAzDmsTableAccepted
+    || handwrittenDms?.isHandwrittenDms
+    || frenchPerimeterDms?.isFrenchPerimeterDms
+  );
+  const hasExplicitHemisphere = hasDmsEvidence && hasExplicitGeographicHemisphereCue(rawText);
+  const hasExplicitCoordinateOrder = hasDmsEvidence && hasExplicitCoordinateOrderCue(rawText);
+
+  return {
+    dmsAccepted,
+    dmsGroupedAccepted,
+    pointAzDmsTableAccepted,
+    handwrittenDms,
+    frenchPerimeterDms,
+    hasExplicitHemisphere,
+    hasExplicitCoordinateOrder,
+    sourceHint: getPreDecisionDmsSourceHint(rawText, {
+      dmsGroupedAccepted,
+      frenchPerimeterDms,
+      pointAzDmsTableAccepted,
+      handwrittenDms
+    }),
+    pointCount: countCoordinateRows(coordinates),
+    groupCount: dmsGroupedAccepted ? 1 : 0,
+    geometryType: countCoordinateRows(coordinates) > 2 ? "polygon" : "unknown",
+    cadastralGrid,
+    crsEvidenceShadow,
+    structuredUtmPriority,
+    explicitUtmEvidenceLock
   };
 }
 
@@ -13827,6 +13905,24 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       isOcrImage: Boolean(req.file),
       hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
     });
+    const preSuppressionEvidenceCandidates = buildPreSuppressionEvidenceSnapshotInput({
+      rawText,
+      coordinates,
+      dmsGroupedAccepted,
+      frenchPerimeterDms,
+      pointAzDmsTableAccepted,
+      handwrittenDms,
+      dmsAccepted,
+      cadastralGrid,
+      crsEvidenceShadow,
+      structuredUtmPriority,
+      explicitUtmEvidenceLock
+    });
+    let preDecisionEvidenceContext = snapshotPreSuppressionCandidates(preSuppressionEvidenceCandidates, {
+      utmEvidenceLockApplied: false,
+      suppressedFallbacks: [],
+      reason: "main_route_pre_decision_snapshot"
+    });
     if (explicitUtmEvidenceLock) {
       const lockedCandidates = suppressGeographicFallbacksForUtmEvidenceLock({
         dmsGroupedAccepted,
@@ -13837,6 +13933,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         wgs84TableCoordinates,
         chatCoordinates
       }, { enabled: true });
+      preDecisionEvidenceContext = snapshotPreSuppressionCandidates(preSuppressionEvidenceCandidates, {
+        utmEvidenceLockApplied: true,
+        suppressedFallbacks: lockedCandidates.suppressedFallbacks,
+        reason: "utm_evidence_lock_final_verification_only"
+      });
       dmsGroupedAccepted = lockedCandidates.dmsGroupedAccepted;
       frenchPerimeterDms = lockedCandidates.frenchPerimeterDms;
       pointAzDmsTableAccepted = lockedCandidates.pointAzDmsTableAccepted;
@@ -13990,6 +14091,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         handwrittenVisionRawText,
         finalRawText: rawText
       },
+      _coordinateEvidenceContext: preDecisionEvidenceContext || undefined,
       parserTrace,
       recognitionMetrics: serializeRecognitionMetrics(),
       quota: consumeResult.quota

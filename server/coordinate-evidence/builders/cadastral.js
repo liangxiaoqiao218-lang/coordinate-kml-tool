@@ -5,19 +5,25 @@ import {
 } from "../schema.js";
 
 function getRows(value = {}) {
-  return Array.isArray(value.cadastralGrid?.rows) ? value.cadastralGrid.rows : [];
+  return Array.isArray(value.cadastralGrid?.rows)
+    ? value.cadastralGrid.rows
+    : Array.isArray(value.cadastral?.rows)
+      ? value.cadastral.rows
+      : [];
 }
 
 export function buildStructuredCadastralEvidenceCandidate(value = {}) {
   const rows = getRows(value);
+  const cadastralContext = value.cadastral && typeof value.cadastral === "object" ? value.cadastral : {};
+  const cadastralGrid = value.cadastralGrid || cadastralContext;
   const isCadastral = Boolean(
-    value.cadastralGrid?.isCadastralGrid
+    cadastralGrid?.isCadastralGrid
     || value.precisionMode === "cadastral-grid-num-xv-yv"
   );
 
   if (!isCadastral) return null;
 
-  const pointCount = Number(value.cadastralGrid?.rowCount || rows.length || value.pointCount || 0);
+  const pointCount = Number(cadastralGrid?.rowCount || rows.length || value.pointCount || 0);
 
   return createCoordinateEvidenceCandidate({
     evidenceType: "structured_cadastral_table",

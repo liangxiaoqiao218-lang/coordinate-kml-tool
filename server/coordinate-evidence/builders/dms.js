@@ -18,16 +18,27 @@ function getGeometryType(coordinateEngineV2 = {}, fallback = "unknown") {
   return String(groups[0]?.geometry || fallback || "unknown");
 }
 
+function getDmsContext(value = {}) {
+  return value.dms && typeof value.dms === "object" ? value.dms : {};
+}
+
 function hasExplicitDmsHemisphereEvidence(value = {}) {
+  const dmsContext = getDmsContext(value);
   return Boolean(
     value.hasExplicitHemisphere
+    || dmsContext.hasExplicitHemisphere
     || value.hasExplicitCoordinateOrder
+    || dmsContext.hasExplicitCoordinateOrder
     || value.dmsAccepted
+    || dmsContext.dmsAccepted
     || value.dmsGroupedAccepted
+    || dmsContext.dmsGroupedAccepted
     || value.pointAzDmsTableAccepted
+    || dmsContext.pointAzDmsTableAccepted
     || value.frenchPerimeterDms?.isFrenchPerimeterDms
+    || dmsContext.frenchPerimeterDms?.isFrenchPerimeterDms
     || value.coordinateEngineV2?.coordinate_type === "cote_divoire_geographic_dms_table"
-    || /dms|latitude|longitude|nord|ouest|south|north|east|west|longitude_e|latitude_s/i.test(String(value.reason || value.sourceHint || ""))
+    || /dms|latitude|longitude|nord|ouest|south|north|east|west|longitude_e|latitude_s/i.test(String(value.reason || value.sourceHint || dmsContext.sourceHint || ""))
   );
 }
 
@@ -55,14 +66,20 @@ function buildCoordinateSummary(value = {}) {
 }
 
 export function buildDmsGeographicEvidenceCandidate(value = {}) {
+  const dmsContext = getDmsContext(value);
   const coordinateEngineV2 = value.coordinateEngineV2 || {};
   const isCoteDIvoire = coordinateEngineV2.coordinate_type === "cote_divoire_geographic_dms_table";
-  const isHandwritten = Boolean(value.handwrittenDms?.isHandwrittenDms || value.precisionMode === "handwritten-dms-coordinates");
+  const handwrittenDms = value.handwrittenDms || dmsContext.handwrittenDms || {};
+  const frenchPerimeterDms = value.frenchPerimeterDms || dmsContext.frenchPerimeterDms || {};
+  const dmsAccepted = Boolean(value.dmsAccepted || dmsContext.dmsAccepted);
+  const dmsGroupedAccepted = Boolean(value.dmsGroupedAccepted || dmsContext.dmsGroupedAccepted);
+  const pointAzDmsTableAccepted = Boolean(value.pointAzDmsTableAccepted || dmsContext.pointAzDmsTableAccepted);
+  const isHandwritten = Boolean(handwrittenDms.isHandwrittenDms || value.precisionMode === "handwritten-dms-coordinates");
   const hasDms = Boolean(
-    value.dmsAccepted
-    || value.dmsGroupedAccepted
-    || value.pointAzDmsTableAccepted
-    || value.frenchPerimeterDms?.isFrenchPerimeterDms
+    dmsAccepted
+    || dmsGroupedAccepted
+    || pointAzDmsTableAccepted
+    || frenchPerimeterDms.isFrenchPerimeterDms
     || isHandwritten
     || isCoteDIvoire
     || /dms/i.test(String(value.precisionMode || coordinateEngineV2.precision_mode || ""))
@@ -92,15 +109,15 @@ export function buildDmsGeographicEvidenceCandidate(value = {}) {
     attributes: {
       hasExplicitHemisphere: explicit,
       hasExplicitCoordinateOrder: explicit,
-      hasStructuredTable: Boolean(value.dmsGroupedAccepted || value.pointAzDmsTableAccepted || isCoteDIvoire),
+      hasStructuredTable: Boolean(dmsGroupedAccepted || pointAzDmsTableAccepted || isCoteDIvoire),
       crsEvidence: false,
       transformVerified: false,
       geometryValid: value.geometryValid === false ? false : true,
       hemisphereAmbiguous: false,
       coordinateOrderAmbiguous: false
     },
-    coordinateSummary: buildCoordinateSummary(value),
-    conflicts: Array.isArray(value.conflicts) ? value.conflicts : [],
+    coordinateSummary: buildCoordinateSummary({ ...dmsContext, ...value, handwrittenDms }),
+    conflicts: Array.isArray(value.conflicts) ? value.conflicts : (Array.isArray(dmsContext.conflicts) ? dmsContext.conflicts : []),
     recommendedState: requiresReview
       ? COORDINATE_EVIDENCE_RECOMMENDED_STATE.CONFIRM_REQUIRED
       : COORDINATE_EVIDENCE_RECOMMENDED_STATE.AUTO_EXPORT,
