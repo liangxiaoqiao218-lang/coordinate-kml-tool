@@ -10,6 +10,7 @@ import { finalizeCoordinateResponse } from "../coordinate-type/response-finalize
 import {
   buildCoordinateEvidenceShadowModel,
   sanitizeCandidateForResponse,
+  sanitizePreDecisionEvidenceContext,
   sanitizeShadowDecisionForResponse
 } from "../coordinate-evidence/index.js";
 
@@ -196,6 +197,7 @@ function buildCoordinateEvidenceAttachment(response = {}, engine = {}, options =
     return {
       coordinateEvidenceSummary,
       coordinateEvidenceCandidates: sanitizedCandidates,
+      debugEvidenceContext: sanitizePreDecisionEvidenceContext(options.coordinateEvidenceContext || {}),
       shadowEvidenceDecision: sanitizedDecision
     };
   }
