@@ -61,6 +61,14 @@ export {
 } from "./shadow-observation.js";
 
 export {
+  EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION,
+  EVIDENCE_ARBITRATION_PROPOSAL_MODE,
+  EVIDENCE_ARBITRATION_PROPOSAL_SCHEMA_VERSION,
+  buildEvidenceArbitrationProposal,
+  createEvidenceArbitrationFlags
+} from "./arbitration-proposal.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
