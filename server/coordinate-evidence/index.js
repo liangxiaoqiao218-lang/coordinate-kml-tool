@@ -89,6 +89,12 @@ export {
 } from "./review-gate.js";
 
 export {
+  EVIDENCE_ARBITRATION_LIMITED_MIGRATION_CLASSIFICATION,
+  EVIDENCE_ARBITRATION_LIMITED_MIGRATION_SCHEMA_VERSION,
+  buildEvidenceArbitrationLimitedMigrationCandidate
+} from "./limited-migration.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
