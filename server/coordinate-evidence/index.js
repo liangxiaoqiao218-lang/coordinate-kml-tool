@@ -40,6 +40,11 @@ export {
 } from "./geographic-header-vision.js";
 
 export {
+  CADASTRAL_SEMANTIC_VISION_SCHEMA_VERSION,
+  parseCadastralSemanticVisionOutput
+} from "./cadastral-vision.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
