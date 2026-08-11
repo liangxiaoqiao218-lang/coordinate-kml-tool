@@ -119,6 +119,12 @@ export {
 } from "./controlled-migration-package.js";
 
 export {
+  CONTROLLED_MIGRATION_EXPERIMENT_ACTIVATION_SCHEMA_VERSION,
+  CONTROLLED_MIGRATION_EXPERIMENT_ACTIVATION_STATUS,
+  buildControlledMigrationExperimentActivationPreflight
+} from "./controlled-migration-activation.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
