@@ -113,6 +113,12 @@ export {
 } from "./controlled-migration-execution.js";
 
 export {
+  CONTROLLED_MIGRATION_EXPERIMENT_PACKAGE_SCHEMA_VERSION,
+  CONTROLLED_MIGRATION_EXPERIMENT_PACKAGE_STATUS,
+  buildControlledMigrationExperimentPackage
+} from "./controlled-migration-package.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
