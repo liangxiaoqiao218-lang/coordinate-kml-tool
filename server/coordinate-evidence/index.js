@@ -75,6 +75,13 @@ export {
 } from "./arbitration-dry-run.js";
 
 export {
+  EVIDENCE_ARBITRATION_MIGRATION_CATEGORY,
+  EVIDENCE_ARBITRATION_MIGRATION_SAFETY_CLASSIFICATION,
+  EVIDENCE_ARBITRATION_MIGRATION_SAFETY_SCHEMA_VERSION,
+  buildEvidenceArbitrationMigrationSafety
+} from "./migration-safety.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
