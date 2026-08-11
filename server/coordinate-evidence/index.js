@@ -32,6 +32,11 @@ export {
 } from "./geographic-header.js";
 
 export {
+  GEOGRAPHIC_HEADER_VISION_SCHEMA_VERSION,
+  parseGeographicHeaderVisionOutput
+} from "./geographic-header-vision.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
