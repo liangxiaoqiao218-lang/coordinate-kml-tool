@@ -48,6 +48,19 @@ export {
 } from "./cadastral-vision.js";
 
 export {
+  COORDINATE_EVIDENCE_SHADOW_OBSERVATION_SCHEMA_VERSION,
+  SHADOW_OBSERVATION_CATEGORY,
+  SHADOW_OBSERVATION_CLASSIFICATION,
+  SHADOW_OBSERVATION_POLICIES,
+  buildCoordinateEvidenceShadowObservation,
+  classifyShadowObservation,
+  createLegacySnapshot,
+  getShadowObservationPolicy,
+  summarizeObservationCandidate,
+  summarizeShadowDecision
+} from "./shadow-observation.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
