@@ -8,6 +8,8 @@ import {
 import { buildEvidenceAcquisition } from "../evidence-acquisition/index.js";
 import { finalizeCoordinateResponse } from "../coordinate-type/response-finalizer.js";
 import {
+  buildEvidenceArbitrationDryRunDiff,
+  buildEvidenceArbitrationProposal,
   buildCoordinateEvidenceShadowModel,
   sanitizeCandidateForResponse,
   sanitizePreDecisionEvidenceContext,
@@ -194,10 +196,25 @@ function buildCoordinateEvidenceAttachment(response = {}, engine = {}, options =
   });
 
   if (options.includeCoordinateEvidenceDebug === true) {
+    const evidenceArbitrationProposal = buildEvidenceArbitrationProposal({
+      legacySnapshot: response,
+      candidates: sanitizedCandidates,
+      shadowDecision: sanitizedDecision
+    });
+    const evidenceArbitrationDryRun = buildEvidenceArbitrationDryRunDiff({
+      proposal: evidenceArbitrationProposal
+    });
+    const debugEvidenceContext = Object.freeze({
+      ...sanitizePreDecisionEvidenceContext(options.coordinateEvidenceContext || {}),
+      evidenceArbitrationDryRun
+    });
+
     return {
       coordinateEvidenceSummary,
       coordinateEvidenceCandidates: sanitizedCandidates,
-      debugEvidenceContext: sanitizePreDecisionEvidenceContext(options.coordinateEvidenceContext || {}),
+      debugEvidenceContext,
+      evidenceArbitrationProposal,
+      evidenceArbitrationDryRun,
       shadowEvidenceDecision: sanitizedDecision
     };
   }

@@ -126,7 +126,7 @@ test("debug=true and X-Debug-Trace share the existing coordinate evidence debug 
 test("debug context exposure uses the existing sanitizer and no raw context spread", () => {
   const source = fs.readFileSync(new URL("../server/verification/index.js", import.meta.url), "utf8");
   assert.match(source, /sanitizePreDecisionEvidenceContext/);
-  assert.match(source, /debugEvidenceContext:\s*sanitizePreDecisionEvidenceContext\(options\.coordinateEvidenceContext \|\| \{\}\)/);
+  assert.match(source, /\.\.\.sanitizePreDecisionEvidenceContext\(options\.coordinateEvidenceContext \|\| \{\}\)/);
   assert.doesNotMatch(source, /debugEvidenceContext:\s*\{\s*\.\.\.options\.coordinateEvidenceContext/);
   assert.doesNotMatch(source, /debugEvidenceContext:\s*options\.coordinateEvidenceContext/);
 });
