@@ -143,6 +143,12 @@ export {
 } from "./controlled-migration-session.js";
 
 export {
+  CONTROLLED_MIGRATION_EXPERIMENT_RUNNING_SESSION_SCHEMA_VERSION,
+  CONTROLLED_MIGRATION_EXPERIMENT_RUNNING_SESSION_STATE,
+  buildControlledMigrationExperimentStart
+} from "./controlled-migration-start.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
