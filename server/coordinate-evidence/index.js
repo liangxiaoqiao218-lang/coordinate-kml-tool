@@ -69,6 +69,12 @@ export {
 } from "./arbitration-proposal.js";
 
 export {
+  EVIDENCE_ARBITRATION_DRY_RUN_CLASSIFICATION,
+  EVIDENCE_ARBITRATION_DRY_RUN_DIFF_SCHEMA_VERSION,
+  buildEvidenceArbitrationDryRunDiff
+} from "./arbitration-dry-run.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
