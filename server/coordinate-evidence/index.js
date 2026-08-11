@@ -26,6 +26,11 @@ export {
 } from "./context.js";
 
 export {
+  GEOGRAPHIC_HEADER_SEMANTIC_SCHEMA_VERSION,
+  detectGeographicHeaderSemanticEvidence
+} from "./geographic-header.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
