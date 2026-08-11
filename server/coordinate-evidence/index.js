@@ -95,6 +95,12 @@ export {
 } from "./limited-migration.js";
 
 export {
+  EVIDENCE_ARBITRATION_CONTROLLED_MIGRATION_CLASSIFICATION,
+  EVIDENCE_ARBITRATION_CONTROLLED_MIGRATION_SCHEMA_VERSION,
+  buildEvidenceArbitrationControlledMigration
+} from "./controlled-migration.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
