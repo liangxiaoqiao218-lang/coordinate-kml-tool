@@ -82,6 +82,13 @@ export {
 } from "./migration-safety.js";
 
 export {
+  EVIDENCE_ARBITRATION_REVIEW_GATE_CLASSIFICATION,
+  EVIDENCE_ARBITRATION_REVIEW_GATE_SCHEMA_VERSION,
+  EVIDENCE_ARBITRATION_REVIEW_STATUS,
+  buildEvidenceArbitrationReviewGate
+} from "./review-gate.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
