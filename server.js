@@ -13955,10 +13955,16 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       utm30Accepted,
       projectedCoordinateAmbiguity: Boolean(utm30Accepted || getUtm30ProjectedXyInfo(rawText, coordinates).isUtm30ProjectedXy),
       explicitGeographicDms: Boolean(dmsAccepted || dmsGroupedAccepted || frenchPerimeterDms.isFrenchPerimeterDms),
-      verifiedUtmTransformation: Boolean(structuredUtmPriority?.accepted),
+      verifiedUtmTransformation: Boolean(
+        structuredUtmPriority?.accepted
+        && structuredUtmPriority?.transformationVerification?.status === "match"
+      ),
       structuredUtmPriority
     });
     if (cadastralSemanticVisionRouting.shouldRun && aliyunApiKey && req.file) {
+      if (cadastralSemanticVisionRouting.mode === "shadow_observation_only") {
+        parserTrace.push("CADASTRAL_SEMANTIC_VISION:shadow_observation_only");
+      }
       const cadastralSemanticAttempt = startAttempt(recognitionMetrics, {
         stage: "cadastral_semantic_vision",
         provider: "vision",

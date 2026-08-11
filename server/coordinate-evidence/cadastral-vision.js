@@ -159,8 +159,11 @@ function hasProtectedHighAuthorityEvidence(input = {}) {
     || input.structuredCadastralTable === true
     || input.verifiedUtmTransformation === true
     || input.cadastralGrid?.isCadastralGrid === true
-    || input.cadastralSemanticVision?.detected === true
-    || input.structuredUtmPriority?.accepted === true
+    || input.cadastralSemanticVision?.detected === true;
+}
+
+function hasAcceptedUtmEvidence(input = {}) {
+  return input.structuredUtmPriority?.accepted === true
     || input.structuredUtmTable?.accepted === true;
 }
 
@@ -256,18 +259,24 @@ export function shouldRunCadastralSemanticVisionPass(input = {}) {
     ].filter(Boolean).join("\n"));
   const semanticAlreadyDetected = existingSemantic?.detected === true;
   const protectedHighAuthorityEvidence = hasProtectedHighAuthorityEvidence(input);
+  const acceptedUtmEvidence = hasAcceptedUtmEvidence(input);
   const projectedCoordinateAmbiguity = hasProjectedCoordinateAmbiguity(input);
   const possibleCadastralLayout = hasPossibleCadastralLayout(input);
+  const utmAcceptedCadastralAmbiguity = acceptedUtmEvidence && possibleCadastralLayout;
+  const triggerMode = utmAcceptedCadastralAmbiguity ? "shadow_observation_only" : "standard";
   const shouldRun = Boolean(
     imageAvailable
     && !semanticAlreadyDetected
     && !protectedHighAuthorityEvidence
+    && (!acceptedUtmEvidence || utmAcceptedCadastralAmbiguity)
     && (projectedCoordinateAmbiguity || possibleCadastralLayout)
   );
   const reasons = [];
   if (!imageAvailable) reasons.push("image_unavailable");
   if (semanticAlreadyDetected) reasons.push("cadastral_semantic_already_detected");
   if (protectedHighAuthorityEvidence) reasons.push("high_authority_evidence_already_present");
+  if (acceptedUtmEvidence && !utmAcceptedCadastralAmbiguity) reasons.push("accepted_utm_evidence_present");
+  if (utmAcceptedCadastralAmbiguity) reasons.push("utm_accepted_but_cadastral_observation_allowed");
   if (projectedCoordinateAmbiguity) reasons.push("projected_coordinate_ambiguity");
   if (possibleCadastralLayout) reasons.push("possible_cadastral_layout");
   if (shouldRun && !semanticAlreadyDetected) reasons.unshift("cadastral_candidate_missing");
@@ -275,10 +284,13 @@ export function shouldRunCadastralSemanticVisionPass(input = {}) {
 
   return Object.freeze({
     shouldRun,
+    mode: triggerMode,
     reasons: Object.freeze([...new Set(reasons)]),
     imageAvailable,
     semanticAlreadyDetected,
     protectedHighAuthorityEvidence,
+    acceptedUtmEvidence,
+    utmAcceptedCadastralAmbiguity,
     projectedCoordinateAmbiguity,
     possibleCadastralLayout,
     affectsLegacyWinner: false,

@@ -20,6 +20,7 @@ test("projected coordinate ambiguity routes to cadastral semantic vision when ca
   });
 
   assert.equal(routing.shouldRun, true);
+  assert.equal(routing.mode, "standard");
   assert.ok(routing.reasons.includes("cadastral_candidate_missing"));
   assert.ok(routing.reasons.includes("projected_coordinate_ambiguity"));
   assert.equal(routing.affectsLegacyWinner, false);
@@ -39,7 +40,7 @@ test("existing cadastral grid skips extra semantic vision pass", () => {
   assert.ok(routing.reasons.includes("high_authority_evidence_already_present"));
 });
 
-test("protected verified UTM transformation skips cadastral semantic pass", () => {
+test("verified UTM only skips cadastral semantic pass", () => {
   const routing = shouldRunCadastralSemanticVisionPass({
     imageItems: [{}],
     rawText: "654321,9876543",
@@ -48,7 +49,31 @@ test("protected verified UTM transformation skips cadastral semantic pass", () =
   });
 
   assert.equal(routing.shouldRun, false);
-  assert.ok(routing.reasons.includes("high_authority_evidence_already_present"));
+  assert.equal(routing.mode, "standard");
+  assert.equal(routing.acceptedUtmEvidence, true);
+  assert.equal(routing.utmAcceptedCadastralAmbiguity, false);
+  assert.ok(routing.reasons.includes("accepted_utm_evidence_present"));
+});
+
+test("UTM accepted with cadastral ambiguity allows shadow-only semantic observation", () => {
+  const routing = shouldRunCadastralSemanticVisionPass({
+    imageItems: [{}],
+    rawText: "Liste Carres\n654321,9876543",
+    coordinates: "654321,9876543",
+    projectedCoordinateAmbiguity: true,
+    structuredUtmPriority: { accepted: true },
+    cadastralGrid: { isCadastralGrid: false }
+  });
+
+  assert.equal(routing.shouldRun, true);
+  assert.equal(routing.mode, "shadow_observation_only");
+  assert.equal(routing.acceptedUtmEvidence, true);
+  assert.equal(routing.utmAcceptedCadastralAmbiguity, true);
+  assert.ok(routing.reasons.includes("utm_accepted_but_cadastral_observation_allowed"));
+  assert.ok(routing.reasons.includes("possible_cadastral_layout"));
+  assert.equal(routing.affectsLegacyWinner, false);
+  assert.equal(routing.affectsCoordinateResult, false);
+  assert.equal(routing.affectsKml, false);
 });
 
 test("ordinary UTM CRS text without projected ambiguity does not route", () => {
@@ -137,4 +162,11 @@ test("server integration stays in recognition acquisition layer and does not tou
 
   assert.doesNotMatch(serverSource, /cadastralSemanticVision[\s\S]{0,120}kml_ready\s*=\s*true/);
   assert.doesNotMatch(serverSource, /cadastralSemanticVision[\s\S]{0,120}coordinateType\s*=/);
+});
+
+test("server integration records shadow observation only mode without decision migration", () => {
+  assert.match(serverSource, /CADASTRAL_SEMANTIC_VISION:shadow_observation_only/);
+  assert.match(serverSource, /verifiedUtmTransformation:\s*Boolean\(\s*structuredUtmPriority\?\.accepted\s*&&\s*structuredUtmPriority\?\.transformationVerification\?\.status\s*===\s*"match"\s*\)/);
+  assert.doesNotMatch(serverSource, /shadow_observation_only[\s\S]{0,200}kml_ready\s*=\s*true/);
+  assert.doesNotMatch(serverSource, /shadow_observation_only[\s\S]{0,200}coordinateType\s*=/);
 });
