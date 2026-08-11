@@ -35,6 +35,8 @@ import {
   startAttempt
 } from "./server/recognition-metrics/index.js";
 import {
+  detectGeographicHeaderSemanticEvidence,
+  shouldRunGeographicHeaderSupplementalProducer,
   snapshotPreSuppressionCandidates
 } from "./server/coordinate-evidence/index.js";
 
@@ -14128,18 +14130,33 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     Object.assign(recognitionPayload, attachRecognitionSessionMetadata({}, recognitionSessionId, consumeResult));
 
     let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(recognitionPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });
-    const shouldReadCoteDIvoireV2 = hasCoteDIvoireGeographicDmsCue([
+    const coteDIvoireCueText = [
       uploadedFileName,
       rawText,
       req.body?.rawHint || "",
       req.body?.hint || ""
-    ].join("\n"));
+    ].join("\n");
+    const geographicHeaderSemantic = detectGeographicHeaderSemanticEvidence({
+      rawText,
+      rawHint: req.body?.rawHint || "",
+      hint: req.body?.hint || ""
+    });
+    const geographicHeaderProducerRouting = shouldRunGeographicHeaderSupplementalProducer({
+      countryCueDetected: hasCoteDIvoireGeographicDmsCue(coteDIvoireCueText),
+      countryCueSource: hasCoteDIvoireGeographicDmsCue(uploadedFileName) ? "filename" : "context",
+      rawText,
+      rawHint: req.body?.rawHint || "",
+      hint: req.body?.hint || "",
+      geographicHeaderSemantic
+    });
+    const shouldReadCoteDIvoireV2 = geographicHeaderProducerRouting.shouldRun;
 
     if (shouldReadCoteDIvoireV2) {
       try {
         console.log("Cote d'Ivoire V2 geographic DMS prompt started", {
           fileName: uploadedFileName,
-          timeoutMs: 70000
+          timeoutMs: 70000,
+          triggerReasons: geographicHeaderProducerRouting.reasons
         });
         const coteDIvoireResponse = await callAliyunVision({
           modelName: aliyunVisionModel,

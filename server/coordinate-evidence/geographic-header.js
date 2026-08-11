@@ -158,3 +158,58 @@ export function detectGeographicHeaderSemanticEvidence(input = {}) {
     reason: detected ? confidence.reason : "missing_latitude_longitude_hemisphere_header"
   });
 }
+
+function normalizeReasons(values = []) {
+  return unique(values.map(value => cleanText(value)).filter(Boolean));
+}
+
+function inferRoutingSource(reasons = []) {
+  if (reasons.includes("country_filename_cue")) return "filename";
+  if (reasons.includes("geographic_header_semantic")) return "semantic";
+  if (reasons.includes("raw_text_geographic_header_semantic")) return "raw_text";
+  if (reasons.includes("hint_geographic_header_semantic")) return "hint";
+  return "";
+}
+
+export function shouldRunGeographicHeaderSupplementalProducer(input = {}) {
+  const countryCueDetected = input.countryCueDetected === true;
+  const geographicHeaderSemantic = input.geographicHeaderSemantic
+    || detectGeographicHeaderSemanticEvidence({
+      text: [
+        input.rawText,
+        input.rawHint,
+        input.hint,
+        input.semanticHint
+      ].filter(Boolean).join("\n")
+    });
+  const reasons = [];
+
+  if (countryCueDetected) {
+    reasons.push(input.countryCueSource === "filename" ? "country_filename_cue" : "country_context_cue");
+  }
+  if (geographicHeaderSemantic?.detected === true) {
+    reasons.push("geographic_header_semantic");
+    if (detectGeographicHeaderSemanticEvidence(input.rawText || "").detected) {
+      reasons.push("raw_text_geographic_header_semantic");
+    }
+    if (detectGeographicHeaderSemanticEvidence([
+      input.rawHint,
+      input.hint,
+      input.semanticHint
+    ].filter(Boolean).join("\n")).detected) {
+      reasons.push("hint_geographic_header_semantic");
+    }
+  }
+
+  const normalizedReasons = normalizeReasons(reasons);
+
+  return Object.freeze({
+    shouldRun: normalizedReasons.length > 0,
+    reasons: Object.freeze(normalizedReasons),
+    source: inferRoutingSource(normalizedReasons),
+    geographicHeaderSemantic,
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+}

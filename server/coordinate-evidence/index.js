@@ -27,7 +27,8 @@ export {
 
 export {
   GEOGRAPHIC_HEADER_SEMANTIC_SCHEMA_VERSION,
-  detectGeographicHeaderSemanticEvidence
+  detectGeographicHeaderSemanticEvidence,
+  shouldRunGeographicHeaderSupplementalProducer
 } from "./geographic-header.js";
 
 export {
