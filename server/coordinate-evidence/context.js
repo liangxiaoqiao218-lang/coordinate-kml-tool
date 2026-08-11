@@ -160,6 +160,26 @@ function normalizeGeographicHeaderVisionContext(value = {}) {
   });
 }
 
+function normalizeCadastralSemanticVisionContext(value = {}) {
+  return Object.freeze({
+    schemaVersion: cleanString(value.schemaVersion || "cadastral_semantic_vision_v1"),
+    status: cleanString(value.status || "not_run"),
+    detected: normalizeBoolean(value.detected),
+    tableType: cleanString(value.tableType || "unknown"),
+    indicators: sanitizeArray(value.indicators),
+    layoutHints: Object.freeze({
+      hasListeCarres: normalizeBoolean(value.layoutHints?.hasListeCarres),
+      hasCadastralGrid: normalizeBoolean(value.layoutHints?.hasCadastralGrid),
+      hasTableStructure: normalizeBoolean(value.layoutHints?.hasTableStructure)
+    }),
+    confidence: cleanString(value.confidence || "low"),
+    reason: cleanString(value.reason || "").slice(0, 160),
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+}
+
 export function createPreDecisionEvidenceContext(value = {}) {
   return Object.freeze({
     schemaVersion: PRE_DECISION_EVIDENCE_CONTEXT_SCHEMA_VERSION,
@@ -167,6 +187,7 @@ export function createPreDecisionEvidenceContext(value = {}) {
     cadastral: normalizeCadastralContext(value.cadastral || value),
     utm: normalizeUtmContext(value.utm || value),
     geographicHeaderVision: normalizeGeographicHeaderVisionContext(value.geographicHeaderVision || {}),
+    cadastralSemanticVision: normalizeCadastralSemanticVisionContext(value.cadastralSemanticVision || {}),
     suppression: normalizeSuppressionContext(value.suppression || value)
   });
 }
@@ -193,6 +214,7 @@ export function snapshotPreSuppressionCandidates(candidates = {}, suppression = 
       explicitUtmEvidenceLock: candidates.explicitUtmEvidenceLock
     },
     geographicHeaderVision: candidates.geographicHeaderVision,
+    cadastralSemanticVision: candidates.cadastralSemanticVision,
     suppression
   });
 }

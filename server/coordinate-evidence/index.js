@@ -40,8 +40,11 @@ export {
 } from "./geographic-header-vision.js";
 
 export {
+  CADASTRAL_SEMANTIC_VISION_PROMPT,
   CADASTRAL_SEMANTIC_VISION_SCHEMA_VERSION,
-  parseCadastralSemanticVisionOutput
+  parseCadastralSemanticVisionOutput,
+  runCadastralSemanticVisionPass,
+  shouldRunCadastralSemanticVisionPass
 } from "./cadastral-vision.js";
 
 export {

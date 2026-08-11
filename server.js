@@ -36,7 +36,9 @@ import {
 } from "./server/recognition-metrics/index.js";
 import {
   detectGeographicHeaderSemanticEvidence,
+  runCadastralSemanticVisionPass,
   runGeographicHeaderVisionPass,
+  shouldRunCadastralSemanticVisionPass,
   shouldRunGeographicHeaderSupplementalProducer,
   shouldRunGeographicHeaderVisionPass,
   snapshotPreSuppressionCandidates
@@ -5572,6 +5574,7 @@ function buildPreSuppressionEvidenceSnapshotInput({
   crsEvidenceShadow = null,
   structuredUtmPriority = null,
   explicitUtmEvidenceLock = false,
+  cadastralSemanticVision = null,
   geographicHeaderVision = null
 } = {}) {
   const hasDmsEvidence = Boolean(
@@ -5605,6 +5608,7 @@ function buildPreSuppressionEvidenceSnapshotInput({
     crsEvidenceShadow,
     structuredUtmPriority,
     explicitUtmEvidenceLock,
+    cadastralSemanticVision,
     geographicHeaderVision
   };
 }
@@ -13940,6 +13944,124 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       isOcrImage: Boolean(req.file),
       hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
     });
+    let cadastralSemanticVision = null;
+    const cadastralSemanticVisionRouting = shouldRunCadastralSemanticVisionPass({
+      imageItems,
+      rawText,
+      rawHint: req.body?.rawHint || "",
+      hint: req.body?.hint || "",
+      coordinates,
+      cadastralGrid,
+      utm30Accepted,
+      projectedCoordinateAmbiguity: Boolean(utm30Accepted || getUtm30ProjectedXyInfo(rawText, coordinates).isUtm30ProjectedXy),
+      explicitGeographicDms: Boolean(dmsAccepted || dmsGroupedAccepted || frenchPerimeterDms.isFrenchPerimeterDms),
+      verifiedUtmTransformation: Boolean(structuredUtmPriority?.accepted),
+      structuredUtmPriority
+    });
+    if (cadastralSemanticVisionRouting.shouldRun && aliyunApiKey && req.file) {
+      const cadastralSemanticAttempt = startAttempt(recognitionMetrics, {
+        stage: "cadastral_semantic_vision",
+        provider: "vision",
+        model: aliyunVisionModel,
+        timeoutMs: 25000
+      });
+      try {
+        cadastralSemanticVision = await runCadastralSemanticVisionPass({
+          imageItems,
+          invokeVision: async ({ prompt: cadastralSemanticPrompt, imageItems: cadastralSemanticImageItems }) => {
+            const cadastralSemanticResponse = await callAliyunVision({
+              modelName: aliyunVisionModel,
+              prompt: cadastralSemanticPrompt,
+              imageItems: cadastralSemanticImageItems,
+              temperature: 0,
+              maxTokens: 700,
+              timeoutMs: 25000
+            });
+            return cadastralSemanticResponse.choices?.[0]?.message?.content || "";
+          }
+        });
+        finishAttempt(recognitionMetrics, cadastralSemanticAttempt, {
+          status: "success",
+          resultCount: cadastralSemanticVision?.detected === true ? 1 : 0
+        });
+        if (cadastralSemanticVision?.detected === true) {
+          parserTrace.push("CADASTRAL_SEMANTIC_VISION:semantic_observed");
+          if (utm30Accepted || /UTM|projected|projection/i.test(`${rawText}\n${coordinates}`)) {
+            parserTrace.push("CADASTRAL_SEMANTIC_VISION:conflict(utm_projection_detected)");
+          }
+          if (!cadastralGrid.isCadastralGrid) {
+            const cadastralTableAttempt = startAttempt(recognitionMetrics, {
+              stage: "cadastral_semantic_table_read",
+              provider: "vision",
+              model: aliyunVisionModel,
+              timeoutMs: 35000
+            });
+            try {
+              const cadastralTableResponse = await callAliyunVision({
+                modelName: aliyunVisionModel,
+                prompt: cadastralGridTablePrompt,
+                imageItems,
+                temperature: 0,
+                maxTokens: 1400,
+                timeoutMs: 35000
+              });
+              const cadastralTableRawText = cadastralTableResponse.choices?.[0]?.message?.content || "";
+              const cadastralTableGrid = getCadastralGridInfo(cadastralTableRawText);
+              finishAttempt(recognitionMetrics, cadastralTableAttempt, {
+                status: "success",
+                resultCount: cadastralTableGrid.rows.length
+              });
+              if (cadastralTableGrid.isCadastralGrid) {
+                rawText = cadastralTableRawText;
+                coordinates = formatCadastralGridRows(cadastralTableGrid.rows);
+                cadastralGrid = cadastralTableGrid;
+                mgrs = getMgrsInfo(rawText);
+                mozambiqueGeographicTable = getMozambiqueGeographicInfo(rawText);
+                wgs84TableCoordinates = getWgs84TableCoordinatesInfo(rawText);
+                chatCoordinates = getChatCoordinatesInfo("");
+                kyrgyzGk = getKyrgyzGkInfo(rawText);
+                bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
+                bftmAccepted = false;
+                utm30ProjectedXy = getUtm30ProjectedXyInfo(rawText, coordinates);
+                utm30Accepted = false;
+                dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
+                dmsGroupedAccepted = false;
+                frenchPerimeterDms = getFrenchPerimeterDmsInfo(rawText);
+                dmsAccepted = false;
+                handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, {
+                  isOcrImage: Boolean(req.file),
+                  hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
+                });
+                usedModel = `${aliyunVisionModel}+cadastral-semantic-table`;
+                warning = warning || "识别到矿权网格表，已通过 cadastral semantic pass 读取 num / XV / YV；当前阶段不转换经纬度，也不生成 KML。";
+                parserTrace.push("CADASTRAL_SEMANTIC_VISION:table_read_accepted");
+              } else {
+                parserTrace.push("CADASTRAL_SEMANTIC_VISION:table_read_rejected");
+              }
+            } catch (cadastralTableError) {
+              finishAttempt(recognitionMetrics, cadastralTableAttempt, {
+                status: isRecognitionVisionTimeout(cadastralTableError) ? "timeout" : "error",
+                errorCode: getRecognitionVisionErrorCode(cadastralTableError)
+              });
+              parserTrace.push("CADASTRAL_SEMANTIC_VISION:table_read_failed");
+              console.warn("Cadastral semantic table read skipped after failure", {
+                fileName: uploadedFileName,
+                reason: getRecognitionVisionErrorCode(cadastralTableError)
+              });
+            }
+          }
+        }
+      } catch (cadastralSemanticError) {
+        finishAttempt(recognitionMetrics, cadastralSemanticAttempt, {
+          status: isRecognitionVisionTimeout(cadastralSemanticError) ? "timeout" : "error",
+          errorCode: getRecognitionVisionErrorCode(cadastralSemanticError)
+        });
+        console.warn("Cadastral semantic vision pass skipped after failure", {
+          fileName: uploadedFileName,
+          reason: getRecognitionVisionErrorCode(cadastralSemanticError)
+        });
+      }
+    }
     let geographicHeaderSemantic = detectGeographicHeaderSemanticEvidence({
       rawText,
       rawHint: req.body?.rawHint || "",
@@ -14012,6 +14134,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       crsEvidenceShadow,
       structuredUtmPriority,
       explicitUtmEvidenceLock,
+      cadastralSemanticVision,
       geographicHeaderVision
     });
     let preDecisionEvidenceContext = snapshotPreSuppressionCandidates(preSuppressionEvidenceCandidates, {

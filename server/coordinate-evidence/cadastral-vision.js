@@ -1,5 +1,36 @@
 export const CADASTRAL_SEMANTIC_VISION_SCHEMA_VERSION = "cadastral_semantic_vision_v1";
 
+export const CADASTRAL_SEMANTIC_VISION_PROMPT = `You are performing literal cadastral table-header observation from a mining or cadastral document image.
+
+Read ONLY visible cadastral table headers and table-caption semantics.
+
+Target visible text includes:
+- num, No., Number, N°, №;
+- XV, X V;
+- YV, Y V;
+- Liste_Carrés, Liste Carres, Liste Carrés;
+- carreau, carreaux, carrés miniers;
+- cadastral grid, grille cadastrale, mineral cadastral grid.
+
+Literal evidence rules:
+- Do not read, copy, or return coordinate rows.
+- Do not return XV or YV numeric values.
+- Do not output latitude, longitude, X/Y coordinate values, or KML.
+- Do not infer from country, filename, map position, CRS text, or coordinate values.
+- If cadastral headers are not clearly visible, return status none with an empty indicators array.
+
+Return strict JSON only, with no markdown:
+{
+  "status": "observed" | "none",
+  "tableType": "num_xv_yv" | "unknown",
+  "indicators": ["num", "XV", "YV"],
+  "layoutHints": {
+    "hasListeCarres": true,
+    "hasCadastralGrid": true,
+    "hasTableStructure": true
+  }
+}`;
+
 const SECRET_KEY_PATTERN = /api[_-]?key|secret|token|password|authorization|credential|env|raw[_-]?ocr|prompt|model[_-]?response|full[_-]?response|image|buffer|base64/i;
 const SECRET_VALUE_PATTERN = /(sk-[a-z0-9_-]{8,}|dashscope[_-]?[a-z0-9_-]*|supabase[_-]?[a-z0-9_-]*|bearer\s+[a-z0-9._-]+|api[_-]?key\s*[:=]|secret\s*[:=]|token\s*[:=]|password\s*[:=]|authorization\s*[:=])/ig;
 
@@ -96,6 +127,43 @@ function hasCadastralGridIndicator(text = "") {
   return /cadastral|cadastre|grille\s+cadastrale|mineral\s+cadastral|矿权|网格/.test(folded);
 }
 
+const PROJECTED_COORDINATE_PATTERN = /\b\d{5,}(?:[.,]\d+)?\s*[,;|\s]\s*\d{5,}(?:[.,]\d+)?\b/;
+
+function hasProjectedCoordinateAmbiguity(input = {}) {
+  if (input.projectedCoordinateAmbiguity === true) return true;
+  if (input.utmAccepted === true || input.utm30Accepted === true) return true;
+  if (input.utmProjected === true || input.typedUtmAccepted === true) return true;
+  const text = [
+    input.rawText,
+    input.coordinates,
+    input.semanticHint
+  ].filter(Boolean).join("\n");
+  return PROJECTED_COORDINATE_PATTERN.test(cleanText(text));
+}
+
+function hasPossibleCadastralLayout(input = {}) {
+  if (input.possibleCadastralLayout === true) return true;
+  const text = [
+    input.rawText,
+    input.rawHint,
+    input.hint,
+    input.semanticHint
+  ].filter(Boolean).join("\n");
+  return hasListeCarresIndicator(text)
+    || hasCadastralGridIndicator(text)
+    || (hasXvIndicator(text) && hasYvIndicator(text));
+}
+
+function hasProtectedHighAuthorityEvidence(input = {}) {
+  return input.explicitGeographicDms === true
+    || input.structuredCadastralTable === true
+    || input.verifiedUtmTransformation === true
+    || input.cadastralGrid?.isCadastralGrid === true
+    || input.cadastralSemanticVision?.detected === true
+    || input.structuredUtmPriority?.accepted === true
+    || input.structuredUtmTable?.accepted === true;
+}
+
 function buildIndicators({ hasNum, hasXv, hasYv }) {
   return Object.freeze([
     hasNum ? "num" : "",
@@ -174,4 +242,61 @@ export function parseCadastralSemanticVisionOutput(input = {}) {
       ? "num_xv_yv_cadastral_table_visible"
       : "cadastral_semantic_not_detected"
   });
+}
+
+export function shouldRunCadastralSemanticVisionPass(input = {}) {
+  const imageAvailable = input.imageAvailable === true
+    || (Array.isArray(input.imageItems) && input.imageItems.length > 0);
+  const existingSemantic = input.cadastralSemanticVision
+    || parseCadastralSemanticVisionOutput([
+      input.rawText,
+      input.rawHint,
+      input.hint,
+      input.semanticHint
+    ].filter(Boolean).join("\n"));
+  const semanticAlreadyDetected = existingSemantic?.detected === true;
+  const protectedHighAuthorityEvidence = hasProtectedHighAuthorityEvidence(input);
+  const projectedCoordinateAmbiguity = hasProjectedCoordinateAmbiguity(input);
+  const possibleCadastralLayout = hasPossibleCadastralLayout(input);
+  const shouldRun = Boolean(
+    imageAvailable
+    && !semanticAlreadyDetected
+    && !protectedHighAuthorityEvidence
+    && (projectedCoordinateAmbiguity || possibleCadastralLayout)
+  );
+  const reasons = [];
+  if (!imageAvailable) reasons.push("image_unavailable");
+  if (semanticAlreadyDetected) reasons.push("cadastral_semantic_already_detected");
+  if (protectedHighAuthorityEvidence) reasons.push("high_authority_evidence_already_present");
+  if (projectedCoordinateAmbiguity) reasons.push("projected_coordinate_ambiguity");
+  if (possibleCadastralLayout) reasons.push("possible_cadastral_layout");
+  if (shouldRun && !semanticAlreadyDetected) reasons.unshift("cadastral_candidate_missing");
+  if (reasons.length === 0) reasons.push("no_cadastral_semantic_trigger");
+
+  return Object.freeze({
+    shouldRun,
+    reasons: Object.freeze([...new Set(reasons)]),
+    imageAvailable,
+    semanticAlreadyDetected,
+    protectedHighAuthorityEvidence,
+    projectedCoordinateAmbiguity,
+    possibleCadastralLayout,
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+}
+
+export async function runCadastralSemanticVisionPass({ imageItems = [], invokeVision } = {}) {
+  if (typeof invokeVision !== "function") {
+    throw new TypeError("runCadastralSemanticVisionPass requires an invokeVision function");
+  }
+  if (!Array.isArray(imageItems) || imageItems.length === 0) {
+    throw new TypeError("runCadastralSemanticVisionPass requires at least one image item");
+  }
+  const modelText = await invokeVision({
+    prompt: CADASTRAL_SEMANTIC_VISION_PROMPT,
+    imageItems
+  });
+  return parseCadastralSemanticVisionOutput(modelText);
 }
