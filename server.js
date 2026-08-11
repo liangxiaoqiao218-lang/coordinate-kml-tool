@@ -36,7 +36,9 @@ import {
 } from "./server/recognition-metrics/index.js";
 import {
   detectGeographicHeaderSemanticEvidence,
+  runGeographicHeaderVisionPass,
   shouldRunGeographicHeaderSupplementalProducer,
+  shouldRunGeographicHeaderVisionPass,
   snapshotPreSuppressionCandidates
 } from "./server/coordinate-evidence/index.js";
 
@@ -5569,7 +5571,8 @@ function buildPreSuppressionEvidenceSnapshotInput({
   cadastralGrid = {},
   crsEvidenceShadow = null,
   structuredUtmPriority = null,
-  explicitUtmEvidenceLock = false
+  explicitUtmEvidenceLock = false,
+  geographicHeaderVision = null
 } = {}) {
   const hasDmsEvidence = Boolean(
     dmsAccepted
@@ -5601,7 +5604,8 @@ function buildPreSuppressionEvidenceSnapshotInput({
     cadastralGrid,
     crsEvidenceShadow,
     structuredUtmPriority,
-    explicitUtmEvidenceLock
+    explicitUtmEvidenceLock,
+    geographicHeaderVision
   };
 }
 
@@ -13936,6 +13940,66 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       isOcrImage: Boolean(req.file),
       hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
     });
+    let geographicHeaderSemantic = detectGeographicHeaderSemanticEvidence({
+      rawText,
+      rawHint: req.body?.rawHint || "",
+      hint: req.body?.hint || ""
+    });
+    let geographicHeaderVision = null;
+    const geographicHeaderVisionRouting = shouldRunGeographicHeaderVisionPass({
+      imageItems: crsImageItems,
+      rawText,
+      rawHint: req.body?.rawHint || "",
+      hint: req.body?.hint || "",
+      coordinates,
+      coordinateRowCount: countCoordinateRows(coordinates),
+      geographicHeaderSemantic,
+      cadastralGrid,
+      structuredUtmPriority
+    });
+    if (geographicHeaderVisionRouting.shouldRun && aliyunApiKey && req.file) {
+      const headerVisionAttempt = startAttempt(recognitionMetrics, {
+        stage: "geographic_header_vision",
+        provider: "vision",
+        model: aliyunVisionModel,
+        timeoutMs: 25000
+      });
+      try {
+        geographicHeaderVision = await runGeographicHeaderVisionPass({
+          imageItems: crsImageItems,
+          invokeVision: async ({ prompt: headerPrompt, imageItems: headerImageItems }) => {
+            const headerResponse = await callAliyunVision({
+              modelName: aliyunVisionModel,
+              prompt: headerPrompt,
+              imageItems: headerImageItems,
+              temperature: 0,
+              maxTokens: 700,
+              timeoutMs: 25000
+            });
+            return headerResponse.choices?.[0]?.message?.content || "";
+          }
+        });
+        finishAttempt(recognitionMetrics, headerVisionAttempt, {
+          status: "success",
+          resultCount: Array.isArray(geographicHeaderVision?.observations)
+            ? geographicHeaderVision.observations.length
+            : 0
+        });
+        if (geographicHeaderVision?.semantic?.detected === true) {
+          geographicHeaderSemantic = geographicHeaderVision.semantic;
+          parserTrace.push("GEOGRAPHIC_HEADER_VISION:semantic_observed");
+        }
+      } catch (headerVisionError) {
+        finishAttempt(recognitionMetrics, headerVisionAttempt, {
+          status: isRecognitionVisionTimeout(headerVisionError) ? "timeout" : "error",
+          errorCode: getRecognitionVisionErrorCode(headerVisionError)
+        });
+        console.warn("Geographic header vision pass skipped after failure", {
+          fileName: uploadedFileName,
+          reason: getRecognitionVisionErrorCode(headerVisionError)
+        });
+      }
+    }
     const preSuppressionEvidenceCandidates = buildPreSuppressionEvidenceSnapshotInput({
       rawText,
       coordinates,
@@ -13947,7 +14011,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       cadastralGrid,
       crsEvidenceShadow,
       structuredUtmPriority,
-      explicitUtmEvidenceLock
+      explicitUtmEvidenceLock,
+      geographicHeaderVision
     });
     let preDecisionEvidenceContext = snapshotPreSuppressionCandidates(preSuppressionEvidenceCandidates, {
       utmEvidenceLockApplied: false,
@@ -14136,11 +14201,6 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       req.body?.rawHint || "",
       req.body?.hint || ""
     ].join("\n");
-    const geographicHeaderSemantic = detectGeographicHeaderSemanticEvidence({
-      rawText,
-      rawHint: req.body?.rawHint || "",
-      hint: req.body?.hint || ""
-    });
     const geographicHeaderProducerRouting = shouldRunGeographicHeaderSupplementalProducer({
       countryCueDetected: hasCoteDIvoireGeographicDmsCue(coteDIvoireCueText),
       countryCueSource: hasCoteDIvoireGeographicDmsCue(uploadedFileName) ? "filename" : "context",

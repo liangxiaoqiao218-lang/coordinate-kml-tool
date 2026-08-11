@@ -32,8 +32,11 @@ export {
 } from "./geographic-header.js";
 
 export {
+  GEOGRAPHIC_HEADER_VISION_PROMPT,
   GEOGRAPHIC_HEADER_VISION_SCHEMA_VERSION,
-  parseGeographicHeaderVisionOutput
+  parseGeographicHeaderVisionOutput,
+  runGeographicHeaderVisionPass,
+  shouldRunGeographicHeaderVisionPass
 } from "./geographic-header-vision.js";
 
 export {

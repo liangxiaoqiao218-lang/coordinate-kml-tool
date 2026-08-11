@@ -5,8 +5,39 @@ import {
 
 export const GEOGRAPHIC_HEADER_VISION_SCHEMA_VERSION = "geographic_header_vision_v1";
 
+export const GEOGRAPHIC_HEADER_VISION_PROMPT = `You are performing literal geographic table-header transcription from a mining or cadastral document image.
+
+Read ONLY visible geographic coordinate table headers and hemisphere indicators.
+
+Target visible header text includes:
+- Latitude, Lat, Longitude, Lon, Long;
+- North, South, East, West;
+- N, S, E, W;
+- Nord, Sud, Est, Ouest.
+
+Literal evidence rules:
+- Do not read, copy, or return coordinate point rows.
+- Do not output numeric coordinates.
+- Do not infer hemisphere from country, filename, map location, coordinate values, or CRS text.
+- Do not decide whether the coordinates are valid.
+- If geographic headers are not clearly visible, return status none with an empty observations array.
+
+Return strict JSON only, with no markdown:
+{
+  "status": "observed" | "none",
+  "observations": [
+    {
+      "field": "latitude_header" | "longitude_header",
+      "indicator": "N" | "S" | "E" | "W" | "North" | "South" | "East" | "West" | "Nord" | "Sud" | "Est" | "Ouest",
+      "source": "geographic_header_vision",
+      "region": "table_header" | "table_caption" | "document_body" | "unknown"
+    }
+  ]
+}`;
+
 const SECRET_KEY_PATTERN = /api[_-]?key|secret|token|password|authorization|credential|env|raw[_-]?ocr|prompt|model[_-]?response|full[_-]?response|image|buffer|base64/i;
 const SECRET_VALUE_PATTERN = /(sk-[a-z0-9_-]{8,}|dashscope[_-]?[a-z0-9_-]*|supabase[_-]?[a-z0-9_-]*|bearer\s+[a-z0-9._-]+|api[_-]?key\s*[:=]|secret\s*[:=]|token\s*[:=]|password\s*[:=]|authorization\s*[:=])/ig;
+const COORDINATE_LIKE_TEXT_PATTERN = /(?:\d{1,3}\s*[°º˚]\s*\d{1,2}|\d{1,3}[.,]\d{3,})/;
 
 function cleanText(value = "") {
   return String(value ?? "")
@@ -191,6 +222,71 @@ function buildVisionResult({ status, observations, semantic }) {
   });
 }
 
+function hasCoordinateLikeEvidence(input = {}) {
+  if (input.coordinateLikeEvidence === true) return true;
+  if (Number(input.coordinateRowCount) > 0) return true;
+  const text = [
+    input.rawText,
+    input.coordinates,
+    input.semanticHint
+  ].filter(Boolean).join("\n");
+  return COORDINATE_LIKE_TEXT_PATTERN.test(cleanText(text));
+}
+
+function hasProtectedHighAuthorityEvidence(input = {}) {
+  return input.explicitGeographicDms === true
+    || input.structuredCadastralTable === true
+    || input.verifiedUtmTransformation === true
+    || input.cadastralGrid?.isCadastralGrid === true
+    || input.structuredUtmPriority?.accepted === true
+    || input.structuredUtmTable?.accepted === true
+    || input.coordinateEngineV2?.coordinate_type === "cote_divoire_geographic_dms_table";
+}
+
+export function shouldRunGeographicHeaderVisionPass(input = {}) {
+  const imageAvailable = input.imageAvailable === true
+    || (Array.isArray(input.imageItems) && input.imageItems.length > 0);
+  const existingSemantic = input.geographicHeaderSemantic
+    || detectGeographicHeaderSemanticEvidence({
+      text: [
+        input.rawText,
+        input.rawHint,
+        input.hint,
+        input.semanticHint
+      ].filter(Boolean).join("\n")
+    });
+  const semanticAlreadyDetected = existingSemantic?.detected === true;
+  const protectedHighAuthorityEvidence = hasProtectedHighAuthorityEvidence(input);
+  const coordinateLikeEvidence = hasCoordinateLikeEvidence(input);
+  const shouldRun = Boolean(
+    imageAvailable
+    && !semanticAlreadyDetected
+    && coordinateLikeEvidence
+    && !protectedHighAuthorityEvidence
+  );
+  const reason = !imageAvailable
+    ? "image_unavailable"
+    : semanticAlreadyDetected
+      ? "geographic_header_semantic_already_detected"
+      : protectedHighAuthorityEvidence
+        ? "high_authority_evidence_already_present"
+        : coordinateLikeEvidence
+          ? "coordinate_like_rows_without_header_semantic"
+          : "no_coordinate_like_evidence";
+
+  return Object.freeze({
+    shouldRun,
+    reason,
+    imageAvailable,
+    semanticAlreadyDetected,
+    coordinateLikeEvidence,
+    protectedHighAuthorityEvidence,
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+}
+
 export function parseGeographicHeaderVisionOutput(input = {}) {
   const parsed = typeof input === "string" ? parseJsonObject(input) : null;
   const source = parsed || input;
@@ -216,4 +312,18 @@ export function parseGeographicHeaderVisionOutput(input = {}) {
     observations,
     semantic
   });
+}
+
+export async function runGeographicHeaderVisionPass({ imageItems = [], invokeVision } = {}) {
+  if (typeof invokeVision !== "function") {
+    throw new TypeError("runGeographicHeaderVisionPass requires an invokeVision function");
+  }
+  if (!Array.isArray(imageItems) || imageItems.length === 0) {
+    throw new TypeError("runGeographicHeaderVisionPass requires at least one image item");
+  }
+  const modelText = await invokeVision({
+    prompt: GEOGRAPHIC_HEADER_VISION_PROMPT,
+    imageItems
+  });
+  return parseGeographicHeaderVisionOutput(modelText);
 }

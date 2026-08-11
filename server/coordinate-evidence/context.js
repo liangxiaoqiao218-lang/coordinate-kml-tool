@@ -133,12 +133,40 @@ function normalizeSuppressionContext(value = {}) {
   });
 }
 
+function normalizeGeographicHeaderVisionContext(value = {}) {
+  const semantic = value.semantic && typeof value.semantic === "object" ? value.semantic : {};
+  const confidence = semantic.confidence && typeof semantic.confidence === "object"
+    ? semantic.confidence.level
+    : semantic.confidence;
+  return Object.freeze({
+    schemaVersion: cleanString(value.schemaVersion || "geographic_header_vision_v1"),
+    status: cleanString(value.status || "not_run"),
+    observationCount: normalizeCount(value.observationCount || (Array.isArray(value.observations) ? value.observations.length : 0)),
+    semantic: Object.freeze({
+      evidenceType: cleanString(semantic.evidenceType || "geographic_header_semantic"),
+      detected: normalizeBoolean(semantic.detected),
+      hasLatitudeHeader: normalizeBoolean(semantic.hasLatitudeHeader),
+      hasLongitudeHeader: normalizeBoolean(semantic.hasLongitudeHeader),
+      hasHemisphereIndicator: normalizeBoolean(semantic.hasHemisphereIndicator),
+      latitudeIndicators: sanitizeArray(semantic.latitudeIndicators),
+      longitudeIndicators: sanitizeArray(semantic.longitudeIndicators),
+      coordinateOrder: cleanString(semantic.coordinateOrder || "unknown"),
+      confidence: cleanString(confidence || "low"),
+      reason: cleanString(semantic.reason || semantic.confidenceReason || "").slice(0, 160)
+    }),
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+}
+
 export function createPreDecisionEvidenceContext(value = {}) {
   return Object.freeze({
     schemaVersion: PRE_DECISION_EVIDENCE_CONTEXT_SCHEMA_VERSION,
     dms: normalizeDmsContext(value.dms || value),
     cadastral: normalizeCadastralContext(value.cadastral || value),
     utm: normalizeUtmContext(value.utm || value),
+    geographicHeaderVision: normalizeGeographicHeaderVisionContext(value.geographicHeaderVision || {}),
     suppression: normalizeSuppressionContext(value.suppression || value)
   });
 }
@@ -164,6 +192,7 @@ export function snapshotPreSuppressionCandidates(candidates = {}, suppression = 
       structuredUtmTable: candidates.structuredUtmTable || candidates.structuredUtmPriority,
       explicitUtmEvidenceLock: candidates.explicitUtmEvidenceLock
     },
+    geographicHeaderVision: candidates.geographicHeaderVision,
     suppression
   });
 }
