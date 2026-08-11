@@ -107,6 +107,12 @@ export {
 } from "./controlled-migration-experiment.js";
 
 export {
+  EVIDENCE_ARBITRATION_CONTROLLED_MIGRATION_EXECUTION_SCHEMA_VERSION,
+  EVIDENCE_ARBITRATION_CONTROLLED_MIGRATION_EXECUTION_STATE,
+  buildEvidenceArbitrationControlledMigrationExecution
+} from "./controlled-migration-execution.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
