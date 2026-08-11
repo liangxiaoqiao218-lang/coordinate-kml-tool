@@ -137,6 +137,12 @@ export {
 } from "./controlled-migration-authorization.js";
 
 export {
+  CONTROLLED_MIGRATION_EXPERIMENT_SESSION_SCHEMA_VERSION,
+  CONTROLLED_MIGRATION_EXPERIMENT_SESSION_STATUS,
+  buildControlledMigrationExperimentSession
+} from "./controlled-migration-session.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
