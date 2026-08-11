@@ -125,6 +125,12 @@ export {
 } from "./controlled-migration-activation.js";
 
 export {
+  CONTROLLED_MIGRATION_EXPERIMENT_EXECUTION_PROPOSAL_SCHEMA_VERSION,
+  CONTROLLED_MIGRATION_EXPERIMENT_EXECUTION_PROPOSAL_STATE,
+  buildControlledMigrationExperimentExecutionProposal
+} from "./controlled-migration-execution-proposal.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
