@@ -161,6 +161,12 @@ export {
 } from "./controlled-migration-review.js";
 
 export {
+  CONTROLLED_MIGRATION_EXPERIMENT_RESULT_CLASSIFICATION,
+  CONTROLLED_MIGRATION_EXPERIMENT_RESULT_PACKAGE_SCHEMA_VERSION,
+  buildControlledMigrationExperimentResultPackage
+} from "./controlled-migration-result-package.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
