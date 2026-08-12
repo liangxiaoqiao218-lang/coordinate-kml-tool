@@ -155,6 +155,12 @@ export {
 } from "./controlled-migration-observation.js";
 
 export {
+  CONTROLLED_MIGRATION_EXPERIMENT_REVIEW_DECISION,
+  CONTROLLED_MIGRATION_EXPERIMENT_REVIEW_SCHEMA_VERSION,
+  buildControlledMigrationExperimentReview
+} from "./controlled-migration-review.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
