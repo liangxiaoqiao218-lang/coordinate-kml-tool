@@ -149,6 +149,12 @@ export {
 } from "./controlled-migration-start.js";
 
 export {
+  CONTROLLED_MIGRATION_EXPERIMENT_OBSERVATION_CLASSIFICATION,
+  CONTROLLED_MIGRATION_EXPERIMENT_OBSERVATION_SCHEMA_VERSION,
+  buildControlledMigrationExperimentObservation
+} from "./controlled-migration-observation.js";
+
+export {
   buildCoordinateEvidenceCandidates,
   buildCoordinateEvidenceShadowModel,
   buildDmsGeographicEvidenceCandidate,
