@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const RELEASE_IDENTITY_SCHEMA_VERSION = "release_identity_v2";
 const BUILD_FIELDS = ["releaseVersion", "commit", "branch", "artifactHash", "buildTime"];
-const DEPLOYMENT_FIELDS = ["environment", "deployTarget", "deploymentTime"];
+const DEPLOYMENT_FIELDS = ["environment", "deployTarget"];
 const OPTIONAL_BUILD_FIELDS = ["buildId"];
 const OPTIONAL_DEPLOYMENT_FIELDS = ["deploymentId"];
 const APPROVED_ENVIRONMENTS = new Set([
@@ -25,7 +25,8 @@ const DEPLOYMENT_METADATA_SOURCES = Object.freeze({
   environment: "RELEASE_IDENTITY_ENVIRONMENT",
   deployTarget: "RELEASE_IDENTITY_DEPLOY_TARGET",
   deploymentId: "RELEASE_IDENTITY_DEPLOYMENT_ID",
-  deploymentTime: "RELEASE_IDENTITY_DEPLOYMENT_TIME"
+  deploymentTime: "RELEASE_IDENTITY_DEPLOYMENT_TIME",
+  externalHostname: "RENDER_EXTERNAL_HOSTNAME"
 });
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_MANIFEST_PATH = path.resolve(moduleDirectory, "../../release-manifest.json");
@@ -123,6 +124,14 @@ function normalizeBuildIdentity(manifest, manifestStatus) {
 
   return freezeIdentity({
     ...identity,
+    sources: Object.freeze({
+      releaseVersion: "release_manifest",
+      commit: source.commit ? "release_manifest.commit" : source.gitCommit ? "release_manifest.gitCommit" : null,
+      branch: source.branch ? "release_manifest.branch" : source.sourceBranch ? "release_manifest.sourceBranch" : null,
+      artifactHash: "release_manifest",
+      buildTime: "release_manifest",
+      buildId: source.buildId ? "release_manifest.buildId" : null
+    }),
     identityStatus: manifestStatus === "loaded" && missingFields.length === 0 && invalidFields.length === 0
       ? "complete"
       : "incomplete",
@@ -146,24 +155,34 @@ export function buildDeploymentIdentity(source = process.env) {
   const rawDeployTarget = source?.[DEPLOYMENT_METADATA_SOURCES.deployTarget];
   const rawDeploymentTime = source?.[DEPLOYMENT_METADATA_SOURCES.deploymentTime];
   const rawDeploymentId = source?.[DEPLOYMENT_METADATA_SOURCES.deploymentId];
+  const rawExternalHostname = source?.[DEPLOYMENT_METADATA_SOURCES.externalHostname];
   const identity = {
     environment: readEnvironment(rawEnvironment),
     deployTarget: readDeployTarget(rawDeployTarget),
     deploymentTime: readUtcTimestamp(rawDeploymentTime),
-    deploymentId: readOptionalIdentifier(rawDeploymentId)
+    deploymentId: readOptionalIdentifier(rawDeploymentId),
+    externalHostname: readDeployTarget(rawExternalHostname)
   };
   const rawValues = {
     environment: rawEnvironment,
     deployTarget: rawDeployTarget,
     deploymentTime: rawDeploymentTime,
-    deploymentId: rawDeploymentId
+    deploymentId: rawDeploymentId,
+    externalHostname: rawExternalHostname
   };
   const missingFields = DEPLOYMENT_FIELDS.filter(field => !hasProvidedValue(rawValues[field]));
-  const invalidFields = [...DEPLOYMENT_FIELDS, ...OPTIONAL_DEPLOYMENT_FIELDS]
+  const invalidFields = [...DEPLOYMENT_FIELDS, ...OPTIONAL_DEPLOYMENT_FIELDS, "deploymentTime", "externalHostname"]
     .filter(field => hasProvidedValue(rawValues[field]) && identity[field] === null);
 
   return freezeIdentity({
     ...identity,
+    sources: Object.freeze({
+      environment: DEPLOYMENT_METADATA_SOURCES.environment,
+      deployTarget: DEPLOYMENT_METADATA_SOURCES.deployTarget,
+      deploymentTime: hasProvidedValue(rawDeploymentTime) ? DEPLOYMENT_METADATA_SOURCES.deploymentTime : "not_provided",
+      deploymentId: hasProvidedValue(rawDeploymentId) ? DEPLOYMENT_METADATA_SOURCES.deploymentId : "not_provided",
+      externalHostname: hasProvidedValue(rawExternalHostname) ? DEPLOYMENT_METADATA_SOURCES.externalHostname : "not_provided"
+    }),
     identityStatus: missingFields.length === 0 && invalidFields.length === 0 ? "complete" : "incomplete",
     missingFields,
     invalidFields
@@ -202,7 +221,16 @@ export function buildReleaseIdentity({
       artifactHash: buildIdentity.artifactHash,
       buildId: buildIdentity.buildId,
       deploymentId: deploymentIdentity.deploymentId,
-      deploymentTime: deploymentIdentity.deploymentTime
+      deploymentTime: deploymentIdentity.deploymentTime,
+      deploymentTimeSource: deploymentIdentity.sources.deploymentTime
+    }),
+    identitySources: Object.freeze({
+      commit: buildIdentity.sources.commit,
+      branch: buildIdentity.sources.branch,
+      buildTime: buildIdentity.sources.buildTime,
+      environment: deploymentIdentity.sources.environment,
+      deployTarget: deploymentIdentity.sources.deployTarget,
+      deploymentTime: deploymentIdentity.sources.deploymentTime
     }),
     missingFields: Object.freeze(missingFields),
     invalidFields: Object.freeze(invalidFields)
@@ -247,6 +275,7 @@ export function verifyDeploymentIdentity(expectedIdentity, runtimeIdentity) {
 
   const expectedArtifactHash = expected.releaseIdentity?.artifactHash;
   const runtimeArtifactHash = runtime.releaseIdentity?.artifactHash;
+  const runtimeExternalHostname = runtime.externalHostname;
   for (const field of comparedFields) {
     if (expected[field] && runtime[field] && expected[field] !== runtime[field]) {
       mismatches.push(field);
@@ -254,6 +283,9 @@ export function verifyDeploymentIdentity(expectedIdentity, runtimeIdentity) {
   }
   if (expectedArtifactHash && runtimeArtifactHash && expectedArtifactHash !== runtimeArtifactHash) {
     mismatches.push("artifactHash");
+  }
+  if (runtime.deployTarget && runtimeExternalHostname && runtime.deployTarget !== runtimeExternalHostname) {
+    mismatches.push("externalHostname");
   }
 
   const status = missingFields.length > 0
@@ -267,7 +299,8 @@ export function verifyDeploymentIdentity(expectedIdentity, runtimeIdentity) {
     status,
     comparedFields: Object.freeze([
       ...comparedFields,
-      ...(expectedArtifactHash && runtimeArtifactHash ? ["artifactHash"] : [])
+      ...(expectedArtifactHash && runtimeArtifactHash ? ["artifactHash"] : []),
+      ...(runtimeExternalHostname ? ["externalHostname"] : [])
     ]),
     mismatches: Object.freeze(mismatches),
     missingFields: Object.freeze(missingFields)

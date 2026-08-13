@@ -23,7 +23,8 @@ const validDeployment = {
   RELEASE_IDENTITY_ENVIRONMENT: "secondary",
   RELEASE_IDENTITY_DEPLOY_TARGET: "coordinate-kml-tool-rc.onrender.com",
   RELEASE_IDENTITY_DEPLOYMENT_ID: "deploy-123",
-  RELEASE_IDENTITY_DEPLOYMENT_TIME: "2026-08-08T00:30:00Z"
+  RELEASE_IDENTITY_DEPLOYMENT_TIME: "2026-08-08T00:30:00Z",
+  RENDER_EXTERNAL_HOSTNAME: "coordinate-kml-tool-rc.onrender.com"
 };
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "release-identity-regression-"));
 const manifestPath = path.join(temporaryDirectory, "release-manifest.json");
@@ -55,6 +56,9 @@ const cases = [
       assert.equal(result.releaseIdentity.buildId, "build-123");
       assert.equal(result.releaseIdentity.deploymentId, "deploy-123");
       assert.equal(result.releaseIdentity.deploymentTime, validDeployment.RELEASE_IDENTITY_DEPLOYMENT_TIME);
+      assert.equal(result.releaseIdentity.deploymentTimeSource, "RELEASE_IDENTITY_DEPLOYMENT_TIME");
+      assert.equal(result.identitySources.commit, "release_manifest.commit");
+      assert.equal(result.identitySources.branch, "release_manifest.branch");
     }
   },
   {
@@ -69,6 +73,41 @@ const cases = [
       assert.equal(result.schemaVersion, "release_identity_v2");
       assert.equal(result.identityStatus, "complete");
       assert.equal(result.commit, commit);
+    }
+  },
+  {
+    name: "deployment time is optional when platform timestamp is unavailable",
+    run() {
+      writeManifest(validManifest);
+      const {
+        RELEASE_IDENTITY_DEPLOYMENT_TIME: _deploymentTime,
+        ...deploymentWithoutTime
+      } = validDeployment;
+      const result = buildReleaseIdentity({
+        buildIdentity: loadBuildIdentityManifest(manifestPath),
+        deploymentSource: deploymentWithoutTime
+      });
+      assert.equal(result.identityStatus, "complete");
+      assert.equal(result.releaseIdentity.deploymentTime, null);
+      assert.equal(result.releaseIdentity.deploymentTimeSource, "not_provided");
+      assert.deepEqual(result.missingFields, []);
+      assert.deepEqual(result.invalidFields, []);
+    }
+  },
+  {
+    name: "invalid deployment time is rejected when provided",
+    run() {
+      writeManifest(validManifest);
+      const result = buildReleaseIdentity({
+        buildIdentity: loadBuildIdentityManifest(manifestPath),
+        deploymentSource: {
+          ...validDeployment,
+          RELEASE_IDENTITY_DEPLOYMENT_TIME: "2026-08-08 00:30:00Z"
+        }
+      });
+      assert.equal(result.identityStatus, "incomplete");
+      assert.equal(result.releaseIdentity.deploymentTime, null);
+      assert.equal(result.invalidFields.includes("deploymentTime"), true);
     }
   },
   {

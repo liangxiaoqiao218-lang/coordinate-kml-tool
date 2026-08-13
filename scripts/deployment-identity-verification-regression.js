@@ -87,6 +87,18 @@ const cases = [
     }
   },
   {
+    name: "deploy target mismatch with Render external hostname is detected",
+    run() {
+      const runtime = withChange(baseIdentity, {
+        externalHostname: "coordinate-kml-tool.onrender.com"
+      });
+      const result = verifyDeploymentIdentity(baseIdentity, runtime);
+      assert.equal(result.status, "DEPLOYMENT_IDENTITY_MISMATCH");
+      assert.equal(result.mismatches.includes("externalHostname"), true);
+      assert.equal(result.comparedFields.includes("externalHostname"), true);
+    }
+  },
+  {
     name: "artifact hash mismatch is compared when both sides exist",
     run() {
       const result = verifyDeploymentIdentity(baseIdentity, withChange(baseIdentity, {

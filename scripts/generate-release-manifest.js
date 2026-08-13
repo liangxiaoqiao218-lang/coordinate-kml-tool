@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const RELEASE_VERSION = "coordinate-engine-v2-rc1";
+const DEFAULT_RELEASE_VERSION = "coordinate-engine-v2-shadow-rc";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
 const DEFAULT_OUTPUT_PATH = path.join(REPO_ROOT, "release-manifest.json");
@@ -47,8 +47,22 @@ function runGitBuffer(args) {
   });
 }
 
+function readBoundedEnv(value, maxLength = 200) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized || normalized.length > maxLength || /[\u0000-\u001f\u007f]/u.test(normalized)) return "";
+  return normalized;
+}
+
+function getReleaseVersion() {
+  const releaseVersion = readBoundedEnv(process.env.RELEASE_IDENTITY_RELEASE_VERSION, 100) || DEFAULT_RELEASE_VERSION;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/u.test(releaseVersion)) {
+    throw new Error("Unable to resolve a safe release version identity.");
+  }
+  return releaseVersion;
+}
+
 function getGitCommit() {
-  const commit = runGit(["rev-parse", "HEAD"]).toLowerCase();
+  const commit = (readBoundedEnv(process.env.RENDER_GIT_COMMIT, 40) || runGit(["rev-parse", "HEAD"])).toLowerCase();
   if (!/^[0-9a-f]{40}$/u.test(commit)) {
     throw new Error("Unable to resolve a full 40-character Git commit.");
   }
@@ -56,7 +70,12 @@ function getGitCommit() {
 }
 
 function getGitBranch() {
-  const branch = runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
+  const branch = readBoundedEnv(process.env.RENDER_GIT_BRANCH, 200)
+    || readBoundedEnv(process.env.RELEASE_IDENTITY_BRANCH, 200)
+    || runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
+  if (branch === "HEAD") {
+    throw new Error("Unable to resolve branch identity from trusted metadata; git is detached at HEAD.");
+  }
   if (!/^[A-Za-z0-9][A-Za-z0-9._+/-]*$/u.test(branch)) {
     throw new Error("Unable to resolve a safe Git branch identity.");
   }
@@ -156,7 +175,7 @@ function buildManifest() {
   const runtimeFiles = collectRuntimePayloadFiles();
   return {
     manifest: {
-      releaseVersion: RELEASE_VERSION,
+      releaseVersion: getReleaseVersion(),
       commit: getGitCommit(),
       branch: getGitBranch(),
       artifactHash: computeRuntimePayloadHash(runtimeFiles),
@@ -199,7 +218,7 @@ function parseArgs(argv) {
 
 function assertManifestShape(manifest) {
   assert.deepEqual(Object.keys(manifest), ["releaseVersion", "commit", "branch", "artifactHash", "buildTime"]);
-  assert.equal(manifest.releaseVersion, RELEASE_VERSION);
+  assert.match(manifest.releaseVersion, /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u);
   assert.match(manifest.commit, /^[0-9a-f]{40}$/u);
   assert.match(manifest.branch, /^[A-Za-z0-9][A-Za-z0-9._+/-]*$/u);
   assert.match(manifest.artifactHash, /^sha256:[0-9a-f]{64}$/u);
@@ -211,21 +230,53 @@ function assertManifestShape(manifest) {
 function runRegression() {
   const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "release-manifest-regression-"));
   const outputPath = path.join(tempDirectory, "release-manifest.json");
+  const originalRenderCommit = process.env.RENDER_GIT_COMMIT;
+  const originalRenderBranch = process.env.RENDER_GIT_BRANCH;
+  const originalReleaseBranch = process.env.RELEASE_IDENTITY_BRANCH;
+  const originalReleaseVersion = process.env.RELEASE_IDENTITY_RELEASE_VERSION;
   try {
+    process.env.RENDER_GIT_COMMIT = "";
+    process.env.RENDER_GIT_BRANCH = "";
+    process.env.RELEASE_IDENTITY_BRANCH = "";
+    process.env.RELEASE_IDENTITY_RELEASE_VERSION = "";
     const { manifest, runtimeFiles } = buildManifest();
     writeJsonNoBom(outputPath, manifest);
     const loaded = JSON.parse(fs.readFileSync(outputPath, "utf8"));
     assertManifestShape(loaded);
     assert.equal(loaded.commit, getGitCommit());
     assert.equal(loaded.branch, getGitBranch());
+    assert.equal(loaded.releaseVersion, DEFAULT_RELEASE_VERSION);
     assert.equal(loaded.artifactHash, computeRuntimePayloadHash(runtimeFiles));
     assert.equal(runtimeFiles.includes("release-manifest.json"), false);
     assert.equal(runtimeFiles.some(file => file === ".env" || file.startsWith(".env.")), false);
     assert.equal(runtimeFiles.some(file => file.startsWith("node_modules/")), false);
     assert.equal(runtimeFiles.some(file => file.startsWith("docs/") || file.startsWith("scripts/")), false);
     assert.equal(runtimeFiles.some(file => file.startsWith("artifacts/")), false);
+
+    process.env.RENDER_GIT_COMMIT = "f".repeat(40);
+    process.env.RENDER_GIT_BRANCH = "v2/utm-intent-router";
+    process.env.RELEASE_IDENTITY_RELEASE_VERSION = "coordinate-engine-v2-shadow-rc";
+    const renderManifest = buildManifest().manifest;
+    assert.equal(renderManifest.commit, "f".repeat(40));
+    assert.equal(renderManifest.branch, "v2/utm-intent-router");
+    assert.equal(renderManifest.releaseVersion, "coordinate-engine-v2-shadow-rc");
+
+    process.env.RENDER_GIT_BRANCH = "";
+    process.env.RELEASE_IDENTITY_BRANCH = "v2/utm-intent-router";
+    assert.equal(buildManifest().manifest.branch, "v2/utm-intent-router");
+
+    process.env.RENDER_GIT_COMMIT = "short";
+    assert.throws(() => buildManifest(), /full 40-character Git commit/u);
     console.log("Release Manifest Generation Regression: PASS");
   } finally {
+    if (originalRenderCommit === undefined) delete process.env.RENDER_GIT_COMMIT;
+    else process.env.RENDER_GIT_COMMIT = originalRenderCommit;
+    if (originalRenderBranch === undefined) delete process.env.RENDER_GIT_BRANCH;
+    else process.env.RENDER_GIT_BRANCH = originalRenderBranch;
+    if (originalReleaseBranch === undefined) delete process.env.RELEASE_IDENTITY_BRANCH;
+    else process.env.RELEASE_IDENTITY_BRANCH = originalReleaseBranch;
+    if (originalReleaseVersion === undefined) delete process.env.RELEASE_IDENTITY_RELEASE_VERSION;
+    else process.env.RELEASE_IDENTITY_RELEASE_VERSION = originalReleaseVersion;
     fs.rmSync(tempDirectory, { recursive: true, force: true });
   }
 }
