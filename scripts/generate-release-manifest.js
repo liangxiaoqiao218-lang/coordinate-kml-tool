@@ -55,6 +55,14 @@ function getGitCommit() {
   return commit;
 }
 
+function getGitBranch() {
+  const branch = runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._+/-]*$/u.test(branch)) {
+    throw new Error("Unable to resolve a safe Git branch identity.");
+  }
+  return branch;
+}
+
 function assertSafeRelativePath(relativePath) {
   const normalized = normalizePath(relativePath);
   if (!normalized || normalized.startsWith("../") || path.isAbsolute(normalized)) {
@@ -149,7 +157,8 @@ function buildManifest() {
   return {
     manifest: {
       releaseVersion: RELEASE_VERSION,
-      gitCommit: getGitCommit(),
+      commit: getGitCommit(),
+      branch: getGitBranch(),
       artifactHash: computeRuntimePayloadHash(runtimeFiles),
       buildTime: utcTimestamp()
     },
@@ -189,9 +198,10 @@ function parseArgs(argv) {
 }
 
 function assertManifestShape(manifest) {
-  assert.deepEqual(Object.keys(manifest), ["releaseVersion", "gitCommit", "artifactHash", "buildTime"]);
+  assert.deepEqual(Object.keys(manifest), ["releaseVersion", "commit", "branch", "artifactHash", "buildTime"]);
   assert.equal(manifest.releaseVersion, RELEASE_VERSION);
-  assert.match(manifest.gitCommit, /^[0-9a-f]{40}$/u);
+  assert.match(manifest.commit, /^[0-9a-f]{40}$/u);
+  assert.match(manifest.branch, /^[A-Za-z0-9][A-Za-z0-9._+/-]*$/u);
   assert.match(manifest.artifactHash, /^sha256:[0-9a-f]{64}$/u);
   assert.match(manifest.buildTime, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u);
   assert.equal(Number.isNaN(new Date(manifest.buildTime).getTime()), false);
@@ -206,7 +216,8 @@ function runRegression() {
     writeJsonNoBom(outputPath, manifest);
     const loaded = JSON.parse(fs.readFileSync(outputPath, "utf8"));
     assertManifestShape(loaded);
-    assert.equal(loaded.gitCommit, getGitCommit());
+    assert.equal(loaded.commit, getGitCommit());
+    assert.equal(loaded.branch, getGitBranch());
     assert.equal(loaded.artifactHash, computeRuntimePayloadHash(runtimeFiles));
     assert.equal(runtimeFiles.includes("release-manifest.json"), false);
     assert.equal(runtimeFiles.some(file => file === ".env" || file.startsWith(".env.")), false);
@@ -232,7 +243,8 @@ function main() {
     console.log(JSON.stringify({
       outputPath: options.outputPath,
       releaseVersion: manifest.releaseVersion,
-      gitCommit: manifest.gitCommit,
+      commit: manifest.commit,
+      branch: manifest.branch,
       artifactHash: manifest.artifactHash,
       buildTime: manifest.buildTime,
       runtimeFileCount: runtimeFiles.length
