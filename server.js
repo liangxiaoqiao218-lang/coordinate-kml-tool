@@ -243,62 +243,62 @@ const goldPriceApiUrl = String(process.env.GOLD_PRICE_API_URL || "https://www.go
 const goldPriceApiKey = String(process.env.GOLDAPI_KEY || process.env.GOLD_PRICE_API_KEY || "").trim();
 const shareMetaMap = {
   "/": {
-    title: "矿业空间实验室 | GeoKit Lab",
-    desc: "坐标处理、AI矿地判读、黄金成色计算，一站式矿业工具平台。",
+    title: "GeoKit Lab | 地理空间工具",
+    desc: "简单、高效的地理空间工具，支持坐标处理、矿地快判和黄金成色计算。",
     image: "/share-home-og.jpg"
   },
   "/coordinate": {
-    title: "矿业空间实验室｜坐标处理工具",
+    title: "GeoKit Lab｜坐标处理工具",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-coordinate-og.jpg"
   },
   "/coordinate-tool": {
-    title: "矿业空间实验室｜坐标处理工具",
+    title: "GeoKit Lab｜坐标处理工具",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool-og.jpg"
   },
   "/tool": {
-    title: "矿业空间实验室｜坐标处理工具",
+    title: "GeoKit Lab｜坐标处理工具",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-tool-og.jpg"
   },
   "/convert": {
-    title: "矿业空间实验室｜坐标处理工具",
+    title: "GeoKit Lab｜坐标处理工具",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-coordinate-og.jpg"
   },
   "/ocr": {
-    title: "矿业空间实验室｜坐标处理工具",
+    title: "GeoKit Lab｜坐标处理工具",
     desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
     image: "/share-coordinate-og.jpg"
   },
   "/mining": {
-    title: "矿业空间实验室｜AI矿地判读",
+    title: "GeoKit Lab｜AI矿地判读",
     desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
     image: "/share-judge-og.jpg"
   },
   "/mining-judge": {
-    title: "矿业空间实验室｜AI矿地判读",
+    title: "GeoKit Lab｜AI矿地判读",
     desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
     image: "/share-judge-og.jpg"
   },
   "/mining-analysis": {
-    title: "矿业空间实验室｜AI矿地判读",
+    title: "GeoKit Lab｜AI矿地判读",
     desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
     image: "/share-judge-og.jpg"
   },
   "/judge": {
-    title: "矿业空间实验室｜AI矿地判读",
+    title: "GeoKit Lab｜AI矿地判读",
     desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
     image: "/share-judge-og.jpg"
   },
   "/gold-calculator": {
-    title: "矿业空间实验室｜黄金成色计算器",
+    title: "GeoKit Lab｜黄金成色计算器",
     desc: "输入重量和排水差重，快速估算纯度、K值和参考价格。",
     image: "/share-gold-og.jpg"
   },
   "/gold": {
-    title: "矿业空间实验室｜黄金成色计算器",
+    title: "GeoKit Lab｜黄金成色计算器",
     desc: "输入重量和排水差重，快速估算纯度、K值和参考价格。",
     image: "/share-gold-og.jpg"
   }
@@ -399,7 +399,9 @@ function getStructuredData(meta, canonicalPath) {
 
 app.use(express.json({ limit: "1mb" }));
 
-const appVersion = "2026-05-01-quota-contact-v2";
+const appBrand = "GeoKit Lab";
+const appVersion = "v1.0.1";
+const appRelease = "Compliance / Commercial Foundation";
 const legacyRenderHost = ["coordinate-kml-tool", "onrender", "com"].join(".");
 const canonicalHost = "geokitlab.com";
 
@@ -686,7 +688,9 @@ app.use(express.static(__dirname, {
 
 app.get("/api/version", (req, res) => {
   res.json({
-    version: appVersion
+    brand: appBrand,
+    version: appVersion,
+    release: appRelease
   });
 });
 

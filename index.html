@@ -260,6 +260,42 @@
       line-height: 1.55;
     }
 
+    .company-foundation {
+      width: 100%;
+      margin: 18px auto 0;
+      padding: 16px;
+      border: 1px solid rgba(216, 226, 240, 0.95);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.86);
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .company-foundation h2 {
+      margin: 0 0 8px;
+      color: #0f172a;
+      font-size: 16px;
+    }
+
+    .company-foundation p {
+      margin: 0;
+    }
+
+    .company-foundation p + p {
+      margin-top: 8px;
+    }
+
+    .company-foundation .company-name {
+      color: #334155;
+      font-weight: 800;
+    }
+
+    .company-foundation a {
+      color: #2563eb;
+      text-decoration: none;
+    }
+
     .home-card-icon {
       display: grid;
       width: 40px;
@@ -4062,6 +4098,70 @@
       display: block;
     }
 
+    .site-footer {
+      width: min(1060px, calc(100% - 40px));
+      margin: auto auto 0;
+      padding: 20px 0 0;
+      border-top: 1px solid rgba(148, 163, 184, 0.25);
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .site-footer-inner {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(250px, 1fr);
+      gap: 20px 32px;
+    }
+
+    .site-footer p {
+      margin: 0;
+    }
+
+    .site-footer p + p {
+      margin-top: 5px;
+    }
+
+    .site-footer-brand {
+      color: #334155;
+      font-weight: 800;
+    }
+
+    .site-footer-contact,
+    .site-footer-filing {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 14px;
+    }
+
+    .site-footer a {
+      color: #475569;
+      text-decoration: none;
+    }
+
+    .site-footer a:hover {
+      color: #2563eb;
+      text-decoration: underline;
+    }
+
+    .site-disclaimer {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(148, 163, 184, 0.18);
+      color: #7b8797;
+    }
+
+    .public-security-filing {
+      min-width: 176px;
+    }
+
+    @media (max-width: 640px) {
+      .site-footer-inner {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+    }
+
     .social-share-fallback-image {
       position: absolute;
       left: 0;
@@ -4081,7 +4181,7 @@
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
         <div>
-          <p class="eyebrow"><span class="brand-mark">G</span><span class="brand-name">矿业空间实验室</span><span class="brand-divider">|</span><span class="brand-en">GeoKit Lab</span></p>
+          <p class="eyebrow"><span class="brand-mark">G</span><span class="brand-name">GeoKit Lab</span></p>
           <h1>简单工具 · 高效处理</h1>
         </div>
       </div>
@@ -4112,6 +4212,13 @@
           <small class="module-action">&gt;</small>
         </button>
       </div>
+
+      <section class="company-foundation" aria-labelledby="aboutGeoKitLab">
+        <h2 id="aboutGeoKitLab">关于 GeoKit Lab</h2>
+        <p>GeoKit Lab 是深圳萨赫勒数字科技有限公司旗下的地理空间工具品牌，专注于地理空间数据处理、坐标转换与 KML 生成、地图数据分析、地理信息软件研发、在线工具及人工智能辅助空间数据处理。</p>
+        <p class="company-name">深圳萨赫勒数字科技有限公司</p>
+        <p>电话：<a href="tel:18677101811">18677101811</a> · 邮箱：<a href="mailto:464115177@qq.com">464115177@qq.com</a></p>
+      </section>
 
     </section>
 
@@ -4495,6 +4602,25 @@ Au值 = 纯度 × 10 后取整数</div>
       </section>
     </section>
   </main>
+  <footer class="site-footer" aria-label="GeoKit Lab 公司与备案信息">
+    <div class="site-footer-inner">
+      <div>
+        <p class="site-footer-brand">© 2026 GeoKit Lab · 深圳萨赫勒数字科技有限公司</p>
+        <p>地址：广东省深圳市南山区粤海街道粤桂社区白石路3818号阳光粤海花园二期3栋2019</p>
+        <p class="site-footer-contact">
+          <span>电话：<a href="tel:18677101811">18677101811</a></span>
+          <span>邮箱：<a href="mailto:464115177@qq.com">464115177@qq.com</a></span>
+        </p>
+      </div>
+      <div>
+        <p class="site-footer-filing">
+          <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026099318号-1</a>
+          <span class="public-security-filing">粤公网安备号：待备案后补充</span>
+        </p>
+        <p class="site-disclaimer">GeoKit Lab 提供的工具及分析结果仅作为数据处理和辅助分析参考，具体业务决策请结合实际情况综合判断。</p>
+      </div>
+    </div>
+  </footer>
   <div id="goldCopyFloat" class="copy-float">结果已复制，可直接发送或对比报价</div>
 
   <div id="imageModal" class="image-modal" onclick="closeImageModal()">
@@ -4587,7 +4713,7 @@ Au值 = 纯度 × 10 后取整数</div>
   </div>
 
   <script>
-    const APP_VERSION = "v1.0.0";
+    const APP_VERSION = "v1.0.1";
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
@@ -4763,25 +4889,25 @@ Au值 = 纯度 × 10 后取整数</div>
     const PAGE_ROUTE_META = {
       home: {
         path: "/",
-        title: "矿业空间实验室 | GeoKit Lab",
-        desc: "坐标处理、AI矿地判读、黄金成色计算，一站式矿业工具平台。",
+        title: "GeoKit Lab | 地理空间工具",
+        desc: "简单、高效的地理空间工具，支持坐标处理、矿地快判和黄金成色计算。",
         image: "https://geokitlab.com/share-home-og.jpg"
       },
       coordinate: {
         path: "/coordinate",
-        title: "矿业空间实验室｜坐标处理工具",
+        title: "GeoKit Lab｜坐标处理工具",
         desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
         image: "https://geokitlab.com/share-coordinate-og.jpg"
       },
       judge: {
         path: "/mining",
-        title: "矿业空间实验室｜AI矿地判读",
+        title: "GeoKit Lab｜AI矿地判读",
         desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
         image: "https://geokitlab.com/share-judge-og.jpg"
       },
       gold: {
         path: "/gold",
-        title: "矿业空间实验室｜黄金成色计算器",
+        title: "GeoKit Lab｜黄金成色计算器",
         desc: "输入重量和排水差重，快速估算纯度、K值和参考价格。",
         image: "https://geokitlab.com/share-gold-og.jpg"
       }
