@@ -19,6 +19,11 @@ function normalizeCount(value, fallback = 0) {
   return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : fallback;
 }
 
+function normalizeNumber(value, fallback = null) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 function sanitizeArray(value = []) {
   return Array.isArray(value)
     ? value.map(item => cleanString(item)).filter(Boolean)
@@ -157,17 +162,68 @@ function normalizeCrsIntent(value = {}) {
   });
 }
 
+function normalizeVerificationPoint(value = {}, index = 0) {
+  const projected = value.projected || {};
+  const transformed = value.transformed || {};
+  const reference = value.reference || {};
+  return Object.freeze({
+    point: cleanString(value.point, String(index + 1)),
+    projected: Object.freeze({
+      x: normalizeNumber(projected.x ?? value.projectedX ?? value.easting),
+      y: normalizeNumber(projected.y ?? value.projectedY ?? value.northing)
+    }),
+    transformed: Object.freeze({
+      latitude: normalizeNumber(transformed.latitude ?? value.transformedLatitude),
+      longitude: normalizeNumber(transformed.longitude ?? value.transformedLongitude)
+    }),
+    reference: Object.freeze({
+      latitude: normalizeNumber(reference.latitude ?? value.referenceLatitude),
+      longitude: normalizeNumber(reference.longitude ?? value.referenceLongitude)
+    }),
+    latitudeDifference: normalizeNumber(value.latitudeDifference),
+    longitudeDifference: normalizeNumber(value.longitudeDifference),
+    maximumDifference: normalizeNumber(value.maximumDifference),
+    status: cleanString(value.status, "not_available"),
+    referenceSource: cleanString(value.referenceSource, "other"),
+    referenceMergeMode: cleanString(value.referenceMergeMode)
+  });
+}
+
+function normalizeTransformationVerification(value = {}) {
+  const rows = Array.isArray(value.pointLevelVerification)
+    ? value.pointLevelVerification
+    : Array.isArray(value.rows)
+      ? value.rows
+      : [];
+  const mismatchedPointLabels = Array.isArray(value.mismatchedPointLabels)
+    ? value.mismatchedPointLabels
+    : rows.filter(row => row?.status === "mismatch").map(row => row?.point);
+  const pointLevelVerification = rows.map(normalizeVerificationPoint);
+  return Object.freeze({
+    status: cleanString(value.status),
+    tolerance: normalizeNumber(value.tolerance),
+    comparedRows: normalizeCount(value.comparedRows || pointLevelVerification.filter(row => row.status !== "not_available").length),
+    matchedRows: normalizeCount(value.matchedRows || pointLevelVerification.filter(row => row.status === "match").length),
+    mismatchedRows: normalizeCount(value.mismatchedRows || pointLevelVerification.filter(row => row.status === "mismatch").length),
+    mismatchedPointLabels: Object.freeze(sanitizeArray(mismatchedPointLabels)),
+    maximumDifference: normalizeNumber(value.maximumDifference),
+    pointLevelVerification: Object.freeze(pointLevelVerification)
+  });
+}
+
 function normalizeStructuredUtmTable(value = {}) {
   const table = value.structuredUtmTable || value.structuredUtmPriority || value;
+  const verification = table.transformationVerification || {};
   return Object.freeze({
     accepted: normalizeBoolean(table.accepted),
     reason: cleanString(table.reason),
     rowCount: normalizeCount(table.rowCount || table.table?.rows?.length),
     transformationStatus: cleanString(
-      table.transformationVerification?.status
+      verification?.status
       || table.transformationStatus
       || ""
-    )
+    ),
+    transformationVerification: normalizeTransformationVerification(verification)
   });
 }
 

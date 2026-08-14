@@ -19,7 +19,8 @@ import {
   mergeProjectedXyRows,
   runProjectedXyOnlyPass,
   runSelectiveProjectedXyRereadPass,
-  runStructuredUtmTablePass
+  runStructuredUtmTablePass,
+  summarizeStructuredUtmTransformationVerification
 } from "./server/utm-intent/structured-projected-priority.js";
 import {
   hasExplicitUtmEvidenceLock,
@@ -14586,7 +14587,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         accepted: Boolean(structuredUtmPriority.accepted),
         reason: structuredUtmPriority.reason,
         rowCount: structuredUtmPriority.table?.rows?.length || 0,
-        transformationVerification: structuredUtmPriority.transformationVerification
+        transformationVerification: summarizeStructuredUtmTransformationVerification(structuredUtmPriority.transformationVerification)
       } : undefined,
       cadastralGrid,
       mgrs,

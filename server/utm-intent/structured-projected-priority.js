@@ -430,9 +430,19 @@ export function mergeStructuredUtmReferenceRows(table = {}, referenceTable = {},
 
   const referencesByPoint = new Map(referenceRows.map(row => [String(row.point), row]));
   let mergeMode = "point_label";
+  const referenceSource = String(referenceTable.source || "merged_reference");
+  const mergeReference = (row, reference, mode) => reference
+    ? {
+        ...row,
+        ...reference,
+        point: row.point,
+        referenceSource,
+        referenceMergeMode: mode
+      }
+    : row;
   let mergedRows = tableRows.map(row => {
     const reference = referencesByPoint.get(String(row.point));
-    return reference ? { ...row, ...reference, point: row.point } : row;
+    return mergeReference(row, reference, mergeMode);
   });
   let matchedRows = mergedRows.filter(row => Number.isFinite(row.referenceLatitude) && Number.isFinite(row.referenceLongitude)).length;
 
@@ -446,7 +456,7 @@ export function mergeStructuredUtmReferenceRows(table = {}, referenceTable = {},
     mergeMode = "verified_index";
     mergedRows = tableRows.map((row, index) => {
       const reference = referenceRows[index];
-      return reference ? { ...row, ...reference, point: row.point } : row;
+      return mergeReference(row, reference, mergeMode);
     });
     matchedRows = mergedRows.filter(row => Number.isFinite(row.referenceLatitude) && Number.isFinite(row.referenceLongitude)).length;
   }
@@ -470,6 +480,91 @@ function formatProjectedNumber(value, fallback) {
   return /^[+-]?\d+(?:\.\d+)?$/.test(literal) ? literal : String(value);
 }
 
+function numericOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getReferenceSource(row = {}, table = {}) {
+  const source = String(row.referenceSource || table.referenceMerge?.source || "").trim();
+  if (source) return source;
+  if (Number.isFinite(row.referenceLatitude) && Number.isFinite(row.referenceLongitude)) {
+    return "structured_table";
+  }
+  return "other";
+}
+
+function getReferenceMergeMode(row = {}, table = {}) {
+  return String(row.referenceMergeMode || table.referenceMerge?.mode || "").trim() || null;
+}
+
+function buildPointLevelVerificationRow({ row = {}, index = 0, transformed = {}, status = "not_available", latitudeDifference = null, longitudeDifference = null, table = {} } = {}) {
+  const normalizedLatitudeDifference = numericOrNull(latitudeDifference);
+  const normalizedLongitudeDifference = numericOrNull(longitudeDifference);
+  const maximumDifference = Math.max(
+    Number(normalizedLatitudeDifference || 0),
+    Number(normalizedLongitudeDifference || 0)
+  );
+  return {
+    point: String(row.point || index + 1),
+    projected: {
+      x: numericOrNull(row.easting),
+      y: numericOrNull(row.northing)
+    },
+    transformed: {
+      latitude: numericOrNull(transformed.latitude),
+      longitude: numericOrNull(transformed.longitude)
+    },
+    reference: {
+      latitude: numericOrNull(row.referenceLatitude),
+      longitude: numericOrNull(row.referenceLongitude)
+    },
+    latitudeDifference: normalizedLatitudeDifference,
+    longitudeDifference: normalizedLongitudeDifference,
+    maximumDifference,
+    status,
+    referenceSource: getReferenceSource(row, table),
+    referenceMergeMode: getReferenceMergeMode(row, table)
+  };
+}
+
+function summarizeVerificationRows(rows = []) {
+  const comparable = rows.filter(item => item.status !== "not_available");
+  const mismatches = comparable.filter(item => item.status === "mismatch");
+  return {
+    comparedRows: comparable.length,
+    matchedRows: comparable.filter(item => item.status === "match").length,
+    mismatchedRows: mismatches.length,
+    mismatchedPointLabels: mismatches.map(item => String(item.point || "")).filter(Boolean),
+    maximumDifference: comparable.reduce((maximum, item) => Math.max(
+      maximum,
+      Number(item.maximumDifference || 0),
+      Number(item.latitudeDifference || 0),
+      Number(item.longitudeDifference || 0)
+    ), 0)
+  };
+}
+
+export function summarizeStructuredUtmTransformationVerification(verification = {}) {
+  const rows = Array.isArray(verification.pointLevelVerification)
+    ? verification.pointLevelVerification
+    : Array.isArray(verification.rows)
+      ? verification.rows
+      : [];
+  const summary = summarizeVerificationRows(rows);
+  return {
+    status: String(verification.status || ""),
+    tolerance: numericOrNull(verification.tolerance),
+    comparedRows: Number.isFinite(Number(verification.comparedRows)) ? Number(verification.comparedRows) : summary.comparedRows,
+    matchedRows: Number.isFinite(Number(verification.matchedRows)) ? Number(verification.matchedRows) : summary.matchedRows,
+    mismatchedRows: Number.isFinite(Number(verification.mismatchedRows)) ? Number(verification.mismatchedRows) : summary.mismatchedRows,
+    mismatchedPointLabels: Array.isArray(verification.mismatchedPointLabels)
+      ? verification.mismatchedPointLabels.map(label => String(label || "")).filter(Boolean)
+      : summary.mismatchedPointLabels,
+    maximumDifference: Number.isFinite(Number(verification.maximumDifference)) ? Number(verification.maximumDifference) : summary.maximumDifference
+  };
+}
+
 export function buildStructuredUtmPriority({ shadowIntent, table, tolerance = 1e-6 } = {}) {
   const rows = Array.isArray(table?.rows) ? table.rows : [];
   if (rows.length < 3) return null;
@@ -482,28 +577,41 @@ export function buildStructuredUtmPriority({ shadowIntent, table, tolerance = 1e
   const comparisons = rows.map((row, index) => {
     const transformed = typedResult.transformedWgs84[index];
     const hasReference = Number.isFinite(row.referenceLatitude) && Number.isFinite(row.referenceLongitude);
-    if (!hasReference) return { point: row.point, status: "not_available" };
+    if (!hasReference) {
+      return buildPointLevelVerificationRow({
+        row,
+        index,
+        transformed,
+        status: "not_available",
+        table
+      });
+    }
     const latitudeDifference = Math.abs(transformed.latitude - row.referenceLatitude);
     const longitudeDifference = Math.abs(transformed.longitude - row.referenceLongitude);
-    return {
-      point: row.point,
-      status: Math.max(latitudeDifference, longitudeDifference) <= tolerance ? "match" : "mismatch",
+    const status = Math.max(latitudeDifference, longitudeDifference) <= tolerance ? "match" : "mismatch";
+    return buildPointLevelVerificationRow({
+      row,
+      index,
+      transformed,
+      status,
       latitudeDifference,
-      longitudeDifference
-    };
+      longitudeDifference,
+      table
+    });
   });
   const comparable = comparisons.filter(item => item.status !== "not_available");
   const mismatches = comparable.filter(item => item.status === "mismatch");
+  const summary = summarizeVerificationRows(comparisons);
   const verification = {
     status: comparable.length === 0 ? "not_available" : mismatches.length === 0 ? "match" : "mismatch",
     tolerance,
-    comparedRows: comparable.length,
-    maximumDifference: comparable.reduce((maximum, item) => Math.max(
-      maximum,
-      Number(item.latitudeDifference || 0),
-      Number(item.longitudeDifference || 0)
-    ), 0),
-    rows: comparisons
+    comparedRows: summary.comparedRows,
+    matchedRows: summary.matchedRows,
+    mismatchedRows: summary.mismatchedRows,
+    mismatchedPointLabels: summary.mismatchedPointLabels,
+    maximumDifference: summary.maximumDifference,
+    rows: comparisons,
+    pointLevelVerification: comparisons
   };
 
   if (verification.status === "mismatch") {
