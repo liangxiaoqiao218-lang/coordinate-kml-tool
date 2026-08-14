@@ -42,6 +42,7 @@ export function sanitizeCandidateForResponse(candidate = {}) {
     authority: pickObject(candidate, "authority"),
     confidence: pickObject(candidate, "confidence"),
     attributes: pickObject(candidate, "attributes"),
+    coordinateInterpretation: pickObject(candidate, "coordinateInterpretation", null),
     coordinateSummary: pickObject(candidate, "coordinateSummary"),
     conflicts: Array.isArray(candidate.conflicts) ? sanitizePlainValue(candidate.conflicts) : [],
     recommendedState: cleanString(candidate.recommendedState),

@@ -39,6 +39,7 @@ import {
   runCadastralSemanticVisionPass,
   runGeographicHeaderVisionPass,
   shouldRunCadastralSemanticVisionPass,
+  buildDeterministicDmsInterpretation,
   shouldRunGeographicHeaderSupplementalProducer,
   shouldRunGeographicHeaderVisionPass,
   snapshotPreSuppressionCandidates
@@ -7623,6 +7624,65 @@ function parseCoteDIvoireDmsComponents(line = "") {
   return parts;
 }
 
+function normalizeCoteDIvoireDmsHemisphere(value = "", fallback = "") {
+  const text = String(value || fallback || "").trim().toUpperCase();
+  if (text === "O") return "W";
+  return ["N", "S", "E", "W"].includes(text) ? text : "";
+}
+
+function sanitizeCoteDIvoireDmsToken(part = {}, role = "", fallbackHemisphere = "") {
+  const degrees = Number(part.degrees);
+  const minutes = Number(part.minutes);
+  const seconds = Number(part.seconds);
+  return {
+    role,
+    degrees: Number.isFinite(degrees) ? degrees : null,
+    minutes: Number.isFinite(minutes) ? minutes : null,
+    seconds: Number.isFinite(seconds) ? seconds : null,
+    hemisphere: normalizeCoteDIvoireDmsHemisphere(part.direction, fallbackHemisphere)
+  };
+}
+
+function buildCoteDIvoireStructuredDmsRow(label = "", latPart = {}, lonPart = {}) {
+  return {
+    point: String(label || "").trim(),
+    latitude: sanitizeCoteDIvoireDmsToken(latPart, "latitude", "N"),
+    longitude: sanitizeCoteDIvoireDmsToken(lonPart, "longitude", "W")
+  };
+}
+
+function collectCoteDIvoireStructuredDmsRows(result = {}) {
+  return (Array.isArray(result.groups) ? result.groups : [])
+    .flatMap(group => Array.isArray(group.points) ? group.points : [])
+    .map(point => point?.structuredDmsRow)
+    .filter(row => row && typeof row === "object");
+}
+
+function buildCoteDIvoireDmsCoordinateInterpretation(result = {}) {
+  const rows = collectCoteDIvoireStructuredDmsRows(result);
+  if (rows.length === 0) return null;
+  return buildDeterministicDmsInterpretation({
+    rows,
+    headerSemantics: {
+      latitude: "Latitude nord",
+      longitude: "Longitude ouest"
+    }
+  });
+}
+
+function mergeCoteDIvoireDmsInterpretationIntoEvidenceContext(context = {}, coordinateInterpretation = null) {
+  if (!coordinateInterpretation || typeof coordinateInterpretation !== "object") {
+    return context;
+  }
+  return {
+    ...(context || {}),
+    dms: {
+      ...((context && typeof context === "object" && context.dms && typeof context.dms === "object") ? context.dms : {}),
+      coordinateInterpretation
+    }
+  };
+}
+
 function parseCoteDIvoireCoordinateLine(line = "", fallbackIndex = 1) {
   const source = String(line || "").trim();
   let dmsSource = source;
@@ -7662,6 +7722,7 @@ function parseCoteDIvoireCoordinateLine(line = "", fallbackIndex = 1) {
     raw: source,
     lat,
     lon,
+    structuredDmsRow: buildCoteDIvoireStructuredDmsRow(label || String(fallbackIndex), latPart, lonPart),
     confidence: 0.95,
     requires_review: false,
     warnings: []
@@ -7802,6 +7863,7 @@ function normalizeCoteDIvoireGeographicDmsTable(rawGroups = []) {
       raw: point.raw,
       lat: point.lat,
       lon: point.lon,
+      structuredDmsRow: point.structuredDmsRow,
       confidence: point.confidence,
       requires_review: false,
       warnings: []
@@ -14364,6 +14426,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }, { fileName: uploadedFileName });
 
         if (coteDIvoireV2?.coordinate_type === "cote_divoire_geographic_dms_table") {
+          const coteDIvoireDmsInterpretation = buildCoteDIvoireDmsCoordinateInterpretation(coteDIvoireV2);
+          if (coteDIvoireDmsInterpretation?.interpretationStatus === "COMPLETE") {
+            recognitionPayload._coordinateEvidenceContext = mergeCoteDIvoireDmsInterpretationIntoEvidenceContext(
+              recognitionPayload._coordinateEvidenceContext || preDecisionEvidenceContext || {},
+              coteDIvoireDmsInterpretation
+            );
+          }
           coordinateEngineV2 = normalizeCoordinateEngineV2Result(coteDIvoireV2, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });
           console.log("Cote d'Ivoire V2 geographic DMS prompt success", {
             groups: coteDIvoireV2.groups.length,

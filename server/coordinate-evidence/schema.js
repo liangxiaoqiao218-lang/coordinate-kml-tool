@@ -25,6 +25,8 @@ export const CONFIDENCE_LEVEL = Object.freeze({
   UNKNOWN: "unknown"
 });
 
+const COORDINATE_SOURCE_ALLOWLIST = new Set(["dms_deterministic"]);
+
 function cleanString(value, fallback = "") {
   const text = String(value ?? "").trim();
   return text || fallback;
@@ -80,6 +82,63 @@ function normalizeCoordinateSummary(value = {}) {
   });
 }
 
+function normalizeCoordinatePoint(value = {}, index = 0) {
+  const lat = Number(value.lat);
+  const lon = Number(value.lon);
+  return Object.freeze({
+    point: cleanString(value.point || value.label || value.id, String(index + 1)),
+    lat: Number.isFinite(lat) ? Number(lat.toFixed(9)) : null,
+    lon: Number.isFinite(lon) ? Number(lon.toFixed(9)) : null,
+    source: COORDINATE_SOURCE_ALLOWLIST.has(cleanString(value.source))
+      ? cleanString(value.source)
+      : "dms_deterministic"
+  });
+}
+
+function normalizeSourceDmsToken(value = {}) {
+  return Object.freeze({
+    role: cleanString(value.role),
+    degrees: Number.isFinite(Number(value.degrees)) ? Number(value.degrees) : null,
+    minutes: Number.isFinite(Number(value.minutes)) ? Number(value.minutes) : null,
+    seconds: Number.isFinite(Number(value.seconds)) ? Number(value.seconds) : null,
+    hemisphere: cleanString(value.hemisphere)
+  });
+}
+
+function normalizeSourceDmsRow(value = {}, index = 0) {
+  return Object.freeze({
+    point: cleanString(value.point, String(index + 1)),
+    latitude: normalizeSourceDmsToken(value.latitude || {}),
+    longitude: normalizeSourceDmsToken(value.longitude || {})
+  });
+}
+
+function normalizeCoordinateInterpretation(value = {}) {
+  if (!value || typeof value !== "object") return null;
+  const normalizedCoordinates = Array.isArray(value.normalizedCoordinates)
+    ? value.normalizedCoordinates.map(normalizeCoordinatePoint)
+      .filter(point => point.lat !== null && point.lon !== null)
+    : [];
+  const sourceRows = Array.isArray(value.sourceRows)
+    ? value.sourceRows.map(normalizeSourceDmsRow)
+    : [];
+  const status = cleanString(value.interpretationStatus || value.status, "INCOMPLETE").toUpperCase();
+  const normalizedStatus = ["COMPLETE", "INCOMPLETE", "INVALID"].includes(status) ? status : "INCOMPLETE";
+  return Object.freeze({
+    schemaVersion: cleanString(value.schemaVersion, "dms_coordinate_interpretation_v1"),
+    interpretationStatus: normalizedStatus,
+    deterministicConversion: normalizeBoolean(value.deterministicConversion),
+    hemisphereResolved: normalizeBoolean(value.hemisphereResolved),
+    pointCount: Math.max(0, normalizeInteger(value.pointCount, normalizedCoordinates.length)),
+    normalizedCoordinates: Object.freeze(normalizedCoordinates),
+    sourceRows: Object.freeze(sourceRows),
+    errors: Object.freeze(Array.isArray(value.errors) ? value.errors.map(error => cleanString(error)).filter(Boolean) : []),
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+}
+
 function normalizeRecommendedState(value) {
   const state = cleanString(value, COORDINATE_EVIDENCE_RECOMMENDED_STATE.BLOCKED_REVIEW);
   return Object.values(COORDINATE_EVIDENCE_RECOMMENDED_STATE).includes(state)
@@ -124,6 +183,7 @@ export function createCoordinateEvidenceCandidate(value = {}) {
     authority: normalizeAuthority(value.authority || {}),
     confidence: normalizeConfidence(value.confidence || {}),
     attributes,
+    coordinateInterpretation: normalizeCoordinateInterpretation(value.coordinateInterpretation),
     coordinateSummary: normalizeCoordinateSummary(value.coordinateSummary || {}),
     conflicts: Object.freeze(Array.isArray(value.conflicts) ? [...value.conflicts] : []),
     recommendedState,

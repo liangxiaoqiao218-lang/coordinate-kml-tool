@@ -1,4 +1,12 @@
 export {
+  DMS_COORDINATE_INTERPRETATION_SCHEMA_VERSION,
+  DMS_INTERPRETATION_STATUS,
+  buildDeterministicDmsInterpretation,
+  dmsTokenToDecimal,
+  normalizeDmsHemisphere
+} from "./dms-interpreter.js";
+
+export {
   AUTHORITY_CATEGORY,
   CONFIDENCE_LEVEL,
   COORDINATE_EVIDENCE_CANDIDATE_SCHEMA_VERSION,

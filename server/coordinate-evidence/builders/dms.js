@@ -3,6 +3,7 @@ import {
   COORDINATE_EVIDENCE_RECOMMENDED_STATE,
   createCoordinateEvidenceCandidate
 } from "../schema.js";
+import { buildDeterministicDmsInterpretation } from "../dms-interpreter.js";
 
 function countEnginePoints(coordinateEngineV2 = {}) {
   return (Array.isArray(coordinateEngineV2.groups) ? coordinateEngineV2.groups : [])
@@ -57,12 +58,44 @@ function buildConfidence({ handwritten = false, explicit = false, requiresReview
 
 function buildCoordinateSummary(value = {}) {
   const coordinateEngineV2 = value.coordinateEngineV2 || {};
-  const pointCount = Number(value.pointCount || countEnginePoints(coordinateEngineV2) || value.handwrittenDms?.pointRows || 0);
+  const pointCount = Number(
+    value.coordinateInterpretation?.pointCount
+    || value.pointCount
+    || countEnginePoints(coordinateEngineV2)
+    || value.handwrittenDms?.pointRows
+    || 0
+  );
   return {
     pointCount: Number.isFinite(pointCount) ? pointCount : 0,
     geometryType: value.geometryType || getGeometryType(coordinateEngineV2, pointCount > 2 ? "polygon" : "unknown"),
     groupCount: Number(value.groupCount || countGroups(coordinateEngineV2) || 0)
   };
+}
+
+function getStructuredDmsSource(value = {}, dmsContext = {}) {
+  const source = value.structuredDmsInterpretation
+    || value.dmsCoordinateInterpretation
+    || value.coordinateInterpretationSource
+    || dmsContext.structuredDmsInterpretation
+    || dmsContext.dmsCoordinateInterpretation
+    || dmsContext.coordinateInterpretationSource
+    || null;
+  if (source && typeof source === "object") return source;
+  const rows = value.dmsRows || value.structuredDmsRows || dmsContext.dmsRows || dmsContext.structuredDmsRows;
+  if (Array.isArray(rows)) {
+    return {
+      rows,
+      headerSemantics: value.headerSemantics || dmsContext.headerSemantics || {}
+    };
+  }
+  return null;
+}
+
+function buildCoordinateInterpretation(value = {}, dmsContext = {}) {
+  const existing = value.coordinateInterpretation || dmsContext.coordinateInterpretation;
+  if (existing && typeof existing === "object" && existing.schemaVersion) return existing;
+  const source = getStructuredDmsSource(value, dmsContext);
+  return source ? buildDeterministicDmsInterpretation(source) : null;
 }
 
 export function buildDmsGeographicEvidenceCandidate(value = {}) {
@@ -75,6 +108,7 @@ export function buildDmsGeographicEvidenceCandidate(value = {}) {
   const dmsGroupedAccepted = Boolean(value.dmsGroupedAccepted || dmsContext.dmsGroupedAccepted);
   const pointAzDmsTableAccepted = Boolean(value.pointAzDmsTableAccepted || dmsContext.pointAzDmsTableAccepted);
   const isHandwritten = Boolean(handwrittenDms.isHandwrittenDms || value.precisionMode === "handwritten-dms-coordinates");
+  const coordinateInterpretation = buildCoordinateInterpretation(value, dmsContext);
   const hasDms = Boolean(
     dmsAccepted
     || dmsGroupedAccepted
@@ -116,7 +150,8 @@ export function buildDmsGeographicEvidenceCandidate(value = {}) {
       hemisphereAmbiguous: false,
       coordinateOrderAmbiguous: false
     },
-    coordinateSummary: buildCoordinateSummary({ ...dmsContext, ...value, handwrittenDms }),
+    coordinateInterpretation,
+    coordinateSummary: buildCoordinateSummary({ ...dmsContext, ...value, handwrittenDms, coordinateInterpretation }),
     conflicts: Array.isArray(value.conflicts) ? value.conflicts : (Array.isArray(dmsContext.conflicts) ? dmsContext.conflicts : []),
     recommendedState: requiresReview
       ? COORDINATE_EVIDENCE_RECOMMENDED_STATE.CONFIRM_REQUIRED

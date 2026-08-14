@@ -15,6 +15,7 @@ export const EVIDENCE_ARBITRATION_PROPOSAL_MODE = Object.freeze({
 
 export const EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION = Object.freeze({
   AGREEMENT: "AGREEMENT",
+  TYPE_AGREEMENT_WITH_COORDINATE_DISAGREEMENT: "TYPE_AGREEMENT_WITH_COORDINATE_DISAGREEMENT",
   REVIEW_REQUIRED: "REVIEW_REQUIRED",
   NO_PROPOSAL: "NO_PROPOSAL",
   BLOCKED_KML_GATE: "BLOCKED_KML_GATE",
@@ -85,6 +86,9 @@ function normalizeCandidateList(candidates = []) {
     .map(candidate => Object.freeze({
       ...summarizeObservationCandidate(candidate),
       authorityCategory: nullableString(candidate.authority?.category || candidate.authorityCategory),
+      coordinateInterpretation: candidate.coordinateInterpretation && typeof candidate.coordinateInterpretation === "object"
+        ? candidate.coordinateInterpretation
+        : null,
       canGenerateKml: candidate.canGenerateKml === true
         ? true
         : candidate.canGenerateKml === false
@@ -92,6 +96,174 @@ function normalizeCandidateList(candidates = []) {
           : null
     }))
     .filter(candidate => candidate.evidenceType));
+}
+
+function normalizeCoordinatePoint(value = {}, index = 0) {
+  const lat = Number(value.lat);
+  const lon = Number(value.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return Object.freeze({
+    point: cleanString(value.point || value.label || value.id || String(index + 1)),
+    lat: Number(lat.toFixed(9)),
+    lon: Number(lon.toFixed(9)),
+    source: nullableString(value.source) || "unknown"
+  });
+}
+
+function parseCoordinateText(value = "") {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const numbers = [...line.matchAll(/[-+]?\d+(?:\.\d+)?/g)].map(match => Number(match[0]));
+      if (line.includes("|") && numbers.length >= 3) {
+        return normalizeCoordinatePoint({
+          point: String(numbers[0]),
+          lat: numbers[1],
+          lon: numbers[2],
+          source: "legacy_coordinates_text"
+        }, index);
+      }
+      if (numbers.length >= 2) {
+        return normalizeCoordinatePoint({
+          point: String(index + 1),
+          lat: numbers[0],
+          lon: numbers[1],
+          source: "legacy_coordinates_text"
+        }, index);
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function engineCoordinates(source = {}) {
+  const groups = Array.isArray(source.coordinateEngineV2?.groups)
+    ? source.coordinateEngineV2.groups
+    : [];
+  return groups.flatMap(group => Array.isArray(group.points) ? group.points : [])
+    .map((point, index) => normalizeCoordinatePoint({
+      point: point.point || point.id || point.label || String(index + 1),
+      lat: point.lat ?? point.latitude,
+      lon: point.lon ?? point.lng ?? point.longitude,
+      source: "legacy_coordinate_engine_v2"
+    }, index))
+    .filter(Boolean);
+}
+
+function legacyCoordinateInterpretation(source = {}) {
+  if (source.coordinateInterpretation?.normalizedCoordinates) {
+    return source.coordinateInterpretation;
+  }
+  const publicCoordinates = parseCoordinateText(source.coordinates || source.rawCoordinates || "");
+  const normalizedCoordinates = publicCoordinates.length
+    ? publicCoordinates
+    : engineCoordinates(source);
+  if (!normalizedCoordinates.length) return null;
+  return Object.freeze({
+    schemaVersion: "legacy_coordinate_interpretation_v1",
+    interpretationStatus: "COMPLETE",
+    deterministicConversion: false,
+    hemisphereResolved: false,
+    pointCount: normalizedCoordinates.length,
+    normalizedCoordinates: Object.freeze(normalizedCoordinates),
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+}
+
+function normalizeInterpretation(value = {}) {
+  if (!value || typeof value !== "object" || !Array.isArray(value.normalizedCoordinates)) return null;
+  const normalizedCoordinates = value.normalizedCoordinates
+    .map(normalizeCoordinatePoint)
+    .filter(Boolean);
+  if (!normalizedCoordinates.length) return null;
+  return Object.freeze({
+    schemaVersion: nullableString(value.schemaVersion) || "coordinate_interpretation_v1",
+    interpretationStatus: nullableString(value.interpretationStatus || value.status) || "COMPLETE",
+    deterministicConversion: value.deterministicConversion === true,
+    hemisphereResolved: value.hemisphereResolved === true,
+    pointCount: normalizedCoordinates.length,
+    normalizedCoordinates: Object.freeze(normalizedCoordinates),
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+}
+
+function compareCoordinateInterpretations(legacy = null, evidence = null, tolerance = 0.000001) {
+  const legacyInterpretation = normalizeInterpretation(legacy);
+  const evidenceInterpretation = normalizeInterpretation(evidence);
+  if (!legacyInterpretation || !evidenceInterpretation) {
+    return Object.freeze({
+      available: false,
+      comparisonTolerance: tolerance,
+      wouldChangeCoordinateValues: false,
+      numericDisagreement: false,
+      hemisphereDisagreement: false,
+      maxCoordinateDelta: null,
+      pointMismatchCount: 0,
+      pointLevelDiff: Object.freeze([])
+    });
+  }
+
+  const count = Math.min(
+    legacyInterpretation.normalizedCoordinates.length,
+    evidenceInterpretation.normalizedCoordinates.length
+  );
+  const pointLevelDiff = [];
+  let maxCoordinateDelta = 0;
+  let pointMismatchCount = 0;
+  let hemisphereDisagreement = false;
+
+  for (let index = 0; index < count; index += 1) {
+    const legacyPoint = legacyInterpretation.normalizedCoordinates[index];
+    const evidencePoint = evidenceInterpretation.normalizedCoordinates[index];
+    const latDelta = Number(Math.abs(legacyPoint.lat - evidencePoint.lat).toFixed(9));
+    const lonDelta = Number(Math.abs(legacyPoint.lon - evidencePoint.lon).toFixed(9));
+    const pointHemisphereDisagreement = Math.sign(legacyPoint.lat) !== Math.sign(evidencePoint.lat)
+      || Math.sign(legacyPoint.lon) !== Math.sign(evidencePoint.lon);
+    const numericMismatch = latDelta > tolerance || lonDelta > tolerance;
+    if (numericMismatch) pointMismatchCount += 1;
+    if (pointHemisphereDisagreement) hemisphereDisagreement = true;
+    maxCoordinateDelta = Math.max(maxCoordinateDelta, latDelta, lonDelta);
+    pointLevelDiff.push(Object.freeze({
+      point: evidencePoint.point || legacyPoint.point || String(index + 1),
+      legacy: Object.freeze({
+        lat: legacyPoint.lat,
+        lon: legacyPoint.lon
+      }),
+      evidence: Object.freeze({
+        lat: evidencePoint.lat,
+        lon: evidencePoint.lon
+      }),
+      latDelta,
+      lonDelta,
+      hemisphereDisagreement: pointHemisphereDisagreement,
+      numericMismatch
+    }));
+  }
+
+  if (legacyInterpretation.normalizedCoordinates.length !== evidenceInterpretation.normalizedCoordinates.length) {
+    pointMismatchCount += Math.abs(
+      legacyInterpretation.normalizedCoordinates.length - evidenceInterpretation.normalizedCoordinates.length
+    );
+  }
+
+  const numericDisagreement = pointMismatchCount > 0;
+
+  return Object.freeze({
+    available: true,
+    comparisonTolerance: tolerance,
+    wouldChangeCoordinateValues: numericDisagreement || hemisphereDisagreement,
+    numericDisagreement,
+    hemisphereDisagreement,
+    maxCoordinateDelta: Number(maxCoordinateDelta.toFixed(9)),
+    pointMismatchCount,
+    pointLevelDiff: Object.freeze(pointLevelDiff)
+  });
 }
 
 function findWinnerCandidate(candidates = [], winnerEvidenceType = "") {
@@ -158,6 +330,12 @@ function classifyProposal({
   if (!shadowDecision.winner || !winnerCandidate) {
     return EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION.NO_PROPOSAL;
   }
+  if (
+    sameLegacyInterpretation(legacySnapshot, proposal)
+    && proposal.coordinateComparison?.wouldChangeCoordinateValues === true
+  ) {
+    return EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION.TYPE_AGREEMENT_WITH_COORDINATE_DISAGREEMENT;
+  }
   if (sameLegacyInterpretation(legacySnapshot, proposal)) {
     return EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION.AGREEMENT;
   }
@@ -183,6 +361,12 @@ function buildBlockReasons({
   }
   if (classification === EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION.REVIEW_REQUIRED) {
     reasons.push("manual_review_required");
+  }
+  if (classification === EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION.TYPE_AGREEMENT_WITH_COORDINATE_DISAGREEMENT) {
+    reasons.push("coordinate_value_disagreement");
+    if (proposal.coordinateComparison?.hemisphereDisagreement === true) {
+      reasons.push("hemisphere_disagreement");
+    }
   }
   if (classification === EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION.BLOCKED_KML_GATE) {
     reasons.push("kml_safety_gate_blocked");
@@ -211,6 +395,11 @@ export function buildEvidenceArbitrationProposal(input = {}) {
   const flags = normalizeFlags(input.flags || source.flags || {});
   const mode = proposalMode(flags);
   const legacySnapshot = createLegacySnapshot(
+    input.legacySnapshot
+    || source.legacySnapshot
+    || source
+  );
+  const legacyInterpretation = legacyCoordinateInterpretation(
     input.legacySnapshot
     || source.legacySnapshot
     || source
@@ -247,6 +436,11 @@ export function buildEvidenceArbitrationProposal(input = {}) {
   };
   const proposalWithDiff = {
     ...proposalCore,
+    coordinateComparison: compareCoordinateInterpretations(
+      legacyInterpretation,
+      winnerCandidate?.coordinateInterpretation,
+      Number(input.comparisonTolerance || source.comparisonTolerance || 0.000001)
+    ),
     wouldChangeLegacy: !pendingPolicy && Boolean(
       shadowDecision.winner
       && (
@@ -282,9 +476,17 @@ export function buildEvidenceArbitrationProposal(input = {}) {
     flags,
     shadowWinner: buildShadowWinnerSummary(shadowDecision, winnerCandidate || {}),
     legacySnapshot,
+    legacyCoordinateInterpretation: legacyInterpretation,
     proposal: Object.freeze({
       classification,
       wouldChangeLegacy: proposalWithDiff.wouldChangeLegacy,
+      wouldChangeCoordinateValues: proposalWithDiff.coordinateComparison.wouldChangeCoordinateValues,
+      numericDisagreement: proposalWithDiff.coordinateComparison.numericDisagreement,
+      hemisphereDisagreement: proposalWithDiff.coordinateComparison.hemisphereDisagreement,
+      maxCoordinateDelta: proposalWithDiff.coordinateComparison.maxCoordinateDelta,
+      pointMismatchCount: proposalWithDiff.coordinateComparison.pointMismatchCount,
+      comparisonTolerance: proposalWithDiff.coordinateComparison.comparisonTolerance,
+      coordinateComparison: proposalWithDiff.coordinateComparison,
       proposedCoordinateType: proposalWithDiff.proposedCoordinateType,
       proposedPrecisionMode: proposalWithDiff.proposedPrecisionMode,
       recommendedAction: proposalWithDiff.recommendedAction,

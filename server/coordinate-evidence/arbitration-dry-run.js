@@ -9,6 +9,7 @@ export const EVIDENCE_ARBITRATION_DRY_RUN_DIFF_SCHEMA_VERSION =
 
 export const EVIDENCE_ARBITRATION_DRY_RUN_CLASSIFICATION = Object.freeze({
   AGREEMENT: "AGREEMENT",
+  COORDINATE_DISAGREEMENT: "COORDINATE_DISAGREEMENT",
   REVIEW_REQUIRED: "REVIEW_REQUIRED",
   BLOCKED: "BLOCKED",
   NO_CHANGE: "NO_CHANGE",
@@ -53,6 +54,20 @@ function summarizeProposal(proposal = {}) {
     proposedCoordinateType: nullableString(proposal.proposal?.proposedCoordinateType),
     proposedPrecisionMode: nullableString(proposal.proposal?.proposedPrecisionMode),
     recommendedAction: nullableString(proposal.proposal?.recommendedAction),
+    coordinateComparison: proposal.proposal?.coordinateComparison && typeof proposal.proposal.coordinateComparison === "object"
+      ? Object.freeze({
+          available: proposal.proposal.coordinateComparison.available === true,
+          comparisonTolerance: proposal.proposal.coordinateComparison.comparisonTolerance ?? null,
+          wouldChangeCoordinateValues: proposal.proposal.coordinateComparison.wouldChangeCoordinateValues === true,
+          numericDisagreement: proposal.proposal.coordinateComparison.numericDisagreement === true,
+          hemisphereDisagreement: proposal.proposal.coordinateComparison.hemisphereDisagreement === true,
+          maxCoordinateDelta: proposal.proposal.coordinateComparison.maxCoordinateDelta ?? null,
+          pointMismatchCount: proposal.proposal.coordinateComparison.pointMismatchCount ?? 0,
+          pointLevelDiff: Object.freeze(Array.isArray(proposal.proposal.coordinateComparison.pointLevelDiff)
+            ? proposal.proposal.coordinateComparison.pointLevelDiff
+            : [])
+        })
+      : null,
     blockReasons: Object.freeze(
       Array.isArray(proposal.proposal?.blockReasons)
         ? proposal.proposal.blockReasons.map(reason => cleanString(reason)).filter(Boolean)
@@ -88,6 +103,8 @@ function buildChangeSummary(diff = {}, proposalSummary = {}) {
     return "proposal blocked by KML safety gate";
   }
   const changes = [];
+  if (diff.wouldChangeCoordinateValues) changes.push("coordinateValues");
+  if (diff.hemisphereDisagreement) changes.push("hemisphere");
   if (diff.wouldChangeCoordinateType) changes.push("coordinateType");
   if (diff.wouldChangePrecisionMode) changes.push("precisionMode");
   if (diff.wouldChangeCoordinateResultState) changes.push("coordinateResult.state");
@@ -109,6 +126,9 @@ function classifyDryRun({ proposalSummary = {}, diff = {} }) {
   }
   if (proposalSummary.classification === EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION.AGREEMENT) {
     return EVIDENCE_ARBITRATION_DRY_RUN_CLASSIFICATION.AGREEMENT;
+  }
+  if (proposalSummary.classification === EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION.TYPE_AGREEMENT_WITH_COORDINATE_DISAGREEMENT) {
+    return EVIDENCE_ARBITRATION_DRY_RUN_CLASSIFICATION.COORDINATE_DISAGREEMENT;
   }
   if (proposalSummary.classification === EVIDENCE_ARBITRATION_PROPOSAL_CLASSIFICATION.REVIEW_REQUIRED) {
     return EVIDENCE_ARBITRATION_DRY_RUN_CLASSIFICATION.REVIEW_REQUIRED;
@@ -135,13 +155,34 @@ export function buildEvidenceArbitrationDryRunDiff(input = {}) {
   const proposalSummary = summarizeProposal(proposal);
   const diffCore = {
     wouldChangeLegacy: normalizeBoolean(proposal.proposal?.wouldChangeLegacy, false),
+    wouldChangeCoordinateValues: proposalSummary.coordinateComparison?.wouldChangeCoordinateValues === true,
     wouldChangeCoordinateType: wouldChangeCoordinateType(legacy, proposalSummary),
     wouldChangePrecisionMode: wouldChangePrecisionMode(legacy, proposalSummary),
     wouldChangeCoordinateResultState: false,
-    wouldChangeKml: false
+    wouldChangeKml: false,
+    numericDisagreement: proposalSummary.coordinateComparison?.numericDisagreement === true,
+    hemisphereDisagreement: proposalSummary.coordinateComparison?.hemisphereDisagreement === true,
+    maxCoordinateDelta: proposalSummary.coordinateComparison?.maxCoordinateDelta ?? null,
+    pointMismatchCount: proposalSummary.coordinateComparison?.pointMismatchCount ?? 0
   };
   const diff = Object.freeze({
     ...diffCore,
+    coordinateValueDiff: Object.freeze({
+      available: proposalSummary.coordinateComparison?.available === true,
+      comparisonTolerance: proposalSummary.coordinateComparison?.comparisonTolerance ?? null,
+      numericDisagreement: diffCore.numericDisagreement,
+      maxCoordinateDelta: diffCore.maxCoordinateDelta,
+      pointMismatchCount: diffCore.pointMismatchCount
+    }),
+    hemisphereDiff: Object.freeze({
+      available: proposalSummary.coordinateComparison?.available === true,
+      hemisphereDisagreement: diffCore.hemisphereDisagreement
+    }),
+    pointLevelDiff: Object.freeze(proposalSummary.coordinateComparison?.pointLevelDiff || []),
+    geometryDiff: Object.freeze({
+      available: false,
+      geometryDisagreement: false
+    }),
     changeSummary: buildChangeSummary(diffCore, proposalSummary)
   });
   const classification = classifyDryRun({ proposalSummary, diff });

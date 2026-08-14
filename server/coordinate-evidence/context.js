@@ -53,6 +53,61 @@ function normalizeFrenchPerimeterDms(value = {}) {
   });
 }
 
+function normalizeDmsCoordinatePoint(value = {}, index = 0) {
+  const lat = Number(value.lat);
+  const lon = Number(value.lon);
+  return Object.freeze({
+    point: cleanString(value.point || value.label || value.id, String(index + 1)),
+    lat: Number.isFinite(lat) ? Number(lat.toFixed(9)) : null,
+    lon: Number.isFinite(lon) ? Number(lon.toFixed(9)) : null,
+    source: cleanString(value.source || "dms_deterministic")
+  });
+}
+
+function normalizeDmsToken(value = {}) {
+  return Object.freeze({
+    role: cleanString(value.role),
+    degrees: Number.isFinite(Number(value.degrees)) ? Number(value.degrees) : null,
+    minutes: Number.isFinite(Number(value.minutes)) ? Number(value.minutes) : null,
+    seconds: Number.isFinite(Number(value.seconds)) ? Number(value.seconds) : null,
+    hemisphere: cleanString(value.hemisphere)
+  });
+}
+
+function normalizeDmsSourceRow(value = {}, index = 0) {
+  return Object.freeze({
+    point: cleanString(value.point, String(index + 1)),
+    latitude: normalizeDmsToken(value.latitude || {}),
+    longitude: normalizeDmsToken(value.longitude || {})
+  });
+}
+
+function normalizeDmsCoordinateInterpretation(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const normalizedCoordinates = Array.isArray(value.normalizedCoordinates)
+    ? value.normalizedCoordinates.map(normalizeDmsCoordinatePoint)
+      .filter(point => point.lat !== null && point.lon !== null)
+    : [];
+  const sourceRows = Array.isArray(value.sourceRows)
+    ? value.sourceRows.map(normalizeDmsSourceRow)
+    : [];
+  const status = cleanString(value.interpretationStatus || value.status, "INCOMPLETE").toUpperCase();
+  const normalizedStatus = ["COMPLETE", "INCOMPLETE", "INVALID"].includes(status) ? status : "INCOMPLETE";
+  return Object.freeze({
+    schemaVersion: cleanString(value.schemaVersion || "dms_coordinate_interpretation_v1"),
+    interpretationStatus: normalizedStatus,
+    deterministicConversion: normalizeBoolean(value.deterministicConversion),
+    hemisphereResolved: normalizeBoolean(value.hemisphereResolved),
+    pointCount: normalizeCount(value.pointCount || normalizedCoordinates.length),
+    normalizedCoordinates: Object.freeze(normalizedCoordinates),
+    sourceRows: Object.freeze(sourceRows),
+    errors: Object.freeze(sanitizeArray(value.errors)),
+    affectsLegacyWinner: false,
+    affectsCoordinateResult: false,
+    affectsKml: false
+  });
+}
+
 function normalizeDmsContext(value = {}) {
   return Object.freeze({
     dmsAccepted: normalizeBoolean(value.dmsAccepted),
@@ -65,7 +120,10 @@ function normalizeDmsContext(value = {}) {
     sourceHint: cleanString(value.sourceHint).slice(0, 160),
     pointCount: normalizeCount(value.pointCount),
     groupCount: normalizeCount(value.groupCount),
-    geometryType: cleanString(value.geometryType, "unknown")
+    geometryType: cleanString(value.geometryType, "unknown"),
+    coordinateInterpretation: normalizeDmsCoordinateInterpretation(
+      value.coordinateInterpretation || value.structuredDmsInterpretation || {}
+    )
   });
 }
 
@@ -205,7 +263,8 @@ export function snapshotPreSuppressionCandidates(candidates = {}, suppression = 
       sourceHint: candidates.sourceHint,
       pointCount: candidates.pointCount,
       groupCount: candidates.groupCount,
-      geometryType: candidates.geometryType
+      geometryType: candidates.geometryType,
+      coordinateInterpretation: candidates.coordinateInterpretation || candidates.structuredDmsInterpretation
     },
     cadastral: candidates.cadastralGrid || candidates.cadastral || {},
     utm: {
