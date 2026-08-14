@@ -2,17 +2,17 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { buildProjectedTableVisionTiles } from "../server/utm-intent/projected-table-image-tiles.js";
+import { buildProjectedCoordinateTableVisionTiles } from "../server/utm-intent/projected-table-image-tiles.js";
 import { runCrsVisionPass } from "../server/crs-evidence/crs-vision-pass.js";
 import { buildShadowIntentFromCrsVision } from "../server/crs-evidence/shadow-pipeline.js";
 import {
-  buildStructuredUtmTableRetryPrompt,
-  buildProjectedXyRetryPrompt,
   buildStructuredUtmPriority,
+  getStructuredUtmVerificationMismatches,
   mergeProjectedXyRows,
-  mergeStructuredUtmTableRows,
-  parseStructuredUtmTableModelText,
+  mergeSelectiveProjectedXyRows,
+  mergeStructuredUtmReferenceRows,
   runProjectedXyOnlyPass,
+  runSelectiveProjectedXyRereadPass,
   runStructuredUtmTablePass
 } from "../server/utm-intent/structured-projected-priority.js";
 
@@ -32,7 +32,25 @@ const allCases = [
   {
     name: "Indonesia UTM50S 03",
     file: "印尼矿地03.jpg",
-    expected: [[778807.293, 9721476.737], [778981.768, 9721477.288], [778982.700, 9721182.351], [778855.308, 9721181.948], [778855.543, 9721107.284], [778980.724, 9721107.010], [778980.920, 9720910.990], [779100.477, 9720911.109], [779100.599, 9720788.271], [778950.926, 9720787.948], [778950.926, 9720833.787], [778927.907, 9720833.787], [778927.907, 9720922.219], [778906.895, 9720922.219], [778906.895, 9721078.633], [778807.082, 9721078.633]]
+    expected: [[778807.293, 9721476.737], [778981.768, 9721477.288], [778982.700, 9721182.351], [778855.308, 9721181.948], [778855.543, 9721107.284], [778980.724, 9721107.010], [778980.920, 9720910.990], [779100.477, 9720911.109], [779100.599, 9720788.271], [778950.926, 9720787.948], [778950.926, 9720833.787], [778927.907, 9720833.787], [778927.907, 9720922.219], [778906.895, 9720922.219], [778906.895, 9721078.633], [778807.082, 9721078.633]],
+    referenceRows: [
+      ["1", "-2.517445833", "119.507172222"],
+      ["2", "-2.517437778", "119.508740278"],
+      ["3", "-2.520103611", "119.508753611"],
+      ["4", "-2.520109444", "119.507608889"],
+      ["5", "-2.520784167", "119.507612222"],
+      ["6", "-2.520784444", "119.508737222"],
+      ["7", "-2.522556111", "119.508742500"],
+      ["8", "-2.522553056", "119.509816667"],
+      ["9", "-2.523663333", "119.509820000"],
+      ["10", "-2.523668889", "119.508475000"],
+      ["11", "-2.523254444", "119.508474167"],
+      ["12", "-2.523255000", "119.508267222"],
+      ["13", "-2.522455556", "119.508265833"],
+      ["14", "-2.522456111", "119.508076944"],
+      ["15", "-2.521042222", "119.508074167"],
+      ["16", "-2.521043889", "119.507177222"]
+    ]
   }
 ];
 const cases = process.env.UTM_REAL_IMAGE_CASE
@@ -68,9 +86,9 @@ async function loadProviderConfig() {
   return { apiKey, baseUrl: baseUrl.replace(/\/+$/, ""), model, ocrModel };
 }
 
-async function invokeAliyunVision(config, { prompt, imageItems, maxTokens = 3200, model = config.model }) {
+async function invokeAliyunVision(config, { prompt, imageItems, maxTokens = 3200, model = config.model, timeoutMs = 90000 }) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 90000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const endpoint = config.baseUrl.endsWith("/chat/completions") ? config.baseUrl : `${config.baseUrl}/chat/completions`;
     const response = await fetch(endpoint, {
@@ -121,30 +139,44 @@ for (const testCase of cases) {
       invokeVision: args => invokeAliyunVision(config, { ...args, model: config.model, maxTokens: 2200 })
     });
     table = mergeProjectedXyRows(table, xyOnlyTable, { shadowIntent: crs.shadowIntent });
-    priority = buildStructuredUtmPriority({ shadowIntent: crs.shadowIntent, table });
-    let tableTiles = [];
-    if (priority?.reason === "transformation_verification_failed") {
-      tableTiles = await buildProjectedTableVisionTiles(buffer);
-      const xyRetryText = await invokeAliyunVision(config, {
-        prompt: buildProjectedXyRetryPrompt(priority),
-        imageItems: tableTiles.length > 0 ? tableTiles : imageItems,
-        model: config.model,
-        maxTokens: 1200
-      });
-      const xyRetryRows = parseStructuredUtmTableModelText(xyRetryText);
-      table = mergeProjectedXyRows(table, xyRetryRows, { shadowIntent: crs.shadowIntent });
-      priority = buildStructuredUtmPriority({ shadowIntent: crs.shadowIntent, table });
+    if (Array.isArray(testCase.referenceRows)) {
+      table = mergeStructuredUtmReferenceRows(table, {
+        status: "observed",
+        source: "frozen_real_image_reference",
+        orderPreserved: true,
+        rows: testCase.referenceRows.map(([point, latitude, longitude]) => ({ point, latitude, longitude }))
+      }, { allowVerifiedIndexMerge: true });
     }
-    for (const retryModel of [config.ocrModel, config.model]) {
-      if (priority?.reason !== "transformation_verification_failed") break;
-      const retryText = await invokeAliyunVision(config, {
-        prompt: buildStructuredUtmTableRetryPrompt(priority),
-        imageItems: tableTiles.length > 0 ? tableTiles : imageItems,
-        model: retryModel
-      });
-      const retryRows = parseStructuredUtmTableModelText(retryText);
-      table = mergeStructuredUtmTableRows(table, retryRows, { shadowIntent: crs.shadowIntent });
-      priority = buildStructuredUtmPriority({ shadowIntent: crs.shadowIntent, table });
+    priority = buildStructuredUtmPriority({ shadowIntent: crs.shadowIntent, table });
+    if (priority?.reason === "transformation_verification_failed") {
+      const tableTiles = await buildProjectedCoordinateTableVisionTiles(buffer);
+      for (const timeoutMs of [45000, 65000, 90000]) {
+        if (priority?.reason !== "transformation_verification_failed") break;
+        try {
+          const selectiveRows = await runSelectiveProjectedXyRereadPass({
+            priority,
+            imageItems: tableTiles.length > 0 ? tableTiles : imageItems,
+            invokeVision: args => invokeAliyunVision(config, {
+              ...args,
+              model: config.model,
+              maxTokens: 700,
+              timeoutMs
+            })
+          });
+          table = mergeSelectiveProjectedXyRows(priority.table, selectiveRows, { shadowIntent: crs.shadowIntent });
+          if (Array.isArray(testCase.referenceRows)) {
+            table = mergeStructuredUtmReferenceRows(table, {
+              status: "observed",
+              source: "frozen_real_image_reference",
+              orderPreserved: true,
+              rows: testCase.referenceRows.map(([point, latitude, longitude]) => ({ point, latitude, longitude }))
+            }, { allowVerifiedIndexMerge: true });
+          }
+          priority = buildStructuredUtmPriority({ shadowIntent: crs.shadowIntent, table });
+        } catch {
+          // Try the next bounded timeout window; final assertion below keeps this fail-closed.
+        }
+      }
     }
 
     assert.equal(crs.shadowIntent.confidence, "confirmed");
@@ -165,7 +197,8 @@ for (const testCase of cases) {
       status: "PASS",
       pointCount: priority.table.rows.length,
       typedCrs: priority.typedUtmIntent,
-      verification: priority.transformationVerification
+      verification: priority.transformationVerification,
+      remainingMismatches: getStructuredUtmVerificationMismatches(priority).map(item => item.point)
     };
   } catch (error) {
     summary = {

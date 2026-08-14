@@ -41,6 +41,7 @@ Rules:
 - Ignore Latitude and Longitude completely.
 - Read X and Y from the same horizontal row.
 - Preserve all visible rows in point order.
+- Inspect each digit in X/Y independently; do not drop, transpose, or smooth repeated digits.
 - Do not read map-frame ticks, scale values, areas, pixel positions, or OCR boxes.
 - Do not infer or transform values.
 
@@ -109,6 +110,23 @@ function parseDmsReference(value, axis) {
   const negative = numbers[0] < 0 || direction === "S" || direction === "W";
   const decimal = degrees + minutes / 60 + seconds / 3600;
   return negative ? -decimal : decimal;
+}
+
+function normalizeReferenceRow(value = {}, index) {
+  if (!value || typeof value !== "object") return null;
+  const latitudeText = String(value.latitude ?? value.lat ?? value.latitudeText ?? "").trim();
+  const longitudeText = String(value.longitude ?? value.lon ?? value.longitudeText ?? "").trim();
+  const referenceLatitude = parseDmsReference(latitudeText, "latitude");
+  const referenceLongitude = parseDmsReference(longitudeText, "longitude");
+  if (!Number.isFinite(referenceLatitude) || !Number.isFinite(referenceLongitude)) return null;
+  return {
+    index,
+    point: String(value.point ?? value.label ?? index + 1).trim() || String(index + 1),
+    latitudeText,
+    longitudeText,
+    referenceLatitude,
+    referenceLongitude
+  };
 }
 
 function normalizeRow(value, index) {
@@ -209,6 +227,70 @@ Return strict JSON only:
 }`;
 }
 
+export function getStructuredUtmVerificationMismatches(priority = {}) {
+  return (priority.transformationVerification?.rows || [])
+    .filter(row => row?.status === "mismatch")
+    .map(row => {
+      const latitudeDifference = Number(row.latitudeDifference || 0);
+      const longitudeDifference = Number(row.longitudeDifference || 0);
+      const suspectedField = longitudeDifference > latitudeDifference
+        ? "X"
+        : latitudeDifference > longitudeDifference
+          ? "Y"
+          : "BOTH";
+      return {
+        point: String(row.point || "").trim(),
+        suspectedField,
+        latitudeDifference,
+        longitudeDifference,
+        maximumDifference: Math.max(latitudeDifference, longitudeDifference)
+      };
+    })
+    .filter(row => row.point);
+}
+
+export function buildSelectiveProjectedXyRereadPrompt(priority = {}) {
+  const mismatches = getStructuredUtmVerificationMismatches(priority);
+  const requested = mismatches.map(row => `${row.point} (${row.suspectedField})`).join(", ") || "unknown";
+  return `Verification-guided selective reread.
+
+Read ONLY these printed table point labels and their X/Y cells: ${requested}.
+
+Target columns:
+- Point / No.
+- X
+- Y
+
+Rules:
+- Return only the requested point labels.
+- Read printed numeric cells exactly.
+- Preserve every digit and decimal separator.
+- Do not infer values from geography, neighboring rows, DMS, CRS, map position, or coordinate ranges.
+- Do not calculate coordinates.
+- Do not output DMS, CRS, map description, legend, or other text.
+- If a requested point row is not clearly readable, omit that row rather than guessing.
+
+Return strict JSON only:
+{
+  "status": "observed" | "none",
+  "rows": [
+    { "point": "requested point label", "x": "literal X", "y": "literal Y", "latitude": "", "longitude": "" }
+  ]
+}`;
+}
+
+export async function runSelectiveProjectedXyRereadPass({ priority, imageItems = [], invokeVision } = {}) {
+  if (typeof invokeVision !== "function") throw new TypeError("runSelectiveProjectedXyRereadPass requires an invokeVision function");
+  if (!Array.isArray(imageItems) || imageItems.length === 0) {
+    throw new TypeError("runSelectiveProjectedXyRereadPass requires at least one image item");
+  }
+  const modelText = await invokeVision({
+    prompt: buildSelectiveProjectedXyRereadPrompt(priority),
+    imageItems
+  });
+  return parseStructuredUtmTableModelText(modelText);
+}
+
 function rowVerificationDifference(row, shadowIntent) {
   if (!Number.isFinite(row?.referenceLatitude) || !Number.isFinite(row?.referenceLongitude)) return Infinity;
   try {
@@ -229,7 +311,17 @@ function rowVerificationDifference(row, shadowIntent) {
 
 export function mergeStructuredUtmTableRows(originalTable = {}, retryTable = {}, { shadowIntent } = {}) {
   const replacements = new Map((retryTable.rows || []).map(row => [String(row.point), row]));
-  const rows = (originalTable.rows || []).map(row => {
+  const originalRows = Array.isArray(originalTable.rows) ? originalTable.rows : [];
+  const retryRows = Array.isArray(retryTable.rows) ? retryTable.rows : [];
+  if (originalRows.length === 0 && retryRows.length > 0) {
+    return {
+      status: retryRows.length >= 3 ? "observed" : "none",
+      rows: retryRows,
+      rawModelText: String(retryTable.rawModelText || originalTable.rawModelText || ""),
+      source: "structured_retry_seed"
+    };
+  }
+  const rows = originalRows.map(row => {
     const replacement = replacements.get(String(row.point));
     if (!replacement) return row;
     return rowVerificationDifference(replacement, shadowIntent) < rowVerificationDifference(row, shadowIntent)
@@ -244,8 +336,18 @@ export function mergeStructuredUtmTableRows(originalTable = {}, retryTable = {},
 }
 
 export function mergeProjectedXyRows(referenceTable = {}, xyTable = {}, { shadowIntent } = {}) {
-  const xyByPoint = new Map((xyTable.rows || []).map(row => [String(row.point), row]));
-  const rows = (referenceTable.rows || []).map(row => {
+  const referenceRows = Array.isArray(referenceTable.rows) ? referenceTable.rows : [];
+  const xyRows = Array.isArray(xyTable.rows) ? xyTable.rows : [];
+  if (referenceRows.length === 0 && xyRows.length > 0) {
+    return {
+      status: xyRows.length >= 3 ? "observed" : "none",
+      rows: xyRows,
+      rawModelText: String(xyTable.rawModelText || ""),
+      source: "xy_only_seed"
+    };
+  }
+  const xyByPoint = new Map(xyRows.map(row => [String(row.point), row]));
+  const rows = referenceRows.map(row => {
     const xy = xyByPoint.get(String(row.point));
     if (!xy) return row;
     const candidate = {
@@ -260,6 +362,107 @@ export function mergeProjectedXyRows(referenceTable = {}, xyTable = {}, { shadow
       : row;
   });
   return { status: rows.length >= 3 ? "observed" : "none", rows, rawModelText: referenceTable.rawModelText || "" };
+}
+
+export function mergeSelectiveProjectedXyRows(referenceTable = {}, xyTable = {}, { shadowIntent } = {}) {
+  const referenceRows = Array.isArray(referenceTable.rows) ? referenceTable.rows : [];
+  const xyRows = Array.isArray(xyTable.rows) ? xyTable.rows : [];
+  const xyByPoint = new Map(xyRows.map(row => [String(row.point), row]));
+  const replacements = [];
+  const rows = referenceRows.map(row => {
+    const xy = xyByPoint.get(String(row.point));
+    if (!xy) return row;
+    const oldDifference = rowVerificationDifference(row, shadowIntent);
+    const candidate = {
+      ...row,
+      easting: xy.easting,
+      northing: xy.northing,
+      xText: xy.xText,
+      yText: xy.yText
+    };
+    const newDifference = rowVerificationDifference(candidate, shadowIntent);
+    const accepted = newDifference < oldDifference;
+    replacements.push({
+      point: String(row.point),
+      accepted,
+      oldDifference,
+      newDifference,
+      reason: accepted ? "verification_improved" : "verification_not_improved"
+    });
+    return accepted ? candidate : row;
+  });
+  return {
+    ...referenceTable,
+    status: rows.length >= 3 ? "observed" : "none",
+    rows,
+    rawModelText: referenceTable.rawModelText || "",
+    selectiveReread: {
+      status: replacements.some(item => item.accepted) ? "accepted_partial" : "no_improvement",
+      requestedRows: xyRows.length,
+      acceptedRows: replacements.filter(item => item.accepted).length,
+      replacements
+    }
+  };
+}
+
+function hasSequentialNumericPointLabels(rows = []) {
+  if (!Array.isArray(rows) || rows.length === 0) return false;
+  const labels = rows.map(row => String(row.point || "").trim());
+  const unique = new Set(labels);
+  if (unique.size !== labels.length) return false;
+  return labels.every((label, index) => label === String(index + 1));
+}
+
+export function mergeStructuredUtmReferenceRows(table = {}, referenceTable = {}, { allowVerifiedIndexMerge = false } = {}) {
+  const tableRows = Array.isArray(table.rows) ? table.rows : [];
+  const referenceRows = (Array.isArray(referenceTable.rows) ? referenceTable.rows : [])
+    .map(normalizeReferenceRow)
+    .filter(Boolean);
+  if (tableRows.length === 0 || referenceRows.length === 0) {
+    return {
+      ...table,
+      referenceMerge: {
+        status: "skipped",
+        reason: tableRows.length === 0 ? "no_projected_rows" : "no_reference_rows"
+      }
+    };
+  }
+
+  const referencesByPoint = new Map(referenceRows.map(row => [String(row.point), row]));
+  let mergeMode = "point_label";
+  let mergedRows = tableRows.map(row => {
+    const reference = referencesByPoint.get(String(row.point));
+    return reference ? { ...row, ...reference, point: row.point } : row;
+  });
+  let matchedRows = mergedRows.filter(row => Number.isFinite(row.referenceLatitude) && Number.isFinite(row.referenceLongitude)).length;
+
+  if (
+    matchedRows < Math.min(tableRows.length, referenceRows.length)
+    && allowVerifiedIndexMerge
+    && referenceTable.orderPreserved === true
+    && tableRows.length === referenceRows.length
+    && hasSequentialNumericPointLabels(tableRows)
+  ) {
+    mergeMode = "verified_index";
+    mergedRows = tableRows.map((row, index) => {
+      const reference = referenceRows[index];
+      return reference ? { ...row, ...reference, point: row.point } : row;
+    });
+    matchedRows = mergedRows.filter(row => Number.isFinite(row.referenceLatitude) && Number.isFinite(row.referenceLongitude)).length;
+  }
+
+  return {
+    ...table,
+    rows: mergedRows,
+    status: mergedRows.length >= 3 ? "observed" : "none",
+    referenceMerge: {
+      status: matchedRows > 0 ? "merged" : "unmatched",
+      mode: mergeMode,
+      matchedRows,
+      referenceRows: referenceRows.length,
+      source: referenceTable.source || "unknown"
+    }
+  };
 }
 
 function formatProjectedNumber(value, fallback) {

@@ -11,20 +11,24 @@ import { buildFinalizedCoordinateVerificationResponse } from "./server/verificat
 import { runCrsVisionPass } from "./server/crs-evidence/crs-vision-pass.js";
 import { buildShadowIntentFromCrsVision } from "./server/crs-evidence/shadow-pipeline.js";
 import {
-  buildStructuredUtmTableRetryPrompt,
-  buildProjectedXyRetryPrompt,
   buildStructuredUtmPriority,
+  getStructuredUtmVerificationMismatches,
   mergeStructuredUtmTableRows,
+  mergeStructuredUtmReferenceRows,
+  mergeSelectiveProjectedXyRows,
   mergeProjectedXyRows,
-  parseStructuredUtmTableModelText,
   runProjectedXyOnlyPass,
+  runSelectiveProjectedXyRereadPass,
   runStructuredUtmTablePass
 } from "./server/utm-intent/structured-projected-priority.js";
 import {
   hasExplicitUtmEvidenceLock,
   suppressGeographicFallbacksForUtmEvidenceLock
 } from "./server/utm-intent/evidence-lock.js";
-import { buildProjectedTableVisionTiles } from "./server/utm-intent/projected-table-image-tiles.js";
+import {
+  buildProjectedCoordinateTableVisionTiles,
+  buildProjectedTableVisionTiles
+} from "./server/utm-intent/projected-table-image-tiles.js";
 import { arbitrateCoordinateType } from "./server/coordinate-type/arbitration.js";
 import { buildVersionResponse } from "./server/release-identity/index.js";
 import {
@@ -7289,6 +7293,114 @@ function normalizeCommaDmsCoordinateDisplayOrder(text) {
   return validDmsRows >= 8 ? normalizedRows.join("\n") : text;
 }
 
+function parseDecimalLonLatReferenceRow(line, index) {
+  const text = String(line || "").trim();
+  const parts = text.split(/[|,;\s]+/)
+    .map(value => value.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return null;
+  const lon = Number(parts[0]);
+  const lat = Number(parts[1]);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  if (Math.abs(lon) > 180 || Math.abs(lat) > 90) return null;
+  return {
+    point: String(index + 1),
+    latitude: String(lat),
+    longitude: String(lon)
+  };
+}
+
+function buildUtmReferenceRowsFromRecognition(rawText, coordinates = "") {
+  const dmsRows = [];
+  const sourceLines = getCoordinateRows(rawText);
+  for (const line of sourceLines) {
+    const parts = getLooseDmsPartsFromLine(line);
+    if (parts.length < 2) continue;
+    const latitudePart = parts.find(part => getDmsPartAxis(part) === "lat");
+    const longitudePart = parts.find(part => getDmsPartAxis(part) === "lon");
+    if (!latitudePart || !longitudePart) continue;
+    const label = extractPointTableLabel(line) || String(dmsRows.length + 1);
+    dmsRows.push({
+      point: label,
+      latitude: cleanDmsDisplayPart(latitudePart),
+      longitude: cleanDmsDisplayPart(longitudePart)
+    });
+  }
+  if (dmsRows.length >= 3) {
+    return {
+      status: "observed",
+      source: "raw_dms_rows",
+      orderPreserved: true,
+      rows: dmsRows
+    };
+  }
+
+  const decimalRows = getCoordinateRows(coordinates)
+    .map(parseDecimalLonLatReferenceRow)
+    .filter(Boolean);
+  return {
+    status: decimalRows.length >= 3 ? "observed" : "none",
+    source: decimalRows.length >= 3 ? "decimal_lon_lat_rows" : "none",
+    orderPreserved: decimalRows.length >= 3,
+    rows: decimalRows
+  };
+}
+
+function getStructuredUtmRowCount(tableOrPriority = {}) {
+  return Array.isArray(tableOrPriority?.table?.rows)
+    ? tableOrPriority.table.rows.length
+    : Array.isArray(tableOrPriority?.rows)
+      ? tableOrPriority.rows.length
+      : 0;
+}
+
+function hasStructuredUtmCoverageGap(tableOrPriority = {}, referenceTable = {}) {
+  const referenceRows = Array.isArray(referenceTable?.rows) ? referenceTable.rows.length : 0;
+  if (referenceRows < 3) return false;
+  return getStructuredUtmRowCount(tableOrPriority) < referenceRows;
+}
+
+function blockStructuredUtmCoverageGap(priority, table = {}, referenceTable = {}) {
+  if (!priority?.accepted || !hasStructuredUtmCoverageGap(priority, referenceTable)) {
+    return priority;
+  }
+  return {
+    ...priority,
+    accepted: false,
+    reason: "structured_utm_row_coverage_incomplete",
+    table,
+    transformationVerification: {
+      ...(priority.transformationVerification || {}),
+      status: "coverage_incomplete",
+      expectedRows: referenceTable.rows.length,
+      observedRows: getStructuredUtmRowCount(table)
+    }
+  };
+}
+
+function shouldRunStructuredUtmTableRecovery({ explicitUtmEvidenceLock = false, priority = null, table = {}, referenceTable = {} } = {}) {
+  if (!explicitUtmEvidenceLock) return false;
+  if (priority?.accepted && !hasStructuredUtmCoverageGap(priority, referenceTable)) return false;
+  const rowCount = getStructuredUtmRowCount(table);
+  return !priority
+    || rowCount < 3
+    || hasStructuredUtmCoverageGap(table, referenceTable)
+    || priority.reason === "structured_utm_row_coverage_incomplete";
+}
+
+function shouldRunSelectiveProjectedXyReread({ explicitUtmEvidenceLock = false, priority = null, table = {}, referenceTable = {} } = {}) {
+  if (!explicitUtmEvidenceLock || priority?.reason !== "transformation_verification_failed") return false;
+  if (hasStructuredUtmCoverageGap(table, referenceTable)) return false;
+  return getStructuredUtmVerificationMismatches(priority).length > 0;
+}
+
+function normalizeUtmAcquisitionReviewWarning(warning = "", { explicitUtmEvidenceLock = false, structuredUtmAccepted = false } = {}) {
+  if (!explicitUtmEvidenceLock || structuredUtmAccepted) return warning;
+  const value = String(warning || "");
+  if (!/手写坐标存在需核对字符|手写 DMS|handwritten/i.test(value)) return warning;
+  return "已确认图纸包含明确 WGS84 UTM CRS，但 X/Y 表格读取不完整，需核对后再生成 KML。";
+}
+
 function extractRecognitionWarning(text) {
   const warningLine = String(text || "")
     .split(/\r?\n/)
@@ -13247,41 +13359,149 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             return xyResponse.choices?.[0]?.message?.content || "";
           }
         });
-        const mergedInitialTable = mergeProjectedXyRows(structuredTable, xyOnlyTable, { shadowIntent });
-        structuredUtmPriority = buildStructuredUtmPriority({ shadowIntent, table: mergedInitialTable });
+        const utmReferenceTable = buildUtmReferenceRowsFromRecognition(rawText, coordinates);
+        let mergedInitialTable = mergeProjectedXyRows(structuredTable, xyOnlyTable, { shadowIntent });
+        mergedInitialTable = mergeStructuredUtmReferenceRows(mergedInitialTable, utmReferenceTable, {
+          allowVerifiedIndexMerge: true
+        });
+        structuredUtmPriority = blockStructuredUtmCoverageGap(
+          buildStructuredUtmPriority({ shadowIntent, table: mergedInitialTable }),
+          mergedInitialTable,
+          utmReferenceTable
+        );
         let tableTiles = [];
 
-        if (structuredUtmPriority?.reason === "transformation_verification_failed") {
+        if (shouldRunStructuredUtmTableRecovery({
+          explicitUtmEvidenceLock: explicitConfirmedUtm,
+          priority: structuredUtmPriority,
+          table: mergedInitialTable,
+          referenceTable: utmReferenceTable
+        })) {
           tableTiles = await buildProjectedTableVisionTiles(req.file?.buffer);
-          const xyRetryResponse = await callAliyunVision({
-            modelName: aliyunVisionModel,
-            prompt: buildProjectedXyRetryPrompt(structuredUtmPriority),
-            imageItems: tableTiles.length > 0 ? tableTiles : crsImageItems,
-            temperature: 0,
-            maxTokens: 1200,
-            timeoutMs: 80000
-          });
-          const xyRetryRows = parseStructuredUtmTableModelText(xyRetryResponse.choices?.[0]?.message?.content || "");
-          const xyRetryTable = mergeProjectedXyRows(structuredUtmPriority.table, xyRetryRows, { shadowIntent });
-          structuredUtmPriority = buildStructuredUtmPriority({ shadowIntent, table: xyRetryTable });
-          parserTrace.push("UTM_PROJECTED_XY:targeted_retry");
+          if (tableTiles.length > 0) {
+            parserTrace.push("UTM_TABLE_FOCUSED_RECOVERY:started");
+            const recoveryStructuredTable = await runStructuredUtmTablePass({
+              imageItems: tableTiles,
+              invokeVision: async ({ prompt: recoveryTablePrompt, imageItems: recoveryTableItems }) => {
+                const recoveryTableResponse = await callAliyunVision({
+                  modelName: aliyunVisionModel,
+                  prompt: recoveryTablePrompt,
+                  imageItems: recoveryTableItems,
+                  temperature: 0,
+                  maxTokens: 4200,
+                  timeoutMs: 80000
+                });
+                return recoveryTableResponse.choices?.[0]?.message?.content || "";
+              }
+            });
+            const recoveryXyTable = await runProjectedXyOnlyPass({
+              imageItems: tableTiles,
+              invokeVision: async ({ prompt: recoveryXyPrompt, imageItems: recoveryXyItems }) => {
+                const recoveryXyResponse = await callAliyunVision({
+                  modelName: aliyunVisionModel,
+                  prompt: recoveryXyPrompt,
+                  imageItems: recoveryXyItems,
+                  temperature: 0,
+                  maxTokens: 3200,
+                  timeoutMs: 80000
+                });
+                return recoveryXyResponse.choices?.[0]?.message?.content || "";
+              }
+            });
+            let recoveredTable = mergeStructuredUtmTableRows(mergedInitialTable, recoveryStructuredTable, { shadowIntent });
+            recoveredTable = mergeProjectedXyRows(recoveredTable, recoveryXyTable, { shadowIntent });
+            recoveredTable = mergeStructuredUtmReferenceRows(recoveredTable, utmReferenceTable, {
+              allowVerifiedIndexMerge: true
+            });
+            structuredUtmPriority = blockStructuredUtmCoverageGap(
+              buildStructuredUtmPriority({ shadowIntent, table: recoveredTable }),
+              recoveredTable,
+              utmReferenceTable
+            );
+            parserTrace.push(structuredUtmPriority?.accepted
+              ? "UTM_TABLE_FOCUSED_RECOVERY:accepted"
+              : "UTM_TABLE_FOCUSED_RECOVERY:incomplete");
+          } else {
+            parserTrace.push("UTM_TABLE_FOCUSED_RECOVERY:tiles_unavailable");
+          }
         }
 
-        const verificationRetryModels = [aliyunOcrModel, aliyunVisionModel];
-        for (const retryModel of verificationRetryModels) {
-          if (structuredUtmPriority?.reason !== "transformation_verification_failed") break;
-          const retryResponse = await callAliyunVision({
-            modelName: retryModel,
-            prompt: buildStructuredUtmTableRetryPrompt(structuredUtmPriority),
-            imageItems: tableTiles.length > 0 ? tableTiles : crsImageItems,
-            temperature: 0,
-            maxTokens: 3200,
-            timeoutMs: 80000
-          });
-          const retryRows = parseStructuredUtmTableModelText(retryResponse.choices?.[0]?.message?.content || "");
-          const mergedTable = mergeStructuredUtmTableRows(structuredUtmPriority.table, retryRows, { shadowIntent });
-          structuredUtmPriority = buildStructuredUtmPriority({ shadowIntent, table: mergedTable });
-          parserTrace.push("UTM_REFERENCE_LATLON:verification_retry");
+        if (shouldRunSelectiveProjectedXyReread({
+          explicitUtmEvidenceLock: explicitConfirmedUtm,
+          priority: structuredUtmPriority,
+          table: structuredUtmPriority.table,
+          referenceTable: utmReferenceTable
+        })) {
+          if (tableTiles.length === 0) {
+            tableTiles = await buildProjectedTableVisionTiles(req.file?.buffer);
+          }
+          const selectiveTiles = await buildProjectedCoordinateTableVisionTiles(req.file?.buffer);
+          const mismatchLabels = getStructuredUtmVerificationMismatches(structuredUtmPriority).map(item => item.point);
+          parserTrace.push(`UTM_SELECTIVE_XY_REREAD:started:${mismatchLabels.join(",")}`);
+          const selectiveReread = {
+            attempts: 0,
+            requestedLabels: mismatchLabels,
+            acceptedLabels: [],
+            status: "not_run"
+          };
+          for (const timeoutMs of [45000, 65000, 90000]) {
+            if (structuredUtmPriority?.reason !== "transformation_verification_failed") break;
+            selectiveReread.attempts += 1;
+            try {
+              const selectiveRows = await runSelectiveProjectedXyRereadPass({
+                priority: structuredUtmPriority,
+                imageItems: selectiveTiles.length > 0 ? selectiveTiles : tableTiles.length > 0 ? tableTiles : crsImageItems,
+                invokeVision: async ({ prompt: selectivePrompt, imageItems: selectiveImageItems }) => {
+                  const selectiveResponse = await callAliyunVision({
+                    modelName: aliyunVisionModel,
+                    prompt: selectivePrompt,
+                    imageItems: selectiveImageItems,
+                    temperature: 0,
+                    maxTokens: 700,
+                    timeoutMs
+                  });
+                  return selectiveResponse.choices?.[0]?.message?.content || "";
+                }
+              });
+              let selectiveTable = mergeSelectiveProjectedXyRows(structuredUtmPriority.table, selectiveRows, { shadowIntent });
+              selectiveTable = mergeStructuredUtmReferenceRows(selectiveTable, utmReferenceTable, {
+                allowVerifiedIndexMerge: true
+              });
+              const nextPriority = blockStructuredUtmCoverageGap(
+                buildStructuredUtmPriority({ shadowIntent, table: selectiveTable }),
+                selectiveTable,
+                utmReferenceTable
+              );
+              selectiveReread.status = selectiveTable.selectiveReread?.status || "completed";
+              selectiveReread.acceptedLabels = [...new Set([
+                ...selectiveReread.acceptedLabels,
+                ...(selectiveTable.selectiveReread?.replacements || [])
+                .filter(item => item.accepted)
+                  .map(item => item.point)
+              ])];
+              structuredUtmPriority = {
+                ...nextPriority,
+                selectiveReread
+              };
+              parserTrace.push(selectiveReread.acceptedLabels.length > 0
+                ? `UTM_SELECTIVE_XY_REREAD:accepted:${selectiveReread.acceptedLabels.join(",")}`
+                : "UTM_SELECTIVE_XY_REREAD:no_improvement");
+              if (structuredUtmPriority?.reason === "transformation_verification_failed") {
+                const remainingLabels = getStructuredUtmVerificationMismatches(structuredUtmPriority).map(item => item.point);
+                parserTrace.push(`UTM_SELECTIVE_XY_REREAD:remaining:${remainingLabels.join(",")}`);
+              }
+            } catch (selectiveError) {
+              selectiveReread.status = "failed";
+              selectiveReread.failureReason = selectiveError?.reason || selectiveError?.code || selectiveError?.message || "unknown";
+              parserTrace.push(`UTM_SELECTIVE_XY_REREAD:attempt_failed:${selectiveReread.attempts}`);
+              if (selectiveReread.attempts >= 2) {
+                structuredUtmPriority = {
+                  ...structuredUtmPriority,
+                  selectiveReread
+                };
+              }
+            }
+          }
         }
 
         if (structuredUtmPriority?.accepted) {
@@ -13307,6 +13527,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push("CRS_EVIDENCE:unavailable");
       console.error("CRS evidence / structured UTM pass failed; preserving legacy route:", crsEvidenceError.message || crsEvidenceError);
     }
+
+    warning = normalizeUtmAcquisitionReviewWarning(warning, {
+      explicitUtmEvidenceLock,
+      structuredUtmAccepted: Boolean(structuredUtmPriority?.accepted)
+    });
 
     let handwrittenVisionRawText = "";
     let handwrittenVisionRouting = getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates, {
