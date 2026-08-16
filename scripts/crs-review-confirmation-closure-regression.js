@@ -128,14 +128,19 @@ test("review summary is sanitized", () => {
   assert.equal(response.reviewSummary.referenceRows.length, 3);
 });
 
-test("frontend wires review, reverify, and server confirmation", () => {
+test("frontend keeps reverify API but main warning panel stays point-specific", () => {
   const source = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const renderStart = source.indexOf("function renderCrsConfirmationPanel");
+  const renderEnd = source.indexOf("if (state.intent)", renderStart);
+  assert.ok(renderStart > 0 && renderEnd > renderStart, "renderCrsConfirmationPanel body exists");
+  const renderBody = source.slice(renderStart, renderEnd);
   assert.match(source, /reviewSummary/);
   assert.match(source, /reverificationContext/);
   assert.match(source, /\/api\/reverify-coordinate-result/);
   assert.match(source, /\/api\/confirm-coordinate-result/);
   assert.match(source, /修改异常坐标/);
-  assert.match(source, /重新验证/);
+  assert.match(source, /仍按当前结果生成 KML/);
+  assert.doesNotMatch(renderBody, /重新验证|参考纬度|参考经度|最大差异/);
   assert.match(source, /CONFIRMATION_REQUIRES_VERIFICATION_PASS/);
 });
 

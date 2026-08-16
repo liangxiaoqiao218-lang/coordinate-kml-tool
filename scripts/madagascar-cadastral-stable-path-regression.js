@@ -202,37 +202,36 @@ assert.equal(fixtureFound, true, "Madagascar real fixture image must be availabl
 passed += 1;
 
 const serverSource = await readFile(new URL("../server.js", import.meta.url), "utf8");
-assert.match(serverSource, /stage:\s*"madagascar_legacy_stable_route"/);
+assert.doesNotMatch(serverSource, /stage:\s*"madagascar_legacy_stable_route"/);
+assert.doesNotMatch(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE/);
+assert.match(serverSource, /const madagascarLatePriorityCue = shouldRunEarlyMadagascarCadastralPriority/);
+assert.match(serverSource, /stage:\s*"cadastral_grid_late_layout"/);
+assert.match(serverSource, /stage:\s*"cadastral_grid_late_table"/);
 assert.match(serverSource, /prompt:\s*cadastralGridLayoutPrompt/);
 assert.match(serverSource, /prompt:\s*cadastralGridTablePrompt/);
 assert.ok(
   serverSource.indexOf("prompt: cadastralGridLayoutPrompt") < serverSource.indexOf("prompt: cadastralGridTablePrompt"),
-  "Madagascar legacy route must restore layout detection before table reading"
+  "Madagascar late priority must run layout detection before table reading"
 );
 passed += 1;
 
-assert.match(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE:candidate/);
-assert.match(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE:layout_detected/);
-assert.match(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE:accepted/);
-assert.match(serverSource, /post_complete_retry/);
-assert.match(serverSource, /post_local_ocr_fallback/);
-assert.match(serverSource, /madagascarLegacyRouteAttemptCount\s*>=\s*2/);
-assert.match(serverSource, /MADAGASCAR_CADASTRAL:projected_fallback_blocked/);
+assert.match(serverSource, /usedModel\s*=\s*`\$\{aliyunVisionModel\}\+cadastral-grid-priority`/);
 assert.match(serverSource, /CRS_EVIDENCE:skipped_for_madagascar_cadastral/);
-assert.match(serverSource, /CRS_EVIDENCE:skipped_for_madagascar_cadastral_candidate/);
-assert.match(serverSource, /blocking map-tick projected takeover/);
+assert.doesNotMatch(serverSource, /CRS_EVIDENCE:skipped_for_madagascar_cadastral_candidate/);
+assert.doesNotMatch(serverSource, /blocking map-tick projected takeover/);
+assert.doesNotMatch(serverSource, /madagascarCadastralProjectedFallbackBlocked/);
+assert.doesNotMatch(serverSource, /evaluateMadagascarLegacyStableRouteAfterRecognitionUpdate/);
 assert.doesNotMatch(serverSource, /buildMadagascarCadastralTableVisionTiles/);
 assert.doesNotMatch(serverSource, /MADAGASCAR_CADASTRAL:right_table_crop/);
 assert.ok(
-  serverSource.indexOf('stage: "madagascar_legacy_stable_route"') < serverSource.indexOf("const crsVision = await runCrsVisionPass"),
-  "Madagascar legacy stable route must run before CRS/UTM routing"
+  serverSource.indexOf("const madagascarLatePriorityCue") < serverSource.indexOf('stage: "cadastral_grid_late_layout"'),
+  "Madagascar cue must only feed late cadastral priority"
 );
 assert.match(
   serverSource,
-  /!madagascarCadastralProjectedFallbackBlocked[\s\S]*shouldRetryRecognition\(rawText,\s*coordinates\)/
+  /\(madagascarLatePriorityCue\.candidate \|\| shouldCheckCadastralGridLayout\(rawText,\s*coordinates\)\)/
 );
-assert.match(serverSource, /structuredUtmPriority\s*=\s*null/);
-assert.match(serverSource, /explicitUtmEvidenceLock\s*=\s*false/);
+assert.match(serverSource, /getCadastralGridInfo\(gridRawText\)/);
 passed += 1;
 
 const indexSource = await readFile(new URL("../index.html", import.meta.url), "utf8");

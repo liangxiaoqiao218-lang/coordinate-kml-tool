@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { buildCoordinateEvidenceShadowModel } from "../server/coordinate-evidence/index.js";
@@ -63,8 +63,9 @@ const cases = [
     expectedMismatchLabels: ["3", "4", "6", "13"],
     expectedXyAcceptedLabels: ["3", "4", "6"],
     expectedPostXyMismatchLabels: ["13"],
-    dmsReferenceRereadExpected: true,
-    expectedDmsAcceptedLabels: ["13"],
+    dmsReferenceRereadExpected: false,
+    expectedFinalMismatchLabels: ["13"],
+    expectFinalAccepted: false,
     initial: "mismatched",
     rows: [
       [1, 778807.293, 9721476.737, -2.517445833, 119.507172222],
@@ -280,7 +281,8 @@ for (const testCase of cases) {
 
   dmsReferenceRereadTriggered = priority?.reason === "transformation_verification_failed"
     && !hasCoverageGap(priority, referenceTable)
-    && getStructuredUtmVerificationMismatches(priority).length > 0;
+    && getStructuredUtmVerificationMismatches(priority).length > 0
+    && Boolean(testCase.dmsReferenceRereadExpected);
 
   if (dmsReferenceRereadTriggered) {
     const selectiveReferenceRows = parseSelectiveDmsReferenceModelText(makeSelectiveReferenceModelText(testCase.selectiveReferenceRows || []));
@@ -311,13 +313,21 @@ for (const testCase of cases) {
   if (testCase.expectedDmsAcceptedLabels) {
     assert.deepEqual(dmsAcceptedLabels, testCase.expectedDmsAcceptedLabels, `${testCase.name} DMS accepted labels mismatch`);
   }
-  assert.equal(priority?.accepted, true, `${testCase.name} priority must be accepted`);
+  const expectFinalAccepted = testCase.expectFinalAccepted !== false;
+  assert.equal(Boolean(priority?.accepted), expectFinalAccepted, `${testCase.name} final accepted state mismatch`);
   assert.equal(priority.typedUtmIntent.zone, 50);
   assert.equal(priority.typedUtmIntent.hemisphere, "south");
   assert.equal(priority.typedUtmIntent.epsg, "EPSG:32750");
-  assert.equal(priority.transformationVerification.status, "match");
+  assert.equal(priority.transformationVerification.status, expectFinalAccepted ? "match" : "mismatch");
   assert.equal(priority.transformationVerification.comparedRows, testCase.rows.length);
   assertPointCoverage(priority, testCase.rows);
+  if (testCase.expectedFinalMismatchLabels) {
+    assert.deepEqual(
+      getStructuredUtmVerificationMismatches(priority).map(item => item.point),
+      testCase.expectedFinalMismatchLabels,
+      `${testCase.name} final mismatch labels mismatch`
+    );
+  }
 
   const { coordinateEvidenceCandidates, shadowEvidenceDecision } = buildCoordinateEvidenceShadowModel({
     crsEvidenceShadow: { shadowIntent },
@@ -326,9 +336,13 @@ for (const testCase of cases) {
     coordinateType: "utm_projected_xy",
     precisionMode: "utm-projected-x-y-review"
   });
-  assert.ok(coordinateEvidenceCandidates.find(candidate => candidate.evidenceType === "verified_utm_transformation"));
   assert.ok(coordinateEvidenceCandidates.find(candidate => candidate.evidenceType === "utm_crs_text"));
-  assert.equal(shadowEvidenceDecision.winnerEvidenceType, "verified_utm_transformation");
+  if (expectFinalAccepted) {
+    assert.ok(coordinateEvidenceCandidates.find(candidate => candidate.evidenceType === "verified_utm_transformation"));
+    assert.equal(shadowEvidenceDecision.winnerEvidenceType, "verified_utm_transformation");
+  } else {
+    assert.equal(coordinateEvidenceCandidates.some(candidate => candidate.evidenceType === "verified_utm_transformation"), false);
+  }
 
   passed += 1;
   console.log(JSON.stringify({
@@ -352,5 +366,16 @@ for (const testCase of cases) {
     shadowWinner: shadowEvidenceDecision.winnerEvidenceType
   }));
 }
+
+const serverSource = await readFile(new URL("../server.js", import.meta.url), "utf8");
+assert.match(serverSource, /COORDINATE_RECOGNITION_GLOBAL_DEADLINE_MS\s*=\s*60000/);
+assert.match(serverSource, /COORDINATE_RECOGNITION_TARGET_MS\s*=\s*30000/);
+assert.match(serverSource, /callBudgetedAliyunVision/);
+assert.match(serverSource, /indonesiaUtmLatencyProfile/);
+assert.match(serverSource, /mainVisionRequestedTimeoutMs = indonesiaUtmLatencyProfile \? 20000 : 35000/);
+assert.match(serverSource, /CADASTRAL_SEMANTIC_VISION:skipped_explicit_utm/);
+assert.match(serverSource, /for \(const timeoutMs of \[15000\]\)/);
+assert.doesNotMatch(serverSource, /for \(const timeoutMs of \[45000,\s*65000,\s*90000\]\)/);
+assert.match(serverSource, /&& !targetedCorrectionUsed/);
 
 console.log(`Indonesia Complex UTM Acquisition Regression: ${passed}/${cases.length} PASS`);

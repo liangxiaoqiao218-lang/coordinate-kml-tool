@@ -6938,12 +6938,17 @@ Au值 = 纯度 × 10 后取整数</div>
         const list = document.createElement("dl");
         list.className = "crs-confirmation-grid";
         (Array.isArray(reviewSummary.points) ? reviewSummary.points : []).forEach(point => {
-          appendCrsDetailRow(list, `Point ${point.point}`, `疑似 ${point.suspectedField || "X/Y"} 不一致`);
-          appendCrsDetailRow(list, "当前 X", point.observed?.x ?? "—");
-          appendCrsDetailRow(list, "当前 Y", point.observed?.y ?? "—");
-          appendCrsDetailRow(list, "参考纬度", point.reference?.latitude ?? "—");
-          appendCrsDetailRow(list, "参考经度", point.reference?.longitude ?? "—");
-          appendCrsDetailRow(list, "最大差异", point.maximumDifference ?? "—");
+          const suspectedField = point.suspectedField || "X/Y";
+          const currentValue = suspectedField === "X"
+            ? point.observed?.x
+            : suspectedField === "Y"
+              ? point.observed?.y
+              : point.observed
+                ? `${point.observed.x ?? "—"}, ${point.observed.y ?? "—"}`
+                : "—";
+          appendCrsDetailRow(list, `Point ${point.point}`, `疑似 ${suspectedField} 不一致`);
+          appendCrsDetailRow(list, "当前值", currentValue ?? "—");
+          appendCrsDetailRow(list, "原因", "与图中参考坐标校验不一致，请对照原图核对。");
         });
         reviewPanel.appendChild(list);
 
@@ -6962,13 +6967,6 @@ Au值 = 纯度 × 10 后取整数</div>
         overrideButton.textContent = "仍按当前结果生成 KML";
         overrideButton.addEventListener("click", downloadKml);
         actions.appendChild(overrideButton);
-
-        const reverifyButton = document.createElement("button");
-        reverifyButton.type = "button";
-        reverifyButton.className = "crs-confirm-primary";
-        reverifyButton.textContent = "重新验证";
-        reverifyButton.addEventListener("click", reverifyCoordinateResultFromReview);
-        actions.appendChild(reverifyButton);
         reviewPanel.appendChild(actions);
         panel.appendChild(reviewPanel);
       }

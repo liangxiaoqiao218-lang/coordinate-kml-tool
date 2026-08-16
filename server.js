@@ -81,6 +81,10 @@ const supabase = supabaseUrl && supabaseServiceRoleKey
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
+const COORDINATE_RECOGNITION_GLOBAL_DEADLINE_MS = 60000;
+const COORDINATE_RECOGNITION_TARGET_MS = 30000;
+const COORDINATE_RECOGNITION_FINALIZATION_BUFFER_MS = 5000;
+const COORDINATE_RECOGNITION_MIN_PROVIDER_BUDGET_MS = 2500;
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const SYSTEM_CONFIG_PRICING_ID = "pricing";
 const DEFAULT_PRICING_CONFIG = {
@@ -12343,7 +12347,8 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
   let visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || req.query?.visitorId || "").trim();
   const recognitionSessionId = createRecognitionSessionId();
   const regressionTestMode = getRegressionTestMode(req);
-  const recognitionMetrics = createRecognitionMetrics();
+  const recognitionStartedAt = Date.now();
+  const recognitionMetrics = createRecognitionMetrics({ startedAt: recognitionStartedAt });
   const includeRecognitionMetricAttempts = shouldIncludeRecognitionMetricAttempts(req);
   const includeCoordinateEvidenceDebug = shouldIncludeCoordinateEvidenceDebug(req);
   const serializeRecognitionMetrics = () => sanitizeRecognitionMetricsForResponse(recognitionMetrics, {
@@ -12351,9 +12356,85 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
   });
   const buildDebuggableCoordinateResponse = (payload, engine = null) => buildFinalizedCoordinateVerificationResponse(
     payload,
-    engine,
-    { includeCoordinateEvidenceDebug }
+      engine,
+      { includeCoordinateEvidenceDebug }
+    );
+  const getRecognitionElapsedMs = () => Math.max(0, Date.now() - recognitionStartedAt);
+  const getRemainingRecognitionBudgetMs = ({ reserveMs = COORDINATE_RECOGNITION_FINALIZATION_BUFFER_MS } = {}) => Math.max(
+    0,
+    COORDINATE_RECOGNITION_GLOBAL_DEADLINE_MS - getRecognitionElapsedMs() - reserveMs
   );
+  const getBudgetedProviderTimeoutMs = (requestedTimeoutMs, {
+    minMs = COORDINATE_RECOGNITION_MIN_PROVIDER_BUDGET_MS,
+    reserveMs = COORDINATE_RECOGNITION_FINALIZATION_BUFFER_MS
+  } = {}) => {
+    const remainingMs = getRemainingRecognitionBudgetMs({ reserveMs });
+    if (remainingMs < minMs) return 0;
+    return Math.max(minMs, Math.min(Number(requestedTimeoutMs) || minMs, remainingMs));
+  };
+  const buildRecognitionBudgetError = (stage, remainingMs = 0) => {
+    const error = new Error(`Recognition global deadline exhausted before ${stage}`);
+    error.code = "RECOGNITION_GLOBAL_DEADLINE_EXHAUSTED";
+    error.reason = "global_deadline_exhausted";
+    error.remainingMs = remainingMs;
+    return error;
+  };
+  const callBudgetedAliyunVision = async ({
+    stage,
+    modelName = aliyunVisionModel,
+    prompt,
+    imageItems,
+    temperature = 0,
+    maxTokens,
+    requestedTimeoutMs = 35000,
+    minMs = COORDINATE_RECOGNITION_MIN_PROVIDER_BUDGET_MS,
+    reserveMs = COORDINATE_RECOGNITION_FINALIZATION_BUFFER_MS,
+    resultCounter = null
+  } = {}) => {
+    const remainingMs = getRemainingRecognitionBudgetMs({ reserveMs });
+    const timeoutMs = getBudgetedProviderTimeoutMs(requestedTimeoutMs, { minMs, reserveMs });
+    const attempt = startAttempt(recognitionMetrics, {
+      stage,
+      provider: "vision",
+      model: modelName,
+      timeoutMs
+    });
+    if (!timeoutMs) {
+      finishAttempt(recognitionMetrics, attempt, {
+        status: "skipped",
+        errorCode: "RECOGNITION_GLOBAL_DEADLINE_EXHAUSTED",
+        resultCount: 0,
+        durationMs: 0
+      });
+      throw buildRecognitionBudgetError(stage, remainingMs);
+    }
+    try {
+      const response = await callAliyunVision({
+        modelName,
+        prompt,
+        imageItems,
+        temperature,
+        maxTokens,
+        timeoutMs
+      });
+      const text = response.choices?.[0]?.message?.content || "";
+      const resultCount = typeof resultCounter === "function"
+        ? resultCounter(text)
+        : Math.max(countCoordinateRows(extractCoordinateLines(text)), countCoordinateRows(text));
+      finishAttempt(recognitionMetrics, attempt, {
+        status: text ? "success" : "error",
+        errorCode: text ? null : "MODEL_EMPTY_RESPONSE",
+        resultCount
+      });
+      return response;
+    } catch (visionError) {
+      finishAttempt(recognitionMetrics, attempt, {
+        status: isRecognitionVisionTimeout(visionError) ? "timeout" : "error",
+        errorCode: getRecognitionVisionErrorCode(visionError)
+      });
+      throw visionError;
+    }
+  };
   const runInstrumentedLocalOcrFallback = async (imageBuffer, reason = "", stage = "local_ocr_fallback") => {
     const ocrAttempt = startAttempt(recognitionMetrics, {
       stage,
@@ -13245,7 +13326,27 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
     // Start table recognition with the visual model. OCR is only a retry/fallback because it can
     // lose table row relationships or return bbox metadata instead of coordinate pairs.
-    const mainVisionTimeoutMs = 35000;
+    const indonesiaUtmLatencyProfile = /indonesia|印尼|utm\s*50|utm50|50s/i.test(`${uploadedFileName}\n${coordinateEngineV2ContextHint}`);
+    const mainVisionRequestedTimeoutMs = indonesiaUtmLatencyProfile ? 20000 : 35000;
+    const mainVisionTimeoutMs = getBudgetedProviderTimeoutMs(mainVisionRequestedTimeoutMs, {
+      minMs: 8000,
+      reserveMs: indonesiaUtmLatencyProfile ? 35000 : 20000
+    });
+    if (!mainVisionTimeoutMs) {
+      const skippedMainVisionAttempt = startAttempt(recognitionMetrics, {
+        stage: "main_vision",
+        provider: "vision",
+        model: aliyunVisionModel,
+        timeoutMs: 0
+      });
+      finishAttempt(recognitionMetrics, skippedMainVisionAttempt, {
+        status: "skipped",
+        errorCode: "RECOGNITION_GLOBAL_DEADLINE_EXHAUSTED",
+        resultCount: 0,
+        durationMs: 0
+      });
+      throw buildRecognitionBudgetError("main_vision");
+    }
     const mainVisionAttempt = startAttempt(recognitionMetrics, {
       stage: "main_vision",
       provider: "vision",
@@ -13294,139 +13395,30 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       image_url: item?.image_url ? { ...item.image_url, detail: "high" } : item?.image_url
     }));
 
-    let madagascarCadastralProjectedFallbackBlocked = false;
-    let madagascarLegacyRouteAttemptCount = 0;
-    async function evaluateMadagascarLegacyStableRouteAfterRecognitionUpdate(reason = "initial") {
-      const priority = shouldRunEarlyMadagascarCadastralPriority({
-        rawText,
-        coordinates,
-        fileName: uploadedFileName,
-        rawHint: req.body?.rawHint || "",
-        hint: req.body?.hint || ""
-      });
-      if (cadastralGrid.isCadastralGrid) {
-        return { candidate: true, accepted: true, priority };
-      }
-      if (!priority.candidate) {
-        return { candidate: false, accepted: false, priority };
-      }
-      if (madagascarLegacyRouteAttemptCount >= 2) {
-        madagascarCadastralProjectedFallbackBlocked = true;
-        parserTrace.push(`MADAGASCAR_LEGACY_STABLE_ROUTE:attempt_limit(${reason})`);
-        if (priority.mapTickTakeover || countCoordinateRows(coordinates) > 0) {
-          coordinates = "";
-        }
-        warning = warning || "检测到马达加斯加矿权网格图疑似包含 Liste_Carrés 表，但未能稳定读取 num / XV / YV 表；已阻止地图边框刻度被误当作 UTM/X-Y 坐标，请重试更清晰原图。";
-        return { candidate: true, accepted: false, priority, attemptLimited: true };
-      }
-      madagascarLegacyRouteAttemptCount += 1;
-      const cadastralAttempt = startAttempt(recognitionMetrics, {
-        stage: "madagascar_legacy_stable_route",
-        provider: "vision",
-        model: aliyunVisionModel,
-        timeoutMs: 60000
-      });
-      try {
-        parserTrace.push(`MADAGASCAR_LEGACY_STABLE_ROUTE:candidate(${reason}:${priority.reason})`);
-        const layoutResponse = await callAliyunVision({
-          modelName: aliyunVisionModel,
-          prompt: cadastralGridLayoutPrompt,
-          imageItems,
-          temperature: 0,
-          maxTokens: 80,
-          timeoutMs: 25000
-        });
-        const layoutText = layoutResponse.choices?.[0]?.message?.content || "";
-
-        if (isCadastralGridLayoutDetected(layoutText)) {
-          parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:layout_detected");
-          const gridResponse = await callAliyunVision({
-            modelName: aliyunVisionModel,
-            prompt: cadastralGridTablePrompt,
-            imageItems,
-            temperature: 0,
-            maxTokens: 1400,
-            timeoutMs: 35000
-          });
-          const gridRawText = gridResponse.choices?.[0]?.message?.content || "";
-          const gridInfo = getCadastralGridInfo(gridRawText);
-          finishAttempt(recognitionMetrics, cadastralAttempt, {
-            status: gridInfo.isCadastralGrid ? "success" : "error",
-            errorCode: gridInfo.isCadastralGrid ? null : "MADAGASCAR_CADASTRAL_TABLE_UNREADABLE",
-            resultCount: gridInfo.rows.length
-          });
-          if (gridInfo.isCadastralGrid) {
-            rawText = gridRawText;
-            coordinates = formatCadastralGridRows(gridInfo.rows);
-            cadastralGrid = gridInfo;
-            structuredUtmPriority = null;
-            crsEvidenceShadow = null;
-            explicitUtmEvidenceLock = false;
-            lockedUtmCrsEvidenceShadow = null;
-            usedModel = `${aliyunVisionModel}+madagascar-legacy-stable`;
-            warning = "识别到 Liste_Carrés / 矿权网格表，已优先读取 num / XV / YV；已忽略地图中央的大号 DMS 标注。";
-            parserTrace.push("MADAGASCAR_CADASTRAL:accepted");
-            parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:accepted");
-            return { candidate: true, accepted: true, priority };
-          } else {
-            parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:table_unreadable");
-            madagascarCadastralProjectedFallbackBlocked = true;
-          }
-        } else {
-          finishAttempt(recognitionMetrics, cadastralAttempt, {
-            status: "error",
-            errorCode: "MADAGASCAR_CADASTRAL_LAYOUT_NOT_DETECTED",
-            resultCount: 0
-          });
-          parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:layout_not_detected");
-          madagascarCadastralProjectedFallbackBlocked = true;
-        }
-      } catch (earlyCadastralError) {
-        finishAttempt(recognitionMetrics, cadastralAttempt, {
-          status: isRecognitionVisionTimeout(earlyCadastralError) ? "timeout" : "error",
-          errorCode: getRecognitionVisionErrorCode(earlyCadastralError)
-        });
-        parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:failed");
-        madagascarCadastralProjectedFallbackBlocked = true;
-        console.warn("Madagascar legacy stable cadastral route failed; blocking map-tick projected takeover", {
-          fileName: uploadedFileName || req.file?.originalname || "",
-          reason: getRecognitionVisionErrorCode(earlyCadastralError)
-        });
-      }
-      if (madagascarCadastralProjectedFallbackBlocked) {
-        structuredUtmPriority = null;
-        crsEvidenceShadow = null;
-        explicitUtmEvidenceLock = false;
-        lockedUtmCrsEvidenceShadow = null;
-      }
-      if (madagascarCadastralProjectedFallbackBlocked && (priority.mapTickTakeover || countCoordinateRows(coordinates) > 0)) {
-        coordinates = "";
-      }
-      warning = warning || "检测到马达加斯加矿权网格图疑似包含 Liste_Carrés 表，但未能稳定读取右侧 num / XV / YV 表；已阻止地图边框刻度被误当作 UTM/X-Y 坐标，请重试更清晰原图或裁剪右侧表格区域。";
-      if (madagascarCadastralProjectedFallbackBlocked && !parserTrace.includes("MADAGASCAR_CADASTRAL:projected_fallback_blocked")) {
-        parserTrace.push("MADAGASCAR_CADASTRAL:projected_fallback_blocked");
-      }
-      return { candidate: true, accepted: false, priority };
-    }
-
-    await evaluateMadagascarLegacyStableRouteAfterRecognitionUpdate("initial");
+    const madagascarLatePriorityCue = shouldRunEarlyMadagascarCadastralPriority({
+      rawText,
+      coordinates,
+      fileName: uploadedFileName,
+      rawHint: req.body?.rawHint || "",
+      hint: req.body?.hint || ""
+    });
 
     if (cadastralGrid.isCadastralGrid) {
       parserTrace.push("CRS_EVIDENCE:skipped_for_madagascar_cadastral");
-    } else if (madagascarCadastralProjectedFallbackBlocked) {
-      parserTrace.push("CRS_EVIDENCE:skipped_for_madagascar_cadastral_candidate");
     } else {
     try {
       const crsVision = await runCrsVisionPass({
         imageItems: crsImageItems,
         invokeVision: async ({ prompt: crsPrompt, imageItems: crsImageItems }) => {
-          const crsResponse = await callAliyunVision({
-            modelName: aliyunVisionModel,
+          const crsResponse = await callBudgetedAliyunVision({
+            stage: "crs_vision",
             prompt: crsPrompt,
             imageItems: crsImageItems,
             temperature: 0,
             maxTokens: 1200,
-            timeoutMs: 60000
+            requestedTimeoutMs: 15000,
+            minMs: 4000,
+            reserveMs: 25000
           });
           return crsResponse.choices?.[0]?.message?.content || "";
         }
@@ -13443,13 +13435,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         const structuredTable = await runStructuredUtmTablePass({
           imageItems: crsImageItems,
           invokeVision: async ({ prompt: tablePrompt, imageItems: tableImageItems }) => {
-            const tableResponse = await callAliyunVision({
-              modelName: aliyunVisionModel,
+            const tableResponse = await callBudgetedAliyunVision({
+              stage: "structured_utm_table",
               prompt: tablePrompt,
               imageItems: tableImageItems,
               temperature: 0,
               maxTokens: 3200,
-              timeoutMs: 80000
+              requestedTimeoutMs: 15000,
+              minMs: 4000,
+              reserveMs: 15000
             });
             return tableResponse.choices?.[0]?.message?.content || "";
           }
@@ -13457,13 +13451,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         const xyOnlyTable = await runProjectedXyOnlyPass({
           imageItems: crsImageItems,
           invokeVision: async ({ prompt: xyPrompt, imageItems: xyImageItems }) => {
-            const xyResponse = await callAliyunVision({
-              modelName: aliyunVisionModel,
+            const xyResponse = await callBudgetedAliyunVision({
+              stage: "projected_xy_only",
               prompt: xyPrompt,
               imageItems: xyImageItems,
               temperature: 0,
               maxTokens: 2200,
-              timeoutMs: 80000
+              requestedTimeoutMs: 12000,
+              minMs: 3500,
+              reserveMs: 15000
             });
             return xyResponse.choices?.[0]?.message?.content || "";
           }
@@ -13479,6 +13475,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           utmReferenceTable
         );
         let tableTiles = [];
+        let targetedCorrectionUsed = false;
 
         if (shouldRunStructuredUtmTableRecovery({
           explicitUtmEvidenceLock: explicitConfirmedUtm,
@@ -13492,13 +13489,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             const recoveryStructuredTable = await runStructuredUtmTablePass({
               imageItems: tableTiles,
               invokeVision: async ({ prompt: recoveryTablePrompt, imageItems: recoveryTableItems }) => {
-                const recoveryTableResponse = await callAliyunVision({
-                  modelName: aliyunVisionModel,
+                const recoveryTableResponse = await callBudgetedAliyunVision({
+                  stage: "utm_table_focused_recovery_structured",
                   prompt: recoveryTablePrompt,
                   imageItems: recoveryTableItems,
                   temperature: 0,
                   maxTokens: 4200,
-                  timeoutMs: 80000
+                  requestedTimeoutMs: 12000,
+                  minMs: 3500,
+                  reserveMs: 12000
                 });
                 return recoveryTableResponse.choices?.[0]?.message?.content || "";
               }
@@ -13506,13 +13505,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             const recoveryXyTable = await runProjectedXyOnlyPass({
               imageItems: tableTiles,
               invokeVision: async ({ prompt: recoveryXyPrompt, imageItems: recoveryXyItems }) => {
-                const recoveryXyResponse = await callAliyunVision({
-                  modelName: aliyunVisionModel,
+                const recoveryXyResponse = await callBudgetedAliyunVision({
+                  stage: "utm_table_focused_recovery_xy",
                   prompt: recoveryXyPrompt,
                   imageItems: recoveryXyItems,
                   temperature: 0,
                   maxTokens: 3200,
-                  timeoutMs: 80000
+                  requestedTimeoutMs: 12000,
+                  minMs: 3500,
+                  reserveMs: 12000
                 });
                 return recoveryXyResponse.choices?.[0]?.message?.content || "";
               }
@@ -13541,6 +13542,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           table: structuredUtmPriority?.table,
           referenceTable: utmReferenceTable
         })) {
+          targetedCorrectionUsed = true;
           if (tableTiles.length === 0) {
             tableTiles = await buildProjectedTableVisionTiles(req.file?.buffer);
           }
@@ -13555,7 +13557,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             replacements: [],
             status: "not_run"
           };
-          for (const timeoutMs of [45000, 65000, 90000]) {
+          for (const timeoutMs of [15000]) {
             if (structuredUtmPriority?.reason !== "transformation_verification_failed") break;
             selectiveReread.attempts += 1;
             try {
@@ -13563,13 +13565,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                 priority: structuredUtmPriority,
                 imageItems: selectiveTiles.length > 0 ? selectiveTiles : tableTiles.length > 0 ? tableTiles : crsImageItems,
                 invokeVision: async ({ prompt: selectivePrompt, imageItems: selectiveImageItems }) => {
-                  const selectiveResponse = await callAliyunVision({
-                    modelName: aliyunVisionModel,
+                  const selectiveResponse = await callBudgetedAliyunVision({
+                    stage: `utm_selective_xy_reread_${selectiveReread.attempts}`,
                     prompt: selectivePrompt,
                     imageItems: selectiveImageItems,
                     temperature: 0,
                     maxTokens: 700,
-                    timeoutMs
+                    requestedTimeoutMs: timeoutMs,
+                    minMs: 3500,
+                    reserveMs: 8000
                   });
                   return selectiveResponse.choices?.[0]?.message?.content || "";
                 }
@@ -13642,7 +13646,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           priority: structuredUtmPriority,
           table: structuredUtmPriority?.table,
           referenceTable: utmReferenceTable
-        })) {
+        }) && !targetedCorrectionUsed) {
+          targetedCorrectionUsed = true;
           if (tableTiles.length === 0) {
             tableTiles = await buildProjectedTableVisionTiles(req.file?.buffer);
           }
@@ -13659,7 +13664,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             afterDifference: beforeDifference,
             status: "not_run"
           };
-          for (const timeoutMs of [45000, 65000, 90000]) {
+          for (const timeoutMs of [15000]) {
             if (structuredUtmPriority?.reason !== "transformation_verification_failed") break;
             dmsReferenceReread.attempts += 1;
             try {
@@ -13667,13 +13672,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                 priority: structuredUtmPriority,
                 imageItems: selectiveTiles.length > 0 ? selectiveTiles : tableTiles.length > 0 ? tableTiles : crsImageItems,
                 invokeVision: async ({ prompt: selectivePrompt, imageItems: selectiveImageItems }) => {
-                  const selectiveResponse = await callAliyunVision({
-                    modelName: aliyunVisionModel,
+                  const selectiveResponse = await callBudgetedAliyunVision({
+                    stage: `utm_selective_dms_reference_reread_${dmsReferenceReread.attempts}`,
                     prompt: selectivePrompt,
                     imageItems: selectiveImageItems,
                     temperature: 0,
                     maxTokens: 700,
-                    timeoutMs
+                    requestedTimeoutMs: timeoutMs,
+                    minMs: 3500,
+                    reserveMs: 8000
                   });
                   return selectiveResponse.choices?.[0]?.message?.content || "";
                 }
@@ -13814,7 +13821,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     let bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
     let utm30ProjectedXy = getUtm30ProjectedXyInfo(rawText, coordinates);
-    let utm30Accepted = !madagascarCadastralProjectedFallbackBlocked && !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
+    let utm30Accepted = !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
     let dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     let dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     let frenchPerimeterDms = getFrenchPerimeterDmsInfo(rawText);
@@ -14200,28 +14207,33 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!madagascarCadastralProjectedFallbackBlocked && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && (madagascarLatePriorityCue.candidate || shouldCheckCadastralGridLayout(rawText, coordinates))) {
       try {
         console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
-        const layoutResponse = await callAliyunVision({
-          modelName: aliyunVisionModel,
+        const layoutResponse = await callBudgetedAliyunVision({
+          stage: "cadastral_grid_late_layout",
           prompt: cadastralGridLayoutPrompt,
           imageItems,
           temperature: 0,
           maxTokens: 80,
-          timeoutMs: 25000
+          requestedTimeoutMs: 25000,
+          minMs: 4000,
+          reserveMs: 5000
         });
         const layoutText = layoutResponse.choices?.[0]?.message?.content || "";
 
         if (isCadastralGridLayoutDetected(layoutText)) {
           console.log("Cadastral grid layout detected, reading table area first:", layoutText.slice(0, 300));
-          const gridResponse = await callAliyunVision({
-            modelName: aliyunVisionModel,
+          const gridResponse = await callBudgetedAliyunVision({
+            stage: "cadastral_grid_late_table",
             prompt: cadastralGridTablePrompt,
             imageItems,
             temperature: 0,
             maxTokens: 1400,
-            timeoutMs: 35000
+            requestedTimeoutMs: 35000,
+            minMs: 4000,
+            reserveMs: 5000,
+            resultCounter: text => getCadastralGridInfo(text).rows.length
           });
           const gridRawText = gridResponse.choices?.[0]?.message?.content || "";
           const gridInfo = getCadastralGridInfo(gridRawText);
@@ -14363,7 +14375,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!madagascarCadastralProjectedFallbackBlocked && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -14380,14 +14392,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           coordinates = retryCoordinates;
           usedModel = `${aliyunOcrModel}+complete-retry`;
           warning = extractRecognitionWarning(retryRawText) || warning;
-          await evaluateMadagascarLegacyStableRouteAfterRecognitionUpdate("post_complete_retry");
         }
       } catch (retryError) {
         console.error("阿里云OCR重试失败：", retryError.message || retryError);
       }
     }
 
-    if (!madagascarCadastralProjectedFallbackBlocked && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -14397,7 +14408,6 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           coordinates = fallback.coordinates;
           usedModel = `${aliyunOcrModel}+local-ocr-fallback`;
           warning = fallback.warning;
-          await evaluateMadagascarLegacyStableRouteAfterRecognitionUpdate("post_local_ocr_fallback");
         } else if (!warning) {
           warning = "阿里云识别结果较少，请人工核对。";
         }
@@ -14469,17 +14479,32 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       ),
       structuredUtmPriority
     });
-    if (cadastralSemanticVisionRouting.shouldRun && aliyunApiKey && req.file) {
+    if (cadastralSemanticVisionRouting.shouldRun && (explicitUtmEvidenceLock || structuredUtmPriority)) {
+      parserTrace.push("CADASTRAL_SEMANTIC_VISION:skipped_explicit_utm");
+    } else if (cadastralSemanticVisionRouting.shouldRun && aliyunApiKey && req.file) {
       if (cadastralSemanticVisionRouting.mode === "shadow_observation_only") {
         parserTrace.push("CADASTRAL_SEMANTIC_VISION:shadow_observation_only");
       }
+      const cadastralSemanticTimeoutMs = getBudgetedProviderTimeoutMs(10000, {
+        minMs: 3000,
+        reserveMs: 5000
+      });
       const cadastralSemanticAttempt = startAttempt(recognitionMetrics, {
         stage: "cadastral_semantic_vision",
         provider: "vision",
         model: aliyunVisionModel,
-        timeoutMs: 25000
+        timeoutMs: cadastralSemanticTimeoutMs
       });
       try {
+        if (!cadastralSemanticTimeoutMs) {
+          finishAttempt(recognitionMetrics, cadastralSemanticAttempt, {
+            status: "skipped",
+            errorCode: "RECOGNITION_GLOBAL_DEADLINE_EXHAUSTED",
+            resultCount: 0,
+            durationMs: 0
+          });
+          throw buildRecognitionBudgetError("cadastral_semantic_vision");
+        }
         cadastralSemanticVision = await runCadastralSemanticVisionPass({
           imageItems,
           invokeVision: async ({ prompt: cadastralSemanticPrompt, imageItems: cadastralSemanticImageItems }) => {
@@ -14489,7 +14514,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               imageItems: cadastralSemanticImageItems,
               temperature: 0,
               maxTokens: 700,
-              timeoutMs: 25000
+              timeoutMs: cadastralSemanticTimeoutMs
             });
             return cadastralSemanticResponse.choices?.[0]?.message?.content || "";
           }
@@ -14504,20 +14529,33 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             parserTrace.push("CADASTRAL_SEMANTIC_VISION:conflict(utm_projection_detected)");
           }
           if (!cadastralGrid.isCadastralGrid) {
+            const cadastralTableTimeoutMs = getBudgetedProviderTimeoutMs(10000, {
+              minMs: 3000,
+              reserveMs: 5000
+            });
             const cadastralTableAttempt = startAttempt(recognitionMetrics, {
               stage: "cadastral_semantic_table_read",
               provider: "vision",
               model: aliyunVisionModel,
-              timeoutMs: 35000
+              timeoutMs: cadastralTableTimeoutMs
             });
             try {
+              if (!cadastralTableTimeoutMs) {
+                finishAttempt(recognitionMetrics, cadastralTableAttempt, {
+                  status: "skipped",
+                  errorCode: "RECOGNITION_GLOBAL_DEADLINE_EXHAUSTED",
+                  resultCount: 0,
+                  durationMs: 0
+                });
+                throw buildRecognitionBudgetError("cadastral_semantic_table_read");
+              }
               const cadastralTableResponse = await callAliyunVision({
                 modelName: aliyunVisionModel,
                 prompt: cadastralGridTablePrompt,
                 imageItems,
                 temperature: 0,
                 maxTokens: 1400,
-                timeoutMs: 35000
+                timeoutMs: cadastralTableTimeoutMs
               });
               const cadastralTableRawText = cadastralTableResponse.choices?.[0]?.message?.content || "";
               const cadastralTableGrid = getCadastralGridInfo(cadastralTableRawText);
@@ -14553,10 +14591,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                 parserTrace.push("CADASTRAL_SEMANTIC_VISION:table_read_rejected");
               }
             } catch (cadastralTableError) {
-              finishAttempt(recognitionMetrics, cadastralTableAttempt, {
-                status: isRecognitionVisionTimeout(cadastralTableError) ? "timeout" : "error",
-                errorCode: getRecognitionVisionErrorCode(cadastralTableError)
-              });
+              if (cadastralTableError?.code !== "RECOGNITION_GLOBAL_DEADLINE_EXHAUSTED") {
+                finishAttempt(recognitionMetrics, cadastralTableAttempt, {
+                  status: isRecognitionVisionTimeout(cadastralTableError) ? "timeout" : "error",
+                  errorCode: getRecognitionVisionErrorCode(cadastralTableError)
+                });
+              }
               parserTrace.push("CADASTRAL_SEMANTIC_VISION:table_read_failed");
               console.warn("Cadastral semantic table read skipped after failure", {
                 fileName: uploadedFileName,
@@ -14566,10 +14606,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           }
         }
       } catch (cadastralSemanticError) {
-        finishAttempt(recognitionMetrics, cadastralSemanticAttempt, {
-          status: isRecognitionVisionTimeout(cadastralSemanticError) ? "timeout" : "error",
-          errorCode: getRecognitionVisionErrorCode(cadastralSemanticError)
-        });
+        if (cadastralSemanticError?.code !== "RECOGNITION_GLOBAL_DEADLINE_EXHAUSTED") {
+          finishAttempt(recognitionMetrics, cadastralSemanticAttempt, {
+            status: isRecognitionVisionTimeout(cadastralSemanticError) ? "timeout" : "error",
+            errorCode: getRecognitionVisionErrorCode(cadastralSemanticError)
+          });
+        }
         console.warn("Cadastral semantic vision pass skipped after failure", {
           fileName: uploadedFileName,
           reason: getRecognitionVisionErrorCode(cadastralSemanticError)
@@ -14594,13 +14636,26 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       structuredUtmPriority
     });
     if (geographicHeaderVisionRouting.shouldRun && aliyunApiKey && req.file) {
+      const geographicHeaderTimeoutMs = getBudgetedProviderTimeoutMs(10000, {
+        minMs: 3000,
+        reserveMs: 5000
+      });
       const headerVisionAttempt = startAttempt(recognitionMetrics, {
         stage: "geographic_header_vision",
         provider: "vision",
         model: aliyunVisionModel,
-        timeoutMs: 25000
+        timeoutMs: geographicHeaderTimeoutMs
       });
       try {
+        if (!geographicHeaderTimeoutMs) {
+          finishAttempt(recognitionMetrics, headerVisionAttempt, {
+            status: "skipped",
+            errorCode: "RECOGNITION_GLOBAL_DEADLINE_EXHAUSTED",
+            resultCount: 0,
+            durationMs: 0
+          });
+          throw buildRecognitionBudgetError("geographic_header_vision");
+        }
         geographicHeaderVision = await runGeographicHeaderVisionPass({
           imageItems: crsImageItems,
           invokeVision: async ({ prompt: headerPrompt, imageItems: headerImageItems }) => {
@@ -14610,7 +14665,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               imageItems: headerImageItems,
               temperature: 0,
               maxTokens: 700,
-              timeoutMs: 25000
+              timeoutMs: geographicHeaderTimeoutMs
             });
             return headerResponse.choices?.[0]?.message?.content || "";
           }
@@ -14626,10 +14681,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           parserTrace.push("GEOGRAPHIC_HEADER_VISION:semantic_observed");
         }
       } catch (headerVisionError) {
-        finishAttempt(recognitionMetrics, headerVisionAttempt, {
-          status: isRecognitionVisionTimeout(headerVisionError) ? "timeout" : "error",
-          errorCode: getRecognitionVisionErrorCode(headerVisionError)
-        });
+        if (headerVisionError?.code !== "RECOGNITION_GLOBAL_DEADLINE_EXHAUSTED") {
+          finishAttempt(recognitionMetrics, headerVisionAttempt, {
+            status: isRecognitionVisionTimeout(headerVisionError) ? "timeout" : "error",
+            errorCode: getRecognitionVisionErrorCode(headerVisionError)
+          });
+        }
         console.warn("Geographic header vision pass skipped after failure", {
           fileName: uploadedFileName,
           reason: getRecognitionVisionErrorCode(headerVisionError)
@@ -14690,7 +14747,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
     utm30ProjectedXy = getUtm30ProjectedXyInfo(rawText, coordinates);
-    utm30Accepted = !madagascarCadastralProjectedFallbackBlocked && !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
+    utm30Accepted = !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
     if (utm30Accepted && !parserTrace.includes("UTM30_XY:accepted")) {
       parserTrace.push("UTM30_XY:accepted");
     }

@@ -122,6 +122,9 @@ test("review panel exposes edit and override actions", () => {
   assert.match(renderPanelBody, /修改异常坐标/);
   assert.match(renderPanelBody, /仍按当前结果生成 KML/);
   assert.match(renderPanelBody, /downloadKml/);
+  assert.match(renderPanelBody, /当前值/);
+  assert.match(renderPanelBody, /与图中参考坐标校验不一致/);
+  assert.doesNotMatch(renderPanelBody, /参考纬度|参考经度|最大差异|重新验证/);
 });
 
 test("detected verified flow presents direct KML action", () => {
