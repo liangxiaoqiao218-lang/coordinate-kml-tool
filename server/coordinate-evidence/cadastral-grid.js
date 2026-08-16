@@ -214,7 +214,7 @@ export function shouldRunEarlyMadagascarCadastralPriority({
   const structuralSignature = hasMadagascarCadastralStructuralSignature(combined);
   const madagascarCue = /madagascar|madagasikara|马达加斯加|ampasimamitaka|ilakaka|andriandampy/i.test(combined);
   const mapTickTakeover = hasMapGridTickTakeover([rawText, coordinates].join("\n"));
-  const candidate = Boolean(structuralSignature || (madagascarCue && mapTickTakeover));
+  const candidate = Boolean(structuralSignature || madagascarCue);
 
   return {
     candidate,
@@ -223,8 +223,10 @@ export function shouldRunEarlyMadagascarCadastralPriority({
     mapTickTakeover,
     reason: structuralSignature
       ? "liste_carres_xv_yv_signature"
-      : candidate
+      : madagascarCue && mapTickTakeover
         ? "madagascar_cue_with_map_tick_takeover"
+        : madagascarCue
+          ? "madagascar_cue_requires_table_focused_acquisition"
         : "no_madagascar_cadastral_signature"
   };
 }

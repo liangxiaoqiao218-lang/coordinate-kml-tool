@@ -61,6 +61,7 @@ import {
   getCadastralGridInfo,
   shouldRunEarlyMadagascarCadastralPriority
 } from "./server/coordinate-evidence/cadastral-grid.js";
+import { buildMadagascarCadastralTableVisionTiles } from "./server/coordinate-evidence/cadastral-image-tiles.js";
 
 const app = express();
 const upload = multer({
@@ -13302,6 +13303,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       hint: req.body?.hint || ""
     });
 
+    let madagascarCadastralProjectedFallbackBlocked = false;
     if (!cadastralGrid.isCadastralGrid && earlyCadastralPriority.candidate) {
       const cadastralAttempt = startAttempt(recognitionMetrics, {
         stage: "madagascar_cadastral_table_priority",
@@ -13311,12 +13313,16 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       });
       try {
         parserTrace.push(`MADAGASCAR_CADASTRAL:early_candidate(${earlyCadastralPriority.reason})`);
+        const cadastralTableImageItems = await buildMadagascarCadastralTableVisionTiles(req.file?.buffer);
+        parserTrace.push(cadastralTableImageItems.length > 0
+          ? "MADAGASCAR_CADASTRAL:right_table_crop"
+          : "MADAGASCAR_CADASTRAL:right_table_crop_unavailable");
         const gridResponse = await callAliyunVision({
           modelName: aliyunVisionModel,
           prompt: cadastralGridTablePrompt,
-          imageItems: crsImageItems,
+          imageItems: cadastralTableImageItems.length > 0 ? cadastralTableImageItems : crsImageItems,
           temperature: 0,
-          maxTokens: 1800,
+          maxTokens: 2600,
           timeoutMs: 45000
         });
         const gridRawText = gridResponse.choices?.[0]?.message?.content || "";
@@ -13336,6 +13342,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           parserTrace.push("MADAGASCAR_CADASTRAL:early_priority_accepted");
         } else {
           parserTrace.push("MADAGASCAR_CADASTRAL:early_priority_rejected");
+          madagascarCadastralProjectedFallbackBlocked = true;
         }
       } catch (earlyCadastralError) {
         finishAttempt(recognitionMetrics, cadastralAttempt, {
@@ -13343,15 +13350,26 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           errorCode: getRecognitionVisionErrorCode(earlyCadastralError)
         });
         parserTrace.push("MADAGASCAR_CADASTRAL:early_priority_failed");
-        console.warn("Madagascar cadastral early table priority failed; continuing generic routing", {
+        madagascarCadastralProjectedFallbackBlocked = true;
+        console.warn("Madagascar cadastral early table priority failed; blocking map-tick projected takeover", {
           fileName: uploadedFileName || req.file?.originalname || "",
           reason: getRecognitionVisionErrorCode(earlyCadastralError)
         });
       }
     }
 
+    if (madagascarCadastralProjectedFallbackBlocked) {
+      if (earlyCadastralPriority.mapTickTakeover || countCoordinateRows(coordinates) > 0) {
+        coordinates = "";
+      }
+      warning = warning || "检测到马达加斯加矿权网格图疑似包含 Liste_Carrés 表，但未能稳定读取右侧 num / XV / YV 表；已阻止地图边框刻度被误当作 UTM/X-Y 坐标，请重试更清晰原图或裁剪右侧表格区域。";
+      parserTrace.push("MADAGASCAR_CADASTRAL:projected_fallback_blocked");
+    }
+
     if (cadastralGrid.isCadastralGrid) {
       parserTrace.push("CRS_EVIDENCE:skipped_for_madagascar_cadastral");
+    } else if (madagascarCadastralProjectedFallbackBlocked) {
+      parserTrace.push("CRS_EVIDENCE:skipped_for_madagascar_cadastral_candidate");
     } else {
     try {
       const crsVision = await runCrsVisionPass({
@@ -13751,7 +13769,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     let bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
     let utm30ProjectedXy = getUtm30ProjectedXyInfo(rawText, coordinates);
-    let utm30Accepted = !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
+    let utm30Accepted = !madagascarCadastralProjectedFallbackBlocked && !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
     let dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     let dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
     let frenchPerimeterDms = getFrenchPerimeterDmsInfo(rawText);
@@ -14625,7 +14643,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
     utm30ProjectedXy = getUtm30ProjectedXyInfo(rawText, coordinates);
-    utm30Accepted = !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
+    utm30Accepted = !madagascarCadastralProjectedFallbackBlocked && !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
     if (utm30Accepted && !parserTrace.includes("UTM30_XY:accepted")) {
       parserTrace.push("UTM30_XY:accepted");
     }
