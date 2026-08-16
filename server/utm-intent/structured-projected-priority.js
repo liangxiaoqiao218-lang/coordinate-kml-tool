@@ -435,8 +435,18 @@ export function mergeSelectiveProjectedXyRows(referenceTable = {}, xyTable = {},
     };
     const newDifference = rowVerificationDifference(candidate, shadowIntent);
     const accepted = newDifference < oldDifference;
+    const xChanged = Number(row.easting) !== Number(xy.easting);
+    const yChanged = Number(row.northing) !== Number(xy.northing);
+    const suspectedField = xChanged && yChanged ? "BOTH" : xChanged ? "X" : yChanged ? "Y" : "NONE";
     replacements.push({
       point: String(row.point),
+      suspectedField,
+      beforeX: numericOrNull(row.easting),
+      beforeY: numericOrNull(row.northing),
+      afterX: numericOrNull(xy.easting),
+      afterY: numericOrNull(xy.northing),
+      beforeDifference: oldDifference,
+      afterDifference: newDifference,
       accepted,
       oldDifference,
       newDifference,

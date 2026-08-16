@@ -211,6 +211,40 @@ function normalizeTransformationVerification(value = {}) {
   });
 }
 
+function normalizeXySelectiveRereadReplacement(value = {}, index = 0) {
+  return Object.freeze({
+    point: cleanString(value.point, String(index + 1)),
+    suspectedField: cleanString(value.suspectedField),
+    beforeX: normalizeNumber(value.beforeX),
+    beforeY: normalizeNumber(value.beforeY),
+    afterX: normalizeNumber(value.afterX),
+    afterY: normalizeNumber(value.afterY),
+    beforeDifference: normalizeNumber(value.beforeDifference ?? value.oldDifference),
+    afterDifference: normalizeNumber(value.afterDifference ?? value.newDifference),
+    accepted: normalizeBoolean(value.accepted),
+    reason: cleanString(value.reason).slice(0, 120)
+  });
+}
+
+function normalizeXySelectiveReread(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const replacements = Array.isArray(value.replacements)
+    ? value.replacements.map(normalizeXySelectiveRereadReplacement)
+    : [];
+  const requestedLabels = sanitizeArray(value.requestedLabels);
+  const status = cleanString(value.status);
+  return Object.freeze({
+    triggered: normalizeBoolean(value.attempts > 0 || (status && status !== "not_run") || requestedLabels.length > 0),
+    requestedLabels: Object.freeze(requestedLabels),
+    attemptCount: normalizeCount(value.attemptCount ?? value.attempts),
+    acceptedLabels: Object.freeze(sanitizeArray(value.acceptedLabels)),
+    rejectedLabels: Object.freeze(sanitizeArray(value.rejectedLabels)),
+    replacements: Object.freeze(replacements),
+    status,
+    reason: cleanString(value.failureReason || value.reason).slice(0, 120)
+  });
+}
+
 function normalizeStructuredUtmTable(value = {}) {
   const table = value.structuredUtmTable || value.structuredUtmPriority || value;
   const verification = table.transformationVerification || {};
@@ -242,13 +276,15 @@ function normalizeStructuredUtmTable(value = {}) {
 }
 
 function normalizeUtmContext(value = {}) {
+  const structuredUtm = value.structuredUtmTable || value.structuredUtmPriority || {};
   return Object.freeze({
     crsEvidenceShadow: value.crsEvidenceShadow || value.crsEvidence
       ? Object.freeze({
           shadowIntent: normalizeCrsIntent(value.crsEvidenceShadow?.shadowIntent || value.crsEvidence?.shadowIntent || value.crsEvidenceShadow || value.crsEvidence)
         })
       : null,
-    structuredUtmTable: normalizeStructuredUtmTable(value.structuredUtmTable || value.structuredUtmPriority || {}),
+    structuredUtmTable: normalizeStructuredUtmTable(structuredUtm),
+    xySelectiveReread: normalizeXySelectiveReread(value.xySelectiveReread || structuredUtm.selectiveReread || {}),
     explicitUtmEvidenceLock: normalizeBoolean(value.explicitUtmEvidenceLock)
   });
 }

@@ -13453,6 +13453,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             attempts: 0,
             requestedLabels: mismatchLabels,
             acceptedLabels: [],
+            rejectedLabels: [],
+            replacements: [],
             status: "not_run"
           };
           for (const timeoutMs of [45000, 65000, 90000]) {
@@ -13484,12 +13486,34 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                 utmReferenceTable
               );
               selectiveReread.status = selectiveTable.selectiveReread?.status || "completed";
+              const replacements = selectiveTable.selectiveReread?.replacements || [];
               selectiveReread.acceptedLabels = [...new Set([
                 ...selectiveReread.acceptedLabels,
-                ...(selectiveTable.selectiveReread?.replacements || [])
-                .filter(item => item.accepted)
+                ...replacements
+                  .filter(item => item.accepted)
                   .map(item => item.point)
               ])];
+              selectiveReread.rejectedLabels = [...new Set([
+                ...selectiveReread.rejectedLabels,
+                ...replacements
+                  .filter(item => !item.accepted)
+                  .map(item => item.point)
+              ])];
+              selectiveReread.replacements = [
+                ...selectiveReread.replacements,
+                ...replacements.map(item => ({
+                  point: item.point,
+                  suspectedField: item.suspectedField,
+                  beforeX: item.beforeX,
+                  beforeY: item.beforeY,
+                  afterX: item.afterX,
+                  afterY: item.afterY,
+                  beforeDifference: item.beforeDifference ?? item.oldDifference,
+                  afterDifference: item.afterDifference ?? item.newDifference,
+                  accepted: item.accepted,
+                  reason: item.reason
+                }))
+              ];
               structuredUtmPriority = {
                 ...nextPriority,
                 selectiveReread

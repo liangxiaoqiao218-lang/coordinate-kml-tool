@@ -5,6 +5,7 @@ import { snapshotPreSuppressionCandidates } from "../server/coordinate-evidence/
 import {
   buildStructuredUtmPriority,
   mergeSelectiveDmsReferenceRows,
+  mergeSelectiveProjectedXyRows,
   mergeStructuredUtmReferenceRows,
   parseSelectiveDmsReferenceModelText,
   summarizeStructuredUtmTransformationVerification
@@ -71,6 +72,33 @@ function buildProjectedTable() {
   };
 }
 
+function buildProjectedTableWith(mutator = rows => rows) {
+  const rows = mutator(projectedRows.map(([point, easting, northing]) => ({ point, easting, northing })));
+  return {
+    status: "observed",
+    rows: rows.map(({ point, easting, northing }) => ({
+      point: String(point),
+      easting,
+      northing,
+      xText: String(easting),
+      yText: String(northing)
+    }))
+  };
+}
+
+function buildSelectiveXyTable(rows = []) {
+  return {
+    status: rows.length > 0 ? "observed" : "none",
+    rows: rows.map(([point, easting, northing]) => ({
+      point: String(point),
+      easting,
+      northing,
+      xText: String(easting),
+      yText: String(northing)
+    }))
+  };
+}
+
 function buildReferenceTable(mutator = rows => rows) {
   const rows = referenceRows.map(([point, latitude, longitude]) => ({ point: String(point), latitude, longitude }));
   return {
@@ -86,6 +114,39 @@ function buildPriority(mutator) {
     allowVerifiedIndexMerge: true
   });
   return buildStructuredUtmPriority({ shadowIntent, table });
+}
+
+function buildPriorityFromProjected(projectedTable) {
+  const table = mergeStructuredUtmReferenceRows(projectedTable, buildReferenceTable(), {
+    allowVerifiedIndexMerge: true
+  });
+  return buildStructuredUtmPriority({ shadowIntent, table });
+}
+
+function buildXyRecoveredPriority({ badRows, selectiveRows, requestedLabels } = {}) {
+  const badPriority = buildPriorityFromProjected(buildProjectedTableWith(badRows));
+  const selectiveTable = mergeSelectiveProjectedXyRows(
+    badPriority.table,
+    buildSelectiveXyTable(selectiveRows),
+    { shadowIntent }
+  );
+  const replacements = selectiveTable.selectiveReread.replacements;
+  const repaired = buildStructuredUtmPriority({ shadowIntent, table: selectiveTable });
+  return {
+    badPriority,
+    selectiveTable,
+    priority: {
+      ...repaired,
+      selectiveReread: {
+        status: selectiveTable.selectiveReread.status,
+        requestedLabels,
+        attempts: 1,
+        acceptedLabels: replacements.filter(item => item.accepted).map(item => item.point),
+        rejectedLabels: replacements.filter(item => !item.accepted).map(item => item.point),
+        replacements
+      }
+    }
+  };
 }
 
 function findPoint(verification, point) {
@@ -280,4 +341,150 @@ test("selective DMS reference reread rejects non-improving rows and stays fail-c
   assert.equal(repaired.reason, "transformation_verification_failed");
 });
 
-console.log(`UTM Point-level Verification Observability Regression: ${passed}/14 PASS`);
+test("X/Y selective reread metadata is not triggered when no mismatch exists", () => {
+  const response = makeResponse(buildPriority(), true);
+  assert.equal(response.debugEvidenceContext.utm.xySelectiveReread.triggered, false);
+  assert.deepEqual(response.debugEvidenceContext.utm.xySelectiveReread.requestedLabels, []);
+  assert.deepEqual(response.debugEvidenceContext.utm.xySelectiveReread.replacements, []);
+});
+
+test("one X/Y mismatch records requested label and accepted replacement metadata", () => {
+  const { priority } = buildXyRecoveredPriority({
+    badRows: rows => rows.map(row => row.point === 4 ? { ...row, northing: 9721188.194 } : row),
+    selectiveRows: [[4, 778855.308, 9721181.948]],
+    requestedLabels: ["4"]
+  });
+  const xy = makeResponse(priority, true).debugEvidenceContext.utm.xySelectiveReread;
+  assert.equal(xy.triggered, true);
+  assert.deepEqual(xy.requestedLabels, ["4"]);
+  assert.deepEqual(xy.acceptedLabels, ["4"]);
+  assert.equal(xy.replacements[0].point, "4");
+  assert.equal(xy.replacements[0].suspectedField, "Y");
+  assert.equal(xy.replacements[0].beforeY, 9721188.194);
+  assert.equal(xy.replacements[0].afterY, 9721181.948);
+  assert.equal(xy.replacements[0].accepted, true);
+});
+
+test("multiple X/Y mismatch labels are observable", () => {
+  const { priority } = buildXyRecoveredPriority({
+    badRows: rows => rows.map(row => {
+      if (row.point === 3) return { ...row, northing: 9721188.351 };
+      if (row.point === 4) return { ...row, northing: 9721188.194 };
+      return row;
+    }),
+    selectiveRows: [[3, 778982.700, 9721182.351], [4, 778855.308, 9721181.948]],
+    requestedLabels: ["3", "4"]
+  });
+  const xy = makeResponse(priority, true).debugEvidenceContext.utm.xySelectiveReread;
+  assert.deepEqual(xy.requestedLabels, ["3", "4"]);
+  assert.deepEqual(xy.acceptedLabels, ["3", "4"]);
+  assert.equal(xy.replacements.length, 2);
+});
+
+test("rejected X/Y replacement metadata is observable and fail-closed", () => {
+  const { badPriority, selectiveTable } = buildXyRecoveredPriority({
+    badRows: rows => rows.map(row => row.point === 4 ? { ...row, northing: 9721188.194 } : row),
+    selectiveRows: [[4, 778855.308, 9721189.194]],
+    requestedLabels: ["4"]
+  });
+  const replacements = selectiveTable.selectiveReread.replacements;
+  const priority = {
+    ...buildStructuredUtmPriority({ shadowIntent, table: selectiveTable }),
+    selectiveReread: {
+      status: selectiveTable.selectiveReread.status,
+      requestedLabels: ["4"],
+      attempts: 1,
+      acceptedLabels: replacements.filter(item => item.accepted).map(item => item.point),
+      rejectedLabels: replacements.filter(item => !item.accepted).map(item => item.point),
+      replacements
+    }
+  };
+  const xy = makeResponse(priority, true).debugEvidenceContext.utm.xySelectiveReread;
+  assert.equal(badPriority.reason, "transformation_verification_failed");
+  assert.deepEqual(xy.acceptedLabels, []);
+  assert.deepEqual(xy.rejectedLabels, ["4"]);
+  assert.equal(xy.replacements[0].accepted, false);
+  assert.equal(xy.replacements[0].reason, "verification_not_improved");
+  assert.equal(priority.accepted, false);
+});
+
+test("X/Y before and after differences are observable", () => {
+  const { priority } = buildXyRecoveredPriority({
+    badRows: rows => rows.map(row => row.point === 4 ? { ...row, northing: 9721188.194 } : row),
+    selectiveRows: [[4, 778855.308, 9721181.948]],
+    requestedLabels: ["4"]
+  });
+  const replacement = makeResponse(priority, true).debugEvidenceContext.utm.xySelectiveReread.replacements[0];
+  assert.ok(replacement.beforeDifference > replacement.afterDifference);
+  assert.ok(replacement.afterDifference < 1e-6);
+});
+
+test("debug=true exposes X/Y selective reread metadata", () => {
+  const { priority } = buildXyRecoveredPriority({
+    badRows: rows => rows.map(row => row.point === 4 ? { ...row, northing: 9721188.194 } : row),
+    selectiveRows: [[4, 778855.308, 9721181.948]],
+    requestedLabels: ["4"]
+  });
+  const response = makeResponse(priority, true);
+  assert.equal(response.debugEvidenceContext.utm.xySelectiveReread.triggered, true);
+  assert.equal(response.debugEvidenceContext.utm.xySelectiveReread.replacements[0].point, "4");
+});
+
+test("debug=false does not expose X/Y selective reread detail", () => {
+  const { priority } = buildXyRecoveredPriority({
+    badRows: rows => rows.map(row => row.point === 4 ? { ...row, northing: 9721188.194 } : row),
+    selectiveRows: [[4, 778855.308, 9721181.948]],
+    requestedLabels: ["4"]
+  });
+  const response = makeResponse(priority, false);
+  assert.equal("debugEvidenceContext" in response, false);
+  assert.equal("xySelectiveReread" in response, false);
+});
+
+test("X/Y selective reread metadata security excludes raw/provider payload markers", () => {
+  const { priority } = buildXyRecoveredPriority({
+    badRows: rows => rows.map(row => row.point === 4 ? { ...row, northing: 9721188.194 } : row),
+    selectiveRows: [[4, 778855.308, 9721181.948]],
+    requestedLabels: ["4"]
+  });
+  const serialized = JSON.stringify(makeResponse(priority, true).debugEvidenceContext.utm.xySelectiveReread);
+  assert.equal(serialized.includes("raw OCR"), false);
+  assert.equal(serialized.includes("prompt"), false);
+  assert.equal(serialized.includes("model response"), false);
+  assert.equal(serialized.includes("base64"), false);
+  assert.equal(serialized.includes("C:\\Users"), false);
+  assert.equal(serialized.includes("sk-secret"), false);
+});
+
+test("adding X/Y selective reread metadata does not change public behavior", () => {
+  const { priority } = buildXyRecoveredPriority({
+    badRows: rows => rows.map(row => row.point === 4 ? { ...row, northing: 9721188.194 } : row),
+    selectiveRows: [[4, 778855.308, 9721181.948]],
+    requestedLabels: ["4"]
+  });
+  const debugResponse = makeResponse(priority, true);
+  const publicResponse = makeResponse(priority, false);
+  assert.equal(debugResponse.coordinates, publicResponse.coordinates);
+  assert.equal(debugResponse.coordinateType, publicResponse.coordinateType);
+  assert.equal(debugResponse.precisionMode, publicResponse.precisionMode);
+  assert.equal(debugResponse.confirmationStatus, publicResponse.confirmationStatus);
+  assert.equal(debugResponse.qualityGateStatus, publicResponse.qualityGateStatus);
+  assert.equal(debugResponse.kml_ready, publicResponse.kml_ready);
+  assert.equal(priority.transformationVerification.status, "match");
+});
+
+test("X/Y selective reread metadata does not affect DMS reference reread behavior", () => {
+  const priority = buildPriority(rows => rows.map(row => row.point === "13"
+    ? { ...row, longitude: 119 + 30 / 60 + 29.795 / 3600 }
+    : row));
+  const selectiveReferenceRows = parseSelectiveDmsReferenceModelText(JSON.stringify({
+    status: "observed",
+    rows: [{ point: "13", latitude: "2°31'20.840\" S", longitude: "119°30'29.757\" E" }]
+  }));
+  const table = mergeSelectiveDmsReferenceRows(priority.table, selectiveReferenceRows, { shadowIntent });
+  const repaired = buildStructuredUtmPriority({ shadowIntent, table });
+  assert.equal(repaired.accepted, true);
+  assert.equal(repaired.transformationVerification.status, "match");
+});
+
+console.log(`UTM Point-level Verification Observability Regression: ${passed}/24 PASS`);
