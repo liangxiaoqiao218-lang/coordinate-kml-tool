@@ -49,6 +49,12 @@ function normalizeCoordinate(point = {}) {
     northingDigits: cleanString(point.mgrs.northingDigits),
     precisionDigits: Number.isFinite(Number(point.mgrs.precisionDigits)) ? Number(point.mgrs.precisionDigits) : null,
   }) : null;
+  const sourceProjected = point.sourceProjected && typeof point.sourceProjected === "object" ? Object.freeze({
+    x: Number.isFinite(Number(point.sourceProjected.x)) ? Number(point.sourceProjected.x) : null,
+    y: Number.isFinite(Number(point.sourceProjected.y)) ? Number(point.sourceProjected.y) : null,
+    axisSemantics: cleanString(point.sourceProjected.axisSemantics),
+    sourceCrs: cleanString(point.sourceProjected.sourceCrs),
+  }) : null;
   if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
     return {
       label,
@@ -58,6 +64,7 @@ function normalizeCoordinate(point = {}) {
       numeric: false,
       sourceValue,
       mgrs,
+      sourceProjected,
     };
   }
   return {
@@ -68,6 +75,7 @@ function normalizeCoordinate(point = {}) {
     numeric: true,
     sourceValue,
     mgrs,
+    sourceProjected,
   };
 }
 

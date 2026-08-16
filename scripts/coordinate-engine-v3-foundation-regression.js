@@ -39,15 +39,16 @@ test("v3 disabled by default", () => {
   assert.equal(isCoordinateEngineV3Enabled({ ENABLE_COORDINATE_ENGINE_V3: "true" }), true);
 });
 
-test("registry contains planned recognizers with wgs84_decimal mgrs and generic_dms implemented", () => {
+test("registry contains planned recognizers with wgs84_decimal mgrs generic_dms and kyrgyzstan_gauss_kruger implemented", () => {
   const registry = createDefaultRecognizerRegistry();
   assert.equal(registry.length, RECOGNIZER_TYPES.length);
   assert.deepEqual(registry.map((item) => item.coordinateType), RECOGNIZER_TYPES);
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_decimal").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "mgrs").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "generic_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.find((item) => item.coordinateType === "kyrgyzstan_gauss_kruger").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry
-    .filter((item) => !["wgs84_decimal", "mgrs", "generic_dms"].includes(item.coordinateType))
+    .filter((item) => !["wgs84_decimal", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger"].includes(item.coordinateType))
     .every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
   assert.equal(validateRecognizerRegistry(registry).valid, true);
 });
