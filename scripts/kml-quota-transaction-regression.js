@@ -36,8 +36,12 @@ const checks = [
     run: () => assert.equal(downloadKmlBody.includes('consumeUsage("convert")'), false)
   },
   {
-    name: "KML export still checks CRS confirmation gate",
-    run: () => assert.match(downloadKmlBody, /requiresCrsConfirmationForCurrentInput\(\)/)
+    name: "KML export treats CRS confirmation as warning-only when transform is available",
+    run: () => {
+      assert.match(downloadKmlBody, /requiresCrsConfirmationForCurrentInput\(\)/);
+      assert.match(downloadKmlBody, /tryPrepareProjectedKmlSourceFromAvailableCrs\(\)/);
+      assert.match(downloadKmlBody, /NO_TRANSFORM_AVAILABLE_FOR_PROJECTED_COORDINATES/);
+    }
   },
   {
     name: "KML export still checks permission gate",
@@ -52,23 +56,29 @@ const checks = [
     }
   },
   {
-    name: "CRS confirmation is bound to recognition session",
+    name: "CRS confirmation session is warning-only for KML export",
     run: () => {
       assert.match(indexHtml, /recognitionSessionId: currentRecognitionSession\?\.id/);
       assert.match(indexHtml, /function isCurrentCrsConfirmationSession/);
-      assert.match(downloadKmlBody, /KML_CRS_CONFIRMATION_STALE/);
+      assert.match(downloadKmlBody, /STALE_CONFIRMATION/);
+      assert.doesNotMatch(downloadKmlBody, /KML_CRS_CONFIRMATION_STALE/);
     }
   },
   {
     name: "Coordinate edits invalidate CRS confirmation but preserve recognition session",
     run: () => {
-      assert.match(markCoordinateTextChangedBody, /activeCrsConfirmationState = createCrsConfirmationState\(\)/);
+      assert.match(markCoordinateTextChangedBody, /activeCrsConfirmationState = activeReverificationContext/);
+      assert.match(markCoordinateTextChangedBody, /lastKmlWarningOverride = null/);
       assert.equal(markCoordinateTextChangedBody.includes("saveRecognitionSession(null)"), false);
     }
   },
   {
     name: "New upload clears stale recognition session",
-    run: () => assert.match(indexHtml, /activeCoordinateArbitration = null;\s*saveRecognitionSession\(null\);\s*resetHandwrittenDmsReviewState\(\);/s)
+    run: () => {
+      assert.match(indexHtml, /activeCoordinateArbitration = null/);
+      assert.match(indexHtml, /saveRecognitionSession\(null\)/);
+      assert.match(indexHtml, /resetHandwrittenDmsReviewState\(\)/);
+    }
   },
   {
     name: "Server creates immutable per-recognition session id",

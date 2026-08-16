@@ -4893,6 +4893,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeReviewSummary = null;
     let activeReverificationContext = null;
     let activeRecognitionSummaryMeta = null;
+    let lastKmlWarningOverride = null;
     let currentRecognitionSession = loadRecognitionSession();
     const CRS_CONFIRMATION_STATUS = Object.freeze({
       NOT_APPLICABLE: "NOT_APPLICABLE",
@@ -6553,9 +6554,18 @@ Au值 = 纯度 × 10 后取整数</div>
     function isVerifiedUtmAutoExportResult(data = {}) {
       const coordinateResult = data.coordinateResult || {};
       const coordinate = coordinateResult.coordinate || {};
-      return String(coordinateResult.state || "").trim() === "AUTO_EXPORT"
-        && String(data.coordinateType || coordinate.type || "").trim() === "utm_projected_xy"
-        && String(data.precisionMode || coordinate.precision || "").trim() === "utm-projected-x-y";
+      const coordinateType = String(data.coordinateType || coordinate.type || "").trim();
+      const precisionMode = String(data.precisionMode || coordinate.precision || "").trim();
+      const qualityGateStatus = String(data.qualityGateStatus || data.coordinateArbitration?.qualityGateStatus || "").trim();
+      const accepted = data.structuredUtmTable?.accepted === true
+        || data.coordinateArbitration?.reason === "explicit_utm_crs_and_structured_xy";
+      return coordinateType === "utm_projected_xy"
+        && precisionMode === "utm-projected-x-y"
+        && (
+          String(coordinateResult.state || "").trim() === "AUTO_EXPORT"
+          || qualityGateStatus === "passed"
+          || accepted
+        );
     }
 
     function formatUtmCrsName(intent) {
@@ -6585,6 +6595,153 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function getActiveReverificationContext() {
       return activeReverificationContext || activeRecognitionSummaryMeta?.reverificationContext || null;
+    }
+
+    function getAvailableUtmKmlTransformIntent() {
+      return activeCrsConfirmationState.intent
+        || getActiveReverificationContext()?.crs
+        || activeRecognitionSummaryMeta?.reverificationContext?.crs
+        || null;
+    }
+
+    function tryPrepareProjectedKmlSourceFromAvailableCrs() {
+      if (!hasProjectedCoordinateRows(input.value) || isVerifiedUtmAutoExportSourceReady()) {
+        return isVerifiedUtmAutoExportSourceReady();
+      }
+
+      const intent = getAvailableUtmKmlTransformIntent();
+      const groups = getConfirmedUtmCoordinateGroups(intent);
+      if (groups.length === 0 || groups[0].length === 0) {
+        return false;
+      }
+
+      setInternalKmlSourceFromGroups(groups);
+      return true;
+    }
+
+    function canTechnicallyGenerateKml() {
+      if (!String(input?.value || "").trim()) {
+        return Object.freeze({ ready: false, code: "NO_COORDINATES" });
+      }
+
+      if (hasProjectedCoordinateRows(input.value)) {
+        const intent = getAvailableUtmKmlTransformIntent();
+        const projectedGroups = isVerifiedUtmAutoExportSourceReady()
+          ? getKmlCoordinateGroups()
+          : getConfirmedUtmCoordinateGroups(intent);
+        if (projectedGroups.length > 0 && projectedGroups[0].length > 0) {
+          return Object.freeze({ ready: true, code: "TECHNICAL_GEOMETRY_READY" });
+        }
+
+        if (
+          projectionType.value === "utm30n"
+          || projectionType.value === "bftm"
+          || activeCoordinatePrecisionMode === "utm30n-projected-x-y"
+          || activeCoordinatePrecisionMode === "bftm-projected-x-y"
+        ) {
+          return Object.freeze({ ready: true, code: "PROJECTED_LEGACY_TRANSFORM_READY" });
+        }
+
+        return Object.freeze({ ready: false, code: "NO_TRANSFORM_AVAILABLE_FOR_PROJECTED_COORDINATES" });
+      }
+
+      if (hasMgrsRows(input.value)
+        || hasChatCoordinateRows(input.value)
+        || hasKyrgyzGkRows(input.value)
+        || extractWgs84TableCoordinateRows(input.value, { preserveDuplicatePoints: true }).length > 0
+        || getActiveDmsGroupedCoordinateGroups(input.value).length > 0) {
+        return Object.freeze({ ready: true, code: "TECHNICAL_GEOMETRY_READY" });
+      }
+
+      const pairs = getKmlCoordinateGroups().flat();
+      return pairs.length > 0
+        ? Object.freeze({ ready: true, code: "TECHNICAL_GEOMETRY_READY" })
+        : Object.freeze({ ready: false, code: "UNPARSABLE_COORDINATE_STRUCTURE" });
+    }
+
+    function formatSuspectedCurrentValue(point = {}) {
+      const field = String(point.suspectedField || "").toLowerCase();
+      if (field === "x" && point.observed?.x !== undefined) return `X = ${point.observed.x}`;
+      if (field === "y" && point.observed?.y !== undefined) return `Y = ${point.observed.y}`;
+      if (point.observed?.x !== undefined || point.observed?.y !== undefined) {
+        return `X = ${point.observed?.x ?? "—"}, Y = ${point.observed?.y ?? "—"}`;
+      }
+      return "当前坐标值需核对";
+    }
+
+    function getSanitizedSuspectedPointWarnings() {
+      const reviewSummary = getActiveReviewSummary();
+      return (Array.isArray(reviewSummary?.points) ? reviewSummary.points : [])
+        .slice(0, 12)
+        .map(point => ({
+          point: String(point.point || "").trim(),
+          suspectedField: String(point.suspectedField || "X/Y").trim(),
+          currentValue: formatSuspectedCurrentValue(point),
+          reason: "与参考经纬度转换结果不一致"
+        }))
+        .filter(point => point.point);
+    }
+
+    function getKmlWarningOnlyExportState() {
+      const reasonCodes = [];
+      const chatOrderWarnings = hasChatCoordinateRows(input.value)
+        ? getChatCoordinateWarnings(extractChatCoordinateRows(input.value).map(row => ({ lat: row.lat, lon: row.lon })))
+        : [];
+      const arbitrationOrderWarning = Boolean(
+        activeCoordinateArbitration?.requires_review
+        && activeCoordinateArbitration?.reason === "possible_swapped_lat_lon"
+      );
+
+      if (shouldBlockHandwrittenDmsKml()) reasonCodes.push("HANDWRITTEN_REVIEW");
+      if (activeCoordinateArbitration?.reason === "explicit_crs_conflict") reasonCodes.push("CRS_CONFLICT");
+      if (isUtmReviewKmlBlockedState({
+        precisionMode: activeCoordinatePrecisionMode,
+        coordinateType: activeCoordinateArbitration?.coordinateType,
+        confirmationStatus: activeCoordinateArbitration?.confirmationStatus,
+        qualityGateStatus: activeCoordinateArbitration?.qualityGateStatus,
+        coordinateArbitrationReason: activeCoordinateArbitration?.reason,
+        coordinateArbitration: activeCoordinateArbitration
+      }) || activeCrsConfirmationState.status === CRS_CONFIRMATION_STATUS.BLOCKED) {
+        reasonCodes.push("UTM_REVIEW_WARNING");
+      }
+      if (arbitrationOrderWarning || chatOrderWarnings.includes("possible swapped lat/lon")) {
+        reasonCodes.push("POSSIBLE_SWAPPED_LAT_LON");
+      }
+      if (requiresCrsConfirmationForCurrentInput() && !isVerifiedUtmAutoExportSourceReady()) {
+        reasonCodes.push("CRS_UNCERTAINTY");
+      }
+      if (activeCoordinateArbitration?.requires_review || activeRecognitionSummaryMeta?.requiresReview) {
+        reasonCodes.push("REQUIRES_REVIEW");
+      }
+
+      return Object.freeze({
+        required: reasonCodes.length > 0,
+        reasonCodes: Object.freeze([...new Set(reasonCodes)]),
+        suspectedPoints: Object.freeze(getSanitizedSuspectedPointWarnings())
+      });
+    }
+
+    function recordKmlWarningOverride(warning = getKmlWarningOnlyExportState()) {
+      if (!warning.required) return null;
+      lastKmlWarningOverride = Object.freeze({
+        userOverride: true,
+        warningAcknowledged: true,
+        reasonCodes: Object.freeze([...(warning.reasonCodes || [])]),
+        suspectedPointCount: Array.isArray(warning.suspectedPoints) ? warning.suspectedPoints.length : 0,
+        recognitionSessionId: currentRecognitionSession?.id || "",
+        acknowledgedAt: new Date().toISOString()
+      });
+      trackEvent("kml_warning_override", {
+        reasonCodes: lastKmlWarningOverride.reasonCodes.join(","),
+        suspectedPointCount: lastKmlWarningOverride.suspectedPointCount
+      });
+      const pointSummary = (warning.suspectedPoints || [])
+        .map(point => `Point ${point.point} ${point.currentValue}`)
+        .slice(0, 5)
+        .join("；");
+      showMessage(`系统检测到坐标可能存在误差，已按当前显示结果继续生成 KML。${pointSummary ? `疑似点：${pointSummary}` : "请核对原始资料。"}`, true, 9000);
+      appendDebug(`KML风险提示已由用户继续：${lastKmlWarningOverride.reasonCodes.join(",") || "review_warning"}`);
+      return lastKmlWarningOverride;
     }
 
     function getCurrentProjectedRowsForReverification() {
@@ -6753,8 +6910,8 @@ Au值 = 纯度 × 10 后取整数</div>
       appendCrsDetailRow(userSummary, "KML 状态", state.status === CRS_CONFIRMATION_STATUS.CONFIRMED
         ? "可生成"
         : state.status === CRS_CONFIRMATION_STATUS.BLOCKED
-          ? "暂不可生成"
-          : "确认后可生成");
+          ? "可按当前结果生成"
+          : "可生成");
       panel.appendChild(userSummary);
 
       const note = document.createElement("p");
@@ -6762,9 +6919,9 @@ Au值 = 纯度 × 10 后取整数</div>
       note.textContent = state.status === CRS_CONFIRMATION_STATUS.CONFIRMED
         ? "当前识别结果已确认。系统已将 X/Y 转换为经纬度，可继续生成 KML。修改坐标后需要重新确认。"
         : state.status === CRS_CONFIRMATION_STATUS.BLOCKED
-          ? "图片中的 X/Y 与经纬度参考值不一致。请先核对坐标；系统不会自动猜测，也不会强行导出。"
+          ? "系统检测到部分坐标可能存在识别或坐标系误差，请核对原始资料。继续生成将使用当前显示的坐标结果。"
         : state.status === CRS_CONFIRMATION_STATUS.DETECTED
-          ? "系统已识别图片中的坐标信息。请确认识别结果无误后继续生成 KML。"
+          ? "系统已识别图片中的坐标信息。你可以直接生成 KML；如有疑问，请先对照原图核对。"
           : "识别结果是 X/Y 平面坐标，但缺少完整坐标信息。请在高级设置中选择图纸标注的坐标系。";
       panel.appendChild(note);
 
@@ -6798,6 +6955,13 @@ Au值 = 纯度 × 10 后取整数</div>
         editButton.textContent = "修改异常坐标";
         editButton.addEventListener("click", () => focusReviewPoint(reviewSummary.points?.[0]?.point));
         actions.appendChild(editButton);
+
+        const overrideButton = document.createElement("button");
+        overrideButton.type = "button";
+        overrideButton.className = "crs-confirm-primary";
+        overrideButton.textContent = "仍按当前结果生成 KML";
+        overrideButton.addEventListener("click", downloadKml);
+        actions.appendChild(overrideButton);
 
         const reverifyButton = document.createElement("button");
         reverifyButton.type = "button";
@@ -6835,8 +6999,8 @@ Au值 = 纯度 × 10 后取整数</div>
           const confirmButton = document.createElement("button");
           confirmButton.type = "button";
           confirmButton.className = "crs-confirm-primary";
-          confirmButton.textContent = "确认并继续生成 KML";
-          confirmButton.addEventListener("click", confirmDetectedCrsIntent);
+          confirmButton.textContent = "生成 KML";
+          confirmButton.addEventListener("click", downloadKml);
           actions.appendChild(confirmButton);
         }
 
@@ -7114,6 +7278,7 @@ Au值 = 纯度 × 10 后取整数</div>
       renderCrsConfirmationPanel();
       handwrittenDmsReviewState = getHandwrittenDmsReviewStateAfterTextChange(handwrittenDmsReviewState);
       renderHandwrittenDmsReviewState();
+      lastKmlWarningOverride = null;
       if (previousRecognitionSummaryMeta && hasProjectedCoordinateRows(input.value)) {
         const projectedCoordinateCount = getProjectedCoordinateCountFromText();
         setRecognitionSummary({
@@ -7230,15 +7395,26 @@ Au值 = 纯度 × 10 后取整数</div>
     function refreshKmlButtonState(meta = activeRecognitionSummaryMeta || {}, { forceDefault = false } = {}) {
       if (!kmlDownloadAction) return;
       const resultState = forceDefault ? "" : getCoordinateResultState(meta);
-      const blocked = !forceDefault && (resultState === "BLOCKED_REVIEW" || isUtmReviewKmlBlockedState(meta));
-      const confirmRequired = !forceDefault && resultState === "CONFIRM_REQUIRED";
-      const label = blocked
-        ? "\u9700\u6838\u5bf9\u540e\u751f\u6210 KML"
-        : confirmRequired
-          ? "\u9700\u6838\u5bf9\u8bc6\u522b\u7ed3\u679c"
-        : "\u751f\u6210 KML";
+      const technicalReadiness = forceDefault
+        ? { ready: true }
+        : canTechnicallyGenerateKml();
+      const warningOnly = !forceDefault
+        && technicalReadiness.ready
+        && (
+          resultState === "BLOCKED_REVIEW"
+          || resultState === "CONFIRM_REQUIRED"
+          || isUtmReviewKmlBlockedState(meta)
+          || getKmlWarningOnlyExportState().required
+        );
+      const label = !technicalReadiness.ready
+        ? "无法生成 KML"
+        : warningOnly
+          ? "仍按当前结果生成 KML"
+          : "\u751f\u6210 KML";
       kmlDownloadAction.textContent = label;
-      kmlDownloadAction.dataset.reviewBlocked = blocked ? "true" : "false";
+      kmlDownloadAction.dataset.reviewBlocked = "false";
+      kmlDownloadAction.dataset.warningOnly = warningOnly ? "true" : "false";
+      kmlDownloadAction.dataset.technicalKmlReady = technicalReadiness.ready ? "true" : "false";
       kmlDownloadAction.dataset.coordinateResultState = resultState;
       kmlDownloadAction.setAttribute("aria-label", label);
     }
@@ -12770,42 +12946,19 @@ ${placemarks}
         return;
       }
 
-      if (shouldBlockHandwrittenDmsKml()) {
+      tryPrepareProjectedKmlSourceFromAvailableCrs();
+
+      const technicalReadiness = canTechnicallyGenerateKml();
+      if (!technicalReadiness.ready && technicalReadiness.code === "NO_TRANSFORM_AVAILABLE_FOR_PROJECTED_COORDINATES") {
         showKmlFailure({
-          code: "KML_REVIEW_REQUIRED",
-          title: "坐标需要核对",
-          reason: "当前手写 DMS 识别结果尚未通过人工核对，不能安全生成 KML。",
-          suggestion: "请对照原图核对坐标，确认无误后再生成。"
+          code: technicalReadiness.code,
+          title: "缺少坐标转换信息",
+          reason: "当前是 X/Y 平面坐标，但缺少可用于转换为 WGS84 经纬度的坐标系参数。",
+          suggestion: "请在高级设置中选择图纸标注的 UTM 分区、南北半球和坐标基准，或补充可直接生成 KML 的经纬度坐标。"
         });
         return;
       }
 
-      if (activeCoordinateArbitration?.reason === "explicit_crs_conflict") {
-        showKmlFailure({
-          code: "KML_CRS_CONFLICT",
-          title: "坐标系证据冲突",
-          reason: "当前图片包含互相冲突的明确坐标系证据，系统不能选择安全的转换路径。",
-          suggestion: "请核对图纸坐标系标注，消除冲突后重新识别；不要根据数值范围选择坐标系。"
-        });
-        return;
-      }
-
-      if (isUtmReviewKmlBlockedState({
-        precisionMode: activeCoordinatePrecisionMode,
-        coordinateType: activeCoordinateArbitration?.coordinateType,
-        confirmationStatus: activeCoordinateArbitration?.confirmationStatus,
-        qualityGateStatus: activeCoordinateArbitration?.qualityGateStatus,
-        coordinateArbitrationReason: activeCoordinateArbitration?.reason,
-        coordinateArbitration: activeCoordinateArbitration
-      }) || activeCrsConfirmationState.status === CRS_CONFIRMATION_STATUS.BLOCKED) {
-        showKmlFailure({
-          code: "KML_UTM_REVIEW_REQUIRED",
-          title: "\u9700\u8981\u6838\u5bf9\u8bc6\u522b\u7ed3\u679c",
-          reason: "\u8bc6\u522b\u5230 UTM \u5750\u6807\uff0c\u4f46\u8f6c\u6362\u6821\u9a8c\u672a\u901a\u8fc7\u3002\u7cfb\u7edf\u5df2\u963b\u6b62\u81ea\u52a8\u751f\u6210 KML\uff0c\u8bf7\u6838\u5bf9\u539f\u56fe\u4fe1\u606f\u3002",
-          suggestion: "\u8bf7\u6838\u5bf9 X/Y \u5750\u6807\u3001UTM Zone\u3001\u5357\u5317\u534a\u7403\u548c\u539f\u56fe\u53c2\u8003\u7ecf\u7eac\u5ea6\uff1b\u4fee\u6b63\u540e\u518d\u91cd\u65b0\u8bc6\u522b\u6216\u786e\u8ba4\u3002"
-        });
-        return;
-      }
       const chatOrderWarnings = hasChatCoordinateRows(input.value)
         ? getChatCoordinateWarnings(extractChatCoordinateRows(input.value).map(row => ({ lat: row.lat, lon: row.lon })))
         : [];
@@ -12815,14 +12968,9 @@ ${placemarks}
       );
       if (arbitrationOrderBlocked || chatOrderWarnings.includes("possible swapped lat/lon")) {
         setCoordinateOrderReviewVisible(true);
-        showKmlFailure({
-          code: "KML_COORDINATE_ORDER_REVIEW_REQUIRED",
-          title: "需要确认经纬度顺序",
-          reason: "当前坐标的经纬度顺序可能存在问题，尚不能安全生成 KML。",
-          suggestion: "请对照原始资料确认 Latitude/Longitude 顺序并修正后再导出。"
-        });
-        return;
       }
+
+      recordKmlWarningOverride(getKmlWarningOnlyExportState());
 
       showRecognitionProgress("正在生成 KML 文件...", "loading");
 
@@ -13195,30 +13343,26 @@ ${placemarks}
       if (!isVerifiedUtmAutoExportSourceReady()
         && requiresCrsConfirmationForCurrentInput()
         && activeCrsConfirmationState.status !== CRS_CONFIRMATION_STATUS.CONFIRMED) {
-        showCrsConfirmationRequired();
-        showKmlFailure({
-          code: "KML_CRS_REQUIRED",
-          title: "需要确认识别结果",
-          reason: activeCrsConfirmationState.intent
-            ? "已检测到图纸坐标系标注，但尚未获得用户确认，不能直接写入 KML。"
-            : "识别结果是 X/Y 平面坐标，但尚未确认完整坐标信息，不能直接写入 KML。",
-          suggestion: activeCrsConfirmationState.intent
-            ? "请核对识别结果确认卡片并点击“确认并继续生成 KML”。"
-            : "请在高级设置中手动选择图纸标注的 UTM 分区、南北半球和坐标基准。"
-        });
-        return;
+        if (!tryPrepareProjectedKmlSourceFromAvailableCrs()) {
+          showCrsConfirmationRequired();
+          showKmlFailure({
+            code: "NO_TRANSFORM_AVAILABLE_FOR_PROJECTED_COORDINATES",
+            title: "缺少坐标转换信息",
+            reason: "识别结果是 X/Y 平面坐标，但缺少完整坐标系信息，无法构造 WGS84 KML geometry。",
+            suggestion: "请在高级设置中手动选择图纸标注的 UTM 分区、南北半球和坐标基准。"
+          });
+          return;
+        }
       }
 
       if (activeCrsConfirmationState.status === CRS_CONFIRMATION_STATUS.CONFIRMED && !isCurrentCrsConfirmationSession()) {
         activeCrsConfirmationState = createCrsConfirmationState({ status: CRS_CONFIRMATION_STATUS.REQUIRED });
         renderCrsConfirmationPanel();
-        showKmlFailure({
-          code: "KML_CRS_CONFIRMATION_STALE",
-          title: "识别确认已失效",
-          reason: "当前坐标结果与已确认的识别任务不一致，不能沿用旧确认生成 KML。",
-          suggestion: "请重新确认当前识别结果后再生成 KML。"
-        });
-        return;
+        recordKmlWarningOverride(Object.freeze({
+          required: true,
+          reasonCodes: Object.freeze(["STALE_CONFIRMATION"]),
+          suspectedPoints: Object.freeze([])
+        }));
       }
 
       const coordinateGroups = getKmlCoordinateGroups();
@@ -13230,10 +13374,10 @@ ${placemarks}
         if (hasProjectedCoordinateRows(input.value)) {
           showCrsConfirmationRequired();
           showKmlFailure({
-            code: "KML_CRS_REQUIRED",
-            title: "需要确认识别结果",
-            reason: "识别结果是 X/Y 平面坐标，但尚未确认完整坐标信息，不能直接写入 KML。",
-            suggestion: "请先确认识别结果并转换为经纬度，或使用人工协助转换。"
+            code: "NO_TRANSFORM_AVAILABLE_FOR_PROJECTED_COORDINATES",
+            title: "缺少坐标转换信息",
+            reason: "识别结果是 X/Y 平面坐标，但缺少可用于转换为 WGS84 的坐标系参数。",
+            suggestion: "请确认 UTM 分区、南北半球和坐标基准后再生成 KML。"
           });
           return;
         }
