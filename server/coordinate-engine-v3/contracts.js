@@ -86,7 +86,7 @@ function normalizeCoordinates(value) {
 
 function inferGeometryType(value, coordinates) {
   const explicit = cleanString(value).toLowerCase();
-  if (["point", "line", "linestring", "polygon"].includes(explicit)) {
+  if (["point", "line", "linestring", "polygon", "multipolygon"].includes(explicit)) {
     return explicit === "linestring" ? "line" : explicit;
   }
   if (coordinates.length === 1) return "point";
@@ -104,6 +104,9 @@ function getTechnicalKmlBlockReason(geometryType, coordinates) {
     return TECHNICAL_KML_BLOCK_REASONS.INSUFFICIENT_DATA_FOR_REQUESTED_GEOMETRY;
   }
   if (geometryType === "polygon" && coordinates.length < 3) {
+    return TECHNICAL_KML_BLOCK_REASONS.INSUFFICIENT_DATA_FOR_REQUESTED_GEOMETRY;
+  }
+  if (geometryType === "multipolygon" && coordinates.length < 1) {
     return TECHNICAL_KML_BLOCK_REASONS.INSUFFICIENT_DATA_FOR_REQUESTED_GEOMETRY;
   }
   if (geometryType === "unknown") {

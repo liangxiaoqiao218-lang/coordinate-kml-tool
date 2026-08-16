@@ -109,6 +109,12 @@ test("Kyrgyzstan GK -> kyrgyzstan_gauss_kruger", async () => {
   assert.equal(result.recognizerId, "kyrgyzstan_gauss_kruger");
 });
 
+test("Madagascar cadastral -> madagascar_cadastral", async () => {
+  const result = await run("Liste_Carres\nNC | XV | YV | CM_NOMFIR | num\n1 | 292812,5 | 360937,5 | Ilakaka | 280\n2 | 292812,5 | 361562,5 | Ilakaka | 281\n3 | 292812,5 | 362187,5 | Ilakaka | 282");
+  assert.equal(result.status, V3_RUNNER_STATUS.MATCHED);
+  assert.equal(result.recognizerId, "madagascar_cadastral");
+});
+
 test("NOT_PORTED recognizer not called", async () => {
   const notPorted = createRecognizerContract({
     recognizerId: "not_ported_mock",
@@ -205,24 +211,27 @@ test("geometry polygon", async () => {
   assert.equal(result.normalized.geometryType, "polygon");
 });
 
-test("default registry keeps wgs84_decimal mgrs and generic_dms dispatchable", () => {
+test("default registry keeps wgs84_decimal mgrs generic_dms kyrgyzstan_gauss_kruger and madagascar_cadastral dispatchable", () => {
   const registry = createDefaultRecognizerRegistry();
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_decimal").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "mgrs").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "generic_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "kyrgyzstan_gauss_kruger").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
-  assert.equal(registry.filter((item) => !["wgs84_decimal", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger"].includes(item.coordinateType)).every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
+  assert.equal(registry.find((item) => item.coordinateType === "madagascar_cadastral").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.filter((item) => !["wgs84_decimal", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral"].includes(item.coordinateType)).every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 
-test("standard WGS84 MGRS DMS and Kyrgyz GK inputs are not ambiguous", async () => {
+test("standard WGS84 MGRS DMS Kyrgyz GK and Madagascar inputs are not ambiguous", async () => {
   const wgs84 = await run("12.319572, -11.178174");
   const mgrs = await run("47RLH 24469 42832");
   const dms = await run("11°27'45\"N 08°36'30\"W");
   const kyrgyz = await run("№ points | X | Y\n1 | 13261341 | 4607777\n2 | 13261345 | 4607778\n3 | 13261350 | 4607780");
+  const madagascar = await run("Liste_Carres\nNC | XV | YV | CM_NOMFIR | num\n1 | 292812,5 | 360937,5 | Ilakaka | 280\n2 | 292812,5 | 361562,5 | Ilakaka | 281\n3 | 292812,5 | 362187,5 | Ilakaka | 282");
   assert.notEqual(wgs84.status, V3_RUNNER_STATUS.AMBIGUOUS);
   assert.notEqual(mgrs.status, V3_RUNNER_STATUS.AMBIGUOUS);
   assert.notEqual(dms.status, V3_RUNNER_STATUS.AMBIGUOUS);
   assert.notEqual(kyrgyz.status, V3_RUNNER_STATUS.AMBIGUOUS);
+  assert.notEqual(madagascar.status, V3_RUNNER_STATUS.AMBIGUOUS);
 });
 
 let passed = 0;

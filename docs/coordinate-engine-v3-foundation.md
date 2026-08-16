@@ -1,8 +1,8 @@
 # Coordinate Engine V3 Foundation
 
 This branch starts from the Primary stable core and defines an isolated-recognizer
-foundation. It intentionally does not port Indonesia, Madagascar, Côte d'Ivoire,
-or any other advanced recognizer in this phase.
+foundation. The foundation commit did not port advanced recognizers into
+Primary runtime; current isolated recognizer port status is listed below.
 
 ## Runtime boundary
 
@@ -129,7 +129,7 @@ Current registry:
 - `generic_dms`: `IMPLEMENTED`
 - `mgrs`: `IMPLEMENTED`
 - `kyrgyzstan_gauss_kruger`: `IMPLEMENTED`
-- `madagascar_cadastral`: `NOT_PORTED`
+- `madagascar_cadastral`: `IMPLEMENTED`
 - `indonesia_utm`: `NOT_PORTED`
 - `cote_divoire_dms`: `NOT_PORTED`
 
