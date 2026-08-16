@@ -1,14 +1,19 @@
 import { RECOGNIZER_PORT_STATUS, RECOGNIZER_TYPES } from "./contracts.js";
 import { assertRecognizerIsolation, createRecognizerContract } from "./recognizer-contract.js";
+import { wgs84DecimalRecognizer } from "./recognizers/wgs84-decimal/index.js";
 
 export const COORDINATE_ENGINE_V3_REGISTRY_VERSION = "coordinate_engine_v3_registry_v1";
 
 export function createDefaultRecognizerRegistry() {
-  return Object.freeze(RECOGNIZER_TYPES.map((coordinateType) => createRecognizerContract({
-    recognizerId: `${coordinateType}_recognizer`,
-    coordinateType,
-    portStatus: RECOGNIZER_PORT_STATUS.NOT_PORTED,
-  })));
+  const implementedRecognizers = new Map([
+    [wgs84DecimalRecognizer.coordinateType, wgs84DecimalRecognizer],
+  ]);
+  return Object.freeze(RECOGNIZER_TYPES.map((coordinateType) => implementedRecognizers.get(coordinateType)
+    || createRecognizerContract({
+      recognizerId: `${coordinateType}_recognizer`,
+      coordinateType,
+      portStatus: RECOGNIZER_PORT_STATUS.NOT_PORTED,
+    })));
 }
 
 export function validateRecognizerRegistry(registry = []) {
@@ -42,4 +47,3 @@ export function getRecognizerRegistrySummary(registry = createDefaultRecognizerR
     }))),
   });
 }
-

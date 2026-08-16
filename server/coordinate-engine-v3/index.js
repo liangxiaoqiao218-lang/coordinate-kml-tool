@@ -7,6 +7,14 @@ import {
 } from "./contracts.js";
 import { createLatencyBudget, allocateRecognizerBudget } from "./latency-budget.js";
 import { createDefaultRecognizerRegistry, getRecognizerRegistrySummary, validateRecognizerRegistry } from "./registry.js";
+import {
+  canHandleWgs84Decimal,
+  normalizeWgs84Decimal,
+  recognizeWgs84Decimal,
+  toKmlCoordinate,
+  verifyWgs84Decimal,
+  wgs84DecimalRecognizer,
+} from "./recognizers/wgs84-decimal/index.js";
 
 export const COORDINATE_ENGINE_V3_DISABLED_REASON = "coordinate_engine_v3_not_enabled";
 
@@ -61,5 +69,10 @@ export {
   RECOGNIZER_TYPES,
   validateNormalizedCoordinateResult,
   validateRecognizerRegistry,
+  canHandleWgs84Decimal,
+  normalizeWgs84Decimal,
+  recognizeWgs84Decimal,
+  toKmlCoordinate,
+  verifyWgs84Decimal,
+  wgs84DecimalRecognizer,
 };
-

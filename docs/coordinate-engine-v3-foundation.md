@@ -79,16 +79,20 @@ Recognition uncertainty produces warning metadata only. It does not block KML.
 
 ## Initial recognizer registry
 
-All planned recognizers start as `NOT_PORTED`:
+The first recognizer may move from `NOT_PORTED` to `IMPLEMENTED` only inside
+the V3 registry. `IMPLEMENTED` still means not production-stable and not wired
+to Primary runtime.
 
-- `wgs84_decimal`
-- `wgs84_table`
-- `generic_dms`
-- `mgrs`
-- `kyrgyzstan_gauss_kruger`
-- `madagascar_cadastral`
-- `indonesia_utm`
-- `cote_divoire_dms`
+Current registry:
+
+- `wgs84_decimal`: `IMPLEMENTED`
+- `wgs84_table`: `NOT_PORTED`
+- `generic_dms`: `NOT_PORTED`
+- `mgrs`: `NOT_PORTED`
+- `kyrgyzstan_gauss_kruger`: `NOT_PORTED`
+- `madagascar_cadastral`: `NOT_PORTED`
+- `indonesia_utm`: `NOT_PORTED`
+- `cote_divoire_dms`: `NOT_PORTED`
 
 Only real fixture validation can move a recognizer to `STABLE`.
 
@@ -109,4 +113,3 @@ Only real fixture validation can move a recognizer to `STABLE`.
 | Multi-minute retry chains | DROP | Violates latency architecture. |
 | Cross-type semantic passes | DROP | Caused Madagascar/Indonesia coupling. |
 | V2 evidence/shadow diagnostics | REFERENCE_ONLY | Useful for design, not runtime authority. |
-

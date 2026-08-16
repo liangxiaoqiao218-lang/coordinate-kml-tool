@@ -37,7 +37,11 @@ export function assertRecognizerIsolation(recognizer = {}) {
   if (typeof recognizer.recognize !== "function") errors.push("recognize_missing");
   if (typeof recognizer.normalize !== "function") errors.push("normalize_missing");
   if (typeof recognizer.verify !== "function") errors.push("verify_missing");
-  if (recognizer.portStatus !== RECOGNIZER_PORT_STATUS.NOT_PORTED && recognizer.portStatus !== RECOGNIZER_PORT_STATUS.STABLE) {
+  if (
+    recognizer.portStatus !== RECOGNIZER_PORT_STATUS.NOT_PORTED
+    && recognizer.portStatus !== RECOGNIZER_PORT_STATUS.IMPLEMENTED
+    && recognizer.portStatus !== RECOGNIZER_PORT_STATUS.STABLE
+  ) {
     errors.push("invalid_port_status");
   }
   return Object.freeze({
@@ -45,4 +49,3 @@ export function assertRecognizerIsolation(recognizer = {}) {
     errors: Object.freeze(errors),
   });
 }
-

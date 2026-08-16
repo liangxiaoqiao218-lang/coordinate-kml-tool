@@ -2,6 +2,7 @@ export const COORDINATE_ENGINE_V3_SCHEMA_VERSION = "coordinate_engine_v3_foundat
 
 export const RECOGNIZER_PORT_STATUS = Object.freeze({
   NOT_PORTED: "NOT_PORTED",
+  IMPLEMENTED: "IMPLEMENTED",
   STABLE: "STABLE",
 });
 

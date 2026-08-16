@@ -39,11 +39,14 @@ test("v3 disabled by default", () => {
   assert.equal(isCoordinateEngineV3Enabled({ ENABLE_COORDINATE_ENGINE_V3: "true" }), true);
 });
 
-test("registry contains planned recognizers as NOT_PORTED", () => {
+test("registry contains planned recognizers with only wgs84_decimal implemented", () => {
   const registry = createDefaultRecognizerRegistry();
   assert.equal(registry.length, RECOGNIZER_TYPES.length);
   assert.deepEqual(registry.map((item) => item.coordinateType), RECOGNIZER_TYPES);
-  assert.equal(registry.every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
+  assert.equal(registry.find((item) => item.coordinateType === "wgs84_decimal").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry
+    .filter((item) => item.coordinateType !== "wgs84_decimal")
+    .every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
   assert.equal(validateRecognizerRegistry(registry).valid, true);
 });
 
@@ -114,4 +117,3 @@ await testAsync("disabled recognizer system does not handle requests", async () 
 });
 
 console.log("Coordinate Engine V3 Foundation Regression: 7/7 PASS");
-
