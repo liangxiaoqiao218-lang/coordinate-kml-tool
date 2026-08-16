@@ -10,7 +10,6 @@ import {
   hasMapGridTickTakeover,
   shouldRunEarlyMadagascarCadastralPriority
 } from "../server/coordinate-evidence/cadastral-grid.js";
-import { buildMadagascarCadastralTableVisionTiles } from "../server/coordinate-evidence/cadastral-image-tiles.js";
 
 const expectedRows = [
   ["280", "292812.5", "360937.5"],
@@ -164,12 +163,10 @@ assert.equal(structuralPriority.reason, "liste_carres_xv_yv_signature");
 passed += 1;
 
 let fixtureFound = false;
-let fixturePath = "";
 for (const fixture of realFixtureCandidates) {
   try {
     await access(fixture);
     fixtureFound = true;
-    fixturePath = fixture;
     break;
   } catch {
     // Try the next known non-committed fixture location.
@@ -178,25 +175,28 @@ for (const fixture of realFixtureCandidates) {
 assert.equal(fixtureFound, true, "Madagascar real fixture image must be available locally for this recovery regression");
 passed += 1;
 
-const fixtureBuffer = await readFile(fixturePath);
-const tiles = await buildMadagascarCadastralTableVisionTiles(fixtureBuffer);
-assert.ok(tiles.length >= 1);
-assert.ok(tiles.every(tile => tile.type === "image_url" && tile.image_url?.detail === "high"));
-assert.ok(tiles.every(tile => String(tile.image_url?.url || "").startsWith("data:image/jpeg;base64,")));
+const serverSource = await readFile(new URL("../server.js", import.meta.url), "utf8");
+assert.match(serverSource, /stage:\s*"madagascar_legacy_stable_route"/);
+assert.match(serverSource, /prompt:\s*cadastralGridLayoutPrompt/);
+assert.match(serverSource, /prompt:\s*cadastralGridTablePrompt/);
+assert.ok(
+  serverSource.indexOf("prompt: cadastralGridLayoutPrompt") < serverSource.indexOf("prompt: cadastralGridTablePrompt"),
+  "Madagascar legacy route must restore layout detection before table reading"
+);
 passed += 1;
 
-const serverSource = await readFile(new URL("../server.js", import.meta.url), "utf8");
-assert.match(serverSource, /stage:\s*"madagascar_cadastral_table_priority"/);
-assert.match(serverSource, /buildMadagascarCadastralTableVisionTiles/);
-assert.match(serverSource, /MADAGASCAR_CADASTRAL:right_table_crop/);
-assert.match(serverSource, /MADAGASCAR_CADASTRAL:early_priority_accepted/);
+assert.match(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE:candidate/);
+assert.match(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE:layout_detected/);
+assert.match(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE:accepted/);
 assert.match(serverSource, /MADAGASCAR_CADASTRAL:projected_fallback_blocked/);
 assert.match(serverSource, /CRS_EVIDENCE:skipped_for_madagascar_cadastral/);
 assert.match(serverSource, /CRS_EVIDENCE:skipped_for_madagascar_cadastral_candidate/);
 assert.match(serverSource, /blocking map-tick projected takeover/);
+assert.doesNotMatch(serverSource, /buildMadagascarCadastralTableVisionTiles/);
+assert.doesNotMatch(serverSource, /MADAGASCAR_CADASTRAL:right_table_crop/);
 assert.ok(
-  serverSource.indexOf('stage: "madagascar_cadastral_table_priority"') < serverSource.indexOf("const crsVision = await runCrsVisionPass"),
-  "Madagascar early priority must be available before CRS/UTM routing"
+  serverSource.indexOf('stage: "madagascar_legacy_stable_route"') < serverSource.indexOf("const crsVision = await runCrsVisionPass"),
+  "Madagascar legacy stable route must run before CRS/UTM routing"
 );
 passed += 1;
 

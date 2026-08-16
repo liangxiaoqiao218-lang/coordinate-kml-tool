@@ -61,7 +61,6 @@ import {
   getCadastralGridInfo,
   shouldRunEarlyMadagascarCadastralPriority
 } from "./server/coordinate-evidence/cadastral-grid.js";
-import { buildMadagascarCadastralTableVisionTiles } from "./server/coordinate-evidence/cadastral-image-tiles.js";
 
 const app = express();
 const upload = multer({
@@ -13306,42 +13305,59 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let madagascarCadastralProjectedFallbackBlocked = false;
     if (!cadastralGrid.isCadastralGrid && earlyCadastralPriority.candidate) {
       const cadastralAttempt = startAttempt(recognitionMetrics, {
-        stage: "madagascar_cadastral_table_priority",
+        stage: "madagascar_legacy_stable_route",
         provider: "vision",
         model: aliyunVisionModel,
-        timeoutMs: 45000
+        timeoutMs: 60000
       });
       try {
-        parserTrace.push(`MADAGASCAR_CADASTRAL:early_candidate(${earlyCadastralPriority.reason})`);
-        const cadastralTableImageItems = await buildMadagascarCadastralTableVisionTiles(req.file?.buffer);
-        parserTrace.push(cadastralTableImageItems.length > 0
-          ? "MADAGASCAR_CADASTRAL:right_table_crop"
-          : "MADAGASCAR_CADASTRAL:right_table_crop_unavailable");
-        const gridResponse = await callAliyunVision({
+        parserTrace.push(`MADAGASCAR_LEGACY_STABLE_ROUTE:candidate(${earlyCadastralPriority.reason})`);
+        const layoutResponse = await callAliyunVision({
           modelName: aliyunVisionModel,
-          prompt: cadastralGridTablePrompt,
-          imageItems: cadastralTableImageItems.length > 0 ? cadastralTableImageItems : crsImageItems,
+          prompt: cadastralGridLayoutPrompt,
+          imageItems,
           temperature: 0,
-          maxTokens: 2600,
-          timeoutMs: 45000
+          maxTokens: 80,
+          timeoutMs: 25000
         });
-        const gridRawText = gridResponse.choices?.[0]?.message?.content || "";
-        const gridInfo = getCadastralGridInfo(gridRawText);
-        finishAttempt(recognitionMetrics, cadastralAttempt, {
-          status: gridInfo.isCadastralGrid ? "success" : "error",
-          errorCode: gridInfo.isCadastralGrid ? null : "MADAGASCAR_CADASTRAL_TABLE_UNREADABLE",
-          resultCount: gridInfo.rows.length
-        });
-        if (gridInfo.isCadastralGrid) {
-          rawText = gridRawText;
-          coordinates = formatCadastralGridRows(gridInfo.rows);
-          cadastralGrid = gridInfo;
-          usedModel = `${aliyunVisionModel}+madagascar-cadastral-priority`;
-          warning = "识别到 Liste_Carrés / 矿权网格表，已优先读取 num / XV / YV；已忽略地图边框刻度与中央地图标注。";
-          parserTrace.push("MADAGASCAR_CADASTRAL:accepted");
-          parserTrace.push("MADAGASCAR_CADASTRAL:early_priority_accepted");
+        const layoutText = layoutResponse.choices?.[0]?.message?.content || "";
+
+        if (isCadastralGridLayoutDetected(layoutText)) {
+          parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:layout_detected");
+          const gridResponse = await callAliyunVision({
+            modelName: aliyunVisionModel,
+            prompt: cadastralGridTablePrompt,
+            imageItems,
+            temperature: 0,
+            maxTokens: 1400,
+            timeoutMs: 35000
+          });
+          const gridRawText = gridResponse.choices?.[0]?.message?.content || "";
+          const gridInfo = getCadastralGridInfo(gridRawText);
+          finishAttempt(recognitionMetrics, cadastralAttempt, {
+            status: gridInfo.isCadastralGrid ? "success" : "error",
+            errorCode: gridInfo.isCadastralGrid ? null : "MADAGASCAR_CADASTRAL_TABLE_UNREADABLE",
+            resultCount: gridInfo.rows.length
+          });
+          if (gridInfo.isCadastralGrid) {
+            rawText = gridRawText;
+            coordinates = formatCadastralGridRows(gridInfo.rows);
+            cadastralGrid = gridInfo;
+            usedModel = `${aliyunVisionModel}+madagascar-legacy-stable`;
+            warning = "识别到 Liste_Carrés / 矿权网格表，已优先读取 num / XV / YV；已忽略地图中央的大号 DMS 标注。";
+            parserTrace.push("MADAGASCAR_CADASTRAL:accepted");
+            parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:accepted");
+          } else {
+            parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:table_unreadable");
+            madagascarCadastralProjectedFallbackBlocked = true;
+          }
         } else {
-          parserTrace.push("MADAGASCAR_CADASTRAL:early_priority_rejected");
+          finishAttempt(recognitionMetrics, cadastralAttempt, {
+            status: "error",
+            errorCode: "MADAGASCAR_CADASTRAL_LAYOUT_NOT_DETECTED",
+            resultCount: 0
+          });
+          parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:layout_not_detected");
           madagascarCadastralProjectedFallbackBlocked = true;
         }
       } catch (earlyCadastralError) {
@@ -13349,9 +13365,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           status: isRecognitionVisionTimeout(earlyCadastralError) ? "timeout" : "error",
           errorCode: getRecognitionVisionErrorCode(earlyCadastralError)
         });
-        parserTrace.push("MADAGASCAR_CADASTRAL:early_priority_failed");
+        parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:failed");
         madagascarCadastralProjectedFallbackBlocked = true;
-        console.warn("Madagascar cadastral early table priority failed; blocking map-tick projected takeover", {
+        console.warn("Madagascar legacy stable cadastral route failed; blocking map-tick projected takeover", {
           fileName: uploadedFileName || req.file?.originalname || "",
           reason: getRecognitionVisionErrorCode(earlyCadastralError)
         });
@@ -14155,7 +14171,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+    if (!madagascarCadastralProjectedFallbackBlocked && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
       try {
         console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
         const layoutResponse = await callAliyunVision({
