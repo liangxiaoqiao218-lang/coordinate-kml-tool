@@ -56,6 +56,11 @@ import {
   shouldRunGeographicHeaderVisionPass,
   snapshotPreSuppressionCandidates
 } from "./server/coordinate-evidence/index.js";
+import {
+  formatCadastralGridRows,
+  getCadastralGridInfo,
+  shouldRunEarlyMadagascarCadastralPriority
+} from "./server/coordinate-evidence/cadastral-grid.js";
 
 const app = express();
 const upload = multer({
@@ -3753,92 +3758,6 @@ function isBftmYValue(value) {
 
 function looksLikeBftmProjectedPair(first, second) {
   return isBftmXValue(first) && isBftmYValue(second);
-}
-
-function hasCadastralGridContext(text) {
-  const value = String(text || "");
-  return /\bXV\b/i.test(value)
-    && /\bYV\b/i.test(value)
-    && (/\bnum\b|n[°o]\b|cadastral|cadastre|grid|grille|quadrillage|carreau|矿权|网格/i.test(value));
-}
-
-function normalizeGridValue(value) {
-  return String(value || "")
-    .trim()
-    .replace(/,/g, ".")
-    .replace(/\s+/g, "");
-}
-
-function extractCadastralGridRows(text) {
-  // Stable path: Madagascar cadastral grid extraction returns only num | XV | YV.
-  // Do not include NC/CM_NOMFIR here and do not convert XV/YV in the backend recognition response.
-  if (!hasCadastralGridContext(text)) {
-    return [];
-  }
-
-  const rows = [];
-  const seen = new Set();
-
-  normalizeText(text)
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .forEach(line => {
-      if (/^(?:num|n[°o]?|#)?\s*[\|,;\s-]*xv[\|,;\s-]*yv$/i.test(line)) {
-        return;
-      }
-
-      let row = null;
-      const labeled = line.match(/(?:^|\b)(?:num|n[°o]?|#)?\s*([A-Za-z0-9-]{1,16})\D+XV\D*([-+]?\d+(?:[.,]\d+)?)\D+YV\D*([-+]?\d+(?:[.,]\d+)?)/i);
-
-      if (labeled) {
-        row = {
-          num: labeled[1].trim(),
-          xv: normalizeGridValue(labeled[2]),
-          yv: normalizeGridValue(labeled[3])
-        };
-      } else {
-        const cleaned = line
-          .replace(/\b(?:num|n[°o]?|xv|yv)\b/gi, " ")
-          .replace(/[|:;，,]/g, " ");
-        const tokens = cleaned.match(/[-+]?\d+(?:[.,]\d+)?|[A-Za-z]?\d[A-Za-z0-9-]*/g) || [];
-
-        if (tokens.length >= 3) {
-          row = {
-            num: tokens[0].trim(),
-            xv: normalizeGridValue(tokens[1]),
-            yv: normalizeGridValue(tokens[2])
-          };
-        }
-      }
-
-      if (!row || !row.num || !row.xv || !row.yv) {
-        return;
-      }
-
-      const key = `${row.num}|${row.xv}|${row.yv}`;
-      if (seen.has(key)) {
-        return;
-      }
-
-      seen.add(key);
-      rows.push(row);
-    });
-
-  return rows;
-}
-
-function formatCadastralGridRows(rows) {
-  return ["num | XV | YV", ...rows.map(row => `${row.num} | ${row.xv} | ${row.yv}`)].join("\n");
-}
-
-function getCadastralGridInfo(text) {
-  const rows = extractCadastralGridRows(text);
-  return {
-    isCadastralGrid: rows.length > 0,
-    rows,
-    rowCount: rows.length
-  };
 }
 
 function hasKyrgyzGkContext(text) {
@@ -13369,11 +13288,71 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const generalVisionRawText = rawText;
     let crsEvidenceShadow = null;
     let structuredUtmPriority = null;
+    let cadastralGrid = getCadastralGridInfo(rawText);
     const crsImageItems = imageItems.map(item => ({
       ...item,
       image_url: item?.image_url ? { ...item.image_url, detail: "high" } : item?.image_url
     }));
 
+    const earlyCadastralPriority = shouldRunEarlyMadagascarCadastralPriority({
+      rawText,
+      coordinates,
+      fileName: uploadedFileName,
+      rawHint: req.body?.rawHint || "",
+      hint: req.body?.hint || ""
+    });
+
+    if (!cadastralGrid.isCadastralGrid && earlyCadastralPriority.candidate) {
+      const cadastralAttempt = startAttempt(recognitionMetrics, {
+        stage: "madagascar_cadastral_table_priority",
+        provider: "vision",
+        model: aliyunVisionModel,
+        timeoutMs: 45000
+      });
+      try {
+        parserTrace.push(`MADAGASCAR_CADASTRAL:early_candidate(${earlyCadastralPriority.reason})`);
+        const gridResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: cadastralGridTablePrompt,
+          imageItems: crsImageItems,
+          temperature: 0,
+          maxTokens: 1800,
+          timeoutMs: 45000
+        });
+        const gridRawText = gridResponse.choices?.[0]?.message?.content || "";
+        const gridInfo = getCadastralGridInfo(gridRawText);
+        finishAttempt(recognitionMetrics, cadastralAttempt, {
+          status: gridInfo.isCadastralGrid ? "success" : "error",
+          errorCode: gridInfo.isCadastralGrid ? null : "MADAGASCAR_CADASTRAL_TABLE_UNREADABLE",
+          resultCount: gridInfo.rows.length
+        });
+        if (gridInfo.isCadastralGrid) {
+          rawText = gridRawText;
+          coordinates = formatCadastralGridRows(gridInfo.rows);
+          cadastralGrid = gridInfo;
+          usedModel = `${aliyunVisionModel}+madagascar-cadastral-priority`;
+          warning = "识别到 Liste_Carrés / 矿权网格表，已优先读取 num / XV / YV；已忽略地图边框刻度与中央地图标注。";
+          parserTrace.push("MADAGASCAR_CADASTRAL:accepted");
+          parserTrace.push("MADAGASCAR_CADASTRAL:early_priority_accepted");
+        } else {
+          parserTrace.push("MADAGASCAR_CADASTRAL:early_priority_rejected");
+        }
+      } catch (earlyCadastralError) {
+        finishAttempt(recognitionMetrics, cadastralAttempt, {
+          status: isRecognitionVisionTimeout(earlyCadastralError) ? "timeout" : "error",
+          errorCode: getRecognitionVisionErrorCode(earlyCadastralError)
+        });
+        parserTrace.push("MADAGASCAR_CADASTRAL:early_priority_failed");
+        console.warn("Madagascar cadastral early table priority failed; continuing generic routing", {
+          fileName: uploadedFileName || req.file?.originalname || "",
+          reason: getRecognitionVisionErrorCode(earlyCadastralError)
+        });
+      }
+    }
+
+    if (cadastralGrid.isCadastralGrid) {
+      parserTrace.push("CRS_EVIDENCE:skipped_for_madagascar_cadastral");
+    } else {
     try {
       const crsVision = await runCrsVisionPass({
         imageItems: crsImageItems,
@@ -13703,6 +13682,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push("CRS_EVIDENCE:unavailable");
       console.error("CRS evidence / structured UTM pass failed; preserving legacy route:", crsEvidenceError.message || crsEvidenceError);
     }
+    }
 
     warning = normalizeUtmAcquisitionReviewWarning(warning, {
       explicitUtmEvidenceLock,
@@ -13762,7 +13742,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         console.error("Handwritten DMS evidence visual retry failed:", handwrittenEvidenceRetryError.message || handwrittenEvidenceRetryError);
       }
     }
-    let cadastralGrid = getCadastralGridInfo(rawText);
+    cadastralGrid = cadastralGrid.isCadastralGrid ? cadastralGrid : getCadastralGridInfo(rawText);
     let mgrs = getMgrsInfo(rawText);
     let mozambiqueGeographicTable = getMozambiqueGeographicInfo(rawText);
     let wgs84TableCoordinates = getWgs84TableCoordinatesInfo(rawText);
