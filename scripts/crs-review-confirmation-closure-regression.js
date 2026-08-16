@@ -139,6 +139,31 @@ test("frontend wires review, reverify, and server confirmation", () => {
   assert.match(source, /CONFIRMATION_REQUIRES_VERIFICATION_PASS/);
 });
 
+test("confirm success path requires server authority before KML", () => {
+  const source = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const confirmStart = source.indexOf("async function confirmCrsIntent");
+  const confirmEnd = source.indexOf("async function confirmDetectedCrsIntent");
+  assert.ok(confirmStart > 0 && confirmEnd > confirmStart, "confirm handler exists");
+  const confirmBody = source.slice(confirmStart, confirmEnd);
+  assert.match(confirmBody, /requiresServerCoordinateConfirmation\(\)/);
+  assert.match(confirmBody, /hasReverificationContract\(\)/);
+  assert.match(confirmBody, /CONFIRMATION_CONTEXT_STALE/);
+  assert.match(confirmBody, /data\.success !== true/);
+  assert.match(confirmBody, /data\.confirmationStatus !== "accepted"/);
+  assert.match(confirmBody, /data\.kml_ready !== true/);
+  assert.match(confirmBody, /data\.exportPermission\?\.allowed !== true/);
+});
+
+test("confirm accepted triggers exactly one KML generation call", () => {
+  const source = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const confirmStart = source.indexOf("async function confirmCrsIntent");
+  const confirmEnd = source.indexOf("async function confirmDetectedCrsIntent");
+  const confirmBody = source.slice(confirmStart, confirmEnd);
+  const calls = confirmBody.match(/downloadKmlInternal\(\)/g) || [];
+  assert.equal(calls.length, 1);
+  assert.match(confirmBody, /setInternalKmlSourceFromGroups\(groups\)[\s\S]*await downloadKmlInternal\(\)/);
+});
+
 test("frontend edit invalidates old confirmation state", () => {
   const source = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(source, /function markCoordinateTextChanged\(\)[\s\S]*activeCoordinateResult = null/);
@@ -150,4 +175,4 @@ if (process.exitCode) {
   process.exit(process.exitCode);
 }
 
-console.log("CRS Review Confirmation Closure Regression: 8/8 PASS");
+console.log("CRS Review Confirmation Closure Regression: 10/10 PASS");

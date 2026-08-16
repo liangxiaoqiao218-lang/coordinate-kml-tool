@@ -6981,7 +6981,20 @@ Au值 = 纯度 × 10 后取整数</div>
         return false;
       }
 
-      if (hasReverificationContract()) {
+      const serverConfirmationRequired = requiresServerCoordinateConfirmation();
+      const hasServerConfirmationContext = hasReverificationContract();
+
+      if (serverConfirmationRequired && !hasServerConfirmationContext) {
+        showKmlFailure({
+          code: "CONFIRMATION_CONTEXT_STALE",
+          title: "确认上下文已失效",
+          reason: "当前坐标缺少服务器确认所需的 CRS 或参考验证信息，不能直接生成 KML。",
+          suggestion: "请重新验证坐标，或重新识别图片后再点击“确认并继续生成 KML”。"
+        });
+        return false;
+      }
+
+      if (hasServerConfirmationContext) {
         const response = await fetch("/api/confirm-coordinate-result", {
           method: "POST",
           headers: getSourceHeaders({
@@ -6991,7 +7004,11 @@ Au值 = 纯度 × 10 后取整数</div>
           body: JSON.stringify(getReviewConfirmationRequestPayload())
         });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.kml_ready !== true) {
+        if (!response.ok
+          || data.success !== true
+          || data.confirmationStatus !== "accepted"
+          || data.kml_ready !== true
+          || data.exportPermission?.allowed !== true) {
           showKmlFailure({
             code: data.error || "CONFIRMATION_REQUIRES_VERIFICATION_PASS",
             title: "确认失败",
@@ -7017,6 +7034,7 @@ Au值 = 纯度 × 10 后取整数</div>
         pointCount: groups[0].length
       });
       showMessage(`已确认 ${formatUtmCrsName(intent)}（${intent.epsg}），可生成 KML。`, false, 6000);
+      await downloadKmlInternal();
       return true;
     }
 
@@ -7061,6 +7079,15 @@ Au值 = 纯度 × 10 后取整数</div>
         && Array.isArray(internalNormalizedCoordinateGroups)
         && internalNormalizedCoordinateGroups.length > 0
         && !internalKmlSourceDirty;
+    }
+
+    function requiresServerCoordinateConfirmation() {
+      const coordinate = activeCoordinateResult?.coordinate || {};
+      const coordinateType = String(coordinate.type || activeCoordinateArbitration?.coordinateType || "").trim();
+      const precisionMode = String(coordinate.precision || activeCoordinatePrecisionMode || activeCoordinateArbitration?.precisionMode || "").trim();
+      return coordinateType === "utm_projected_xy"
+        && precisionMode === "utm-projected-x-y"
+        && String(activeCoordinateResult?.state || "").trim() === "CONFIRM_REQUIRED";
     }
 
     function showCrsConfirmationRequired() {
