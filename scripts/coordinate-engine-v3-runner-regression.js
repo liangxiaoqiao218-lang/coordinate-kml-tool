@@ -91,9 +91,10 @@ test("projected X/Y -> NO_MATCH", async () => {
   assert.equal(result.status, V3_RUNNER_STATUS.NO_MATCH);
 });
 
-test("DMS -> NO_MATCH", async () => {
+test("DMS -> generic_dms", async () => {
   const result = await run("11°27'45\"N 08°36'30\"W");
-  assert.equal(result.status, V3_RUNNER_STATUS.NO_MATCH);
+  assert.equal(result.status, V3_RUNNER_STATUS.MATCHED);
+  assert.equal(result.recognizerId, "generic_dms");
 });
 
 test("MGRS -> mgrs", async () => {
@@ -198,18 +199,21 @@ test("geometry polygon", async () => {
   assert.equal(result.normalized.geometryType, "polygon");
 });
 
-test("default registry keeps wgs84_decimal and mgrs dispatchable", () => {
+test("default registry keeps wgs84_decimal mgrs and generic_dms dispatchable", () => {
   const registry = createDefaultRecognizerRegistry();
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_decimal").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "mgrs").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
-  assert.equal(registry.filter((item) => !["wgs84_decimal", "mgrs"].includes(item.coordinateType)).every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
+  assert.equal(registry.find((item) => item.coordinateType === "generic_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.filter((item) => !["wgs84_decimal", "mgrs", "generic_dms"].includes(item.coordinateType)).every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 
-test("standard WGS84 and MGRS inputs are not ambiguous", async () => {
+test("standard WGS84 MGRS and DMS inputs are not ambiguous", async () => {
   const wgs84 = await run("12.319572, -11.178174");
   const mgrs = await run("47RLH 24469 42832");
+  const dms = await run("11°27'45\"N 08°36'30\"W");
   assert.notEqual(wgs84.status, V3_RUNNER_STATUS.AMBIGUOUS);
   assert.notEqual(mgrs.status, V3_RUNNER_STATUS.AMBIGUOUS);
+  assert.notEqual(dms.status, V3_RUNNER_STATUS.AMBIGUOUS);
 });
 
 let passed = 0;

@@ -10,6 +10,17 @@ import { createRecognizerContract } from "./recognizer-contract.js";
 import { createDefaultRecognizerRegistry, getRecognizerRegistrySummary, validateRecognizerRegistry } from "./registry.js";
 import { runCoordinateEngineV3, V3_RUNNER_STATUS } from "./runner.js";
 import {
+  canHandleGenericDms,
+  dmsToDecimal,
+  genericDmsRecognizer,
+  normalizeGenericDms,
+  parseDmsTokens,
+  parseGenericDmsRows,
+  recognizeGenericDms,
+  toGenericDmsKmlCoordinate,
+  verifyGenericDms,
+} from "./recognizers/generic-dms/index.js";
+import {
   canHandleMgrs,
   mgrsRecognizer,
   normalizeMgrs,
@@ -63,6 +74,15 @@ export {
   validateNormalizedCoordinateResult,
   validateRecognizerRegistry,
   V3_RUNNER_STATUS,
+  canHandleGenericDms,
+  dmsToDecimal,
+  genericDmsRecognizer,
+  normalizeGenericDms,
+  parseDmsTokens,
+  parseGenericDmsRows,
+  recognizeGenericDms,
+  toGenericDmsKmlCoordinate,
+  verifyGenericDms,
   canHandleMgrs,
   mgrsRecognizer,
   normalizeMgrs,

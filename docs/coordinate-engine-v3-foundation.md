@@ -126,7 +126,7 @@ Current registry:
 
 - `wgs84_decimal`: `IMPLEMENTED`
 - `wgs84_table`: `NOT_PORTED`
-- `generic_dms`: `NOT_PORTED`
+- `generic_dms`: `IMPLEMENTED`
 - `mgrs`: `IMPLEMENTED`
 - `kyrgyzstan_gauss_kruger`: `NOT_PORTED`
 - `madagascar_cadastral`: `NOT_PORTED`
