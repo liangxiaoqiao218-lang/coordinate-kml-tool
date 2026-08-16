@@ -162,6 +162,32 @@ assert.equal(structuralPriority.structuralSignature, true);
 assert.equal(structuralPriority.reason, "liste_carres_xv_yv_signature");
 passed += 1;
 
+const initialSparseRecognition = shouldRunEarlyMadagascarCadastralPriority({
+  rawText: "NO COORDINATES_FOUND\nmain recognition too few results",
+  coordinates: "",
+  fileName: "unknown.png"
+});
+assert.equal(initialSparseRecognition.candidate, false);
+passed += 1;
+
+const fallbackVisibleSignature = shouldRunEarlyMadagascarCadastralPriority({
+  rawText: `
+PROJET PERMIS MINIER AMPASIMAMITAKA Liste_Carrés
+[Nc] xv Jw CM_NOMFIR [num]
+290625
+295625
+300625
+535625
+540625
+`,
+  coordinates: "290625,295625\n300625,535625",
+  fileName: "马达加斯加坐标.png"
+});
+assert.equal(fallbackVisibleSignature.candidate, true);
+assert.equal(fallbackVisibleSignature.madagascarCue, true);
+assert.equal(fallbackVisibleSignature.mapTickTakeover, true);
+passed += 1;
+
 let fixtureFound = false;
 for (const fixture of realFixtureCandidates) {
   try {
@@ -188,6 +214,9 @@ passed += 1;
 assert.match(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE:candidate/);
 assert.match(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE:layout_detected/);
 assert.match(serverSource, /MADAGASCAR_LEGACY_STABLE_ROUTE:accepted/);
+assert.match(serverSource, /post_complete_retry/);
+assert.match(serverSource, /post_local_ocr_fallback/);
+assert.match(serverSource, /madagascarLegacyRouteAttemptCount\s*>=\s*2/);
 assert.match(serverSource, /MADAGASCAR_CADASTRAL:projected_fallback_blocked/);
 assert.match(serverSource, /CRS_EVIDENCE:skipped_for_madagascar_cadastral/);
 assert.match(serverSource, /CRS_EVIDENCE:skipped_for_madagascar_cadastral_candidate/);
@@ -198,6 +227,12 @@ assert.ok(
   serverSource.indexOf('stage: "madagascar_legacy_stable_route"') < serverSource.indexOf("const crsVision = await runCrsVisionPass"),
   "Madagascar legacy stable route must run before CRS/UTM routing"
 );
+assert.match(
+  serverSource,
+  /!madagascarCadastralProjectedFallbackBlocked[\s\S]*shouldRetryRecognition\(rawText,\s*coordinates\)/
+);
+assert.match(serverSource, /structuredUtmPriority\s*=\s*null/);
+assert.match(serverSource, /explicitUtmEvidenceLock\s*=\s*false/);
 passed += 1;
 
 const indexSource = await readFile(new URL("../index.html", import.meta.url), "utf8");
@@ -206,4 +241,4 @@ assert.match(indexSource, /convertMadagascarCadastralToWgs84/);
 assert.match(indexSource, /buildCadastralGridKml/);
 passed += 1;
 
-console.log(`Madagascar Cadastral Stable Path Regression: ${passed}/12 PASS`);
+console.log(`Madagascar Cadastral Stable Path Regression: ${passed}/14 PASS`);

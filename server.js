@@ -13294,16 +13294,32 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       image_url: item?.image_url ? { ...item.image_url, detail: "high" } : item?.image_url
     }));
 
-    const earlyCadastralPriority = shouldRunEarlyMadagascarCadastralPriority({
-      rawText,
-      coordinates,
-      fileName: uploadedFileName,
-      rawHint: req.body?.rawHint || "",
-      hint: req.body?.hint || ""
-    });
-
     let madagascarCadastralProjectedFallbackBlocked = false;
-    if (!cadastralGrid.isCadastralGrid && earlyCadastralPriority.candidate) {
+    let madagascarLegacyRouteAttemptCount = 0;
+    async function evaluateMadagascarLegacyStableRouteAfterRecognitionUpdate(reason = "initial") {
+      const priority = shouldRunEarlyMadagascarCadastralPriority({
+        rawText,
+        coordinates,
+        fileName: uploadedFileName,
+        rawHint: req.body?.rawHint || "",
+        hint: req.body?.hint || ""
+      });
+      if (cadastralGrid.isCadastralGrid) {
+        return { candidate: true, accepted: true, priority };
+      }
+      if (!priority.candidate) {
+        return { candidate: false, accepted: false, priority };
+      }
+      if (madagascarLegacyRouteAttemptCount >= 2) {
+        madagascarCadastralProjectedFallbackBlocked = true;
+        parserTrace.push(`MADAGASCAR_LEGACY_STABLE_ROUTE:attempt_limit(${reason})`);
+        if (priority.mapTickTakeover || countCoordinateRows(coordinates) > 0) {
+          coordinates = "";
+        }
+        warning = warning || "检测到马达加斯加矿权网格图疑似包含 Liste_Carrés 表，但未能稳定读取 num / XV / YV 表；已阻止地图边框刻度被误当作 UTM/X-Y 坐标，请重试更清晰原图。";
+        return { candidate: true, accepted: false, priority, attemptLimited: true };
+      }
+      madagascarLegacyRouteAttemptCount += 1;
       const cadastralAttempt = startAttempt(recognitionMetrics, {
         stage: "madagascar_legacy_stable_route",
         provider: "vision",
@@ -13311,7 +13327,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         timeoutMs: 60000
       });
       try {
-        parserTrace.push(`MADAGASCAR_LEGACY_STABLE_ROUTE:candidate(${earlyCadastralPriority.reason})`);
+        parserTrace.push(`MADAGASCAR_LEGACY_STABLE_ROUTE:candidate(${reason}:${priority.reason})`);
         const layoutResponse = await callAliyunVision({
           modelName: aliyunVisionModel,
           prompt: cadastralGridLayoutPrompt,
@@ -13343,10 +13359,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             rawText = gridRawText;
             coordinates = formatCadastralGridRows(gridInfo.rows);
             cadastralGrid = gridInfo;
+            structuredUtmPriority = null;
+            crsEvidenceShadow = null;
+            explicitUtmEvidenceLock = false;
+            lockedUtmCrsEvidenceShadow = null;
             usedModel = `${aliyunVisionModel}+madagascar-legacy-stable`;
             warning = "识别到 Liste_Carrés / 矿权网格表，已优先读取 num / XV / YV；已忽略地图中央的大号 DMS 标注。";
             parserTrace.push("MADAGASCAR_CADASTRAL:accepted");
             parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:accepted");
+            return { candidate: true, accepted: true, priority };
           } else {
             parserTrace.push("MADAGASCAR_LEGACY_STABLE_ROUTE:table_unreadable");
             madagascarCadastralProjectedFallbackBlocked = true;
@@ -13372,15 +13393,23 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           reason: getRecognitionVisionErrorCode(earlyCadastralError)
         });
       }
-    }
-
-    if (madagascarCadastralProjectedFallbackBlocked) {
-      if (earlyCadastralPriority.mapTickTakeover || countCoordinateRows(coordinates) > 0) {
+      if (madagascarCadastralProjectedFallbackBlocked) {
+        structuredUtmPriority = null;
+        crsEvidenceShadow = null;
+        explicitUtmEvidenceLock = false;
+        lockedUtmCrsEvidenceShadow = null;
+      }
+      if (madagascarCadastralProjectedFallbackBlocked && (priority.mapTickTakeover || countCoordinateRows(coordinates) > 0)) {
         coordinates = "";
       }
       warning = warning || "检测到马达加斯加矿权网格图疑似包含 Liste_Carrés 表，但未能稳定读取右侧 num / XV / YV 表；已阻止地图边框刻度被误当作 UTM/X-Y 坐标，请重试更清晰原图或裁剪右侧表格区域。";
-      parserTrace.push("MADAGASCAR_CADASTRAL:projected_fallback_blocked");
+      if (madagascarCadastralProjectedFallbackBlocked && !parserTrace.includes("MADAGASCAR_CADASTRAL:projected_fallback_blocked")) {
+        parserTrace.push("MADAGASCAR_CADASTRAL:projected_fallback_blocked");
+      }
+      return { candidate: true, accepted: false, priority };
     }
+
+    await evaluateMadagascarLegacyStableRouteAfterRecognitionUpdate("initial");
 
     if (cadastralGrid.isCadastralGrid) {
       parserTrace.push("CRS_EVIDENCE:skipped_for_madagascar_cadastral");
@@ -14334,7 +14363,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!madagascarCadastralProjectedFallbackBlocked && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -14351,13 +14380,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           coordinates = retryCoordinates;
           usedModel = `${aliyunOcrModel}+complete-retry`;
           warning = extractRecognitionWarning(retryRawText) || warning;
+          await evaluateMadagascarLegacyStableRouteAfterRecognitionUpdate("post_complete_retry");
         }
       } catch (retryError) {
         console.error("阿里云OCR重试失败：", retryError.message || retryError);
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!madagascarCadastralProjectedFallbackBlocked && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -14367,6 +14397,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           coordinates = fallback.coordinates;
           usedModel = `${aliyunOcrModel}+local-ocr-fallback`;
           warning = fallback.warning;
+          await evaluateMadagascarLegacyStableRouteAfterRecognitionUpdate("post_local_ocr_fallback");
         } else if (!warning) {
           warning = "阿里云识别结果较少，请人工核对。";
         }
