@@ -4,7 +4,9 @@ import { buildFinalizedCoordinateVerificationResponse } from "../server/verifica
 import { snapshotPreSuppressionCandidates } from "../server/coordinate-evidence/index.js";
 import {
   buildStructuredUtmPriority,
+  mergeSelectiveDmsReferenceRows,
   mergeStructuredUtmReferenceRows,
+  parseSelectiveDmsReferenceModelText,
   summarizeStructuredUtmTransformationVerification
 } from "../server/utm-intent/structured-projected-priority.js";
 
@@ -243,4 +245,39 @@ test("fail-closed logic remains unchanged", () => {
   assert.equal(response.coordinateResult.state, "BLOCKED_REVIEW");
 });
 
-console.log(`UTM Point-level Verification Observability Regression: ${passed}/12 PASS`);
+test("selective DMS reference reread accepts only verification-improving rows", () => {
+  const priority = buildPriority(rows => rows.map(row => row.point === "13"
+    ? { ...row, longitude: 119 + 30 / 60 + 29.795 / 3600 }
+    : row));
+  const selectiveReferenceRows = parseSelectiveDmsReferenceModelText(JSON.stringify({
+    status: "observed",
+    rows: [{ point: "13", latitude: "2°31'20.840\" S", longitude: "119°30'29.757\" E" }]
+  }));
+  const table = mergeSelectiveDmsReferenceRows(priority.table, selectiveReferenceRows, { shadowIntent });
+  const replacement = table.selectiveDmsReferenceReread.replacements[0];
+  assert.equal(replacement.point, "13");
+  assert.equal(replacement.accepted, true);
+  assert.equal(replacement.reason, "verification_improved");
+  const repaired = buildStructuredUtmPriority({ shadowIntent, table });
+  assert.equal(repaired.accepted, true);
+  assert.equal(repaired.transformationVerification.status, "match");
+});
+
+test("selective DMS reference reread rejects non-improving rows and stays fail-closed", () => {
+  const priority = buildPriority(rows => rows.map(row => row.point === "13"
+    ? { ...row, longitude: 119 + 30 / 60 + 29.795 / 3600 }
+    : row));
+  const selectiveReferenceRows = parseSelectiveDmsReferenceModelText(JSON.stringify({
+    status: "observed",
+    rows: [{ point: "13", latitude: "2°31'20.840\" S", longitude: "119°30'29.895\" E" }]
+  }));
+  const table = mergeSelectiveDmsReferenceRows(priority.table, selectiveReferenceRows, { shadowIntent });
+  const replacement = table.selectiveDmsReferenceReread.replacements[0];
+  assert.equal(replacement.accepted, false);
+  assert.equal(replacement.reason, "verification_not_improved");
+  const repaired = buildStructuredUtmPriority({ shadowIntent, table });
+  assert.equal(repaired.accepted, false);
+  assert.equal(repaired.reason, "transformation_verification_failed");
+});
+
+console.log(`UTM Point-level Verification Observability Regression: ${passed}/14 PASS`);

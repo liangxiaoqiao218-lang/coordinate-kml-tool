@@ -279,6 +279,35 @@ Return strict JSON only:
 }`;
 }
 
+export function buildSelectiveDmsReferenceRereadPrompt(priority = {}) {
+  const mismatches = getStructuredUtmVerificationMismatches(priority);
+  const requested = mismatches.map(row => String(row.point || "").trim()).filter(Boolean).join(", ") || "unknown";
+  return `Verification-guided selective DMS reference reread.
+
+Read ONLY these printed table point labels and their Latitude/Longitude DMS cells: ${requested}.
+
+Target columns:
+- Point / No.
+- Latitude
+- Longitude
+
+Rules:
+- Return only the requested point labels.
+- Copy the printed DMS text exactly, preserving degrees, minutes, seconds, decimals, and hemisphere letters.
+- Do not read or return X/Y, CRS, map legend, or other text.
+- Do not calculate decimal coordinates.
+- Do not infer from UTM, transformed coordinates, geography, neighboring rows, or coordinate ranges.
+- If a requested point row is not clearly readable, omit that row rather than guessing.
+
+Return strict JSON only:
+{
+  "status": "observed" | "none",
+  "rows": [
+    { "point": "requested point label", "latitude": "literal Latitude DMS", "longitude": "literal Longitude DMS" }
+  ]
+}`;
+}
+
 export async function runSelectiveProjectedXyRereadPass({ priority, imageItems = [], invokeVision } = {}) {
   if (typeof invokeVision !== "function") throw new TypeError("runSelectiveProjectedXyRereadPass requires an invokeVision function");
   if (!Array.isArray(imageItems) || imageItems.length === 0) {
@@ -289,6 +318,30 @@ export async function runSelectiveProjectedXyRereadPass({ priority, imageItems =
     imageItems
   });
   return parseStructuredUtmTableModelText(modelText);
+}
+
+export function parseSelectiveDmsReferenceModelText(modelText = "") {
+  const parsed = parseJsonObject(modelText);
+  const rows = (Array.isArray(parsed?.rows) ? parsed.rows : [])
+    .map(normalizeReferenceRow)
+    .filter(Boolean);
+  return {
+    status: rows.length > 0 ? "observed" : "none",
+    rows,
+    rawModelText: ""
+  };
+}
+
+export async function runSelectiveDmsReferenceRereadPass({ priority, imageItems = [], invokeVision } = {}) {
+  if (typeof invokeVision !== "function") throw new TypeError("runSelectiveDmsReferenceRereadPass requires an invokeVision function");
+  if (!Array.isArray(imageItems) || imageItems.length === 0) {
+    throw new TypeError("runSelectiveDmsReferenceRereadPass requires at least one image item");
+  }
+  const modelText = await invokeVision({
+    prompt: buildSelectiveDmsReferenceRereadPrompt(priority),
+    imageItems
+  });
+  return parseSelectiveDmsReferenceModelText(modelText);
 }
 
 function rowVerificationDifference(row, shadowIntent) {
@@ -399,6 +452,65 @@ export function mergeSelectiveProjectedXyRows(referenceTable = {}, xyTable = {},
     selectiveReread: {
       status: replacements.some(item => item.accepted) ? "accepted_partial" : "no_improvement",
       requestedRows: xyRows.length,
+      acceptedRows: replacements.filter(item => item.accepted).length,
+      replacements
+    }
+  };
+}
+
+function hasValidReferenceFormat(row = {}) {
+  const latitudeText = String(row.latitudeText || row.latitude || "").trim();
+  const longitudeText = String(row.longitudeText || row.longitude || "").trim();
+  if (!Number.isFinite(row.referenceLatitude) || !Number.isFinite(row.referenceLongitude)) return false;
+  const latitudeHasHemisphereOrSign = /[NS]/i.test(latitudeText) || /^[+-]/.test(latitudeText);
+  const longitudeHasHemisphereOrSign = /[EW]/i.test(longitudeText) || /^[+-]/.test(longitudeText);
+  return latitudeHasHemisphereOrSign && longitudeHasHemisphereOrSign;
+}
+
+export function mergeSelectiveDmsReferenceRows(referenceTable = {}, dmsReferenceTable = {}, { shadowIntent } = {}) {
+  const referenceRows = Array.isArray(referenceTable.rows) ? referenceTable.rows : [];
+  const dmsRows = (Array.isArray(dmsReferenceTable.rows) ? dmsReferenceTable.rows : [])
+    .map(normalizeReferenceRow)
+    .filter(Boolean);
+  const dmsByPoint = new Map(dmsRows.map(row => [String(row.point), row]));
+  const replacements = [];
+  const rows = referenceRows.map(row => {
+    const dms = dmsByPoint.get(String(row.point));
+    if (!dms) return row;
+    const oldDifference = rowVerificationDifference(row, shadowIntent);
+    const candidate = {
+      ...row,
+      latitudeText: dms.latitudeText,
+      longitudeText: dms.longitudeText,
+      referenceLatitude: dms.referenceLatitude,
+      referenceLongitude: dms.referenceLongitude,
+      referenceSource: "selective_dms_reference_reread",
+      referenceMergeMode: "point_label"
+    };
+    const newDifference = rowVerificationDifference(candidate, shadowIntent);
+    const formatValid = hasValidReferenceFormat(dms);
+    const accepted = formatValid && newDifference < oldDifference;
+    replacements.push({
+      point: String(row.point),
+      accepted,
+      oldDifference,
+      newDifference,
+      reason: !formatValid
+        ? "invalid_dms_reference_format"
+        : accepted
+          ? "verification_improved"
+          : "verification_not_improved"
+    });
+    return accepted ? candidate : row;
+  });
+  return {
+    ...referenceTable,
+    status: rows.length >= 3 ? "observed" : "none",
+    rows,
+    rawModelText: referenceTable.rawModelText || "",
+    selectiveDmsReferenceReread: {
+      status: replacements.some(item => item.accepted) ? "accepted_partial" : "no_improvement",
+      requestedRows: dmsRows.length,
       acceptedRows: replacements.filter(item => item.accepted).length,
       replacements
     }

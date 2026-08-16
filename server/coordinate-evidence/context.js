@@ -214,6 +214,19 @@ function normalizeTransformationVerification(value = {}) {
 function normalizeStructuredUtmTable(value = {}) {
   const table = value.structuredUtmTable || value.structuredUtmPriority || value;
   const verification = table.transformationVerification || {};
+  const dmsReferenceReread = table.dmsReferenceReread && typeof table.dmsReferenceReread === "object"
+    ? Object.freeze({
+        triggered: normalizeBoolean(table.dmsReferenceReread.attempts > 0 || table.dmsReferenceReread.status !== "not_run"),
+        requestedLabels: Object.freeze(sanitizeArray(table.dmsReferenceReread.requestedLabels)),
+        attempts: normalizeCount(table.dmsReferenceReread.attempts),
+        acceptedLabels: Object.freeze(sanitizeArray(table.dmsReferenceReread.acceptedLabels)),
+        rejectedLabels: Object.freeze(sanitizeArray(table.dmsReferenceReread.rejectedLabels)),
+        beforeDifference: normalizeNumber(table.dmsReferenceReread.beforeDifference),
+        afterDifference: normalizeNumber(table.dmsReferenceReread.afterDifference),
+        status: cleanString(table.dmsReferenceReread.status),
+        reason: cleanString(table.dmsReferenceReread.failureReason || table.dmsReferenceReread.reason).slice(0, 120)
+      })
+    : null;
   return Object.freeze({
     accepted: normalizeBoolean(table.accepted),
     reason: cleanString(table.reason),
@@ -223,7 +236,8 @@ function normalizeStructuredUtmTable(value = {}) {
       || table.transformationStatus
       || ""
     ),
-    transformationVerification: normalizeTransformationVerification(verification)
+    transformationVerification: normalizeTransformationVerification(verification),
+    dmsReferenceReread
   });
 }
 

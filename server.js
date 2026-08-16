@@ -15,9 +15,11 @@ import {
   getStructuredUtmVerificationMismatches,
   mergeStructuredUtmTableRows,
   mergeStructuredUtmReferenceRows,
+  mergeSelectiveDmsReferenceRows,
   mergeSelectiveProjectedXyRows,
   mergeProjectedXyRows,
   runProjectedXyOnlyPass,
+  runSelectiveDmsReferenceRereadPass,
   runSelectiveProjectedXyRereadPass,
   runStructuredUtmTablePass,
   summarizeStructuredUtmTransformationVerification
@@ -7395,6 +7397,14 @@ function shouldRunSelectiveProjectedXyReread({ explicitUtmEvidenceLock = false, 
   return getStructuredUtmVerificationMismatches(priority).length > 0;
 }
 
+function shouldRunSelectiveDmsReferenceReread({ explicitUtmEvidenceLock = false, priority = null, table = {}, referenceTable = {} } = {}) {
+  if (!explicitUtmEvidenceLock || priority?.reason !== "transformation_verification_failed") return false;
+  if (hasStructuredUtmCoverageGap(table, referenceTable)) return false;
+  const rows = Array.isArray(table?.rows) ? table.rows : [];
+  if (rows.length < 3 || rows.some(row => !Number.isFinite(row?.easting) || !Number.isFinite(row?.northing))) return false;
+  return getStructuredUtmVerificationMismatches(priority).length > 0;
+}
+
 function normalizeUtmAcquisitionReviewWarning(warning = "", { explicitUtmEvidenceLock = false, structuredUtmAccepted = false } = {}) {
   if (!explicitUtmEvidenceLock || structuredUtmAccepted) return warning;
   const value = String(warning || "");
@@ -13430,7 +13440,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         if (shouldRunSelectiveProjectedXyReread({
           explicitUtmEvidenceLock: explicitConfirmedUtm,
           priority: structuredUtmPriority,
-          table: structuredUtmPriority.table,
+          table: structuredUtmPriority?.table,
           referenceTable: utmReferenceTable
         })) {
           if (tableTiles.length === 0) {
@@ -13499,6 +13509,91 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                 structuredUtmPriority = {
                   ...structuredUtmPriority,
                   selectiveReread
+                };
+              }
+            }
+          }
+        }
+
+        if (shouldRunSelectiveDmsReferenceReread({
+          explicitUtmEvidenceLock: explicitConfirmedUtm,
+          priority: structuredUtmPriority,
+          table: structuredUtmPriority?.table,
+          referenceTable: utmReferenceTable
+        })) {
+          if (tableTiles.length === 0) {
+            tableTiles = await buildProjectedTableVisionTiles(req.file?.buffer);
+          }
+          const selectiveTiles = await buildProjectedCoordinateTableVisionTiles(req.file?.buffer);
+          const mismatchLabels = getStructuredUtmVerificationMismatches(structuredUtmPriority).map(item => item.point);
+          const beforeDifference = structuredUtmPriority?.transformationVerification?.maximumDifference ?? null;
+          parserTrace.push(`UTM_SELECTIVE_DMS_REFERENCE_REREAD:started:${mismatchLabels.join(",")}`);
+          const dmsReferenceReread = {
+            attempts: 0,
+            requestedLabels: mismatchLabels,
+            acceptedLabels: [],
+            rejectedLabels: [],
+            beforeDifference,
+            afterDifference: beforeDifference,
+            status: "not_run"
+          };
+          for (const timeoutMs of [45000, 65000, 90000]) {
+            if (structuredUtmPriority?.reason !== "transformation_verification_failed") break;
+            dmsReferenceReread.attempts += 1;
+            try {
+              const selectiveReferenceRows = await runSelectiveDmsReferenceRereadPass({
+                priority: structuredUtmPriority,
+                imageItems: selectiveTiles.length > 0 ? selectiveTiles : tableTiles.length > 0 ? tableTiles : crsImageItems,
+                invokeVision: async ({ prompt: selectivePrompt, imageItems: selectiveImageItems }) => {
+                  const selectiveResponse = await callAliyunVision({
+                    modelName: aliyunVisionModel,
+                    prompt: selectivePrompt,
+                    imageItems: selectiveImageItems,
+                    temperature: 0,
+                    maxTokens: 700,
+                    timeoutMs
+                  });
+                  return selectiveResponse.choices?.[0]?.message?.content || "";
+                }
+              });
+              const selectiveTable = mergeSelectiveDmsReferenceRows(structuredUtmPriority.table, selectiveReferenceRows, { shadowIntent });
+              const replacements = selectiveTable.selectiveDmsReferenceReread?.replacements || [];
+              const acceptedLabels = replacements.filter(item => item.accepted).map(item => item.point);
+              const rejectedLabels = replacements.filter(item => !item.accepted).map(item => item.point);
+              const nextPriority = blockStructuredUtmCoverageGap(
+                buildStructuredUtmPriority({ shadowIntent, table: selectiveTable }),
+                selectiveTable,
+                utmReferenceTable
+              );
+              dmsReferenceReread.status = selectiveTable.selectiveDmsReferenceReread?.status || "completed";
+              dmsReferenceReread.acceptedLabels = [...new Set([
+                ...dmsReferenceReread.acceptedLabels,
+                ...acceptedLabels
+              ])];
+              dmsReferenceReread.rejectedLabels = [...new Set([
+                ...dmsReferenceReread.rejectedLabels,
+                ...rejectedLabels
+              ])];
+              dmsReferenceReread.afterDifference = nextPriority?.transformationVerification?.maximumDifference ?? dmsReferenceReread.afterDifference;
+              structuredUtmPriority = {
+                ...nextPriority,
+                dmsReferenceReread
+              };
+              parserTrace.push(acceptedLabels.length > 0
+                ? `UTM_SELECTIVE_DMS_REFERENCE_REREAD:accepted:${acceptedLabels.join(",")}`
+                : "UTM_SELECTIVE_DMS_REFERENCE_REREAD:no_improvement");
+              if (structuredUtmPriority?.reason === "transformation_verification_failed") {
+                const remainingLabels = getStructuredUtmVerificationMismatches(structuredUtmPriority).map(item => item.point);
+                parserTrace.push(`UTM_SELECTIVE_DMS_REFERENCE_REREAD:remaining:${remainingLabels.join(",")}`);
+              }
+            } catch (selectiveError) {
+              dmsReferenceReread.status = "failed";
+              dmsReferenceReread.failureReason = selectiveError?.reason || selectiveError?.code || selectiveError?.message || "unknown";
+              parserTrace.push(`UTM_SELECTIVE_DMS_REFERENCE_REREAD:attempt_failed:${dmsReferenceReread.attempts}`);
+              if (dmsReferenceReread.attempts >= 2) {
+                structuredUtmPriority = {
+                  ...structuredUtmPriority,
+                  dmsReferenceReread
                 };
               }
             }

@@ -9,9 +9,11 @@ import {
   buildStructuredUtmPriority,
   getStructuredUtmVerificationMismatches,
   mergeProjectedXyRows,
+  mergeSelectiveDmsReferenceRows,
   mergeSelectiveProjectedXyRows,
   mergeStructuredUtmReferenceRows,
   runProjectedXyOnlyPass,
+  runSelectiveDmsReferenceRereadPass,
   runSelectiveProjectedXyRereadPass,
   runStructuredUtmTablePass
 } from "../server/utm-intent/structured-projected-priority.js";
@@ -172,6 +174,28 @@ for (const testCase of cases) {
               rows: testCase.referenceRows.map(([point, latitude, longitude]) => ({ point, latitude, longitude }))
             }, { allowVerifiedIndexMerge: true });
           }
+          priority = buildStructuredUtmPriority({ shadowIntent: crs.shadowIntent, table });
+        } catch {
+          // Try the next bounded timeout window; final assertion below keeps this fail-closed.
+        }
+      }
+    }
+    if (priority?.reason === "transformation_verification_failed") {
+      const tableTiles = await buildProjectedCoordinateTableVisionTiles(buffer);
+      for (const timeoutMs of [45000, 65000, 90000]) {
+        if (priority?.reason !== "transformation_verification_failed") break;
+        try {
+          const selectiveReferenceRows = await runSelectiveDmsReferenceRereadPass({
+            priority,
+            imageItems: tableTiles.length > 0 ? tableTiles : imageItems,
+            invokeVision: args => invokeAliyunVision(config, {
+              ...args,
+              model: config.model,
+              maxTokens: 700,
+              timeoutMs
+            })
+          });
+          table = mergeSelectiveDmsReferenceRows(priority.table, selectiveReferenceRows, { shadowIntent: crs.shadowIntent });
           priority = buildStructuredUtmPriority({ shadowIntent: crs.shadowIntent, table });
         } catch {
           // Try the next bounded timeout window; final assertion below keeps this fail-closed.

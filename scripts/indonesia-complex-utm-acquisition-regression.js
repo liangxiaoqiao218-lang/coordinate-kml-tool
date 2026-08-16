@@ -7,9 +7,11 @@ import {
   buildStructuredUtmPriority,
   getStructuredUtmVerificationMismatches,
   mergeProjectedXyRows,
+  mergeSelectiveDmsReferenceRows,
   mergeSelectiveProjectedXyRows,
   mergeStructuredUtmReferenceRows,
   mergeStructuredUtmTableRows,
+  parseSelectiveDmsReferenceModelText,
   parseStructuredUtmTableModelText
 } from "../server/utm-intent/structured-projected-priority.js";
 import { transformUtmWgs84Point } from "../server/utm-intent/utm-wgs84-transform.js";
@@ -58,7 +60,11 @@ const cases = [
     recoveryExpected: false,
     selectiveRereadExpected: true,
     expectedInitialCorrectRows: 13,
-    expectedMismatchLabels: ["3", "4", "6"],
+    expectedMismatchLabels: ["3", "4", "6", "13"],
+    expectedXyAcceptedLabels: ["3", "4", "6"],
+    expectedPostXyMismatchLabels: ["13"],
+    dmsReferenceRereadExpected: true,
+    expectedDmsAcceptedLabels: ["13"],
     initial: "mismatched",
     rows: [
       [1, 778807.293, 9721476.737, -2.517445833, 119.507172222],
@@ -100,6 +106,27 @@ const cases = [
       [3, 778982.700, 9721182.351],
       [4, 778855.308, 9721181.948],
       [6, 778980.724, 9721107.010]
+    ],
+    initialReferenceRows: [
+      [1, 778807.293, 9721476.737, -2.517445833, 119.507172222],
+      [2, 778981.768, 9721477.288, -2.517437778, 119.508740278],
+      [3, 778982.700, 9721182.351, -2.520103611, 119.508753611],
+      [4, 778855.308, 9721181.948, -2.520109444, 119.507608889],
+      [5, 778855.543, 9721107.284, -2.520784167, 119.507612222],
+      [6, 778980.724, 9721107.010, -2.520784444, 119.508737222],
+      [7, 778980.920, 9720910.990, -2.522556111, 119.508742500],
+      [8, 779100.477, 9720911.109, -2.522553056, 119.509816667],
+      [9, 779100.599, 9720788.271, -2.523663333, 119.509820000],
+      [10, 778950.926, 9720787.948, -2.523668889, 119.508475000],
+      [11, 778950.926, 9720833.787, -2.523254444, 119.508474167],
+      [12, 778927.907, 9720833.787, -2.523255000, 119.508267222],
+      [13, 778927.907, 9720922.219, -2.522455556, 119 + 30 / 60 + 29.795 / 3600],
+      [14, 778906.895, 9720922.219, -2.522456111, 119.508076944],
+      [15, 778906.895, 9721078.633, -2.521042222, 119.508074167],
+      [16, 778807.082, 9721078.633, -2.521043889, 119.507177222]
+    ],
+    selectiveReferenceRows: [
+      ["13", "2°31'20.840\" S", "119°30'29.757\" E"]
     ]
   }
 ];
@@ -138,6 +165,17 @@ function makeReferenceTable(rows) {
       };
     })
   };
+}
+
+function makeSelectiveReferenceModelText(rows = []) {
+  return JSON.stringify({
+    status: rows.length > 0 ? "observed" : "none",
+    rows: rows.map(([point, latitude, longitude]) => ({
+      point: String(point),
+      latitude: String(latitude),
+      longitude: String(longitude)
+    }))
+  });
 }
 
 function hasCoverageGap(priority, referenceTable) {
@@ -189,7 +227,7 @@ function assertPointCoverage(priority, expectedRows) {
 let passed = 0;
 for (const testCase of cases) {
   await access(path.join(fixtureRoot, testCase.fixture));
-  const referenceTable = makeReferenceTable(testCase.rows);
+  const referenceTable = makeReferenceTable(testCase.initialReferenceRows || testCase.rows);
   const initialRows = testCase.initialRows || testCase.rows;
   const initialStructured = parseStructuredUtmTableModelText(
     testCase.initial === "complete"
@@ -226,6 +264,9 @@ for (const testCase of cases) {
     && mismatchLabels.length > 0;
 
   let acceptedReplacementLabels = [];
+  let dmsReferenceRereadTriggered = false;
+  let dmsAcceptedLabels = [];
+  let postXyMismatchLabels = [];
   if (selectiveRereadTriggered) {
     const selectiveRows = parseStructuredUtmTableModelText(makeModelText(testCase.selectiveRows || [], { includeReference: false }));
     table = mergeSelectiveProjectedXyRows(priority.table, selectiveRows, { shadowIntent });
@@ -234,16 +275,41 @@ for (const testCase of cases) {
       .map(item => item.point);
     table = mergeStructuredUtmReferenceRows(table, referenceTable, { allowVerifiedIndexMerge: true });
     priority = buildPriority(table, referenceTable);
+    postXyMismatchLabels = getStructuredUtmVerificationMismatches(priority).map(item => item.point);
+  }
+
+  dmsReferenceRereadTriggered = priority?.reason === "transformation_verification_failed"
+    && !hasCoverageGap(priority, referenceTable)
+    && getStructuredUtmVerificationMismatches(priority).length > 0;
+
+  if (dmsReferenceRereadTriggered) {
+    const selectiveReferenceRows = parseSelectiveDmsReferenceModelText(makeSelectiveReferenceModelText(testCase.selectiveReferenceRows || []));
+    table = mergeSelectiveDmsReferenceRows(priority.table, selectiveReferenceRows, { shadowIntent });
+    dmsAcceptedLabels = (table.selectiveDmsReferenceReread?.replacements || [])
+      .filter(item => item.accepted)
+      .map(item => item.point);
+    priority = buildPriority(table, referenceTable);
   }
 
   assert.equal(recoveryTriggered, testCase.recoveryExpected, `${testCase.name} recovery trigger mismatch`);
   assert.equal(selectiveRereadTriggered, Boolean(testCase.selectiveRereadExpected), `${testCase.name} selective reread trigger mismatch`);
+  assert.equal(dmsReferenceRereadTriggered, Boolean(testCase.dmsReferenceRereadExpected), `${testCase.name} DMS reference reread trigger mismatch`);
   if (testCase.expectedInitialCorrectRows) {
     assert.equal(initialCorrectRows, testCase.expectedInitialCorrectRows, `${testCase.name} initial correct row count mismatch`);
   }
   if (testCase.expectedMismatchLabels) {
     assert.deepEqual(mismatchLabels, testCase.expectedMismatchLabels, `${testCase.name} mismatch labels mismatch`);
-    assert.deepEqual(acceptedReplacementLabels, testCase.expectedMismatchLabels, `${testCase.name} accepted labels mismatch`);
+    assert.deepEqual(
+      acceptedReplacementLabels,
+      testCase.expectedXyAcceptedLabels || testCase.expectedMismatchLabels,
+      `${testCase.name} accepted labels mismatch`
+    );
+  }
+  if (testCase.expectedPostXyMismatchLabels) {
+    assert.deepEqual(postXyMismatchLabels, testCase.expectedPostXyMismatchLabels, `${testCase.name} post-X/Y mismatch labels mismatch`);
+  }
+  if (testCase.expectedDmsAcceptedLabels) {
+    assert.deepEqual(dmsAcceptedLabels, testCase.expectedDmsAcceptedLabels, `${testCase.name} DMS accepted labels mismatch`);
   }
   assert.equal(priority?.accepted, true, `${testCase.name} priority must be accepted`);
   assert.equal(priority.typedUtmIntent.zone, 50);
@@ -276,9 +342,12 @@ for (const testCase of cases) {
     maximumDifference: priority.transformationVerification.maximumDifference,
     recoveryTriggered,
     selectiveRereadTriggered,
+    dmsReferenceRereadTriggered,
     initialCorrectRows,
     mismatchedLabels: mismatchLabels,
     acceptedReplacementLabels,
+    postXyMismatchLabels,
+    dmsAcceptedLabels,
     candidate: "verified_utm_transformation",
     shadowWinner: shadowEvidenceDecision.winnerEvidenceType
   }));
