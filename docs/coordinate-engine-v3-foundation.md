@@ -60,6 +60,45 @@ A recognizer must not call another recognizer's provider acquisition, mutate
 another recognizer's state, or allow generic fallback to override a clear type
 match.
 
+## Isolated runner
+
+The V3 runner is internal-only and remains disconnected from `server.js`,
+`index.html`, public API routes, OCR, Vision, KML download, confirmation,
+migration, and V2 arbitration.
+
+Runner responsibilities:
+
+1. Receive input and context.
+2. Create or consume a V3 latency budget.
+3. Read dispatchable recognizers from the registry.
+4. Call `canHandle`.
+5. Classify dispatch as `NO_MATCH`, `MATCHED`, or `AMBIGUOUS`.
+6. For one match, call `recognize`, `normalize`, and optional `verify`.
+7. Return the recognizer's normalized result and verification metadata.
+
+Dispatch rules:
+
+- `0` matching recognizers -> `NO_MATCH`.
+- `1` matching recognizer -> `MATCHED`.
+- `>1` matching recognizers -> `AMBIGUOUS`, with candidate recognizer IDs.
+- The runner does not automatically choose a winner for ambiguous matches.
+- `NOT_PORTED` recognizers are not dispatched.
+- `IMPLEMENTED` and future `STABLE` recognizers may be dispatched inside V3.
+
+Deadline behavior:
+
+- If the hard deadline has already expired before dispatch, return
+  `DEADLINE_EXCEEDED`.
+- Do not call recognizers after an expired runner deadline.
+- Do not start a global retry chain.
+
+Error isolation:
+
+- A recognizer `canHandle` error is sanitized and does not crash the runner.
+- A selected recognizer error is returned as sanitized runner metadata.
+- Raw provider payloads, prompts, images, filesystem paths, and credentials are
+  not exposed.
+
 ## Latency contract
 
 - Target: `30000ms`

@@ -6,7 +6,9 @@ import {
   validateNormalizedCoordinateResult,
 } from "./contracts.js";
 import { createLatencyBudget, allocateRecognizerBudget } from "./latency-budget.js";
+import { createRecognizerContract } from "./recognizer-contract.js";
 import { createDefaultRecognizerRegistry, getRecognizerRegistrySummary, validateRecognizerRegistry } from "./registry.js";
+import { runCoordinateEngineV3, V3_RUNNER_STATUS } from "./runner.js";
 import {
   canHandleWgs84Decimal,
   normalizeWgs84Decimal,
@@ -35,40 +37,23 @@ export async function recognizeWithIsolatedRecognizers(input = {}, {
     });
   }
 
-  for (const recognizer of registry) {
-    if (recognizer.portStatus !== RECOGNIZER_PORT_STATUS.STABLE) continue;
-    if (!recognizer.canHandle(input, { latencyBudget })) continue;
-    const childBudget = allocateRecognizerBudget(latencyBudget, recognizer.providerBudgetMs || latencyBudget.targetMs);
-    const recognized = await recognizer.recognize(input, { latencyBudget: childBudget });
-    const normalized = recognizer.normalize(recognized, { input });
-    const verification = await recognizer.verify(normalized, { input });
-    return Object.freeze({
-      handled: true,
-      recognizerId: recognizer.recognizerId,
-      coordinateType: recognizer.coordinateType,
-      normalized,
-      verification,
-    });
-  }
-
-  return Object.freeze({
-    handled: false,
-    reason: "no_stable_recognizer_matched",
-    registry: getRecognizerRegistrySummary(registry),
-  });
+  return runCoordinateEngineV3(input, { registry, latencyBudget });
 }
 
 export {
   allocateRecognizerBudget,
   createDefaultRecognizerRegistry,
   createLatencyBudget,
+  createRecognizerContract,
   createNormalizedCoordinateResult,
   createWarningMetadata,
   getRecognizerRegistrySummary,
+  runCoordinateEngineV3,
   RECOGNIZER_PORT_STATUS,
   RECOGNIZER_TYPES,
   validateNormalizedCoordinateResult,
   validateRecognizerRegistry,
+  V3_RUNNER_STATUS,
   canHandleWgs84Decimal,
   normalizeWgs84Decimal,
   recognizeWgs84Decimal,
