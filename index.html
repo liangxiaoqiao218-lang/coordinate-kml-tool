@@ -262,21 +262,21 @@
 
     .company-foundation {
       width: calc(100% - 8px);
-      margin: 32px 4px 0;
+      margin: 38px 4px 0;
       padding: 0 2px;
       border: 0;
       border-radius: 0;
       background: transparent;
       box-shadow: none;
       color: #64748b;
-      font-size: 12.5px;
-      line-height: 1.65;
+      font-size: 12px;
+      line-height: 1.7;
     }
 
     .company-foundation h2 {
-      margin: 0 0 7px;
-      color: #64748b;
-      font-size: 13px;
+      margin: 0 0 8px;
+      color: #526274;
+      font-size: 12.5px;
       font-weight: 700;
     }
 
@@ -4093,17 +4093,17 @@
     .site-footer {
       width: min(1060px, calc(100% - 40px));
       margin: auto auto 0;
-      padding: 16px 0 0;
+      padding: 18px 0 0;
       border-top: 1px solid rgba(148, 163, 184, 0.2);
       color: #7b8797;
       font-size: 11px;
-      line-height: 1.6;
+      line-height: 1.65;
     }
 
     .site-footer-inner {
       display: grid;
-      grid-template-columns: minmax(0, 1.5fr) minmax(250px, 1fr);
-      gap: 20px 32px;
+      grid-template-columns: minmax(0, 1.55fr) minmax(250px, 0.85fr);
+      gap: 24px 40px;
     }
 
     .site-footer p {
@@ -4111,18 +4111,32 @@
     }
 
     .site-footer p + p {
-      margin-top: 5px;
+      margin-top: 7px;
     }
 
     .site-footer-brand {
-      color: #64748b;
+      color: #526274;
+      font-size: 11.5px;
       font-weight: 700;
+    }
+
+    .site-footer-address {
+      max-width: 620px;
+    }
+
+    .site-footer-legal {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      justify-content: space-between;
     }
 
     .site-footer-filing {
       display: flex;
       flex-wrap: wrap;
-      gap: 4px 14px;
+      gap: 3px 14px;
+      color: #6f7c8c;
+      font-size: 10.75px;
     }
 
     .site-footer a {
@@ -4136,11 +4150,12 @@
     }
 
     .site-disclaimer {
-      margin-top: 12px;
-      padding-top: 12px;
+      margin-top: 14px;
+      padding-top: 10px;
       border-top: 1px solid rgba(148, 163, 184, 0.18);
       color: #7b8797;
       font-size: 10.5px;
+      line-height: 1.7;
     }
 
     .public-security-filing {
@@ -4150,14 +4165,37 @@
     @media (max-width: 640px) {
       .company-foundation {
         width: 100%;
-        margin: 26px 0 0;
+        margin: 32px 0 0;
         padding: 0 2px;
-        line-height: 1.6;
+        line-height: 1.7;
       }
 
       .site-footer-inner {
         grid-template-columns: 1fr;
-        gap: 12px;
+        gap: 18px;
+      }
+
+      .site-footer {
+        width: calc(100% - 32px);
+        padding-top: 16px;
+      }
+
+      .site-footer p + p {
+        margin-top: 8px;
+      }
+
+      .site-footer-contact {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 10px;
+      }
+
+      .site-footer-contact .contact-item {
+        white-space: nowrap;
+      }
+
+      .site-footer-filing {
+        gap: 4px 12px;
       }
     }
 
@@ -4214,7 +4252,7 @@
 
       <section class="company-foundation" aria-labelledby="aboutGeoKitLab">
         <h2 id="aboutGeoKitLab">关于 GeoKit Lab</h2>
-        <p>GeoKit Lab 是深圳萨赫勒数字科技有限公司旗下的地理空间工具品牌，提供坐标转换、KML 生成、地图分析及相关地理信息处理工具。</p>
+        <p>深圳萨赫勒数字科技有限公司旗下的地理空间工具品牌，提供坐标转换、KML 生成与地图分析工具。</p>
       </section>
 
     </section>
@@ -4601,17 +4639,17 @@ Au值 = 纯度 × 10 后取整数</div>
   </main>
   <footer class="site-footer" aria-label="GeoKit Lab 公司与备案信息">
     <div class="site-footer-inner">
-      <div>
+      <div class="site-footer-company">
         <p class="site-footer-brand">© 2026 GeoKit Lab · 深圳萨赫勒数字科技有限公司</p>
-        <p>地址：广东省深圳市南山区粤海街道粤桂社区白石路3818号阳光粤海花园二期3栋2019</p>
-        <p class="site-footer-contact">电话：<a href="tel:18677101811">18677101811</a> · 邮箱：<a href="mailto:464115177@qq.com">464115177@qq.com</a></p>
+        <p class="site-footer-address">地址：广东省深圳市南山区粤海街道粤桂社区白石路3818号阳光粤海花园二期3栋2019</p>
+        <p class="site-footer-contact"><span class="contact-item">电话：<a href="tel:18677101811">18677101811</a></span><span class="contact-item">邮箱：<a href="mailto:464115177@qq.com">464115177@qq.com</a></span></p>
       </div>
-      <div>
+      <div class="site-footer-legal">
         <p class="site-footer-filing">
           <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026099318号-1</a>
           <span class="public-security-filing">公网安备：待备案后补充</span>
         </p>
-        <p class="site-disclaimer">GeoKit Lab 提供的工具及分析结果仅作为数据处理和辅助分析参考，具体业务决策请结合实际情况综合判断。</p>
+        <p class="site-disclaimer">本站工具及分析结果仅供数据处理和辅助分析参考，业务决策请结合实际情况综合判断。</p>
       </div>
     </div>
   </footer>
@@ -5091,7 +5129,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function addVersionStamp() {
       const stamp = document.createElement("div");
       stamp.className = "version-stamp";
-      stamp.textContent = `GeoKit Lab ${APP_VERSION}`;
+      stamp.textContent = APP_VERSION;
       document.body.appendChild(stamp);
     }
 
