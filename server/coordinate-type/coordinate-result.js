@@ -40,7 +40,11 @@ function isHandwrittenDmsResult(model = {}) {
 }
 
 function classifyCoordinateResult(model = {}) {
-  if (isVerifiedUtmResult(model)) {
+  if (
+    isVerifiedUtmResult(model)
+    && model.confirmationStatus !== "awaiting_confirmation"
+    && model.confirmationStatus !== "required"
+  ) {
     return COORDINATE_RESULT_STATE.AUTO_EXPORT;
   }
 

@@ -27,7 +27,7 @@ function assertState(name, payload, expectedState) {
   return result;
 }
 
-test("Indonesia02 verified UTM maps to AUTO_EXPORT without changing legacy fields", () => {
+test("Indonesia02 verified UTM maps to CONFIRM_REQUIRED until accepted", () => {
   const finalized = finalizeCoordinateResponse({
     coordinateType: "utm_projected_xy",
     precisionMode: "utm-projected-x-y",
@@ -49,10 +49,11 @@ test("Indonesia02 verified UTM maps to AUTO_EXPORT without changing legacy field
 
   assert.equal(finalized.confirmationStatus, "awaiting_confirmation", "legacy confirmation remains unchanged");
   assert.equal(finalized.kml_ready, false, "legacy kml_ready remains unchanged");
-  assert.equal(finalized.coordinateResult.state, "AUTO_EXPORT");
+  assert.equal(finalized.coordinateResult.state, "CONFIRM_REQUIRED");
   assert.equal(finalized.coordinateResult.coordinate.type, "utm_projected_xy");
   assert.equal(finalized.coordinateResult.coordinate.precision, "utm-projected-x-y");
-  assert.equal(finalized.coordinateResult.kml.ready, true);
+  assert.equal(finalized.coordinateResult.kml.ready, false);
+  assert.equal(finalized.coordinateResult.review.canUserConfirm, true);
 });
 
 test("Indonesia03 UTM review maps to BLOCKED_REVIEW", () => {

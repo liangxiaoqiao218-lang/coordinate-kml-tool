@@ -74,7 +74,9 @@ test("Verified UTM ignores generic engine review", () => {
   assert.equal(finalized.requires_review, false);
   assert.equal(finalized.confirmationStatus, "awaiting_confirmation");
   assert.equal(finalized.qualityGateStatus, "passed");
-  assert.equal(finalized.coordinateResult.state, "AUTO_EXPORT");
+  assert.equal(finalized.coordinateResult.state, "CONFIRM_REQUIRED");
+  assert.equal(finalized.coordinateResult.kml.ready, false);
+  assert.equal(finalized.coordinateResult.review.canUserConfirm, true);
 });
 
 test("MGRS ignores generic engine review", () => {

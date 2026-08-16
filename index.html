@@ -4890,6 +4890,8 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeCoordinateEngineV2 = null;
     let activeCoordinateArbitration = null;
     let activeCoordinateResult = null;
+    let activeReviewSummary = null;
+    let activeReverificationContext = null;
     let activeRecognitionSummaryMeta = null;
     let currentRecognitionSession = loadRecognitionSession();
     const CRS_CONFIRMATION_STATUS = Object.freeze({
@@ -6577,6 +6579,149 @@ Au值 = 纯度 × 10 后取整数</div>
       list.append(term, detail);
     }
 
+    function getActiveReviewSummary() {
+      return activeReviewSummary || activeRecognitionSummaryMeta?.reviewSummary || null;
+    }
+
+    function getActiveReverificationContext() {
+      return activeReverificationContext || activeRecognitionSummaryMeta?.reverificationContext || null;
+    }
+
+    function getCurrentProjectedRowsForReverification() {
+      return String(input?.value || "")
+        .split(/\r?\n/)
+        .map((line, index) => {
+          const pair = extractProjectedNumberPair(line.trim());
+          return pair ? {
+            point: String(index + 1),
+            x: Number(pair[0]),
+            y: Number(pair[1])
+          } : null;
+        })
+        .filter(row => row && Number.isFinite(row.x) && Number.isFinite(row.y));
+    }
+
+    function getReviewConfirmationRequestPayload() {
+      const context = getActiveReverificationContext();
+      const crs = context?.crs || activeCrsConfirmationState.intent || null;
+      const referenceRows = Array.isArray(context?.referenceRows) ? context.referenceRows : [];
+      return {
+        coordinates: input?.value || "",
+        projectedRows: getCurrentProjectedRowsForReverification(),
+        crs,
+        referenceRows
+      };
+    }
+
+    function hasReverificationContract() {
+      const payload = getReviewConfirmationRequestPayload();
+      return Boolean(
+        payload.crs
+        && Array.isArray(payload.referenceRows)
+        && payload.referenceRows.length > 0
+        && Array.isArray(payload.projectedRows)
+        && payload.projectedRows.length > 0
+      );
+    }
+
+    function focusReviewPoint(pointLabel) {
+      const label = String(pointLabel || "").trim();
+      const lines = String(input?.value || "").split(/\r?\n/);
+      const index = Math.max(0, Number(label) - 1);
+      const targetIndex = Number.isInteger(index) && index >= 0 && index < lines.length ? index : 0;
+      const start = lines.slice(0, targetIndex).join("\n").length + (targetIndex > 0 ? 1 : 0);
+      const end = start + (lines[targetIndex] || "").length;
+      input.focus();
+      try {
+        input.setSelectionRange(start, end);
+      } catch (_) {
+        // Selection is a best-effort UX aid only.
+      }
+      showMessage(`请修改 Point ${label || targetIndex + 1} 的 X/Y 坐标，然后点击“重新验证”。`, false, 6000);
+    }
+
+    function applyCoordinateVerificationResponse(data = {}) {
+      activeCoordinatePrecisionMode = data.precisionMode || "";
+      activeCoordinateArbitration = data.coordinateArbitration || null;
+      activeCoordinateResult = data.coordinateResult || null;
+      activeReviewSummary = data.reviewSummary || null;
+      activeReverificationContext = data.reverificationContext || activeReverificationContext;
+      activeRecognitionSummaryMeta = {
+        ...(activeRecognitionSummaryMeta || {}),
+        precisionMode: data.precisionMode || activeRecognitionSummaryMeta?.precisionMode || "",
+        coordinateType: data.coordinateType || activeRecognitionSummaryMeta?.coordinateType || "",
+        confirmationStatus: data.confirmationStatus || data.coordinateArbitration?.confirmationStatus || "",
+        qualityGateStatus: data.qualityGateStatus || data.coordinateArbitration?.qualityGateStatus || "",
+        kml_ready: data.kml_ready,
+        coordinateArbitrationReason: data.coordinateArbitration?.reason || "",
+        coordinateArbitration: data.coordinateArbitration || null,
+        coordinateResult: data.coordinateResult || null,
+        reviewSummary: data.reviewSummary || null,
+        reverificationContext: data.reverificationContext || activeReverificationContext,
+        requiresReview: Boolean(data.requires_review)
+      };
+      if (data.coordinates) {
+        rememberState();
+        input.value = data.coordinates;
+      }
+      refreshKmlButtonState();
+      refreshRecognitionSummaryState();
+    }
+
+    async function reverifyCoordinateResultFromReview() {
+      if (!hasReverificationContract()) {
+        showKmlFailure({
+          code: "REVERIFY_CONTEXT_MISSING",
+          title: "缺少重新验证信息",
+          reason: "当前识别结果缺少安全的 CRS 或参考经纬度信息，无法仅凭前端状态重新验证。",
+          suggestion: "请重新识别图片，或确认图纸坐标系和参考经纬度后再试。"
+        });
+        return;
+      }
+      showRecognitionProgress("正在重新验证坐标...", "loading");
+      const response = await fetch("/api/reverify-coordinate-result", {
+        method: "POST",
+        headers: getSourceHeaders({
+          "Content-Type": "application/json",
+          "x-visitor-id": currentVisitorId
+        }),
+        body: JSON.stringify(getReviewConfirmationRequestPayload())
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showKmlFailure({
+          code: data.error || "REVERIFY_FAILED",
+          title: "重新验证失败",
+          reason: data.message || "服务器未能重新验证当前坐标。",
+          suggestion: "请检查异常点坐标和 CRS 后重试。"
+        });
+        return;
+      }
+      applyCoordinateVerificationResponse(data);
+      if (data.qualityGateStatus === "passed" && data.confirmationStatus === "awaiting_confirmation") {
+        activeCrsConfirmationState = createCrsConfirmationState({
+          status: CRS_CONFIRMATION_STATUS.DETECTED,
+          intent: data.reverificationContext?.crs || getActiveReverificationContext()?.crs || activeCrsConfirmationState.intent,
+          recognitionSessionId: currentRecognitionSession?.id || activeCrsConfirmationState.recognitionSessionId || ""
+        });
+        renderCrsConfirmationPanel();
+        showMessage("坐标及坐标系验证通过，请确认后生成 KML。", false, 6000);
+      } else {
+        activeCrsConfirmationState = createCrsConfirmationState({
+          status: CRS_CONFIRMATION_STATUS.BLOCKED,
+          intent: getActiveReverificationContext()?.crs || activeCrsConfirmationState.intent,
+          recognitionSessionId: currentRecognitionSession?.id || activeCrsConfirmationState.recognitionSessionId || ""
+        });
+        renderCrsConfirmationPanel();
+        showKmlFailure({
+          code: "REVERIFY_REVIEW_REQUIRED",
+          title: "仍需核对坐标",
+          reason: "重新验证后仍存在坐标差异，不能生成 KML。",
+          suggestion: "请继续核对异常点后再次重新验证。"
+        });
+      }
+    }
+
     function renderCrsConfirmationPanel() {
       const panel = document.getElementById("crsConfirmationPanel");
       if (!panel) return;
@@ -6622,6 +6767,47 @@ Au值 = 纯度 × 10 后取整数</div>
           ? "系统已识别图片中的坐标信息。请确认识别结果无误后继续生成 KML。"
           : "识别结果是 X/Y 平面坐标，但缺少完整坐标信息。请在高级设置中选择图纸标注的坐标系。";
       panel.appendChild(note);
+
+      const reviewSummary = getActiveReviewSummary();
+      if (state.status === CRS_CONFIRMATION_STATUS.BLOCKED && reviewSummary?.status === "review_required") {
+        const reviewPanel = document.createElement("div");
+        reviewPanel.className = "crs-confirmation-review";
+        const title = document.createElement("p");
+        const mismatchCount = Array.isArray(reviewSummary.points) ? reviewSummary.points.length : 0;
+        title.className = "crs-confirmation-note";
+        title.textContent = `识别到 ${mismatchCount || 1} 个需要核对的坐标。`;
+        reviewPanel.appendChild(title);
+
+        const list = document.createElement("dl");
+        list.className = "crs-confirmation-grid";
+        (Array.isArray(reviewSummary.points) ? reviewSummary.points : []).forEach(point => {
+          appendCrsDetailRow(list, `Point ${point.point}`, `疑似 ${point.suspectedField || "X/Y"} 不一致`);
+          appendCrsDetailRow(list, "当前 X", point.observed?.x ?? "—");
+          appendCrsDetailRow(list, "当前 Y", point.observed?.y ?? "—");
+          appendCrsDetailRow(list, "参考纬度", point.reference?.latitude ?? "—");
+          appendCrsDetailRow(list, "参考经度", point.reference?.longitude ?? "—");
+          appendCrsDetailRow(list, "最大差异", point.maximumDifference ?? "—");
+        });
+        reviewPanel.appendChild(list);
+
+        const actions = document.createElement("div");
+        actions.className = "crs-confirmation-actions";
+        const editButton = document.createElement("button");
+        editButton.type = "button";
+        editButton.className = "crs-confirm-primary";
+        editButton.textContent = "修改异常坐标";
+        editButton.addEventListener("click", () => focusReviewPoint(reviewSummary.points?.[0]?.point));
+        actions.appendChild(editButton);
+
+        const reverifyButton = document.createElement("button");
+        reverifyButton.type = "button";
+        reverifyButton.className = "crs-confirm-primary";
+        reverifyButton.textContent = "重新验证";
+        reverifyButton.addEventListener("click", reverifyCoordinateResultFromReview);
+        actions.appendChild(reverifyButton);
+        reviewPanel.appendChild(actions);
+        panel.appendChild(reviewPanel);
+      }
 
       if (state.intent) {
         const technicalDetails = document.createElement("details");
@@ -6783,7 +6969,7 @@ Au值 = 纯度 × 10 后取整数</div>
       return true;
     }
 
-    function confirmCrsIntent(intent) {
+    async function confirmCrsIntent(intent) {
       const groups = getConfirmedUtmCoordinateGroups(intent);
       if (groups.length === 0 || groups[0].length === 0) {
         showKmlFailure({
@@ -6793,6 +6979,28 @@ Au值 = 纯度 × 10 后取整数</div>
           suggestion: "请核对 UTM 分区、南北半球、坐标基准和坐标列顺序。"
         });
         return false;
+      }
+
+      if (hasReverificationContract()) {
+        const response = await fetch("/api/confirm-coordinate-result", {
+          method: "POST",
+          headers: getSourceHeaders({
+            "Content-Type": "application/json",
+            "x-visitor-id": currentVisitorId
+          }),
+          body: JSON.stringify(getReviewConfirmationRequestPayload())
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.kml_ready !== true) {
+          showKmlFailure({
+            code: data.error || "CONFIRMATION_REQUIRES_VERIFICATION_PASS",
+            title: "确认失败",
+            reason: data.message || "服务器未确认当前坐标通过验证，不能生成 KML。",
+            suggestion: "请先点击“重新验证”，通过后再确认生成 KML。"
+          });
+          return false;
+        }
+        applyCoordinateVerificationResponse(data);
       }
 
       setInternalKmlSourceFromGroups(groups);
@@ -6812,12 +7020,12 @@ Au值 = 纯度 × 10 后取整数</div>
       return true;
     }
 
-    function confirmDetectedCrsIntent() {
+    async function confirmDetectedCrsIntent() {
       if (!activeCrsConfirmationState.intent) return;
-      confirmCrsIntent(activeCrsConfirmationState.intent);
+      await confirmCrsIntent(activeCrsConfirmationState.intent);
     }
 
-    function confirmManualCrsSelection(event) {
+    async function confirmManualCrsSelection(event) {
       event.preventDefault();
       const zone = Number(document.getElementById("manualCrsZone")?.value);
       const hemisphere = String(document.getElementById("manualCrsHemisphere")?.value || "");
@@ -6829,7 +7037,7 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      confirmCrsIntent({
+      await confirmCrsIntent({
         coordinateType: "utm_projected_xy",
         datum,
         zone,
@@ -6869,7 +7077,13 @@ Au值 = 纯度 × 10 后取整数</div>
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
       activeCoordinateResult = null;
-      activeCrsConfirmationState = createCrsConfirmationState();
+      activeCrsConfirmationState = activeReverificationContext
+        ? createCrsConfirmationState({
+            status: CRS_CONFIRMATION_STATUS.BLOCKED,
+            intent: activeReverificationContext.crs || activeCrsConfirmationState.intent,
+            recognitionSessionId: currentRecognitionSession?.id || activeCrsConfirmationState.recognitionSessionId || ""
+          })
+        : createCrsConfirmationState();
       renderCrsConfirmationPanel();
       handwrittenDmsReviewState = getHandwrittenDmsReviewStateAfterTextChange(handwrittenDmsReviewState);
       renderHandwrittenDmsReviewState();
@@ -6879,7 +7093,14 @@ Au值 = 纯度 × 10 后取整数</div>
           ...previousRecognitionSummaryMeta,
           count: projectedCoordinateCount || previousRecognitionSummaryMeta.count,
           geometry: previousRecognitionSummaryMeta.geometry || inferGeometry(projectedCoordinateCount || previousRecognitionSummaryMeta.count || 0),
-          requiresReview: false
+          confirmationStatus: "blocked",
+          qualityGateStatus: "blocked",
+          kml_ready: false,
+          coordinateArbitration: null,
+          coordinateResult: null,
+          reviewSummary: activeReviewSummary,
+          reverificationContext: activeReverificationContext,
+          requiresReview: true
         });
       } else {
         clearRecognitionSummary();
@@ -7067,6 +7288,8 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function clearRecognitionSummary() {
       activeRecognitionSummaryMeta = null;
+      activeReviewSummary = null;
+      activeReverificationContext = null;
       recognitionSummary.style.display = "none";
       recognitionSummary.textContent = "";
       recognitionSummary.className = "recognition-status";
@@ -7401,6 +7624,8 @@ Au值 = 纯度 × 10 后取整数</div>
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
       activeCoordinateResult = null;
+      activeReviewSummary = null;
+      activeReverificationContext = null;
       saveRecognitionSession(null);
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
@@ -12101,6 +12326,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       activeCoordinateEngineV2 = null;
       activeCoordinateArbitration = null;
       activeCoordinateResult = null;
+      activeReviewSummary = null;
+      activeReverificationContext = null;
       saveRecognitionSession(null);
       activeCrsConfirmationState = createCrsConfirmationState();
       renderCrsConfirmationPanel();
@@ -13084,6 +13311,8 @@ ${placemarks}
       activeCoordinateEngineV2 = null;
       activeCoordinateResult = null;
       activeCoordinateArbitration = null;
+      activeReviewSummary = null;
+      activeReverificationContext = null;
       saveRecognitionSession(null);
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
@@ -13137,6 +13366,8 @@ ${placemarks}
         activeCoordinatePrecisionMode = data.precisionMode || "";
         activeCoordinateArbitration = data.coordinateArbitration || null;
         activeCoordinateResult = data.coordinateResult || null;
+        activeReviewSummary = data.reviewSummary || null;
+        activeReverificationContext = data.reverificationContext || null;
         const isTypedUtmProjected = data.coordinateType === "utm_projected_xy"
           && /^utm(?:30n)?-projected-x-y(?:-review)?$/.test(activeCoordinatePrecisionMode);
         const preservedCoordinates = extractCoordinatesPreservePrecision(data.rawText);
@@ -13417,6 +13648,8 @@ ${placemarks}
           coordinateArbitrationReason: data.coordinateArbitration?.reason || "",
           coordinateArbitration: data.coordinateArbitration || null,
           coordinateResult: data.coordinateResult || null,
+          reviewSummary: data.reviewSummary || null,
+          reverificationContext: data.reverificationContext || null,
           crsConfirmationBlocked: Boolean(data.crsConfirmationBlocked),
           requiresReview: Boolean(data.requires_review || summaryEngine.requires_review),
           engine: summaryEngine

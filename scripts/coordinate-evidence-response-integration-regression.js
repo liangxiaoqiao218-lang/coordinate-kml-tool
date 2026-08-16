@@ -206,7 +206,7 @@ test("Indonesia03 shadow ranks DMS above UTM CRS while legacy stays unchanged", 
   assert.equal(debug.shadowEvidenceDecision.differenceFromCurrentWinner, true);
 });
 
-test("Verified UTM keeps AUTO_EXPORT legacy decision while exposing verified transformation evidence", () => {
+test("Verified UTM waits for confirmation while exposing verified transformation evidence", () => {
   const payload = {
     coordinateType: "utm_projected_xy",
     precisionMode: "utm-projected-x-y",
@@ -252,7 +252,7 @@ test("Verified UTM keeps AUTO_EXPORT legacy decision while exposing verified tra
     requires_review: true,
     groups: []
   });
-  assert.equal(debug.coordinateResult.state, "AUTO_EXPORT");
+  assert.equal(debug.coordinateResult.state, "CONFIRM_REQUIRED");
   assert.ok(findCandidate(debug.coordinateEvidenceCandidates, "verified_utm_transformation"));
   assert.ok(findCandidate(debug.coordinateEvidenceCandidates, "utm_crs_text"));
   assert.equal(debug.shadowEvidenceDecision.winnerEvidenceType, "verified_utm_transformation");

@@ -33,6 +33,11 @@ import {
   buildProjectedTableVisionTiles
 } from "./server/utm-intent/projected-table-image-tiles.js";
 import { arbitrateCoordinateType } from "./server/coordinate-type/arbitration.js";
+import {
+  attachReviewConfirmationContracts,
+  buildConfirmedCoordinateResponse,
+  buildReverifiedCoordinateResponse
+} from "./server/coordinate-type/review-confirmation.js";
 import { buildVersionResponse } from "./server/release-identity/index.js";
 import {
   createRecognitionMetrics,
@@ -12312,6 +12317,57 @@ app.post("/api/regression/parse-coordinate-text", (req, res) => {
   }));
 });
 
+app.post("/api/reverify-coordinate-result", (req, res) => {
+  try {
+    const result = buildReverifiedCoordinateResponse({
+      coordinates: req.body?.coordinates || "",
+      projectedRows: req.body?.projectedRows || req.body?.rows || [],
+      crs: req.body?.crs || {},
+      referenceRows: req.body?.referenceRows || []
+    });
+    return res.json(result);
+  } catch {
+    return res.status(400).json({
+      success: false,
+      error: "REVERIFY_COORDINATE_RESULT_FAILED",
+      message: "无法重新验证当前坐标，请检查坐标值、CRS 和参考经纬度。"
+    });
+  }
+});
+
+app.post("/api/confirm-coordinate-result", (req, res) => {
+  try {
+    const result = buildConfirmedCoordinateResponse({
+      coordinates: req.body?.coordinates || "",
+      projectedRows: req.body?.projectedRows || req.body?.rows || [],
+      crs: req.body?.crs || {},
+      referenceRows: req.body?.referenceRows || []
+    });
+    if (result?.success === false || result?.kml_ready !== true) {
+      return res.status(409).json({
+        ...result,
+        success: false,
+        error: "CONFIRMATION_REQUIRES_VERIFICATION_PASS",
+        message: "当前坐标尚未通过服务器重新验证，不能确认生成 KML。"
+      });
+    }
+    return res.json({
+      ...result,
+      success: true,
+      exportPermission: {
+        allowed: true,
+        source: "server_confirmed_coordinate_result"
+      }
+    });
+  } catch {
+    return res.status(400).json({
+      success: false,
+      error: "CONFIRM_COORDINATE_RESULT_FAILED",
+      message: "确认失败，请重新验证当前坐标后再生成 KML。"
+    });
+  }
+});
+
 /*
  * Coordinate recognition maintenance rules
  * Follow COORDINATE_TYPE_REGISTRY.md for all coordinate-type changes.
@@ -14684,7 +14740,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const structuredUtmAccepted = Boolean(structuredUtmPriority?.accepted);
     const structuredUtmRouted = coordinateArbitration.coordinateType === "utm_projected_xy"
       && coordinateArbitration.authority === "explicit_crs_evidence";
-    const recognitionPayload = {
+    let recognitionPayload = {
       model: usedModel,
       rawText,
       coordinates,
@@ -14728,6 +14784,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       recognitionMetrics: serializeRecognitionMetrics(),
       quota: consumeResult.quota
     };
+    recognitionPayload = attachReviewConfirmationContracts(recognitionPayload, structuredUtmPriority);
     Object.assign(recognitionPayload, attachRecognitionSessionMetadata({}, recognitionSessionId, consumeResult));
 
     let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(recognitionPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });

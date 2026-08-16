@@ -273,7 +273,7 @@ test("verified UTM evidence remains distinct from UTM CRS text under nested cont
     includeCoordinateEvidenceDebug: true
   });
 
-  assert.equal(debug.coordinateResult.state, "AUTO_EXPORT");
+  assert.equal(debug.coordinateResult.state, "CONFIRM_REQUIRED");
   assert.ok(findCandidate(debug.coordinateEvidenceCandidates, "verified_utm_transformation"));
   assert.ok(findCandidate(debug.coordinateEvidenceCandidates, "utm_crs_text"));
   assert.equal(debug.shadowEvidenceDecision.winnerEvidenceType, "verified_utm_transformation");

@@ -93,7 +93,7 @@ test("Case D explicit signed WGS84 chat remains AUTO_EXPORT", () => {
   assertDecisionState("Case D", decision, "AUTO_EXPORT");
 });
 
-test("Case E Indonesia02 verified UTM remains AUTO_EXPORT", () => {
+test("Case E Indonesia02 verified UTM requires confirmation before export", () => {
   const decision = arbitrateCoordinateType({
     structuredUtmPriority: {
       accepted: true,
@@ -117,7 +117,7 @@ test("Case E Indonesia02 verified UTM remains AUTO_EXPORT", () => {
   assert.equal(decision.coordinateType, "utm_projected_xy");
   assert.equal(decision.precisionMode, "utm-projected-x-y");
   assert.equal(decision.reason, "explicit_utm_crs_and_structured_xy");
-  assertDecisionState("Case E", decision, "AUTO_EXPORT");
+  assertDecisionState("Case E", decision, "CONFIRM_REQUIRED");
 });
 
 test("MGRS type lock remains unaffected by chat ambiguity", () => {
