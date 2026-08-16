@@ -146,8 +146,9 @@ test("cross-type registry isolation", () => {
   const registry = createDefaultRecognizerRegistry();
   assert.equal(wgs84DecimalRecognizer.portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_decimal").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.find((item) => item.coordinateType === "mgrs").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry
-    .filter((item) => item.coordinateType !== "wgs84_decimal")
+    .filter((item) => !["wgs84_decimal", "mgrs"].includes(item.coordinateType))
     .every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 

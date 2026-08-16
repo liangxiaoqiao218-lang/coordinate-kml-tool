@@ -96,9 +96,10 @@ test("DMS -> NO_MATCH", async () => {
   assert.equal(result.status, V3_RUNNER_STATUS.NO_MATCH);
 });
 
-test("MGRS -> NO_MATCH", async () => {
+test("MGRS -> mgrs", async () => {
   const result = await run("47RLH 24469 42832");
-  assert.equal(result.status, V3_RUNNER_STATUS.NO_MATCH);
+  assert.equal(result.status, V3_RUNNER_STATUS.MATCHED);
+  assert.equal(result.recognizerId, "mgrs");
 });
 
 test("NOT_PORTED recognizer not called", async () => {
@@ -197,10 +198,18 @@ test("geometry polygon", async () => {
   assert.equal(result.normalized.geometryType, "polygon");
 });
 
-test("default registry keeps only wgs84_decimal dispatchable", () => {
+test("default registry keeps wgs84_decimal and mgrs dispatchable", () => {
   const registry = createDefaultRecognizerRegistry();
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_decimal").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
-  assert.equal(registry.filter((item) => item.coordinateType !== "wgs84_decimal").every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
+  assert.equal(registry.find((item) => item.coordinateType === "mgrs").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.filter((item) => !["wgs84_decimal", "mgrs"].includes(item.coordinateType)).every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
+});
+
+test("standard WGS84 and MGRS inputs are not ambiguous", async () => {
+  const wgs84 = await run("12.319572, -11.178174");
+  const mgrs = await run("47RLH 24469 42832");
+  assert.notEqual(wgs84.status, V3_RUNNER_STATUS.AMBIGUOUS);
+  assert.notEqual(mgrs.status, V3_RUNNER_STATUS.AMBIGUOUS);
 });
 
 let passed = 0;
@@ -216,4 +225,3 @@ for (const item of tests) {
 }
 
 console.log(`Coordinate Engine V3 Runner Regression: ${passed}/${tests.length} PASS`);
-

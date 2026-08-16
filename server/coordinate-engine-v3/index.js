@@ -10,6 +10,15 @@ import { createRecognizerContract } from "./recognizer-contract.js";
 import { createDefaultRecognizerRegistry, getRecognizerRegistrySummary, validateRecognizerRegistry } from "./registry.js";
 import { runCoordinateEngineV3, V3_RUNNER_STATUS } from "./runner.js";
 import {
+  canHandleMgrs,
+  mgrsRecognizer,
+  normalizeMgrs,
+  parseMgrsRows,
+  recognizeMgrs,
+  toMgrsKmlCoordinate,
+  verifyMgrs,
+} from "./recognizers/mgrs/index.js";
+import {
   canHandleWgs84Decimal,
   normalizeWgs84Decimal,
   recognizeWgs84Decimal,
@@ -54,6 +63,13 @@ export {
   validateNormalizedCoordinateResult,
   validateRecognizerRegistry,
   V3_RUNNER_STATUS,
+  canHandleMgrs,
+  mgrsRecognizer,
+  normalizeMgrs,
+  parseMgrsRows,
+  recognizeMgrs,
+  toMgrsKmlCoordinate,
+  verifyMgrs,
   canHandleWgs84Decimal,
   normalizeWgs84Decimal,
   recognizeWgs84Decimal,

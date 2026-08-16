@@ -1,11 +1,13 @@
 import { RECOGNIZER_PORT_STATUS, RECOGNIZER_TYPES } from "./contracts.js";
 import { assertRecognizerIsolation, createRecognizerContract } from "./recognizer-contract.js";
+import { mgrsRecognizer } from "./recognizers/mgrs/index.js";
 import { wgs84DecimalRecognizer } from "./recognizers/wgs84-decimal/index.js";
 
 export const COORDINATE_ENGINE_V3_REGISTRY_VERSION = "coordinate_engine_v3_registry_v1";
 
 export function createDefaultRecognizerRegistry() {
   const implementedRecognizers = new Map([
+    [mgrsRecognizer.coordinateType, mgrsRecognizer],
     [wgs84DecimalRecognizer.coordinateType, wgs84DecimalRecognizer],
   ]);
   return Object.freeze(RECOGNIZER_TYPES.map((coordinateType) => implementedRecognizers.get(coordinateType)

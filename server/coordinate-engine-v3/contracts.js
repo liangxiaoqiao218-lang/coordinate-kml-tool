@@ -40,6 +40,15 @@ function normalizeCoordinate(point = {}) {
   const label = cleanString(point.label || point.point || point.id);
   const longitude = Number(point.longitude ?? point.lon ?? point.x);
   const latitude = Number(point.latitude ?? point.lat ?? point.y);
+  const sourceValue = cleanString(point.sourceValue);
+  const mgrs = point.mgrs && typeof point.mgrs === "object" ? Object.freeze({
+    zone: Number.isFinite(Number(point.mgrs.zone)) ? Number(point.mgrs.zone) : null,
+    band: cleanString(point.mgrs.band),
+    gridSquare: cleanString(point.mgrs.gridSquare),
+    eastingDigits: cleanString(point.mgrs.eastingDigits),
+    northingDigits: cleanString(point.mgrs.northingDigits),
+    precisionDigits: Number.isFinite(Number(point.mgrs.precisionDigits)) ? Number(point.mgrs.precisionDigits) : null,
+  }) : null;
   if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
     return {
       label,
@@ -47,6 +56,8 @@ function normalizeCoordinate(point = {}) {
       latitude: null,
       altitude: 0,
       numeric: false,
+      sourceValue,
+      mgrs,
     };
   }
   return {
@@ -55,6 +66,8 @@ function normalizeCoordinate(point = {}) {
     latitude,
     altitude: Number.isFinite(Number(point.altitude)) ? Number(point.altitude) : 0,
     numeric: true,
+    sourceValue,
+    mgrs,
   };
 }
 
