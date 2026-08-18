@@ -109,6 +109,32 @@ import {
   WGS84_TABLE_RECOGNIZER_ID,
   wgs84TableRecognizer,
 } from "./recognizers/wgs84-table/index.js";
+export {
+  ACQUISITION_ADAPTER_STATUS,
+  ACQUISITION_AUTHORITY_FIELDS,
+  ACQUISITION_CANDIDATE_SCHEMA_VERSION,
+  ACQUISITION_HARD_DEADLINE_MS,
+  ACQUISITION_MAX_PROVIDER_CALLS,
+  ACQUISITION_PROVENANCE,
+  ACQUISITION_SCHEMA_VERSION,
+  ACQUISITION_SENSITIVE_FIELDS,
+  ACQUISITION_SOURCE_TYPE,
+  ACQUISITION_STATUS,
+  ACQUISITION_TARGET_MS,
+  acquisitionCandidateToRunnerInput,
+  calculateCandidateCompleteness,
+  createAcquisitionAdapterMetrics,
+  createAcquisitionBudget,
+  createAcquisitionCandidate,
+  createAcquisitionResult,
+  dedupeAcquisitionCandidates,
+  getCandidateDedupeKey,
+  runAcquisitionCandidatesThroughRunner,
+  shouldRequestTargetedAcquisition,
+  stripSensitiveAcquisitionMetadata,
+  validateAcquisitionCandidate,
+  validateAcquisitionResult,
+} from "./acquisition/index.js";
 
 export const COORDINATE_ENGINE_V3_DISABLED_REASON = "coordinate_engine_v3_not_enabled";
 

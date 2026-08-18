@@ -99,6 +99,29 @@ Error isolation:
 - Raw provider payloads, prompts, images, filesystem paths, and credentials are
   not exposed.
 
+## Image acquisition boundary
+
+Image acquisition is a separate layer in front of the frozen deterministic
+runner. Its job is to produce sanitized, non-authoritative candidates:
+
+- text
+- structured rows
+- visible headers
+- document cues
+- source type
+- provenance
+- confidence
+- timing
+
+The acquisition layer must not choose a coordinate type, recognizer owner,
+winner, KML permission, confirmation state, migration state, or arbitration
+result. Acquisition candidates are passed to the V3 runner, and ownership
+remains determined only by recognizer `canHandle()` contracts.
+
+Provider-backed acquisition, OCR, Vision, image preprocessing, and targeted
+acquisition remain outside this foundation and outside the deterministic
+recognizer freeze.
+
 ## Latency contract
 
 - Target: `30000ms`
