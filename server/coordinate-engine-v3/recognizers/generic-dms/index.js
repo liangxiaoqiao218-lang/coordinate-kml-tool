@@ -38,6 +38,58 @@ function splitRows(text = "") {
     .filter(Boolean);
 }
 
+function splitPossibleHeaderCells(line = "") {
+  const value = String(line || "").trim();
+  if (!value) return [];
+  if (/[|\t,]/.test(value)) {
+    return value.split(/[|\t,]/).map((item) => item.trim()).filter(Boolean);
+  }
+  const wideColumns = value.split(/\s{2,}/).map((item) => item.trim()).filter(Boolean);
+  if (wideColumns.length > 1) return wideColumns;
+  return value.split(/\s+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function classifyHeaderCell(cell = "") {
+  const normalized = normalizeDmsText(cell)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.。:：()[\]{}]/g, "")
+    .toLowerCase()
+    .trim();
+  if (/^(point|points|pt|id|no|n°|num|number|label|编号|点号)$/.test(normalized)) return "label";
+  if (/^(latitude|lat|n|s|nord|north|sud|south|纬度|北纬|南纬)$/.test(normalized)) return "latitude";
+  if (/^(longitude|lon|lng|e|w|o|est|east|ouest|west|经度|东经|西经)$/.test(normalized)) return "longitude";
+  if (/^x$/.test(normalized)) return "x";
+  if (/^y$/.test(normalized)) return "y";
+  return "";
+}
+
+function hasGeographicDmsTableHeader(text = "") {
+  const headerRegion = splitRows(text).slice(0, 8);
+  return headerRegion.some((row) => {
+    if (/[°º˚'′"″]/.test(row)) return false;
+    const hasColumnStructure = /[|\t,]/.test(row)
+      || row.split(/\s{2,}/).filter(Boolean).length > 1
+      || splitPossibleHeaderCells(row).length <= 8;
+    if (!hasColumnStructure) return false;
+
+    const roles = splitPossibleHeaderCells(row).map(classifyHeaderCell).filter(Boolean);
+    const unknownCount = splitPossibleHeaderCells(row).length - roles.length;
+    const hasPointHeader = roles.includes("label");
+    const hasLatitudeHeader = roles.includes("latitude");
+    const hasLongitudeHeader = roles.includes("longitude");
+    const hasX = roles.includes("x");
+    const hasY = roles.includes("y");
+    const isMostlyHeaderCells = roles.length >= 2 && unknownCount <= 1;
+
+    if (!isMostlyHeaderCells) return false;
+    if (hasLatitudeHeader && hasLongitudeHeader) return true;
+    if (hasX && hasY && (hasLatitudeHeader || hasLongitudeHeader)) return true;
+    if (hasPointHeader && ((hasLatitudeHeader && hasLongitudeHeader) || (hasX && hasY))) return true;
+    return false;
+  });
+}
+
 function extractLabel(line = "") {
   const match = String(line || "").match(/^\s*(?:point|pt|ponto|sommet|vertex)?\s*([A-Za-z]|\d{1,3})\s*[:.)|、-]\s+/i);
   if (!match) return { label: "", body: line };
@@ -106,15 +158,16 @@ export function dmsToDecimal({ degrees, minutes, seconds, hemisphere } = {}) {
 export function parseDmsTokens(text = "") {
   const source = normalizeDmsText(text);
   const pattern = /(?<body>[-+]?\d{1,3}\s*(?:°\s*)?\d{1,2}(?:[.,]\d{1,2})?(?:\s*['"]?\s*|\s+|\.)\d{1,2}(?:[.,]\d+)?(?:\s+\d{1,2})?)\s*["]?\s*(?<hemisphere>[NSEW])\b/gi;
+  const prefixPattern = /(?:^|[\r\n])\s*(?<hemisphere>[NSEW])\s+(?<body>[-+]?\d{1,3}\s*(?:°\s*)?\d{1,2}(?:[.,]\d{1,2})?(?:\s*['"]?\s*|\s+|\.)\d{1,2}(?:[.,]\d+)?(?:\s+\d{1,2})?)\s*["]?/gi;
   const tokens = [];
-  for (const match of source.matchAll(pattern)) {
+  function pushToken(match, rawValue = match[0]) {
     const parts = parseNumberParts(match.groups?.body || "");
-    if (!parts) continue;
+    if (!parts) return;
     const hemisphere = normalizeHemisphere(match.groups?.hemisphere);
     const decimal = dmsToDecimal({ ...parts, hemisphere });
     const role = getRole(hemisphere);
     tokens.push(Object.freeze({
-      raw: cleanSourceValue(match[0]),
+      raw: cleanSourceValue(rawValue),
       degrees: String(Math.abs(Number(parts.degrees))),
       minutes: String(Number(parts.minutes)),
       seconds: String(Number(parts.seconds)),
@@ -123,6 +176,12 @@ export function parseDmsTokens(text = "") {
       decimal,
       valid: decimal !== null && Boolean(role),
     }));
+  }
+  for (const match of source.matchAll(pattern)) {
+    pushToken(match);
+  }
+  for (const match of source.matchAll(prefixPattern)) {
+    pushToken(match, `${match.groups?.body || ""} ${match.groups?.hemisphere || ""}`);
   }
   return tokens;
 }
@@ -148,6 +207,7 @@ function buildPointFromTokens(tokens = [], label = "", sourceValue = "") {
 export function parseGenericDmsRows(input = {}) {
   const text = getInputText(input);
   if (!text) return [];
+  if (hasGeographicDmsTableHeader(text)) return [];
   const rows = [];
   const pendingSingles = [];
   const sourceRows = splitRows(text);

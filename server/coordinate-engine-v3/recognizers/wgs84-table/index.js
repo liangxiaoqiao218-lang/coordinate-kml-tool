@@ -248,13 +248,22 @@ function parseTextTable(input = {}) {
   if (!text) return { status: "not_handled", rows: [], warnings: [], reason: "empty_input" };
   const sourceRows = splitTextRows(text);
   if (sourceRows.length < 2) return { status: "not_handled", rows: [], warnings: [], reason: "table_requires_header_and_rows" };
-  const headerCells = splitTableLine(sourceRows[0]);
-  const mapping = resolveHeaderMapping(headerCells);
-  if (!mapping.accepted) return { status: "not_handled", rows: [], warnings: [], reason: mapping.reason, mapping };
+  const headerSearchLimit = Math.min(sourceRows.length - 1, 8);
+  let headerIndex = -1;
+  let mapping = null;
+  for (let index = 0; index < headerSearchLimit; index += 1) {
+    const candidate = resolveHeaderMapping(splitTableLine(sourceRows[index]));
+    if (candidate.accepted) {
+      headerIndex = index;
+      mapping = candidate;
+      break;
+    }
+  }
+  if (!mapping?.accepted) return { status: "not_handled", rows: [], warnings: [], reason: "header_role_mapping_unresolved", mapping };
 
   const parsedRows = [];
   const warnings = [];
-  sourceRows.slice(1).forEach((line, rowIndex) => {
+  sourceRows.slice(headerIndex + 1).forEach((line, rowIndex) => {
     const cells = splitTableLine(line);
     const parsed = parseRowCells(cells, mapping, rowIndex);
     if (parsed.row) parsedRows.push(parsed.row);

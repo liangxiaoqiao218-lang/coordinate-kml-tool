@@ -10,6 +10,18 @@ import { createRecognizerContract } from "./recognizer-contract.js";
 import { createDefaultRecognizerRegistry, getRecognizerRegistrySummary, validateRecognizerRegistry } from "./registry.js";
 import { runCoordinateEngineV3, V3_RUNNER_STATUS } from "./runner.js";
 import {
+  canHandleCoteDivoireDms,
+  COTE_DIVOIRE_DMS_CRS,
+  COTE_DIVOIRE_DMS_PRECISION_MODE,
+  COTE_DIVOIRE_DMS_RECOGNIZER_ID,
+  coteDivoireDmsRecognizer,
+  normalizeCoteDivoireDms,
+  parseCoteDivoireDmsTable,
+  recognizeCoteDivoireDms,
+  toCoteDivoireDmsKmlCoordinate,
+  verifyCoteDivoireDms,
+} from "./recognizers/cote-divoire-dms/index.js";
+import {
   canHandleGenericDms,
   dmsToDecimal,
   genericDmsRecognizer,
@@ -117,6 +129,16 @@ export {
   validateNormalizedCoordinateResult,
   validateRecognizerRegistry,
   V3_RUNNER_STATUS,
+  canHandleCoteDivoireDms,
+  COTE_DIVOIRE_DMS_CRS,
+  COTE_DIVOIRE_DMS_PRECISION_MODE,
+  COTE_DIVOIRE_DMS_RECOGNIZER_ID,
+  coteDivoireDmsRecognizer,
+  normalizeCoteDivoireDms,
+  parseCoteDivoireDmsTable,
+  recognizeCoteDivoireDms,
+  toCoteDivoireDmsKmlCoordinate,
+  verifyCoteDivoireDms,
   canHandleGenericDms,
   dmsToDecimal,
   genericDmsRecognizer,

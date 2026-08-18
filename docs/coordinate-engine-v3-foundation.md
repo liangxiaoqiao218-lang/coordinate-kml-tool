@@ -131,7 +131,7 @@ Current registry:
 - `kyrgyzstan_gauss_kruger`: `IMPLEMENTED`
 - `madagascar_cadastral`: `IMPLEMENTED`
 - `indonesia_utm`: `NOT_PORTED`
-- `cote_divoire_dms`: `NOT_PORTED`
+- `cote_divoire_dms`: `IMPLEMENTED`
 
 Only real fixture validation can move a recognizer to `STABLE`.
 

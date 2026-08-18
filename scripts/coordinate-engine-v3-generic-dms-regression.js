@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 
 import {
+  canHandleCoteDivoireDms,
   canHandleGenericDms,
+  canHandleKyrgyzGk,
+  canHandleMadagascarCadastral,
+  canHandleMgrs,
+  canHandleWgs84Decimal,
+  canHandleWgs84Table,
   createDefaultRecognizerRegistry,
   createLatencyBudget,
   normalizeGenericDms,
@@ -9,8 +15,10 @@ import {
   parseGenericDmsRows,
   recognizeGenericDms,
   RECOGNIZER_PORT_STATUS,
+  runCoordinateEngineV3,
   toGenericDmsKmlCoordinate,
   verifyGenericDms,
+  V3_RUNNER_STATUS,
 } from "../server/coordinate-engine-v3/index.js";
 
 const tests = [];
@@ -29,6 +37,12 @@ async function parse(text, clock = () => 0) {
 
 function assertNear(actual, expected, tolerance = 1e-12) {
   assert.equal(Math.abs(Number(actual) - Number(expected)) <= tolerance, true, `${actual} not within ${tolerance} of ${expected}`);
+}
+
+async function run(text) {
+  return runCoordinateEngineV3({ text }, {
+    latencyBudget: createLatencyBudget({ startedAtMs: 0, clock: () => 0 }),
+  });
 }
 
 test("standard DMS", async () => {
@@ -181,6 +195,144 @@ test("UTM rejection", () => {
   assert.equal(canHandleGenericDms({ text: "778807.293,9721476.737" }), false);
 });
 
+test("table header on row 2 rejected", () => {
+  assert.equal(canHandleGenericDms({ text: "Project coordinates\nPoint | Latitude Nord | Longitude Ouest\nA | 10°52'15\" | 08°16'00\"" }), false);
+});
+
+test("table header on row 3 rejected", () => {
+  assert.equal(canHandleGenericDms({ text: "Project coordinates\nCoordinate appendix\nPoint | Latitude Nord | Longitude Ouest\nA | 10°52'15\" | 08°16'00\"" }), false);
+});
+
+test("CRS preamble + table rejected", () => {
+  assert.equal(canHandleGenericDms({ text: "SISTEM KOORDINAT: UTM WGS 1984 ZONA 50S\nNo. | X | Y | Latitude | Longitude\n1 | 778807,293 | 9721476,737 | 02°31'01\"S | 119°30'23\"E" }), false);
+});
+
+test("title + table rejected", () => {
+  assert.equal(canHandleGenericDms({ text: "Coordinate Report\nPoint | Longitude | Latitude\nA | 16.0320 | 3.7638" }), false);
+});
+
+test("Indonesia UTM structured table reject", async () => {
+  const text = "SISTEM KOORDINAT: UTM WGS 1984 ZONA 50S\nNo. | X | Y | Latitude | Longitude\n1 | 778807,293 | 9721476,737 | 02°31'01\"S | 119°30'23\"E";
+  const runner = await run(text);
+  assert.equal(canHandleGenericDms({ text }), false);
+  assert.equal(parseGenericDmsRows({ text }).length, 0);
+  assert.equal(runner.status, V3_RUNNER_STATUS.NO_MATCH);
+});
+
+test("Côte d'Ivoire structured table reject from generic", async () => {
+  const text = "Project coordinates\nPoint | Latitude Nord | Longitude Ouest\nA | 10°52'15\" | 08°16'00\"";
+  const runner = await run(text);
+  assert.equal(canHandleGenericDms({ text }), false);
+  assert.equal(canHandleCoteDivoireDms({ text }), true);
+  assert.equal(runner.recognizerId, "cote_divoire_dms");
+});
+
+test("WGS84 table reject from generic", () => {
+  const text = "Report Header\nPoint | Longitude | Latitude\nA | 16.0320 | 3.7638";
+  assert.equal(canHandleGenericDms({ text }), false);
+  assert.equal(canHandleWgs84Table({ text }), true);
+});
+
+test("plain DMS still accepted after structured-table guard", () => {
+  assert.equal(canHandleGenericDms({ text: "11°27'45\"N 08°36'30\"W" }), true);
+});
+
+test("labeled plain DMS accepted after structured-table guard", () => {
+  assert.equal(canHandleGenericDms({ text: "A: 11°27'45\"N 08°36'30\"W\nB: 11°28'00\"N 08°37'00\"W" }), true);
+});
+
+test("multi-line plain DMS accepted after structured-table guard", () => {
+  assert.equal(canHandleGenericDms({ text: "11°27'45\"N\n08°36'30\"W" }), true);
+});
+
+test("Nord/Ouest prefix plain text accepted", async () => {
+  const { normalized } = await parse("Nord 11°27'45\"\nOuest 08°36'30\"");
+  assert.equal(normalized.coordinates.length, 1);
+  assertNear(normalized.coordinates[0].latitude, 11.4625);
+  assertNear(normalized.coordinates[0].longitude, -8.608333333333333);
+});
+
+test("metadata-only latitude longitude words do not falsely reject following plain DMS", () => {
+  assert.equal(canHandleGenericDms({ text: "Coordinates are latitude and longitude values\n11°27'45\"N 08°36'30\"W" }), true);
+});
+
+test("ownership matrix", async () => {
+  const cases = [
+    {
+      name: "Plain WGS84 decimal",
+      text: "12.319572, -11.178174",
+      only: "wgs84_decimal",
+      expectedRunner: "wgs84_decimal",
+    },
+    {
+      name: "WGS84 table",
+      text: "Report Header\nPoint | Longitude | Latitude\nA | -8.6085 | 11.4625",
+      only: "wgs84_table",
+      expectedRunner: "wgs84_table",
+    },
+    {
+      name: "MGRS",
+      text: "47RLH 24469 42832",
+      only: "mgrs",
+      expectedRunner: "mgrs",
+    },
+    {
+      name: "Plain DMS",
+      text: "11°27'45\"N 08°36'30\"W",
+      only: "generic_dms",
+      expectedRunner: "generic_dms",
+    },
+    {
+      name: "Kyrgyz GK",
+      text: "№ points | X | Y\n1 | 13261341 | 4607777\n2 | 13261345 | 4607778\n3 | 13261350 | 4607780",
+      only: "kyrgyzstan_gauss_kruger",
+      expectedRunner: "kyrgyzstan_gauss_kruger",
+    },
+    {
+      name: "Madagascar",
+      text: "Liste_Carres\nNC | XV | YV | CM_NOMFIR | num\n1 | 292812,5 | 360937,5 | Ilakaka | 280\n2 | 292812,5 | 361562,5 | Ilakaka | 281\n3 | 292812,5 | 362187,5 | Ilakaka | 282",
+      only: "madagascar_cadastral",
+      expectedRunner: "madagascar_cadastral",
+    },
+    {
+      name: "Côte d'Ivoire DMS table",
+      text: "Project coordinates\nPoint | Latitude Nord | Longitude Ouest\nA | 10°52'15\" | 08°16'00\"",
+      only: "cote_divoire_dms",
+      expectedRunner: "cote_divoire_dms",
+    },
+    {
+      name: "Indonesia UTM table",
+      text: "SISTEM KOORDINAT: UTM WGS 1984 ZONA 50S\nNo. | X | Y | Latitude | Longitude\n1 | 778807,293 | 9721476,737 | 02°31'01\"S | 119°30'23\"E",
+      only: null,
+      expectedRunner: null,
+    },
+  ];
+
+  const recognizers = {
+    wgs84_decimal: canHandleWgs84Decimal,
+    wgs84_table: canHandleWgs84Table,
+    mgrs: canHandleMgrs,
+    generic_dms: canHandleGenericDms,
+    kyrgyzstan_gauss_kruger: canHandleKyrgyzGk,
+    madagascar_cadastral: canHandleMadagascarCadastral,
+    cote_divoire_dms: canHandleCoteDivoireDms,
+  };
+
+  for (const item of cases) {
+    const hits = Object.entries(recognizers)
+      .filter(([, canHandle]) => canHandle({ text: item.text }))
+      .map(([name]) => name);
+    assert.deepEqual(hits, item.only ? [item.only] : [], item.name);
+    const runner = await run(item.text);
+    if (item.expectedRunner) {
+      assert.equal(runner.status, V3_RUNNER_STATUS.MATCHED, item.name);
+      assert.equal(runner.recognizerId, item.expectedRunner, item.name);
+    } else {
+      assert.equal(runner.status, V3_RUNNER_STATUS.NO_MATCH, item.name);
+    }
+  }
+});
+
 test("historical known conversion", async () => {
   const { normalized } = await parse("11°27 45 09 N\n08 36 30.76 W");
   assertNear(normalized.coordinates[0].latitude, 11.462525);
@@ -245,8 +397,9 @@ test("registry status", () => {
   assert.equal(registry.find((item) => item.coordinateType === "generic_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "kyrgyzstan_gauss_kruger").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "madagascar_cadastral").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.find((item) => item.coordinateType === "cote_divoire_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry
-    .filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral"].includes(item.coordinateType))
+    .filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "cote_divoire_dms"].includes(item.coordinateType))
     .every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 

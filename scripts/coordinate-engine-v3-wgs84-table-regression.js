@@ -43,6 +43,13 @@ test("Latitude | Longitude", async () => {
   assert.equal(normalized.coordinates[0].longitude, 16.032);
 });
 
+test("title before Longitude | Latitude header", async () => {
+  const { normalized } = await parse("Report Header\nPoint | Longitude | Latitude\nA | 16.0320 | 3.7638");
+  assert.equal(normalized.coordinates[0].label, "A");
+  assert.equal(normalized.coordinates[0].longitude, 16.032);
+  assert.equal(normalized.coordinates[0].latitude, 3.7638);
+});
+
 test("经度 | 纬度", async () => {
   const { normalized } = await parse("经度 | 纬度\n16.0320 | 3.7638");
   assert.equal(normalized.coordinates[0].longitude, 16.032);
@@ -271,8 +278,9 @@ test("isolation", () => {
   assert.equal(registry.find((item) => item.coordinateType === "generic_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "kyrgyzstan_gauss_kruger").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "madagascar_cadastral").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.find((item) => item.coordinateType === "cote_divoire_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry
-    .filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral"].includes(item.coordinateType))
+    .filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "cote_divoire_dms"].includes(item.coordinateType))
     .every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 
