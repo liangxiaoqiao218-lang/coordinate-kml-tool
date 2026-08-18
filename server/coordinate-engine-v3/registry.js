@@ -5,6 +5,7 @@ import { kyrgyzGkRecognizer } from "./recognizers/kyrgyzstan-gauss-kruger/index.
 import { madagascarCadastralRecognizer } from "./recognizers/madagascar-cadastral/index.js";
 import { mgrsRecognizer } from "./recognizers/mgrs/index.js";
 import { wgs84DecimalRecognizer } from "./recognizers/wgs84-decimal/index.js";
+import { wgs84TableRecognizer } from "./recognizers/wgs84-table/index.js";
 
 export const COORDINATE_ENGINE_V3_REGISTRY_VERSION = "coordinate_engine_v3_registry_v1";
 
@@ -15,6 +16,7 @@ export function createDefaultRecognizerRegistry() {
     [madagascarCadastralRecognizer.coordinateType, madagascarCadastralRecognizer],
     [mgrsRecognizer.coordinateType, mgrsRecognizer],
     [wgs84DecimalRecognizer.coordinateType, wgs84DecimalRecognizer],
+    [wgs84TableRecognizer.coordinateType, wgs84TableRecognizer],
   ]);
   return Object.freeze(RECOGNIZER_TYPES.map((coordinateType) => implementedRecognizers.get(coordinateType)
     || createRecognizerContract({

@@ -23,6 +23,17 @@ function hasMgrsSyntax(text) {
   return /\b\d{1,2}[C-HJ-NP-X]\s*[A-HJ-NP-Z]{2}\s*\d{2,}\b/i.test(text);
 }
 
+function hasGeographicTableHeader(text) {
+  const firstRow = splitRows(text)[0] || "";
+  const normalized = firstRow
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const hasLatitude = /纬度|北纬|南纬|latitude|\blat\b/.test(normalized);
+  const hasLongitude = /经度|东经|西经|longitude|\blon\b|\blng\b/.test(normalized);
+  return hasLatitude && hasLongitude;
+}
+
 function splitRows(text) {
   return String(text || "")
     .split(/\r?\n|;/)
@@ -35,6 +46,7 @@ function parseDecimalRows(input = {}) {
   if (!text) return { status: "not_handled", rows: [], warnings: [], reason: "empty_input" };
   if (hasDmsSyntax(text)) return { status: "not_handled", rows: [], warnings: [], reason: "dms_not_supported" };
   if (hasMgrsSyntax(text)) return { status: "not_handled", rows: [], warnings: [], reason: "mgrs_not_supported" };
+  if (hasGeographicTableHeader(text)) return { status: "not_handled", rows: [], warnings: [], reason: "geographic_table_header_not_decimal_pair" };
 
   const rows = [];
   const warnings = [];

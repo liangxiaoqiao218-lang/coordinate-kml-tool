@@ -274,12 +274,13 @@ test("deadline behavior", async () => {
 test("isolation", () => {
   const registry = createDefaultRecognizerRegistry();
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_decimal").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.find((item) => item.coordinateType === "wgs84_table").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "mgrs").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "generic_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "kyrgyzstan_gauss_kruger").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "madagascar_cadastral").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry
-    .filter((item) => !["wgs84_decimal", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral"].includes(item.coordinateType))
+    .filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral"].includes(item.coordinateType))
     .every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 

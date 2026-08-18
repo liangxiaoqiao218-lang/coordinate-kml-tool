@@ -68,6 +68,18 @@ import {
   verifyWgs84Decimal,
   wgs84DecimalRecognizer,
 } from "./recognizers/wgs84-decimal/index.js";
+import {
+  canHandleWgs84Table,
+  normalizeWgs84Table,
+  parseWgs84Table,
+  recognizeWgs84Table,
+  toWgs84TableKmlCoordinate,
+  verifyWgs84Table,
+  WGS84_TABLE_CRS,
+  WGS84_TABLE_PRECISION_MODE,
+  WGS84_TABLE_RECOGNIZER_ID,
+  wgs84TableRecognizer,
+} from "./recognizers/wgs84-table/index.js";
 
 export const COORDINATE_ENGINE_V3_DISABLED_REASON = "coordinate_engine_v3_not_enabled";
 
@@ -154,4 +166,14 @@ export {
   toKmlCoordinate,
   verifyWgs84Decimal,
   wgs84DecimalRecognizer,
+  canHandleWgs84Table,
+  normalizeWgs84Table,
+  parseWgs84Table,
+  recognizeWgs84Table,
+  toWgs84TableKmlCoordinate,
+  verifyWgs84Table,
+  WGS84_TABLE_CRS,
+  WGS84_TABLE_PRECISION_MODE,
+  WGS84_TABLE_RECOGNIZER_ID,
+  wgs84TableRecognizer,
 };

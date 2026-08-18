@@ -125,7 +125,7 @@ to Primary runtime.
 Current registry:
 
 - `wgs84_decimal`: `IMPLEMENTED`
-- `wgs84_table`: `NOT_PORTED`
+- `wgs84_table`: `IMPLEMENTED`
 - `generic_dms`: `IMPLEMENTED`
 - `mgrs`: `IMPLEMENTED`
 - `kyrgyzstan_gauss_kruger`: `IMPLEMENTED`
