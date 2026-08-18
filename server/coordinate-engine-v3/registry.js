@@ -2,6 +2,7 @@ import { RECOGNIZER_PORT_STATUS, RECOGNIZER_TYPES } from "./contracts.js";
 import { assertRecognizerIsolation, createRecognizerContract } from "./recognizer-contract.js";
 import { coteDivoireDmsRecognizer } from "./recognizers/cote-divoire-dms/index.js";
 import { genericDmsRecognizer } from "./recognizers/generic-dms/index.js";
+import { indonesiaUtmRecognizer } from "./recognizers/indonesia-utm/index.js";
 import { kyrgyzGkRecognizer } from "./recognizers/kyrgyzstan-gauss-kruger/index.js";
 import { madagascarCadastralRecognizer } from "./recognizers/madagascar-cadastral/index.js";
 import { mgrsRecognizer } from "./recognizers/mgrs/index.js";
@@ -14,6 +15,7 @@ export function createDefaultRecognizerRegistry() {
   const implementedRecognizers = new Map([
     [coteDivoireDmsRecognizer.coordinateType, coteDivoireDmsRecognizer],
     [genericDmsRecognizer.coordinateType, genericDmsRecognizer],
+    [indonesiaUtmRecognizer.coordinateType, indonesiaUtmRecognizer],
     [kyrgyzGkRecognizer.coordinateType, kyrgyzGkRecognizer],
     [madagascarCadastralRecognizer.coordinateType, madagascarCadastralRecognizer],
     [mgrsRecognizer.coordinateType, mgrsRecognizer],

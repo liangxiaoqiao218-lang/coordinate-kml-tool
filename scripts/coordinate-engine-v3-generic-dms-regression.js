@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   canHandleCoteDivoireDms,
   canHandleGenericDms,
+  canHandleIndonesiaUtm,
   canHandleKyrgyzGk,
   canHandleMadagascarCadastral,
   canHandleMgrs,
@@ -216,7 +217,8 @@ test("Indonesia UTM structured table reject", async () => {
   const runner = await run(text);
   assert.equal(canHandleGenericDms({ text }), false);
   assert.equal(parseGenericDmsRows({ text }).length, 0);
-  assert.equal(runner.status, V3_RUNNER_STATUS.NO_MATCH);
+  assert.equal(runner.status, V3_RUNNER_STATUS.MATCHED);
+  assert.equal(runner.recognizerId, "indonesia_utm");
 });
 
 test("Côte d'Ivoire structured table reject from generic", async () => {
@@ -303,8 +305,8 @@ test("ownership matrix", async () => {
     {
       name: "Indonesia UTM table",
       text: "SISTEM KOORDINAT: UTM WGS 1984 ZONA 50S\nNo. | X | Y | Latitude | Longitude\n1 | 778807,293 | 9721476,737 | 02°31'01\"S | 119°30'23\"E",
-      only: null,
-      expectedRunner: null,
+      only: "indonesia_utm",
+      expectedRunner: "indonesia_utm",
     },
   ];
 
@@ -313,6 +315,7 @@ test("ownership matrix", async () => {
     wgs84_table: canHandleWgs84Table,
     mgrs: canHandleMgrs,
     generic_dms: canHandleGenericDms,
+    indonesia_utm: canHandleIndonesiaUtm,
     kyrgyzstan_gauss_kruger: canHandleKyrgyzGk,
     madagascar_cadastral: canHandleMadagascarCadastral,
     cote_divoire_dms: canHandleCoteDivoireDms,
@@ -397,9 +400,10 @@ test("registry status", () => {
   assert.equal(registry.find((item) => item.coordinateType === "generic_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "kyrgyzstan_gauss_kruger").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "madagascar_cadastral").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.find((item) => item.coordinateType === "indonesia_utm").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "cote_divoire_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry
-    .filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "cote_divoire_dms"].includes(item.coordinateType))
+    .filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "indonesia_utm", "cote_divoire_dms"].includes(item.coordinateType))
     .every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 

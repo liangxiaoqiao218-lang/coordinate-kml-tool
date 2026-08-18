@@ -130,7 +130,7 @@ Current registry:
 - `mgrs`: `IMPLEMENTED`
 - `kyrgyzstan_gauss_kruger`: `IMPLEMENTED`
 - `madagascar_cadastral`: `IMPLEMENTED`
-- `indonesia_utm`: `NOT_PORTED`
+- `indonesia_utm`: `IMPLEMENTED`
 - `cote_divoire_dms`: `IMPLEMENTED`
 
 Only real fixture validation can move a recognizer to `STABLE`.
@@ -141,7 +141,7 @@ Only real fixture validation can move a recognizer to `STABLE`.
 |---|---|---|
 | Release Identity V2 | PORT | Proven useful for deployment traceability. |
 | Warning-only KML export | PORT | Matches product rule that user controls export when geometry is constructible. |
-| Indonesia structured UTM | PORT | Real fixtures #001/#002 passed; #003 needs isolated revalidation. |
+| Indonesia structured UTM | PORT | Deterministic text/table recognizer owns X/Y, CRS semantics, UTM transform, and optional DMS verification. |
 | Côte d'Ivoire deterministic DMS | PORT | Correctly preserves west hemisphere when structured DMS source is present. |
 | Madagascar cadastral behavior | PORT | Preserve legacy stable route, not V2 cross-type repairs. |
 | Point-specific warning metadata | PORT | Useful user-facing risk localization. |
