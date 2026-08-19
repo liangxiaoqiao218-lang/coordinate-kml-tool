@@ -157,6 +157,13 @@ The contract rejects a third provider call with:
 PROVIDER_CALL_LIMIT_EXCEEDED
 ```
 
+## Primary acquisition
+
+Phase 9C introduces primary acquisition as a provider-facing module that makes
+at most one type-neutral full-image provider call and returns acquisition
+candidates. It does not perform targeted acquisition, OCR fallback, provider
+retry, recognizer-specific routing, coordinate conversion, or KML decisions.
+
 ## Security
 
 Candidates and adapter metadata must not expose:

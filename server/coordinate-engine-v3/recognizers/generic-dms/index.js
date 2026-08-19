@@ -10,6 +10,14 @@ function getInputText(input = {}) {
   return String(input.text ?? input.rawText ?? input.coordinatesText ?? input.coordinates ?? "").trim();
 }
 
+function hasStructuredCoordinateTableMetadata(input = {}) {
+  if (!input || typeof input !== "object" || typeof input === "string") return false;
+  return Array.isArray(input.headers)
+    && input.headers.length > 0
+    && Array.isArray(input.structuredRows)
+    && input.structuredRows.length > 0;
+}
+
 function cleanSourceValue(value) {
   return String(value || "")
     .replace(/[\r\n\t]+/g, " ")
@@ -205,6 +213,7 @@ function buildPointFromTokens(tokens = [], label = "", sourceValue = "") {
 }
 
 export function parseGenericDmsRows(input = {}) {
+  if (hasStructuredCoordinateTableMetadata(input)) return [];
   const text = getInputText(input);
   if (!text) return [];
   if (hasGeographicDmsTableHeader(text)) return [];
@@ -244,6 +253,7 @@ export function parseGenericDmsRows(input = {}) {
 }
 
 export function canHandleGenericDms(input = {}) {
+  if (hasStructuredCoordinateTableMetadata(input)) return false;
   return parseGenericDmsRows(input).length > 0;
 }
 

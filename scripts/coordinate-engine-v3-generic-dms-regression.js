@@ -221,6 +221,40 @@ test("Indonesia UTM structured table reject", async () => {
   assert.equal(runner.recognizerId, "indonesia_utm");
 });
 
+test("structured candidate metadata rejects generic ownership before text parsing", () => {
+  const input = {
+    text: "No. | X | Y | Latitude | Longitude\n1 | 778807,293 | 9721476,737 | 02°31'01\"S | 119°30'23\"E",
+    headers: ["No.", "X", "Y", "Latitude", "Longitude"],
+    structuredRows: [
+      {
+        "No.": "1",
+        X: "778807,293",
+        Y: "9721476,737",
+        Latitude: "02°31'01\"S",
+        Longitude: "119°30'23\"E",
+      },
+    ],
+  };
+  assert.equal(canHandleGenericDms(input), false);
+  assert.equal(parseGenericDmsRows(input).length, 0);
+});
+
+test("headers without structured rows do not block plain DMS", () => {
+  assert.equal(canHandleGenericDms({
+    text: "11°27'45\"N 08°36'30\"W",
+    headers: ["note"],
+    structuredRows: [],
+  }), true);
+});
+
+test("structured rows without headers do not block plain DMS", () => {
+  assert.equal(canHandleGenericDms({
+    text: "11°27'45\"N 08°36'30\"W",
+    headers: [],
+    structuredRows: [{ value: "11°27'45\"N 08°36'30\"W" }],
+  }), true);
+});
+
 test("Côte d'Ivoire structured table reject from generic", async () => {
   const text = "Project coordinates\nPoint | Latitude Nord | Longitude Ouest\nA | 10°52'15\" | 08°16'00\"";
   const runner = await run(text);
@@ -229,10 +263,86 @@ test("Côte d'Ivoire structured table reject from generic", async () => {
   assert.equal(runner.recognizerId, "cote_divoire_dms");
 });
 
+test("Côte d'Ivoire structured metadata rejects generic ownership", async () => {
+  const input = {
+    text: "Point | Latitude Nord | Longitude Ouest\nA | 10°52'15\" | 08°16'00\"",
+    headers: ["Point", "Latitude Nord", "Longitude Ouest"],
+    structuredRows: [{ Point: "A", "Latitude Nord": "10°52'15\"", "Longitude Ouest": "08°16'00\"" }],
+  };
+  const runner = await runCoordinateEngineV3(input, {
+    latencyBudget: createLatencyBudget({ startedAtMs: 0, clock: () => 0 }),
+  });
+  assert.equal(canHandleGenericDms(input), false);
+  assert.equal(canHandleCoteDivoireDms(input), true);
+  assert.equal(runner.status, V3_RUNNER_STATUS.MATCHED);
+  assert.equal(runner.recognizerId, "cote_divoire_dms");
+});
+
 test("WGS84 table reject from generic", () => {
   const text = "Report Header\nPoint | Longitude | Latitude\nA | 16.0320 | 3.7638";
   assert.equal(canHandleGenericDms({ text }), false);
   assert.equal(canHandleWgs84Table({ text }), true);
+});
+
+test("WGS84 structured metadata rejects generic ownership", async () => {
+  const input = {
+    text: "Point | Longitude | Latitude\nA | 16.0320 | 3.7638",
+    headers: ["Point", "Longitude", "Latitude"],
+    structuredRows: [{ Point: "A", Longitude: "16.0320", Latitude: "3.7638" }],
+  };
+  const runner = await runCoordinateEngineV3(input, {
+    latencyBudget: createLatencyBudget({ startedAtMs: 0, clock: () => 0 }),
+  });
+  assert.equal(canHandleGenericDms(input), false);
+  assert.equal(canHandleWgs84Table(input), true);
+  assert.equal(runner.status, V3_RUNNER_STATUS.MATCHED);
+  assert.equal(runner.recognizerId, "wgs84_table");
+});
+
+test("mock Indonesia #001 real candidate shape resolves to indonesia_utm only", async () => {
+  const input = {
+    text: "PETAINDEKS KOORDINAT IPR UTM WGS 1984 ZONA 50S\nNo. | X | Y | Latitude | Longitude\n1 | 779271,176 | 9720912,526 | 2°31'21.134\" S | 119°30'40.863\" E\n2 | 779554,165 | 9720912,526 | 2°31'21.116\" S | 119°30'50.018\" E\n3 | 779554,165 | 9720734,464 | 2°31'26.910\" S | 119°30'50.029\" E\n4 | 779271,176 | 9720734,464 | 2°31'26.928\" S | 119°30'40.874\" E",
+    headers: ["No.", "X", "Y", "Latitude", "Longitude"],
+    structuredRows: [
+      { "No.": "1", X: "779271,176", Y: "9720912,526", Latitude: "2°31'21.134\" S", Longitude: "119°30'40.863\" E" },
+      { "No.": "2", X: "779554,165", Y: "9720912,526", Latitude: "2°31'21.116\" S", Longitude: "119°30'50.018\" E" },
+      { "No.": "3", X: "779554,165", Y: "9720734,464", Latitude: "2°31'26.910\" S", Longitude: "119°30'50.029\" E" },
+      { "No.": "4", X: "779271,176", Y: "9720734,464", Latitude: "2°31'26.928\" S", Longitude: "119°30'40.874\" E" },
+    ],
+    documentCues: ["PETAINDEKS", "KOORDINAT IPR", "UTM WGS 1984 ZONA 50S", "BaseMap ESRI"],
+  };
+  const runner = await runCoordinateEngineV3(input, {
+    latencyBudget: createLatencyBudget({ startedAtMs: 0, clock: () => 0 }),
+  });
+  assert.equal(canHandleGenericDms(input), false);
+  assert.equal(canHandleIndonesiaUtm(input), true);
+  assert.equal(runner.status, V3_RUNNER_STATUS.MATCHED);
+  assert.equal(runner.recognizerId, "indonesia_utm");
+  assert.equal(runner.normalized.coordinates.length, 4);
+});
+
+test("mock Indonesia #002 real candidate shape resolves to indonesia_utm only", async () => {
+  const input = {
+    text: "PETAINDEKS LOKASI SISTEM KOORDINAT UTM WGS 1984 ZONA 50S\nNo. | X | Y | LATITUDE | LONGITUDE\n1 | 778984,492 | 9721476,737 | 2°31'2.805\" S | 119°30'25.820\" E\n2 | 779099,680 | 9721476,848 | 2°31'2.776\" S | 119°30'31.465\" E\n3 | 779099,680 | 9721110,798 | 2°31'14.824\" S | 119°30'31.454\" E\n4 | 778875,519 | 9721110,798 | 2°31'14.823\" S | 119°30'27.404\" E\n5 | 778875,519 | 9721180,576 | 2°31'12.394\" S | 119°30'27.392\" E\n6 | 778984,492 | 9721180,576 | 2°31'12.373\" S | 119°30'31.513\" E",
+    headers: ["No.", "X", "Y", "LATITUDE", "LONGITUDE"],
+    structuredRows: [
+      { "No.": "1", X: "778984,492", Y: "9721476,737", LATITUDE: "2°31'2.805\" S", LONGITUDE: "119°30'25.820\" E" },
+      { "No.": "2", X: "779099,680", Y: "9721476,848", LATITUDE: "2°31'2.776\" S", LONGITUDE: "119°30'31.465\" E" },
+      { "No.": "3", X: "779099,680", Y: "9721110,798", LATITUDE: "2°31'14.824\" S", LONGITUDE: "119°30'31.454\" E" },
+      { "No.": "4", X: "778875,519", Y: "9721110,798", LATITUDE: "2°31'14.823\" S", LONGITUDE: "119°30'27.404\" E" },
+      { "No.": "5", X: "778875,519", Y: "9721180,576", LATITUDE: "2°31'12.394\" S", LONGITUDE: "119°30'27.392\" E" },
+      { "No.": "6", X: "778984,492", Y: "9721180,576", LATITUDE: "2°31'12.373\" S", LONGITUDE: "119°30'31.513\" E" },
+    ],
+    documentCues: ["PETAINDEKS", "SISTEM KOORDINAT", "UTM WGS 1984 ZONA 50S"],
+  };
+  const runner = await runCoordinateEngineV3(input, {
+    latencyBudget: createLatencyBudget({ startedAtMs: 0, clock: () => 0 }),
+  });
+  assert.equal(canHandleGenericDms(input), false);
+  assert.equal(canHandleIndonesiaUtm(input), true);
+  assert.equal(runner.status, V3_RUNNER_STATUS.MATCHED);
+  assert.equal(runner.recognizerId, "indonesia_utm");
+  assert.equal(runner.normalized.coordinates.length, 6);
 });
 
 test("plain DMS still accepted after structured-table guard", () => {

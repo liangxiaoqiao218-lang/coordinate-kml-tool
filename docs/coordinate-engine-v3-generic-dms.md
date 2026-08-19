@@ -89,12 +89,19 @@ The recognizer does not handle:
 - Kyrgyzstan Gauss-Kruger
 - WGS84 table header parsing
 - Côte d'Ivoire table acquisition
+- structured coordinate table candidates with both headers and structured rows
 
 ## Isolation boundary
 
 Generic DMS only recognizes already-present DMS text tokens. It does not own
 table acquisition, image reading, handwriting review, OCR confidence, evidence
 arbitration, shadow decisions, migration, or KML export policy.
+
+When acquisition has already produced structured table metadata, the generic
+DMS recognizer treats that input as outside plain-DMS scope even if one or more
+table cells contain DMS reference text. Dedicated table recognizers own those
+structured candidates through their own `canHandle()` contracts; the runner
+still does not apply recognizer priority or precedence.
 
 Future dedicated recognizers such as `cote_divoire_dms` may reuse pure DMS
 conversion semantics, but Côte d'Ivoire table structure and source acquisition
