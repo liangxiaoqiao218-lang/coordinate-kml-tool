@@ -236,15 +236,15 @@ User-provided real images were added under `artifacts/fixtures/structural-expans
 | `STRUCT_REAL_005` | `6d2cb08956f2a1e6511fbf18d8922200.png` | `full_frame_compact_table` | `HIGH` | `LEVEL_1` | `PATH_A` | Compact table |
 | `STRUCT_REAL_006` | `df55cd6c829b1d62375626aca75225c4.jpg` | `OTHER_STRUCTURAL` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Full-page document with embedded coordinate table |
 | `STRUCT_REAL_007` | `两块矿地.jpg` | `multi_table_document` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Multiple coordinate blocks in one document |
-| `STRUCT_REAL_008` | `刚果，两个坐标在同一张图.jpg` | `OTHER_STRUCTURAL` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Full-page document with coordinate table |
+| `STRUCT_REAL_008` | `刚果，两个坐标在同一张图.jpg` | `OTHER_STRUCTURAL` | `MEDIUM` | `LEVEL_4` | `PATH_A` | RC2 / WGS84 table frozen from historical baseline; expectedPath remains `UNRESOLVED` |
 | `STRUCT_REAL_009` | `吉尔吉斯斯坦矿地坐标.png` | `full_frame_compact_table` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Photographed/scanned coordinate table |
 | `STRUCT_REAL_010` | `布基纳法索01.jpg` | `OTHER_STRUCTURAL` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Full-page photographed document |
 | `STRUCT_REAL_011` | `微信图片_20260427122118_114_19.jpg` | `mixed_text_table_map` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Mobile screenshot with table and map context |
 | `STRUCT_REAL_012` | `微信图片_20260503091216_182_19.jpg` | `OTHER_STRUCTURAL` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Related variant of `STRUCT_REAL_008` |
 | `STRUCT_REAL_013` | `手写坐标.jpg` | `handwritten_or_low_structure` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Handwritten coordinate sample |
-| `STRUCT_REAL_014` | `模糊坐标.jpg` | `handwritten_or_low_structure` | `LOW` | `LEVEL_1` | `PATH_A` | Low-quality / blurry coordinate sample |
+| `STRUCT_REAL_014` | `模糊坐标.jpg` | `handwritten_or_low_structure` | `LOW` | `LEVEL_4` | `PATH_A` | French perimeter DMS Point A-D coordinate truth frozen from historical sources; expectedPath remains `UNRESOLVED` |
 | `STRUCT_REAL_015` | `科特迪瓦03.png` | `full_frame_compact_table` | `HIGH` | `LEVEL_1` | `PATH_A` | Compact Côte d’Ivoire table |
-| `STRUCT_REAL_016` | `科特迪瓦04.png` | `OTHER_STRUCTURAL` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Full-page scanned / photographed document |
+| `STRUCT_REAL_016` | `科特迪瓦04.png` | `OTHER_STRUCTURAL` | `MEDIUM` | `LEVEL_3` | `PATH_A` | Côte d’Ivoire DMS owner/row truth frozen; complete coordinates intentionally not claimed; expectedPath remains `UNRESOLVED` |
 | `STRUCT_REAL_017` | `缅甸坐标.jpg` | `mixed_text_table_map` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Map/image plus coordinate text |
 | `STRUCT_REAL_018` | `莫桑比克矿地.jpg` | `full_frame_compact_table` | `MEDIUM` | `LEVEL_1` | `PATH_A` | Full-page coordinate table/document |
 | `STRUCT_REAL_019` | `邓巴坐标01.jpg` | `full_frame_compact_table` | `HIGH` | `LEVEL_1` | `PATH_A` | Compact coordinate table |
@@ -321,6 +321,37 @@ Three recovered fixtures have historical owners that are not currently V3 isolat
 - `handwritten_dms_historical_not_ported`
 
 These are still valid ground-truth recovery records, but Phase 11D must separate provider/acquisition evidence from deterministic recognizer coverage gaps.
+
+## Phase 11H.1 Ground Truth Freeze
+
+Phase 11H.1 freezes only the correct-answer / expected-recognition metadata for three independently sourced fixtures. It does not resolve acquisition strategy, and it does not use current provider output, current recognizer output, or Router output as truth.
+
+Expected acquisition path remains `UNRESOLVED` for all three fixtures in this phase.
+
+### Frozen Fixtures
+
+| Fixture | File | Frozen level | Expected owner | Expected rows | Coordinate truth | Expected path | Provenance |
+|---|---|---:|---|---:|---|---|---|
+| `STRUCT_REAL_014` | `模糊坐标.jpg` | `LEVEL_4` | `french_perimeter_dms_historical_not_ported` | `4` | complete Point A-D KML coordinates | `UNRESOLVED` | `regression-samples/FRENCH_PERIMETER_DMS/expected.json`; `regression-samples/FRENCH_PERIMETER_DMS/README.md`; `COORDINATE_ENGINE_AUDIT_2026-07-01.md`; `COORDINATE_TYPE_REGISTRY.md` |
+| `STRUCT_REAL_008` | `刚果，两个坐标在同一张图.jpg` | `LEVEL_4` | `wgs84_table` | `11` | frozen RC2 baseline hash, point count, first/last KML | `UNRESOLVED` | `regression-samples/RC2/expected.json`; `regression-samples/RC2/baseline.json`; `COORDINATE_RECOGNITION_GOLDEN_BASELINE.json`; `COORDINATE_ENGINE_AUDIT_2026-07-01.md` |
+| `STRUCT_REAL_016` | `科特迪瓦04.png` | `LEVEL_3` | `cote_divoire_dms` | `4` | partial; full coordinate truth not claimed | `UNRESOLVED` | `COORDINATE_RECOGNITION_GOLDEN_BASELINE.json`; `REGRESSION_TEST_SAMPLES.md`; `COORDINATE_RECOGNITION_STABLE_PATHS.md` |
+
+### Freeze Counts
+
+| Metric | Result |
+|---|---:|
+| New `LEVEL_4` added | `2` |
+| New `LEVEL_3` added | `1` |
+| Independent ground-truth-ready fixtures added | `3` |
+| ExpectedPath changes | `0` |
+| Provider calls | `0` |
+| Runtime changes | `0` |
+
+Future Full-Image OCR evidence priority:
+
+1. `STRUCT_REAL_014` — `HIGH`
+2. `STRUCT_REAL_008` — `HIGH`
+3. `STRUCT_REAL_016` — `MEDIUM`
 
 ## Phase 11D.2 Evidence Reclassification
 
