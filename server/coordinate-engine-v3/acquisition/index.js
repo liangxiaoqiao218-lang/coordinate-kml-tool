@@ -49,3 +49,10 @@ export {
   callPrimaryVisionProvider,
   getPrimaryProviderReadiness,
 } from "./primary.js";
+
+export {
+  TABLE_CONTEXT_COMPOSITE_MODE,
+  TABLE_CONTEXT_COMPOSITE_STATUS,
+  createTableContextComposite,
+  detectTableContextRegions,
+} from "./table-context-composite.js";
