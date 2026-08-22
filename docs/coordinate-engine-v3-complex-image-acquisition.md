@@ -123,3 +123,48 @@ artifacts/phase-10c-model-ab-matrix.txt
 ```
 
 The artifact must remain sanitized and must not contain API keys, authorization headers, raw provider responses, raw prompt text, or base64 image data.
+
+## Phase 10G: Structural Router Dry-Run
+
+Phase 10G is an experimental dry-run only structural strategy router. It is not production routing and is not wired into Primary acquisition.
+
+The router may inspect deterministic image and table geometry metrics, then return an experimental strategy decision:
+
+```text
+general_primary
+or
+complex_structured_document
+```
+
+The dry-run contract is:
+
+- experimental: `true`;
+- mode: `DRY_RUN_ONLY`;
+- production routing: `false`;
+- provider calls: `0`;
+- Primary integration: none;
+- fallback: none;
+- retry: none;
+- Runner calls: none;
+- recognizer calls: none.
+
+The current thresholds are `EXPERIMENTAL_THRESHOLDS`. They are experimentally fitted to a small four-fixture matrix and must not be treated as stable, final, or production-safe.
+
+Current status:
+
+```text
+Real fixture count: 4
+Real fixture fit: 4/4
+Production generalization: UNPROVEN
+Threshold fragility: HIGH
+Additional real fixtures required: true
+```
+
+This does not prove production generalization. The observed boundary between the medium embedded-table fixture and the dense embedded-table fixture is useful, but narrow. Additional structurally diverse real fixtures are required before any production integration.
+
+Recommended next phase:
+
+```text
+Phase 11A —
+Structural Fixture Expansion & Ground-Truth Catalog
+```

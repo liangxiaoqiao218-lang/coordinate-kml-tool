@@ -56,3 +56,15 @@ export {
   createTableContextComposite,
   detectTableContextRegions,
 } from "./table-context-composite.js";
+
+export {
+  ACQUISITION_STRATEGY_ID,
+  ACQUISITION_STRATEGY_INPUT_MODE,
+  ACQUISITION_STRATEGY_MODEL,
+  ACQUISITION_STRATEGY_REASON,
+  EXPERIMENTAL_STRUCTURAL_ROUTER_CONTRACT,
+  EXPERIMENTAL_STRUCTURAL_ROUTER_THRESHOLDS,
+  chooseAcquisitionStrategyFromMetrics,
+  dryRunAcquisitionStrategy,
+  normalizeStructuralMetrics,
+} from "./strategy-router.js";
