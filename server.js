@@ -400,8 +400,8 @@ function getStructuredData(meta, canonicalPath) {
 app.use(express.json({ limit: "1mb" }));
 
 const appBrand = "GeoKit Lab";
-const appVersion = "v1.0.1";
-const appRelease = "Compliance / Commercial Foundation";
+const appVersion = "v1.0.2";
+const appRelease = "WGS84 and KML Closure";
 const legacyRenderHost = ["coordinate-kml-tool", "onrender", "com"].join(".");
 const canonicalHost = "geokitlab.com";
 
