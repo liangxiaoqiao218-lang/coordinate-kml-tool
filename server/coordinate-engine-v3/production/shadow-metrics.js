@@ -95,6 +95,7 @@ export function buildV3ShadowEvaluationMetric({
   durationMetadata = {},
 } = {}) {
   const v3Production = response.coordinateEngineV3Production || {};
+  const v3Canary = response.coordinateEngineV3Canary || {};
   const coordinateEngineV2 = response.coordinateEngineV2 || response.coordinate_engine_v2 || {};
   const legacySuccess = hasLegacyCoordinates(response);
   const legacyRequiresReview = getLegacyRequiresReview(response);
@@ -112,6 +113,10 @@ export function buildV3ShadowEvaluationMetric({
     technicalKmlReady: cleanBoolean(v3Production.technicalKmlReady),
     recognizerId: cleanString(v3Production.recognizerId),
     coordinateType: cleanString(v3Production.coordinateType),
+    family: cleanString(v3Canary.family || v3Production.recognizerId || v3Production.coordinateType),
+    selectedEngine: cleanString(v3Canary.selectedEngine, "legacy"),
+    selectionReason: cleanString(v3Canary.selectionReason, "flag_off"),
+    rollbackActive: cleanBoolean(v3Canary.rollbackActive),
     legacySuccess,
     legacyRequiresReview,
     legacyKmlReady,

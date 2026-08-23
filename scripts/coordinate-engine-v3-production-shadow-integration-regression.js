@@ -214,7 +214,8 @@ test("UNSUPPORTED shadow for invalid geometry", () => {
 
 test("server response wrapper is shadow-only and non-authoritative", () => {
   const source = readFileSync("server.js", "utf8");
-  assert.match(source, /coordinateEngineV3Production:\s*buildCoordinateEngineV3ProductionShadow/);
+  assert.match(source, /coordinateEngineV3Production\s*=\s*buildCoordinateEngineV3ProductionShadow/);
+  assert.match(source, /coordinateEngineV3Production,\s*\n\s*coordinateEngineV3Canary/);
   assert.doesNotMatch(source, /coordinateEngineV3Production\.[\s\S]{0,80}(coordinates|precisionMode|kml_ready|verification)\s*=/);
 });
 

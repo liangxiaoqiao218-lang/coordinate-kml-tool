@@ -171,11 +171,16 @@ export {
 export {
   chooseV3ProductionReason,
   buildCoordinateEngineV3ProductionShadow,
+  buildV3FamilyCanarySelection,
   buildV3ShadowEvaluationMetric,
   getV3ProductionScopeStatus,
+  isWgs84DecimalCanaryEnabled,
   isV3ProductionSupported,
   mapV3ProductionResult,
   recordV3ShadowEvaluationMetric,
+  V3_CANARY_SELECTED_ENGINE,
+  V3_CANARY_SELECTION_REASON,
+  V3_CANARY_SELECTION_SCHEMA_VERSION,
   V3_PRODUCTION_REASON_CODE,
   V3_PRODUCTION_REASON_PRIORITY,
   V3_PRODUCTION_RESULT_SCHEMA_VERSION,
@@ -183,6 +188,8 @@ export {
   V3_PRODUCTION_STATUS,
   V3_PRODUCTION_SUPPORTED_SCOPE_V1,
   V3_TECHNICAL_KML_HARD_BLOCK_REASONS,
+  WGS84_DECIMAL_CANARY_FAMILY,
+  WGS84_DECIMAL_CANARY_FLAG,
 } from "./production/index.js";
 
 export const COORDINATE_ENGINE_V3_DISABLED_REASON = "coordinate_engine_v3_not_enabled";

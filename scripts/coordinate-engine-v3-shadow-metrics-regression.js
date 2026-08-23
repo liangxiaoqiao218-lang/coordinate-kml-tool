@@ -202,7 +202,8 @@ test("record helper uses structured event logger", () => {
 
 test("server records metric after shadow augmentation", () => {
   const source = readFileSync("server.js", "utf8");
-  assert.match(source, /coordinateEngineV3Production:\s*buildCoordinateEngineV3ProductionShadow/);
+  assert.match(source, /coordinateEngineV3Production\s*=\s*buildCoordinateEngineV3ProductionShadow/);
+  assert.match(source, /coordinateEngineV3Canary\s*=\s*buildV3FamilyCanarySelection/);
   assert.match(source, /recordV3ShadowEvaluationMetric\(\{/);
   const metricCall = source.match(/recordV3ShadowEvaluationMetric\(\{([\s\S]*?)\n\s*\}\);/);
   assert.ok(metricCall);

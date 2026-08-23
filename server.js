@@ -10,6 +10,7 @@ import Tesseract from "tesseract.js";
 import { buildCoordinateVerificationResponse as buildCoordinateVerificationResponseBase } from "./server/verification/index.js";
 import {
   buildCoordinateEngineV3ProductionShadow,
+  buildV3FamilyCanarySelection,
   recordV3ShadowEvaluationMetric,
 } from "./server/coordinate-engine-v3/index.js";
 
@@ -37,12 +38,21 @@ const SYSTEM_CONFIG_PRICING_ID = "pricing";
 
 function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null) {
   const response = buildCoordinateVerificationResponseBase(payload, coordinateEngineV2);
+  const coordinateEngineV3Production = buildCoordinateEngineV3ProductionShadow({
+    payload: response,
+    coordinateEngineV2: response.coordinateEngineV2
+  });
+  const coordinateEngineV3Canary = buildV3FamilyCanarySelection({
+    response: {
+      ...response,
+      coordinateEngineV3Production
+    },
+    v3Production: coordinateEngineV3Production
+  });
   const augmentedResponse = {
     ...response,
-    coordinateEngineV3Production: buildCoordinateEngineV3ProductionShadow({
-      payload: response,
-      coordinateEngineV2: response.coordinateEngineV2
-    })
+    coordinateEngineV3Production,
+    coordinateEngineV3Canary
   };
   recordV3ShadowEvaluationMetric({
     response: augmentedResponse,

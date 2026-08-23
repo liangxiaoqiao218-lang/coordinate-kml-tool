@@ -23,6 +23,16 @@ export {
 } from "./shadow-response.js";
 
 export {
+  buildV3FamilyCanarySelection,
+  isWgs84DecimalCanaryEnabled,
+  V3_CANARY_SELECTED_ENGINE,
+  V3_CANARY_SELECTION_REASON,
+  V3_CANARY_SELECTION_SCHEMA_VERSION,
+  WGS84_DECIMAL_CANARY_FAMILY,
+  WGS84_DECIMAL_CANARY_FLAG,
+} from "./canary-selection.js";
+
+export {
   buildV3ShadowEvaluationMetric,
   recordV3ShadowEvaluationMetric,
 } from "./shadow-metrics.js";
