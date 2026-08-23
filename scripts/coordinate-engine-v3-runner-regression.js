@@ -109,6 +109,12 @@ test("DMS -> generic_dms", async () => {
   assert.equal(result.recognizerId, "generic_dms");
 });
 
+test("grouped DMS -> dms_grouped_coordinates", async () => {
+  const result = await run("Mining Area 1:\n1. 11°52'25.72\"N, 08°53'13.39\"W\n2. 11°52'21.27\"N, 08°53'11.78\"W\n3. 11°52'18.00\"N, 08°53'20.00\"W\n\nMining Area Two:\n1. 11°52'11.93\"N, 08°53'32.66\"W\n2. 11°52'17.21\"N, 08°53'33.18\"W\n3. 11°52'12.57\"N, 08°53'54.03\"W");
+  assert.equal(result.status, V3_RUNNER_STATUS.MATCHED);
+  assert.equal(result.recognizerId, "dms_grouped_coordinates");
+});
+
 test("MGRS -> mgrs", async () => {
   const result = await run("47RLH 24469 42832");
   assert.equal(result.status, V3_RUNNER_STATUS.MATCHED);
@@ -229,24 +235,26 @@ test("geometry polygon", async () => {
   assert.equal(result.normalized.geometryType, "polygon");
 });
 
-test("default registry keeps wgs84_decimal wgs84_table mgrs generic_dms kyrgyzstan_gauss_kruger madagascar_cadastral indonesia_utm and cote_divoire_dms dispatchable", () => {
+test("default registry keeps wgs84_decimal wgs84_table dms_grouped_coordinates mgrs generic_dms kyrgyzstan_gauss_kruger madagascar_cadastral indonesia_utm and cote_divoire_dms dispatchable", () => {
   const registry = createDefaultRecognizerRegistry();
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_decimal").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_table").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.find((item) => item.coordinateType === "dms_grouped_coordinates").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "mgrs").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "generic_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "kyrgyzstan_gauss_kruger").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "madagascar_cadastral").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "indonesia_utm").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "cote_divoire_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
-  assert.equal(registry.filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "indonesia_utm", "cote_divoire_dms"].includes(item.coordinateType)).every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
+  assert.equal(registry.filter((item) => !["wgs84_decimal", "wgs84_table", "dms_grouped_coordinates", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "indonesia_utm", "cote_divoire_dms"].includes(item.coordinateType)).every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 
-test("standard WGS84 WGS84 table MGRS DMS Kyrgyz GK Madagascar Indonesia and Côte d'Ivoire inputs are not ambiguous", async () => {
+test("standard WGS84 WGS84 table grouped DMS MGRS DMS Kyrgyz GK Madagascar Indonesia and Côte d'Ivoire inputs are not ambiguous", async () => {
   const wgs84 = await run("12.319572, -11.178174");
   const wgs84Table = await run("Longitude | Latitude\n16.0320 | 3.7638");
   const mgrs = await run("47RLH 24469 42832");
   const dms = await run("11°27'45\"N 08°36'30\"W");
+  const groupedDms = await run("Mining Area 1:\n1. 11°52'25.72\"N, 08°53'13.39\"W\n2. 11°52'21.27\"N, 08°53'11.78\"W\n3. 11°52'18.00\"N, 08°53'20.00\"W\n\nMining Area Two:\n1. 11°52'11.93\"N, 08°53'32.66\"W\n2. 11°52'17.21\"N, 08°53'33.18\"W\n3. 11°52'12.57\"N, 08°53'54.03\"W");
   const kyrgyz = await run("№ points | X | Y\n1 | 13261341 | 4607777\n2 | 13261345 | 4607778\n3 | 13261350 | 4607780");
   const madagascar = await run("Liste_Carres\nNC | XV | YV | CM_NOMFIR | num\n1 | 292812,5 | 360937,5 | Ilakaka | 280\n2 | 292812,5 | 361562,5 | Ilakaka | 281\n3 | 292812,5 | 362187,5 | Ilakaka | 282");
   const indonesia = await run("SISTEM KOORDINAT: UTM WGS 1984 ZONA 50S\nNo. | X | Y | Latitude | Longitude\n1 | 778807,293 | 9721476,737 | 02°31'01\"S | 119°30'23\"E");
@@ -255,6 +263,7 @@ test("standard WGS84 WGS84 table MGRS DMS Kyrgyz GK Madagascar Indonesia and Cô
   assert.notEqual(wgs84Table.status, V3_RUNNER_STATUS.AMBIGUOUS);
   assert.notEqual(mgrs.status, V3_RUNNER_STATUS.AMBIGUOUS);
   assert.notEqual(dms.status, V3_RUNNER_STATUS.AMBIGUOUS);
+  assert.notEqual(groupedDms.status, V3_RUNNER_STATUS.AMBIGUOUS);
   assert.notEqual(kyrgyz.status, V3_RUNNER_STATUS.AMBIGUOUS);
   assert.notEqual(madagascar.status, V3_RUNNER_STATUS.AMBIGUOUS);
   assert.notEqual(indonesia.status, V3_RUNNER_STATUS.AMBIGUOUS);

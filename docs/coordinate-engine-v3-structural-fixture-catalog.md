@@ -322,6 +322,21 @@ Three recovered fixtures have historical owners that are not currently V3 isolat
 
 These are still valid ground-truth recovery records, but Phase 11D must separate provider/acquisition evidence from deterministic recognizer coverage gaps.
 
+## Phase 12C Recognizer Port Note
+
+`STRUCT_REAL_007` remains a `LEVEL_3` ground-truth fixture with `PATH_A`
+acquisition evidence. Phase 12C ports the corresponding isolated recognizer as
+`dms_grouped_coordinates`, converting the prior deterministic coverage gap:
+
+```text
+ACQUISITION_PASS_V3_RECOGNIZER_NOT_PORTED
+↓
+FULL_V3_END_TO_END_VALIDATION
+```
+
+This does not change the production supported-scope contract. Runtime contract
+implementation and production routing remain separate future work.
+
 ## Phase 11H.1 Ground Truth Freeze
 
 Phase 11H.1 freezes only the correct-answer / expected-recognition metadata for three independently sourced fixtures. It does not resolve acquisition strategy, and it does not use current provider output, current recognizer output, or Router output as truth.

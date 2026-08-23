@@ -281,7 +281,7 @@ test("isolation", () => {
   assert.equal(registry.find((item) => item.coordinateType === "indonesia_utm").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "cote_divoire_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry
-    .filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "indonesia_utm", "cote_divoire_dms"].includes(item.coordinateType))
+    .filter((item) => !["wgs84_decimal", "wgs84_table", "dms_grouped_coordinates", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "indonesia_utm", "cote_divoire_dms"].includes(item.coordinateType))
     .every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 

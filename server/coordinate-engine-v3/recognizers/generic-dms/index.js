@@ -98,6 +98,12 @@ function hasGeographicDmsTableHeader(text = "") {
   });
 }
 
+function hasGroupedDmsOwnershipContext(text = "") {
+  const value = normalizeDmsText(text);
+  return /\bmining\s+area\b|\barea\s+(?:one|two|three|\d+)\b|\bcoordinates?\s+are\s+as\s+follows\b/i.test(value)
+    || (/[°'"]/.test(value) && /\b1\s*[.)]\s*[\d\s°'".,]+[NS]\b[\s\S]{0,700}\b1\s*[.)]\s*[\d\s°'".,]+[NS]\b/i.test(value));
+}
+
 function extractLabel(line = "") {
   const match = String(line || "").match(/^\s*(?:point|pt|ponto|sommet|vertex)?\s*([A-Za-z]|\d{1,3})\s*[:.)|、-]\s+/i);
   if (!match) return { label: "", body: line };
@@ -217,6 +223,7 @@ export function parseGenericDmsRows(input = {}) {
   const text = getInputText(input);
   if (!text) return [];
   if (hasGeographicDmsTableHeader(text)) return [];
+  if (hasGroupedDmsOwnershipContext(text)) return [];
   const rows = [];
   const pendingSingles = [];
   const sourceRows = splitRows(text);

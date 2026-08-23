@@ -9,6 +9,7 @@ export const RECOGNIZER_PORT_STATUS = Object.freeze({
 export const RECOGNIZER_TYPES = Object.freeze([
   "wgs84_decimal",
   "wgs84_table",
+  "dms_grouped_coordinates",
   "generic_dms",
   "mgrs",
   "kyrgyzstan_gauss_kruger",

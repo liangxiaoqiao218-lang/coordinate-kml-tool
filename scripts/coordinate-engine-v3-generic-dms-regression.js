@@ -143,6 +143,12 @@ test("multiple points", async () => {
   assert.equal(normalized.coordinates.length, 2);
 });
 
+test("grouped Mining Area DMS rejected", () => {
+  const text = "Mining Area 1:\n1. 11°52'25.72\"N, 08°53'13.39\"W\n2. 11°52'21.27\"N, 08°53'11.78\"W\n3. 11°52'18.00\"N, 08°53'20.00\"W\n\nMining Area Two:\n1. 11°52'11.93\"N, 08°53'32.66\"W\n2. 11°52'17.21\"N, 08°53'33.18\"W\n3. 11°52'12.57\"N, 08°53'54.03\"W";
+  assert.equal(canHandleGenericDms({ text }), false);
+  assert.equal(parseGenericDmsRows({ text }).length, 0);
+});
+
 test("order preservation", async () => {
   const { normalized } = await parse("B: 11°28'00\"N 08°37'00\"W\nA: 11°27'45\"N 08°36'30\"W");
   assert.deepEqual(normalized.coordinates.map((point) => point.label), ["B", "A"]);
@@ -506,6 +512,7 @@ test("registry status", () => {
   const registry = createDefaultRecognizerRegistry();
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_decimal").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "wgs84_table").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
+  assert.equal(registry.find((item) => item.coordinateType === "dms_grouped_coordinates").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "mgrs").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "generic_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "kyrgyzstan_gauss_kruger").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
@@ -513,7 +520,7 @@ test("registry status", () => {
   assert.equal(registry.find((item) => item.coordinateType === "indonesia_utm").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry.find((item) => item.coordinateType === "cote_divoire_dms").portStatus, RECOGNIZER_PORT_STATUS.IMPLEMENTED);
   assert.equal(registry
-    .filter((item) => !["wgs84_decimal", "wgs84_table", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "indonesia_utm", "cote_divoire_dms"].includes(item.coordinateType))
+    .filter((item) => !["wgs84_decimal", "wgs84_table", "dms_grouped_coordinates", "mgrs", "generic_dms", "kyrgyzstan_gauss_kruger", "madagascar_cadastral", "indonesia_utm", "cote_divoire_dms"].includes(item.coordinateType))
     .every((item) => item.portStatus === RECOGNIZER_PORT_STATUS.NOT_PORTED), true);
 });
 
