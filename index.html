@@ -4159,7 +4159,17 @@
     }
 
     .public-security-filing {
-      min-width: 176px;
+      display: inline-flex;
+      min-width: 0;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .public-security-icon {
+      width: 14px;
+      height: 14px;
+      flex: 0 0 14px;
+      object-fit: contain;
     }
 
     @media (max-width: 640px) {
@@ -4647,7 +4657,7 @@ Au值 = 纯度 × 10 后取整数</div>
       <div class="site-footer-legal">
         <p class="site-footer-filing">
           <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026099318号-1</a>
-          <span class="public-security-filing">公网安备：待备案后补充</span>
+          <span class="public-security-filing"><img class="public-security-icon" src="assets/备案图标.png" alt="公安备案图标"><a href="https://beian.mps.gov.cn/#/query/webSearch?code=44030002015944" rel="noreferrer" target="_blank">粤公网安备44030002015944号</a></span>
         </p>
         <p class="site-disclaimer">本站工具及分析结果仅供数据处理和辅助分析参考，业务决策请结合实际情况综合判断。</p>
       </div>
