@@ -114,6 +114,7 @@ export function buildV3ShadowEvaluationMetric({
     recognizerId: cleanString(v3Production.recognizerId),
     coordinateType: cleanString(v3Production.coordinateType),
     family: cleanString(v3Canary.family || v3Production.recognizerId || v3Production.coordinateType),
+    canaryUser: cleanBoolean(v3Canary.canaryUser),
     selectedEngine: cleanString(v3Canary.selectedEngine, "legacy"),
     selectionReason: cleanString(v3Canary.selectionReason, "flag_off"),
     rollbackActive: cleanBoolean(v3Canary.rollbackActive),

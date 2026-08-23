@@ -7,6 +7,7 @@ import { V3_PRODUCTION_SCOPE_STATUS } from "./supported-scope.js";
 export const V3_CANARY_SELECTION_SCHEMA_VERSION = "coordinate_engine_v3_family_canary_selection_v1";
 export const WGS84_DECIMAL_CANARY_FAMILY = "wgs84_decimal";
 export const WGS84_DECIMAL_CANARY_FLAG = "v3_enable_wgs84_decimal";
+export const WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST = "V3_WGS84_DECIMAL_CANARY_VISITOR_IDS";
 
 export const V3_CANARY_SELECTED_ENGINE = Object.freeze({
   LEGACY: "legacy",
@@ -15,6 +16,7 @@ export const V3_CANARY_SELECTED_ENGINE = Object.freeze({
 
 export const V3_CANARY_SELECTION_REASON = Object.freeze({
   FLAG_OFF: "flag_off",
+  USER_NOT_ALLOWED: "user_not_allowed",
   FAMILY_NOT_ENABLED: "family_not_enabled",
   V3_SUCCESS_SELECTED: "v3_success_selected",
   V3_REVIEW_FALLBACK_LEGACY: "v3_review_fallback_legacy",
@@ -35,6 +37,38 @@ function boolFromFlag(value) {
 
 export function isWgs84DecimalCanaryEnabled(env = process.env) {
   return boolFromFlag(env[WGS84_DECIMAL_CANARY_FLAG] ?? env.V3_ENABLE_WGS84_DECIMAL);
+}
+
+function parseAllowlist(value = "") {
+  return new Set(String(value || "")
+    .split(",")
+    .map((item) => cleanString(item))
+    .filter(Boolean));
+}
+
+export function isWgs84DecimalCanaryVisitorAllowed({
+  visitorId = "",
+  userId = "",
+  env = process.env,
+} = {}) {
+  const allowlist = parseAllowlist(env[WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]);
+  if (allowlist.size === 0) return false;
+  const visitor = cleanString(visitorId);
+  const user = cleanString(userId);
+  return Boolean((visitor && allowlist.has(visitor)) || (user && allowlist.has(user)));
+}
+
+export function canUseV3Canary({
+  family = WGS84_DECIMAL_CANARY_FAMILY,
+  visitorId = "",
+  userId = "",
+  flag = false,
+  env = process.env,
+} = {}) {
+  const targetFamily = cleanString(family);
+  if (targetFamily !== WGS84_DECIMAL_CANARY_FAMILY) return false;
+  if (boolFromFlag(flag) !== true) return false;
+  return isWgs84DecimalCanaryVisitorAllowed({ visitorId, userId, env });
 }
 
 function getV3Family(v3Production = {}) {
@@ -66,6 +100,8 @@ export function buildV3FamilyCanarySelection({
   v3Production = response.coordinateEngineV3Production || {},
   env = process.env,
   family = WGS84_DECIMAL_CANARY_FAMILY,
+  visitorId = response.visitorId || response.visitor_id || response.user_id || "",
+  userId = response.userId || response.user_id || response.visitorId || response.visitor_id || "",
   rollbackActive = false,
 } = {}) {
   const targetFamily = cleanString(family, WGS84_DECIMAL_CANARY_FAMILY);
@@ -73,12 +109,21 @@ export function buildV3FamilyCanarySelection({
   const flagEnabled = targetFamily === WGS84_DECIMAL_CANARY_FAMILY
     ? isWgs84DecimalCanaryEnabled(env)
     : false;
+  const canaryUser = canUseV3Canary({
+    family: targetFamily,
+    visitorId,
+    userId,
+    flag: flagEnabled,
+    env,
+  });
   const experimentalSignal = hasExperimentalSignal(v3Production);
   const common = {
     schemaVersion: V3_CANARY_SELECTION_SCHEMA_VERSION,
     family: targetFamily,
     flag: WGS84_DECIMAL_CANARY_FLAG,
     flagEnabled,
+    allowlist: WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST,
+    canaryUser,
     rollbackActive: rollbackActive === true,
     v3Family,
     v3Status: cleanString(v3Production.status, V3_PRODUCTION_STATUS.UNSUPPORTED),
@@ -105,6 +150,13 @@ export function buildV3FamilyCanarySelection({
     return Object.freeze({
       ...common,
       ...legacySelection(V3_CANARY_SELECTION_REASON.FAMILY_NOT_ENABLED),
+    });
+  }
+
+  if (!canaryUser) {
+    return Object.freeze({
+      ...common,
+      ...legacySelection(V3_CANARY_SELECTION_REASON.USER_NOT_ALLOWED),
     });
   }
 

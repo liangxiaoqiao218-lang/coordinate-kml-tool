@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   buildV3FamilyCanarySelection,
   buildV3ShadowEvaluationMetric,
+  canUseV3Canary,
   V3_CANARY_SELECTED_ENGINE,
   V3_CANARY_SELECTION_REASON,
   V3_PRODUCTION_REASON_CODE,
@@ -11,6 +12,7 @@ import {
   V3_PRODUCTION_STATUS,
   WGS84_DECIMAL_CANARY_FLAG,
   WGS84_DECIMAL_CANARY_FAMILY,
+  WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST,
 } from "../server/coordinate-engine-v3/index.js";
 
 const tests = [];
@@ -43,23 +45,50 @@ function select(options = {}) {
   return buildV3FamilyCanarySelection({
     v3Production: production(options),
     env: options.env || {},
+    visitorId: options.visitorId || "",
+    userId: options.userId || "",
     rollbackActive: options.rollbackActive === true,
   });
 }
 
-test("flag OFF keeps legacy authoritative", () => {
-  const result = select();
+test("flag OFF keeps legacy authoritative even when visitor is allowlisted", () => {
+  const result = select({
+    visitorId: "internal-1",
+    env: { [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1" },
+  });
   assert.equal(result.family, WGS84_DECIMAL_CANARY_FAMILY);
   assert.equal(result.flag, WGS84_DECIMAL_CANARY_FLAG);
   assert.equal(result.flagEnabled, false);
+  assert.equal(result.canaryUser, false);
   assert.equal(result.selectedEngine, V3_CANARY_SELECTED_ENGINE.LEGACY);
   assert.equal(result.selectionReason, V3_CANARY_SELECTION_REASON.FLAG_OFF);
   assert.equal(result.canaryEligible, false);
 });
 
-test("flag ON and V3 SUCCESS selects V3 for wgs84_decimal only", () => {
-  const result = select({ env: { [WGS84_DECIMAL_CANARY_FLAG]: "true" } });
+test("flag ON but visitor not allowlisted keeps legacy authoritative", () => {
+  const result = select({
+    visitorId: "external-1",
+    env: {
+      [WGS84_DECIMAL_CANARY_FLAG]: "true",
+      [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1",
+    },
+  });
   assert.equal(result.flagEnabled, true);
+  assert.equal(result.canaryUser, false);
+  assert.equal(result.selectedEngine, V3_CANARY_SELECTED_ENGINE.LEGACY);
+  assert.equal(result.selectionReason, V3_CANARY_SELECTION_REASON.USER_NOT_ALLOWED);
+});
+
+test("flag ON and allowlisted V3 SUCCESS selects V3 for wgs84_decimal only", () => {
+  const result = select({
+    visitorId: "internal-1",
+    env: {
+      [WGS84_DECIMAL_CANARY_FLAG]: "true",
+      [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1",
+    },
+  });
+  assert.equal(result.flagEnabled, true);
+  assert.equal(result.canaryUser, true);
   assert.equal(result.selectedEngine, V3_CANARY_SELECTED_ENGINE.V3);
   assert.equal(result.selectionReason, V3_CANARY_SELECTION_REASON.V3_SUCCESS_SELECTED);
   assert.equal(result.canaryEligible, true);
@@ -67,7 +96,11 @@ test("flag ON and V3 SUCCESS selects V3 for wgs84_decimal only", () => {
 
 test("flag ON with V3 REVIEW_REQUIRED falls back to legacy", () => {
   const result = select({
-    env: { [WGS84_DECIMAL_CANARY_FLAG]: "true" },
+    visitorId: "internal-1",
+    env: {
+      [WGS84_DECIMAL_CANARY_FLAG]: "true",
+      [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1",
+    },
     status: V3_PRODUCTION_STATUS.REVIEW_REQUIRED,
     productionSupported: false,
     reasonCode: V3_PRODUCTION_REASON_CODE.INCOMPLETE_EXTRACTION,
@@ -79,7 +112,11 @@ test("flag ON with V3 REVIEW_REQUIRED falls back to legacy", () => {
 
 test("flag ON with V3 UNSUPPORTED falls back to legacy", () => {
   const result = select({
-    env: { [WGS84_DECIMAL_CANARY_FLAG]: "true" },
+    visitorId: "internal-1",
+    env: {
+      [WGS84_DECIMAL_CANARY_FLAG]: "true",
+      [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1",
+    },
     status: V3_PRODUCTION_STATUS.UNSUPPORTED,
     productionSupported: false,
     technicalKmlReady: false,
@@ -91,7 +128,11 @@ test("flag ON with V3 UNSUPPORTED falls back to legacy", () => {
 
 test("other family is never selected by wgs84 flag", () => {
   const result = select({
-    env: { [WGS84_DECIMAL_CANARY_FLAG]: "true" },
+    visitorId: "internal-1",
+    env: {
+      [WGS84_DECIMAL_CANARY_FLAG]: "true",
+      [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1",
+    },
     family: "cote_divoire_dms",
   });
   assert.equal(result.selectedEngine, V3_CANARY_SELECTED_ENGINE.LEGACY);
@@ -100,7 +141,11 @@ test("other family is never selected by wgs84 flag", () => {
 
 test("rollback active restores legacy", () => {
   const result = select({
-    env: { [WGS84_DECIMAL_CANARY_FLAG]: "true" },
+    visitorId: "internal-1",
+    env: {
+      [WGS84_DECIMAL_CANARY_FLAG]: "true",
+      [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1",
+    },
     rollbackActive: true,
   });
   assert.equal(result.rollbackActive, true);
@@ -110,7 +155,11 @@ test("rollback active restores legacy", () => {
 
 test("experimental signal cannot be selected", () => {
   const result = select({
-    env: { [WGS84_DECIMAL_CANARY_FLAG]: "true" },
+    visitorId: "internal-1",
+    env: {
+      [WGS84_DECIMAL_CANARY_FLAG]: "true",
+      [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1",
+    },
     productionScopeStatus: V3_PRODUCTION_SCOPE_STATUS.EXPERIMENTAL,
     reasonCodes: [V3_PRODUCTION_REASON_CODE.EXPERIMENTAL_PATH_REQUIRED],
   });
@@ -120,7 +169,13 @@ test("experimental signal cannot be selected", () => {
 });
 
 test("shadow metrics include sanitized canary selection fields", () => {
-  const coordinateEngineV3Canary = select({ env: { [WGS84_DECIMAL_CANARY_FLAG]: "true" } });
+  const coordinateEngineV3Canary = select({
+    visitorId: "internal-1",
+    env: {
+      [WGS84_DECIMAL_CANARY_FLAG]: "true",
+      [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1",
+    },
+  });
   const event = buildV3ShadowEvaluationMetric({
     response: {
       coordinates: "-8,11",
@@ -132,10 +187,43 @@ test("shadow metrics include sanitized canary selection fields", () => {
     },
   });
   assert.equal(event.family, WGS84_DECIMAL_CANARY_FAMILY);
+  assert.equal(event.canaryUser, true);
   assert.equal(event.selectedEngine, V3_CANARY_SELECTED_ENGINE.V3);
   assert.equal(event.selectionReason, V3_CANARY_SELECTION_REASON.V3_SUCCESS_SELECTED);
   assert.equal(event.rollbackActive, false);
   assert.equal(JSON.stringify(event).includes("provider"), false);
+  assert.equal(JSON.stringify(event).includes("internal-1"), false);
+});
+
+test("empty allowlist keeps legacy even when flag is on", () => {
+  const result = select({
+    visitorId: "internal-1",
+    env: { [WGS84_DECIMAL_CANARY_FLAG]: "true" },
+  });
+  assert.equal(result.selectedEngine, V3_CANARY_SELECTED_ENGINE.LEGACY);
+  assert.equal(result.selectionReason, V3_CANARY_SELECTION_REASON.USER_NOT_ALLOWED);
+  assert.equal(result.canaryUser, false);
+});
+
+test("canUseV3Canary requires family flag and allowlisted visitor", () => {
+  assert.equal(canUseV3Canary({
+    family: WGS84_DECIMAL_CANARY_FAMILY,
+    visitorId: "internal-1",
+    flag: true,
+    env: { [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1,internal-2" },
+  }), true);
+  assert.equal(canUseV3Canary({
+    family: WGS84_DECIMAL_CANARY_FAMILY,
+    visitorId: "external-1",
+    flag: true,
+    env: { [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1" },
+  }), false);
+  assert.equal(canUseV3Canary({
+    family: "generic_dms",
+    visitorId: "internal-1",
+    flag: true,
+    env: { [WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST]: "internal-1" },
+  }), false);
 });
 
 test("server wrapper attaches canary metadata without public coordinate override", () => {

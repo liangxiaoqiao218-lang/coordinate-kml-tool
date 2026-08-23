@@ -24,12 +24,15 @@ export {
 
 export {
   buildV3FamilyCanarySelection,
+  canUseV3Canary,
   isWgs84DecimalCanaryEnabled,
+  isWgs84DecimalCanaryVisitorAllowed,
   V3_CANARY_SELECTED_ENGINE,
   V3_CANARY_SELECTION_REASON,
   V3_CANARY_SELECTION_SCHEMA_VERSION,
   WGS84_DECIMAL_CANARY_FAMILY,
   WGS84_DECIMAL_CANARY_FLAG,
+  WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST,
 } from "./canary-selection.js";
 
 export {

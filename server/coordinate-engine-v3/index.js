@@ -173,8 +173,10 @@ export {
   buildCoordinateEngineV3ProductionShadow,
   buildV3FamilyCanarySelection,
   buildV3ShadowEvaluationMetric,
+  canUseV3Canary,
   getV3ProductionScopeStatus,
   isWgs84DecimalCanaryEnabled,
+  isWgs84DecimalCanaryVisitorAllowed,
   isV3ProductionSupported,
   mapV3ProductionResult,
   recordV3ShadowEvaluationMetric,
@@ -190,6 +192,7 @@ export {
   V3_TECHNICAL_KML_HARD_BLOCK_REASONS,
   WGS84_DECIMAL_CANARY_FAMILY,
   WGS84_DECIMAL_CANARY_FLAG,
+  WGS84_DECIMAL_CANARY_VISITOR_ALLOWLIST,
 } from "./production/index.js";
 
 export const COORDINATE_ENGINE_V3_DISABLED_REASON = "coordinate_engine_v3_not_enabled";

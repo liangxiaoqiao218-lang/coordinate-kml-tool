@@ -36,8 +36,33 @@ const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰�
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const SYSTEM_CONFIG_PRICING_ID = "pricing";
 
+function getV3CanaryIdentity(payload = {}, response = {}) {
+  const visitorId = String(
+    payload.visitorId
+      || payload.visitor_id
+      || payload.user_id
+      || response.visitorId
+      || response.visitor_id
+      || response.user_id
+      || ""
+  ).trim();
+  const userId = String(
+    payload.userId
+      || payload.user_id
+      || payload.visitorId
+      || payload.visitor_id
+      || response.userId
+      || response.user_id
+      || response.visitorId
+      || response.visitor_id
+      || ""
+  ).trim();
+  return { visitorId, userId };
+}
+
 function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null) {
   const response = buildCoordinateVerificationResponseBase(payload, coordinateEngineV2);
+  const canaryIdentity = getV3CanaryIdentity(payload, response);
   const coordinateEngineV3Production = buildCoordinateEngineV3ProductionShadow({
     payload: response,
     coordinateEngineV2: response.coordinateEngineV2
@@ -47,7 +72,9 @@ function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = 
       ...response,
       coordinateEngineV3Production
     },
-    v3Production: coordinateEngineV3Production
+    v3Production: coordinateEngineV3Production,
+    visitorId: canaryIdentity.visitorId,
+    userId: canaryIdentity.userId
   });
   const augmentedResponse = {
     ...response,
