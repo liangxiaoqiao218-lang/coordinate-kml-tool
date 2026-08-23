@@ -10,6 +10,7 @@ WGS84 and KML Closure
 - Restored WGS84 golden regression baseline.
 - Restored KML export permission closure.
 - Added local-only development quota fallback validation.
+- Added an exact-HTTPS, environment-configurable RC origin allowlist while preserving the default production origin boundary.
 
 ### Excluded
 
