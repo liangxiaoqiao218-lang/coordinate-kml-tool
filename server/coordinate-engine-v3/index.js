@@ -168,6 +168,20 @@ export {
   validateAcquisitionResult,
 } from "./acquisition/index.js";
 
+export {
+  chooseV3ProductionReason,
+  getV3ProductionScopeStatus,
+  isV3ProductionSupported,
+  mapV3ProductionResult,
+  V3_PRODUCTION_REASON_CODE,
+  V3_PRODUCTION_REASON_PRIORITY,
+  V3_PRODUCTION_RESULT_SCHEMA_VERSION,
+  V3_PRODUCTION_SCOPE_STATUS,
+  V3_PRODUCTION_STATUS,
+  V3_PRODUCTION_SUPPORTED_SCOPE_V1,
+  V3_TECHNICAL_KML_HARD_BLOCK_REASONS,
+} from "./production/index.js";
+
 export const COORDINATE_ENGINE_V3_DISABLED_REASON = "coordinate_engine_v3_not_enabled";
 
 export function isCoordinateEngineV3Enabled(env = process.env) {
