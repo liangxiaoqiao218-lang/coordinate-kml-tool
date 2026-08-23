@@ -482,11 +482,42 @@ function getProtectedEndpointType(pathname = "") {
   return "";
 }
 
+function parseOptionalHttpsOrigin(value) {
+  const candidate = String(value || "").trim();
+
+  if (!candidate) {
+    return "";
+  }
+
+  try {
+    const url = new URL(candidate);
+    const isExactOrigin = candidate === url.origin
+      && url.protocol === "https:"
+      && !url.username
+      && !url.password
+      && url.pathname === "/"
+      && !url.search
+      && !url.hash
+      && !url.hostname.includes("*");
+
+    return isExactOrigin ? url.origin : "";
+  } catch (_) {
+    return "";
+  }
+}
+
 const allowedRequestOrigins = new Set([
   "https://geokitlab.com",
   "https://www.geokitlab.com",
   "https://coordinate-kml-tool.onrender.com"
 ]);
+const rcAllowedOrigin = parseOptionalHttpsOrigin(process.env.RC_ALLOWED_ORIGIN);
+
+if (rcAllowedOrigin) {
+  allowedRequestOrigins.add(rcAllowedOrigin);
+} else if (String(process.env.RC_ALLOWED_ORIGIN || "").trim()) {
+  console.warn("RC_ALLOWED_ORIGIN ignored: expected one exact HTTPS origin.");
+}
 
 function parseRequestOrigin(value) {
   if (!value) return { empty: true, origin: "" };
