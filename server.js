@@ -7,7 +7,11 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import Tesseract from "tesseract.js";
-import { buildCoordinateVerificationResponse } from "./server/verification/index.js";
+import { buildCoordinateVerificationResponse as buildCoordinateVerificationResponseBase } from "./server/verification/index.js";
+import {
+  buildCoordinateEngineV3ProductionShadow,
+  recordV3ShadowEvaluationMetric,
+} from "./server/coordinate-engine-v3/index.js";
 
 const app = express();
 const upload = multer({
@@ -30,6 +34,23 @@ const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const SYSTEM_CONFIG_PRICING_ID = "pricing";
+
+function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null) {
+  const response = buildCoordinateVerificationResponseBase(payload, coordinateEngineV2);
+  const augmentedResponse = {
+    ...response,
+    coordinateEngineV3Production: buildCoordinateEngineV3ProductionShadow({
+      payload: response,
+      coordinateEngineV2: response.coordinateEngineV2
+    })
+  };
+  recordV3ShadowEvaluationMetric({
+    response: augmentedResponse,
+    route: "recognize-coordinates"
+  });
+  return augmentedResponse;
+}
+
 const DEFAULT_PRICING_CONFIG = {
   monthly: {
     name: "月度版",

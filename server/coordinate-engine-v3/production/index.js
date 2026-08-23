@@ -17,3 +17,12 @@ export {
   chooseV3ProductionReason,
   mapV3ProductionResult,
 } from "./result-mapper.js";
+
+export {
+  buildCoordinateEngineV3ProductionShadow,
+} from "./shadow-response.js";
+
+export {
+  buildV3ShadowEvaluationMetric,
+  recordV3ShadowEvaluationMetric,
+} from "./shadow-metrics.js";

@@ -170,9 +170,12 @@ export {
 
 export {
   chooseV3ProductionReason,
+  buildCoordinateEngineV3ProductionShadow,
+  buildV3ShadowEvaluationMetric,
   getV3ProductionScopeStatus,
   isV3ProductionSupported,
   mapV3ProductionResult,
+  recordV3ShadowEvaluationMetric,
   V3_PRODUCTION_REASON_CODE,
   V3_PRODUCTION_REASON_PRIORITY,
   V3_PRODUCTION_RESULT_SCHEMA_VERSION,
