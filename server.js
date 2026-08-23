@@ -961,6 +961,16 @@ function consumeLocalUsage(user, type) {
   };
 }
 
+function isLocalUsageFallbackRequest(req) {
+  if (supabase || process.env.NODE_ENV === "production") return false;
+  const remoteAddress = String(req?.socket?.remoteAddress || req?.ip || "").toLowerCase();
+  const hostname = String(req?.hostname || "").toLowerCase();
+  const isLoopbackAddress = remoteAddress === "127.0.0.1"
+    || remoteAddress === "::1"
+    || remoteAddress.endsWith(":127.0.0.1");
+  return isLoopbackAddress && ["localhost", "127.0.0.1", "::1"].includes(hostname);
+}
+
 async function getOrCreateSupabaseUser(userId) {
   if (!supabase || !userId) {
     return null;
@@ -8123,6 +8133,13 @@ function getCoordinateEngineV2AxisEvidence(coordinateType = "", result = {}, opt
       reason: "explicit WGS84 longitude/latitude table"
     };
   }
+  if (precisionMode === "wgs84-chat-coordinates") {
+    return {
+      status: "locked_by_parser",
+      interpretation: "as_parsed",
+      reason: "WGS84 Chat parser defines latitude/longitude order"
+    };
+  }
 
   const text = foldSearchText([
     options.fileName || "",
@@ -8749,6 +8766,8 @@ function buildCoordinateEngineV2ValidationReport(group = {}, coordinateType = ""
   const profile = validationContext.profile || getCoordinateEngineV2ValidationProfile(coordinateType);
   const axisEvidence = validationContext.axisEvidence || { status: "none", interpretation: null, reason: "" };
   const scoreMarginThreshold = 15;
+  const axisOrderLocked = axisEvidence.status === "locked_by_coordinate_type"
+    || axisEvidence.status === "locked_by_parser";
 
   if (hasProjectedOrGrid) {
     return {
@@ -8764,7 +8783,7 @@ function buildCoordinateEngineV2ValidationReport(group = {}, coordinateType = ""
     };
   }
 
-  const candidateInterpretations = axisEvidence.status === "locked_by_coordinate_type"
+  const candidateInterpretations = axisOrderLocked
     ? ["as_parsed", "swapped_lat_lon"]
     : ["first_is_lon_second_is_lat", "first_is_lat_second_is_lon"];
   const candidates = candidateInterpretations
@@ -8775,7 +8794,7 @@ function buildCoordinateEngineV2ValidationReport(group = {}, coordinateType = ""
   const best = candidates[0] || null;
   const runnerUp = candidates[1] || null;
   const scoreMargin = best && runnerUp ? Number((best.score - runnerUp.score).toFixed(2)) : null;
-  const effectivePointInterpretation = axisEvidence.status === "locked_by_coordinate_type" ? "as_parsed" : (points.every(point => {
+  const effectivePointInterpretation = axisOrderLocked ? "as_parsed" : (points.every(point => {
     const rawPair = parseCoordinateEngineV2RawPair(point);
     return rawPair && hasCoordinateEngineV2Wgs84Point(point)
       && Number(point.lon) === Number(rawPair.first)
@@ -8787,10 +8806,10 @@ function buildCoordinateEngineV2ValidationReport(group = {}, coordinateType = ""
   let selectionReason = "highest_candidate_score";
   let orderStatus = "resolved";
 
-  if (axisEvidence.status === "locked_by_coordinate_type") {
+  if (axisOrderLocked) {
     selected = candidates.find(candidate => candidate.interpretation === effectivePointInterpretation) || best;
     selectionReason = axisEvidence.reason;
-    orderStatus = "locked_by_coordinate_type";
+    orderStatus = axisEvidence.status;
   } else if (axisEvidence.status === "explicit_header" && axisEvidence.interpretation) {
     selected = candidates.find(candidate => candidate.interpretation === axisEvidence.interpretation) || best;
     selectionReason = axisEvidence.reason;
@@ -11110,6 +11129,16 @@ app.get("/api/usage/quota", async (req, res) => {
     const user = await getOrCreateSupabaseUser(visitorId);
 
     if (!user) {
+      if (isLocalUsageFallbackRequest(req)) {
+        const data = await readAdminData();
+        const localUser = ensureUser(data, visitorId);
+        await writeAdminData(data);
+        return res.json({
+          success: true,
+          source: "local_development",
+          quota: buildQuotaPayload(localUser)
+        });
+      }
       return res.status(500).json({
         success: false,
         reason: "db_disabled",
@@ -11159,7 +11188,38 @@ app.post("/api/usage/consume", async (req, res) => {
       });
     }
 
-    const result = await consumeUsage(visitorId, type, req);
+    let result;
+    if (isLocalUsageFallbackRequest(req)) {
+      const data = await readAdminData();
+      const user = ensureUser(data, visitorId);
+      const permissions = getEffectivePermissions(user, data.featureFlags);
+      const requiredFeature = type === "judge" ? "aiJudgeEnabled" : "kmlExportEnabled";
+
+      await updateUserVisitMeta(user, req, data);
+      if (!permissions[requiredFeature]) {
+        await writeAdminData(data);
+        return res.status(403).json({
+          success: false,
+          reason: "permission_denied",
+          type,
+          quota: buildQuotaPayload(user),
+          error: type === "judge" ? "当前用户暂未开通 AI 判读功能。" : "当前用户暂未开通 KML 导出。"
+        });
+      }
+
+      const localResult = consumeLocalUsage(user, type);
+      result = {
+        ...localResult,
+        reason: localResult.success ? "ok" : "limit_exceeded"
+      };
+      user.eventCount = Number(user.eventCount || 0) + 1;
+      if (localResult.success) {
+        await appendUsageLog(data, user, req, type, localResult.source);
+      }
+      await writeAdminData(data);
+    } else {
+      result = await consumeUsage(visitorId, type, req);
+    }
     await updateSupabaseUserVisitMeta(visitorId, req);
     await updateSupabaseUserSourceMeta(visitorId, req);
 

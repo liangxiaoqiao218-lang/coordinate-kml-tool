@@ -172,6 +172,38 @@ assert.ok(engineGeometryResult.geometryWarnings.some(warning => (
   warning.code === "ENGINE_SELF_INTERSECTION" && warning.source === "coordinate_engine_v2"
 )), "geometry warning should identify Coordinate Engine V2 as its source");
 
+const ambiguousWgs84Engine = {
+  coordinate_type: "decimal_latlon",
+  requires_review: true,
+  warnings: ["坐标顺序存在歧义，请人工确认经纬度顺序。"],
+  groups: [{
+    group_id: "group_1",
+    geometry: "point",
+    requires_review: true,
+    kml_ready: false,
+    warnings: ["坐标顺序存在歧义，请人工确认经纬度顺序。"],
+    validation: {
+      status: "scored",
+      selected_interpretation: "first_is_lat_second_is_lon",
+      order_status: "ambiguous",
+      candidates: [{
+        interpretation: "first_is_lat_second_is_lon",
+        warnings: ["坐标顺序存在歧义，请人工确认经纬度顺序。"]
+      }]
+    },
+    points: [{ label: "1", raw: "12.319572, -11.178174", lat: 12.319572, lon: -11.178174 }]
+  }]
+};
+const ambiguousWgs84Result = buildCoordinateVerification({
+  recognitionResult: { coordinates: "12.319572, -11.178174" },
+  coordinateEngineV2: ambiguousWgs84Engine
+});
+assert.equal(ambiguousWgs84Result.status, "REVIEW", "unresolved WGS84 axis ambiguity must still require review");
+assert.ok(
+  ambiguousWgs84Result.warnings.includes("坐标顺序存在歧义，请人工确认经纬度顺序。"),
+  "the review must retain the concrete unresolved axis-order question"
+);
+
 const responseBeforeVerification = {
   success: true,
   rawText: normalDmsText,
@@ -194,7 +226,7 @@ assert.deepEqual(responseBeforeVerification, responseSnapshot, "response wrapper
 
 console.log(JSON.stringify({
   suite: "coordinate-verification-regression",
-  passed: 9,
+  passed: 10,
   cases: [
     { id: "normal_dms", status: normalResult.status, verification_score: normalResult.verification_score },
     { id: "handwritten_digit_conflict", status: handwrittenResult.status, conflicts: handwrittenResult.conflicts.length },
@@ -206,6 +238,7 @@ console.log(JSON.stringify({
       geometry_validation: item.result.geometry_validation
     })),
     { id: "existing_v2_geometry", status: engineGeometryResult.status },
+    { id: "true_wgs84_axis_ambiguity", status: ambiguousWgs84Result.status },
     { id: "legacy_response_compatibility", status: "PASS" }
   ]
 }, null, 2));

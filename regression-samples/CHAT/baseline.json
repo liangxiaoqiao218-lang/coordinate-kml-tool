@@ -3,6 +3,7 @@
   "status": "locked",
   "baselineCommit": "701719f9a881cca22055f4d9b648092a0d2583d2",
   "precisionMode": "wgs84-chat-coordinates",
+  "inputFile": "TEXT:12.319572, -11.178174",
   "parserTraceAlias": ["TEXT", "WGS84_CHAT:accepted"],
   "pointCount": 1,
   "geometry": "Point",
