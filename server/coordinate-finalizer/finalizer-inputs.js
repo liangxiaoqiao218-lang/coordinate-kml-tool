@@ -35,6 +35,7 @@ function commonInput({
   const geometryResult = geometryFromStructuredGroups(groups);
   const underlyingRequiresReview = Boolean(structuredResult.requires_review || groups.some(group => group?.requires_review !== false));
   const underlyingKmlReady = groups.length > 0 && groups.every(group => group?.kml_ready === true);
+  const technicalKmlReady = geometryResult.ok && verification?.status !== "BLOCK";
   const underlyingGroups = groups.map(group => ({
     groupId: group?.group_id || null,
     requiresReview: group?.requires_review !== false,
@@ -81,9 +82,8 @@ function commonInput({
     confirmationStatus,
     qualityGateStatus: availabilityBlocked
       ? COORDINATE_QUALITY_GATE_STATUS.FAILED
-      : confirmationOnlyReview
-      ? COORDINATE_QUALITY_GATE_STATUS.PASSED
       : verificationQualityStatus(verification),
+    technicalKmlReady: availabilityBlocked ? false : technicalKmlReady,
     requiresReview: availabilityBlocked ? false : familySafety.requiresReview,
     kmlReady: availabilityBlocked ? false : familySafety.kmlReady,
     groups: familySafety.groups,

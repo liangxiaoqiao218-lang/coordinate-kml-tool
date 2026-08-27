@@ -6894,7 +6894,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function shouldBlockFinalizedCoordinateKml() {
       if (!activeFinalizedCoordinateResult) return false;
-      return finalizedCoordinateDirty || activeFinalizedCoordinateResult.decisionState !== "AUTO_EXPORT";
+      return finalizedCoordinateDirty || activeFinalizedCoordinateResult.kmlReady !== true;
     }
 
     function scrollToCoordinateReviewGroup(groupIndex) {

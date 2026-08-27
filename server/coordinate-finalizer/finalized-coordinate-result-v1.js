@@ -29,6 +29,7 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
   const effectiveCandidate = {
     ...candidate,
     availabilityStatus,
+    technicalKmlReady: availabilityBlocked ? false : (candidate.technicalKmlReady === true || candidate.kmlReady === true),
     requiresReview: availabilityBlocked ? false : candidate.requiresReview,
     kmlReady: availabilityBlocked ? false : candidate.kmlReady,
     resultId,
@@ -56,8 +57,9 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
     confirmationStatus: candidate.confirmationStatus || null,
     qualityGateStatus: candidate.qualityGateStatus || null,
     decisionState: gate.decisionState,
+    technicalKmlReady: effectiveCandidate.technicalKmlReady === true,
     requiresReview: effectiveCandidate.requiresReview !== false,
-    kmlReady: effectiveCandidate.kmlReady === true,
+    kmlReady: gate.kmlReady === true,
     reasonCodes: gate.reasonCodes,
     blockingReasons: gate.blockingReasons,
     warnings: uniqueStrings(candidate.warnings),

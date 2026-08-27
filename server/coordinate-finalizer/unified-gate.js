@@ -15,6 +15,14 @@ function unique(values) {
 
 export function evaluateCoordinateReleaseGate(candidate = {}) {
   const blockingReasons = [];
+  const confirmationAccepted = candidate.confirmationStatus === COORDINATE_CONFIRMATION_STATUS.ACCEPTED;
+  const confirmationWorkflowActive = [
+    COORDINATE_CONFIRMATION_STATUS.PENDING,
+    COORDINATE_CONFIRMATION_STATUS.ACCEPTED,
+    COORDINATE_CONFIRMATION_STATUS.REJECTED
+  ].includes(candidate.confirmationStatus);
+  const reviewOnlyKmlHold = candidate.technicalKmlReady === true
+    && (confirmationWorkflowActive || candidate.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED);
   if (candidate.availabilityStatus === FAMILY_AVAILABILITY_STATUS.BLOCKED_BY_PROVIDER) {
     blockingReasons.push(COORDINATE_GATE_REASON.FAMILY_BLOCKED_BY_PROVIDER);
   } else if (candidate.availabilityStatus === FAMILY_AVAILABILITY_STATUS.TEMPORARILY_UNAVAILABLE) {
@@ -32,7 +40,9 @@ export function evaluateCoordinateReleaseGate(candidate = {}) {
   if (candidate.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.FAILED) {
     blockingReasons.push(COORDINATE_GATE_REASON.QUALITY_GATE_FAILED);
   } else if (candidate.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED) {
-    blockingReasons.push(COORDINATE_GATE_REASON.QUALITY_GATE_REVIEW_REQUIRED);
+    if (!confirmationAccepted) {
+      blockingReasons.push(COORDINATE_GATE_REASON.QUALITY_GATE_REVIEW_REQUIRED);
+    }
   } else if (candidate.qualityGateStatus !== COORDINATE_QUALITY_GATE_STATUS.PASSED) {
     blockingReasons.push(COORDINATE_GATE_REASON.QUALITY_GATE_UNKNOWN);
   }
@@ -48,8 +58,12 @@ export function evaluateCoordinateReleaseGate(candidate = {}) {
     && candidate.confirmedRevision !== candidate.resultRevision) {
     blockingReasons.push(COORDINATE_GATE_REASON.RESULT_REVISION_STALE);
   }
-  if (candidate.requiresReview !== false) blockingReasons.push(COORDINATE_GATE_REASON.REVIEW_REQUIRED);
-  if (candidate.kmlReady !== true) blockingReasons.push(COORDINATE_GATE_REASON.KML_NOT_READY);
+  if (candidate.requiresReview !== false && !confirmationAccepted) {
+    blockingReasons.push(COORDINATE_GATE_REASON.REVIEW_REQUIRED);
+  }
+  if (candidate.kmlReady !== true && !reviewOnlyKmlHold) {
+    blockingReasons.push(COORDINATE_GATE_REASON.KML_NOT_READY);
+  }
 
   const budget = getRecognitionBudget();
   const crsStage = budget?.stageStarted("crs");
@@ -93,6 +107,7 @@ export function evaluateCoordinateReleaseGate(candidate = {}) {
 
   return Object.freeze({
     decisionState,
+    kmlReady: decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT,
     reasonCodes: Object.freeze(reasonCodes),
     blockingReasons: Object.freeze(reasonCodes.map(code => Object.freeze({ code })))
   });

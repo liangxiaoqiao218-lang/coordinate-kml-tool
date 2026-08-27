@@ -127,7 +127,7 @@ assert.match(html, /fetch\("\/api\/coordinate-confirmation"/);
 assert.match(html, /fetch\("\/api\/coordinate-revision"/);
 assert.match(html, /finalizedCoordinateDirty/);
 assert.match(html, /shouldBlockFinalizedCoordinateKml\(\)/);
-assert.match(html, /activeFinalizedCoordinateResult\.decisionState !== "AUTO_EXPORT"/);
+assert.match(html, /activeFinalizedCoordinateResult\.kmlReady !== true/);
 assert.match(html, /if \(activeFinalizedCoordinateResult\) finalizedCoordinateDirty = true/);
 
 console.log(JSON.stringify({
