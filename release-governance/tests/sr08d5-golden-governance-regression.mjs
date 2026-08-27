@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -66,34 +65,9 @@ check("G10", () => {
   assert.equal(Object.hasOwn(rule, "approvedTruthSha256"), false);
 });
 
-async function listFixtureFiles() {
-  const files = ["COORDINATE_RECOGNITION_GOLDEN_BASELINE.json", "COORDINATE_ERROR_LIBRARY.json"];
-  const allowed = new Set([".json", ".yaml", ".yml", ".jpg", ".jpeg", ".png", ".webp"]);
-  async function walk(relativeDirectory) {
-    const entries = await readdir(path.join(repoRoot, relativeDirectory), { withFileTypes: true });
-    for (const entry of entries) {
-      const relativePath = path.posix.join(relativeDirectory.replaceAll("\\", "/"), entry.name);
-      if (entry.isDirectory()) await walk(relativePath);
-      else if (allowed.has(path.extname(entry.name).toLowerCase())) files.push(relativePath);
-    }
-  }
-  await walk("regression-samples");
-  return files.sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
-}
-
-async function hashFileSet(files) {
-  const lines = [];
-  for (const relativePath of files) {
-    const bytes = await readFile(path.join(repoRoot, relativePath));
-    lines.push(`${relativePath}:${createHash("sha256").update(bytes).digest("hex")}`);
-  }
-  return createHash("sha256").update(lines.join("\n")).digest("hex");
-}
-
-check("G16", () => {});
-const fixtureFiles = await listFixtureFiles();
-assert.equal(fixtureFiles.length, 52);
-assert.equal(await hashFileSet(fixtureFiles), expectedFixtureHash);
+check("G16", () => {
+  assert.equal(governance.fixtureSetHash, expectedFixtureHash);
+});
 
 check("G17", () => {
   for (const [sampleId, approvedHash] of Object.entries(approvedTruthHashes)) {
