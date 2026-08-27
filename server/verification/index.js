@@ -6,6 +6,13 @@ import {
   buildRecognitionEvidence
 } from "../evidence/recognition-evidence-adapter.js";
 import { buildEvidenceAcquisition } from "../evidence-acquisition/index.js";
+import {
+  createManualFinalizerInput,
+  createLegacyFinalizerInput,
+  finalizeCoordinateResult,
+  registerFinalizedCoordinateResult
+} from "../coordinate-finalizer/index.js";
+import { getRecognitionBudget } from "../coordinate-finalizer/recognition-deadline.js";
 
 function uniqueWarnings(values) {
   return Array.from(new Set(values.map(value => String(value || "").trim()).filter(Boolean)));
@@ -122,26 +129,63 @@ export function buildCoordinateVerification({ recognitionResult = {}, coordinate
   };
 }
 
-export function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null) {
+export function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null, finalizerOptions = {}) {
+  const budget = getRecognitionBudget();
+  budget?.assertCanContinue({ stageName: "verification" });
+  const verificationStage = budget?.stageStarted("verification");
   const engine = coordinateEngineV2 || payload.coordinateEngineV2 || {};
-  const evidenceAcquisition = buildEvidenceAcquisition({
-    recognitionResult: payload,
-    coordinateEngineV2: engine
-  });
-  const evidence = buildRecognitionEvidence({
-    recognitionResult: payload,
-    coordinateEngineV2: engine,
-    context: { evidenceAcquisition }
-  });
+  let evidenceAcquisition;
+  let evidence;
+  let verification;
+  let verificationResult = "success";
+  try {
+    evidenceAcquisition = buildEvidenceAcquisition({
+      recognitionResult: payload,
+      coordinateEngineV2: engine
+    });
+    evidence = buildRecognitionEvidence({
+      recognitionResult: payload,
+      coordinateEngineV2: engine,
+      context: { evidenceAcquisition }
+    });
+    verification = buildCoordinateVerification({
+      recognitionResult: payload,
+      coordinateEngineV2: engine,
+      evidence
+    });
+  } catch (error) {
+    verificationResult = "failed";
+    throw error;
+  } finally {
+    budget?.stageCompleted(verificationStage, { result: verificationResult });
+  }
+  budget?.assertCanContinue({ stageName: "finalizer" });
+  const finalizerStage = budget?.stageStarted("finalizer");
+  let finalizedCoordinateResult;
+  let finalizerResult = "success";
+  try {
+    const createFinalizerInput = finalizerOptions.sourceAuthority === "manual_input"
+      ? createManualFinalizerInput
+      : createLegacyFinalizerInput;
+    finalizedCoordinateResult = registerFinalizedCoordinateResult(finalizeCoordinateResult(createFinalizerInput({
+      recognitionResult: payload,
+      coordinateEngineV2: engine,
+      verification,
+      revision: finalizerOptions.revision || payload.finalizerRevision,
+      familyAvailability: finalizerOptions.familyAvailability || null
+    })));
+  } catch (error) {
+    finalizerResult = "failed";
+    throw error;
+  } finally {
+    budget?.stageCompleted(finalizerStage, { result: finalizerResult });
+  }
   return {
     ...payload,
     coordinateEngineV2: engine,
     evidenceAcquisition,
     evidence,
-    verification: buildCoordinateVerification({
-      recognitionResult: payload,
-      coordinateEngineV2: engine,
-      evidence
-    })
+    verification,
+    finalizedCoordinateResult
   };
 }

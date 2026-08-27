@@ -217,10 +217,11 @@ const responseAfterVerification = buildCoordinateVerificationResponse(
   responseBeforeVerification,
   responseBeforeVerification.coordinateEngineV2
 );
-const { verification, evidence, evidenceAcquisition, ...responseWithoutVerification } = responseAfterVerification;
+const { verification, evidence, evidenceAcquisition, finalizedCoordinateResult, ...responseWithoutVerification } = responseAfterVerification;
 assert.ok(verification, "response wrapper should append verification");
 assert.ok(evidence, "response wrapper should append evidence shadow data");
 assert.ok(evidenceAcquisition, "response wrapper should append evidence acquisition shadow data");
+assert.ok(finalizedCoordinateResult, "response wrapper should append the authoritative finalized result");
 assert.deepEqual(responseWithoutVerification, responseSnapshot, "removing verification must restore the exact legacy response");
 assert.deepEqual(responseBeforeVerification, responseSnapshot, "response wrapper must not mutate the legacy response");
 

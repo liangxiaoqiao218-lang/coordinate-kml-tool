@@ -7,9 +7,53 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import Tesseract from "tesseract.js";
+import { runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
+import { isFamilyRetryAllowed } from "./server/recognition/family-retry-policy.js";
+import {
+  KYRGYZ_PRIMARY_STAGE_CAP_MS,
+  MADAGASCAR_PRIMARY_STAGE_CAP_MS,
+  WGS84_PRIMARY_STAGE_CAP_MS,
+  buildPrimaryRouteDecision,
+  detectUploadTableStructure,
+  getMadagascarCadastralStrongRouteEvidence,
+  getWgs84StrongRouteEvidence,
+  shouldRunWgs84TimeoutRescue
+} from "./server/recognition/family-primary-routing.js";
+import { finiteNumberOrNull, hasFiniteNumericValue } from "./server/coordinate-values.js";
+import { utmToWgs84 } from "./server/projection/utm.js";
+import {
+  getStructuredCoordinateBlocks,
+  inferStructuredBoundaryType,
+  parseStructuredBoundaryPoint
+} from "./server/structured-coordinate-boundary.js";
 import { buildCoordinateVerificationResponse } from "./server/verification/index.js";
+import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
+import { parseManualLongitudeLatitudeText } from "./server/manual-coordinate-input.js";
+import { calculateSpatialFacts } from "./server/spatial/spatial-facts.js";
+import {
+  COORDINATE_DECISION_STATE,
+  FINALIZED_COORDINATE_SCHEMA_VERSION,
+  CONFIRMATION_RUNTIME_VERSION,
+  FAMILY_AVAILABILITY_STATUS,
+  RECOGNITION_BUDGET_CODE,
+  RECOGNITION_DEADLINE_CODE,
+  activateRecognitionDeadlineContext,
+  assertRecognitionCanContinue,
+  confirmFinalizedCoordinateResult,
+  composeAbortSignals,
+  getRecognitionBudget,
+  getRecognitionDeadlineSignal,
+  getRecognitionHardDeadlineMs,
+  evaluateFamilyAvailability,
+  enforceSpatialApiEnabled,
+  isSpatialResultEnabled,
+  isRecognitionStopError,
+  recognitionDeadlineMiddleware,
+  validateFinalizedCoordinateIdentity
+} from "./server/coordinate-finalizer/index.js";
 
 const app = express();
+const mapPreviewAdapter = new MapPreviewAdapter();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -28,6 +72,18 @@ const supabase = supabaseUrl && supabaseServiceRoleKey
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
+const regressionRecognitionTraces = new Map();
+const MAX_REGRESSION_RECOGNITION_TRACES = 200;
+
+function storeRegressionRecognitionTrace(trace) {
+  if (!trace?.requestId || !trace?.caseId) return false;
+  regressionRecognitionTraces.set(trace.requestId, trace);
+  while (regressionRecognitionTraces.size > MAX_REGRESSION_RECOGNITION_TRACES) {
+    const oldestRequestId = regressionRecognitionTraces.keys().next().value;
+    regressionRecognitionTraces.delete(oldestRequestId);
+  }
+  return true;
+}
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const SYSTEM_CONFIG_PRICING_ID = "pricing";
 const DEFAULT_PRICING_CONFIG = {
@@ -623,6 +679,11 @@ function rateLimitGuard(req, res, next) {
   const endpoint = getProtectedEndpointType(req.path);
   if (!endpoint) return next();
 
+  if (endpoint === "recognize") {
+    const regressionTestMode = getRegressionTestMode(req);
+    if (regressionTestMode.active) return next();
+  }
+
   const rule = rateLimitRules[endpoint];
   if (!rule) return next();
 
@@ -692,7 +753,7 @@ function renderIndexWithMeta(req, res) {
   res.type("html").send(html);
 }
 
-app.get(["/", "/index.html", "/coordinate", "/coordinate-tool", "/tool", "/convert", "/ocr", "/mining", "/mining-judge", "/mining-analysis", "/judge", "/gold", "/gold-calculator"], renderIndexWithMeta);
+app.get(["/", "/index.html", "/coordinate", "/coordinate/map", "/coordinate-tool", "/tool", "/convert", "/ocr", "/mining", "/mining-judge", "/mining-analysis", "/judge", "/gold", "/gold-calculator"], renderIndexWithMeta);
 
 app.get("/robots.txt", (req, res) => {
   res.type("text/plain").send("User-agent: *\nAllow: /\n\nSitemap: https://geokitlab.com/sitemap.xml\n");
@@ -721,7 +782,23 @@ app.get("/api/version", (req, res) => {
   res.json({
     brand: appBrand,
     version: appVersion,
-    release: appRelease
+    release: appRelease,
+    runtimeIdentity: {
+      commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null,
+      branch: process.env.RENDER_GIT_BRANCH || process.env.GIT_BRANCH || null,
+      finalizerSchemaVersion: FINALIZED_COORDINATE_SCHEMA_VERSION,
+      confirmationRuntimeVersion: CONFIRMATION_RUNTIME_VERSION,
+      spatialResultEnabled: isSpatialResultEnabled(),
+      regressionTestMode: process.env.REGRESSION_TEST_MODE === "true",
+      recognitionHardDeadlineMs: getRecognitionHardDeadlineMs(),
+      workingTreeDirty: process.env.WORKING_TREE_DIRTY === "true"
+        ? true
+        : process.env.WORKING_TREE_DIRTY === "false"
+          ? false
+          : null,
+      runtimeSourceSha256: process.env.RUNTIME_SOURCE_SHA256 || null,
+      fixtureSetSha256: process.env.FIXTURE_SET_SHA256 || null
+    }
   });
 });
 
@@ -4172,48 +4249,6 @@ function getMgrsBandRange(band) {
   };
 }
 
-function utmToWgs84(zone, easting, northing, northernHemisphere = true) {
-  const a = 6378137;
-  const e = 0.08181919084262149;
-  const e1sq = 0.006739496742276434;
-  const k0 = 0.9996;
-  const x = Number(easting) - 500000;
-  let y = Number(northing);
-
-  if (!northernHemisphere) {
-    y -= 10000000;
-  }
-
-  const longOrigin = (Number(zone) - 1) * 6 - 180 + 3;
-  const m = y / k0;
-  const mu = m / (a * (1 - (e ** 2) / 4 - (3 * e ** 4) / 64 - (5 * e ** 6) / 256));
-  const e1 = (1 - Math.sqrt(1 - e ** 2)) / (1 + Math.sqrt(1 - e ** 2));
-  const j1 = (3 * e1 / 2) - (27 * e1 ** 3 / 32);
-  const j2 = (21 * e1 ** 2 / 16) - (55 * e1 ** 4 / 32);
-  const j3 = 151 * e1 ** 3 / 96;
-  const j4 = 1097 * e1 ** 4 / 512;
-  const fp = mu + j1 * Math.sin(2 * mu) + j2 * Math.sin(4 * mu) + j3 * Math.sin(6 * mu) + j4 * Math.sin(8 * mu);
-  const c1 = e1sq * Math.cos(fp) ** 2;
-  const t1 = Math.tan(fp) ** 2;
-  const n1 = a / Math.sqrt(1 - e ** 2 * Math.sin(fp) ** 2);
-  const r1 = a * (1 - e ** 2) / ((1 - e ** 2 * Math.sin(fp) ** 2) ** 1.5);
-  const d = x / (n1 * k0);
-  const q1 = n1 * Math.tan(fp) / r1;
-  const q2 = d ** 2 / 2;
-  const q3 = (5 + 3 * t1 + 10 * c1 - 4 * c1 ** 2 - 9 * e1sq) * d ** 4 / 24;
-  const q4 = (61 + 90 * t1 + 298 * c1 + 45 * t1 ** 2 - 252 * e1sq - 3 * c1 ** 2) * d ** 6 / 720;
-  const lat = fp - q1 * (q2 - q3 + q4);
-  const q5 = d;
-  const q6 = (1 + 2 * t1 + c1) * d ** 3 / 6;
-  const q7 = (5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * e1sq + 24 * t1 ** 2) * d ** 5 / 120;
-  const lon = (q5 - q6 + q7) / Math.cos(fp);
-
-  return {
-    lat: lat * 180 / Math.PI,
-    lon: longOrigin + lon * 180 / Math.PI
-  };
-}
-
 function parseMgrsMatch(match = {}) {
   const zone = Number(match.zone);
   const band = String(match.band || "").toUpperCase();
@@ -4538,6 +4573,112 @@ function buildMozambiqueLockedReviewPayload({
   }, { forceRequiresReview: true });
 
   return buildCoordinateVerificationResponse(payload, payload.coordinateEngineV2);
+}
+
+function buildSpecializedFamilyLockedReviewPayload({
+  family,
+  coordinateType,
+  precisionMode,
+  model = "",
+  warning = "Specialized coordinate recognition unavailable",
+  reason = "specialized_provider_unavailable",
+  blockedFallbacks = []
+} = {}) {
+  const payload = {
+    success: false,
+    reason,
+    code: "RECOGNITION_PROVIDER_UNAVAILABLE",
+    model,
+    rawText: "",
+    coordinates: "",
+    precisionMode,
+    warning,
+    parserTrace: [`${String(family || "specialized_family").toUpperCase()}:review_required`]
+  };
+
+  const unavailableEngine = normalizeCoordinateEngineV2Result({
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: coordinateType,
+    precision_mode: precisionMode,
+    confidence: 0,
+    requires_review: true,
+    source: {
+      image_count: 1,
+      ocr_engine: model,
+      fallback_used: false
+    },
+    groups: [],
+    warnings: [warning],
+    debug: {
+      matched_detectors: [family, `${family}_type_lock`],
+      blocked_fallbacks: Array.from(new Set([
+        "generic_provider",
+        "unrelated_family_retry",
+        ...blockedFallbacks
+      ])),
+      supplemental_fallbacks: []
+    }
+  }, { forceRequiresReview: true });
+
+  return buildCoordinateVerificationResponse(payload, payload.coordinateEngineV2);
+}
+
+function buildFamilyAvailabilityBlockedPayload({ availability, coordinateType, precisionMode } = {}) {
+  const family = String(availability?.family || coordinateType || "");
+  const status = availability?.status || FAMILY_AVAILABILITY_STATUS.TEMPORARILY_UNAVAILABLE;
+  const reasonCode = availability?.reasonCode || "FAMILY_TEMPORARILY_UNAVAILABLE";
+  const payload = {
+    success: false,
+    reason: "recognition_unavailable",
+    code: reasonCode,
+    family,
+    availabilityStatus: status,
+    availabilityReasonCode: reasonCode,
+    policyId: availability?.policyId || null,
+    policyVersion: availability?.policyVersion || null,
+    rawText: "",
+    coordinates: "",
+    precisionMode: precisionMode || "",
+    warning: "This coordinate family is currently unavailable for authoritative recognition.",
+    parserTrace: [`${family.toUpperCase()}:availability_blocked`]
+  };
+
+  payload.coordinateEngineV2 = normalizeCoordinateEngineV2Result({
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: coordinateType || family,
+    precision_mode: precisionMode || "",
+    confidence: 0,
+    requires_review: false,
+    kml_ready: false,
+    source: {
+      image_count: 1,
+      ocr_engine: "availability_policy",
+      fallback_used: false
+    },
+    groups: [],
+    warnings: [payload.warning],
+    debug: {
+      matched_detectors: [family, "family_availability_policy"],
+      blocked_fallbacks: [
+        "provider_call",
+        "generic_provider",
+        "unrelated_family_retry",
+        "legacy_multi_call_chain",
+        "kml_generator"
+      ],
+      supplemental_fallbacks: []
+    }
+  }, { forceRequiresReview: false });
+  payload.coordinateEngineV2 = {
+    ...unavailableEngine,
+    requires_review: false,
+    kml_ready: false,
+    groups: []
+  };
+
+  return buildCoordinateVerificationResponse(payload, payload.coordinateEngineV2, {
+    familyAvailability: availability
+  });
 }
 
 function getMozambiqueGeographicRowsQuality(rows) {
@@ -7090,7 +7231,19 @@ function getAliyunChatCompletionsUrl() {
   return base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
 }
 
-async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0.1, maxTokens, timeoutMs = 35000 }) {
+async function callAliyunVision({
+  modelName,
+  prompt,
+  imageItems,
+  temperature = 0.1,
+  maxTokens,
+  timeoutMs = 35000,
+  stageName = "generic_provider",
+  attempt = 1,
+  lowValue = false,
+  familyEvidence = false,
+  minRequiredMs = 500
+}) {
   if (!aliyunApiKey) {
     console.error("[Aliyun] 缺少环境变量：ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
     const error = new Error("阿里云 API 未配置");
@@ -7098,16 +7251,39 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
     throw error;
   }
 
+  if (!isFamilyRetryAllowed({ stageName, familyEvidence })) {
+    const error = new Error(`Family evidence is required for ${stageName}.`);
+    error.code = "RECOGNITION_FAMILY_EVIDENCE_REQUIRED";
+    error.reason = "family_evidence_required";
+    error.stageName = stageName;
+    throw error;
+  }
+  const budget = getRecognitionBudget();
+  budget?.assertCanContinue({ stageName, minRequiredMs, lowValue });
+  const effectiveTimeoutMs = budget ? budget.effectiveTimeout(timeoutMs) : timeoutMs;
+  if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < minRequiredMs) {
+    const error = new Error("Insufficient remaining budget for Provider stage.");
+    error.code = RECOGNITION_BUDGET_CODE;
+    error.reason = "insufficient_remaining_budget";
+    error.stageName = stageName;
+    throw error;
+  }
+  const stageEvent = budget?.stageStarted(stageName, {
+    attempt,
+    configuredTimeoutMs: timeoutMs,
+    effectiveTimeoutMs
+  });
   const requestUrl = getAliyunChatCompletionsUrl();
   const startedAt = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
+  const combinedAbort = composeAbortSignals([controller.signal, getRecognitionDeadlineSignal()]);
   console.log("[Aliyun] 请求开始：", {
     url: requestUrl,
     model: modelName,
     imageCount: Array.isArray(imageItems) ? imageItems.length : 0,
     startedAt: new Date(startedAt).toISOString(),
-    timeoutMs,
+    timeoutMs: effectiveTimeoutMs,
     hasAliyunApiKey: Boolean(process.env.ALIYUN_API_KEY),
     hasDashscopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY),
     baseURL: aliyunBaseURL
@@ -7133,6 +7309,7 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
 
   let response;
   let data;
+  let stageResult = "success";
 
   try {
     response = await fetch(getAliyunChatCompletionsUrl(), {
@@ -7142,14 +7319,17 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
         "Content-Type": "application/json"
       },
       body: JSON.stringify(requestBody),
-      signal: controller.signal
+      signal: combinedAbort.signal
     });
     data = await response.json().catch(() => ({}));
+    if (!response.ok) stageResult = "failed";
   } catch (error) {
     const endedAt = Date.now();
-    if (error.name === "AbortError") {
-      const timeoutError = new Error("阿里云接口超时");
-      timeoutError.code = "ALIYUN_TIMEOUT";
+    const requestDeadlineExceeded = Boolean(getRecognitionDeadlineSignal()?.aborted);
+    if (error.name === "AbortError" || requestDeadlineExceeded) {
+      stageResult = requestDeadlineExceeded ? "aborted" : "timeout";
+      const timeoutError = new Error(requestDeadlineExceeded ? "坐标识别请求超过硬截止时间" : "阿里云接口超时");
+      timeoutError.code = requestDeadlineExceeded ? RECOGNITION_DEADLINE_CODE : "ALIYUN_TIMEOUT";
       timeoutError.reason = "timeout";
       timeoutError.durationMs = endedAt - startedAt;
       console.error("[Aliyun] 请求超时：", {
@@ -7157,10 +7337,12 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
         startedAt: new Date(startedAt).toISOString(),
         endedAt: new Date(endedAt).toISOString(),
         durationMs: timeoutError.durationMs,
-        timeoutMs
+        configuredTimeoutMs: timeoutMs,
+        effectiveTimeoutMs
       });
       throw timeoutError;
     }
+    stageResult = "failed";
     error.durationMs = endedAt - startedAt;
     console.error("[Aliyun] 网络请求失败：", {
       model: modelName,
@@ -7171,6 +7353,8 @@ async function callAliyunVision({ modelName, prompt, imageItems, temperature = 0
     throw error;
   } finally {
     clearTimeout(timer);
+    combinedAbort.cleanup();
+    budget?.stageCompleted(stageEvent, { result: stageResult });
   }
 
   const endedAt = Date.now();
@@ -7245,14 +7429,23 @@ Output only coordinate lines. Examples:
 If fewer than four handwritten DMS coordinate rows are readable, output only: ${noCoordinatesText}`;
 }
 
-async function readHandwrittenDmsWithPrompt({ imageItems, modelName = aliyunVisionModel, timeoutMs = 80000 } = {}) {
+async function readHandwrittenDmsWithPrompt({
+  imageItems,
+  modelName = aliyunVisionModel,
+  timeoutMs = 80000,
+  stageName = "handwritten_retry",
+  lowValue = true
+} = {}) {
   const response = await callAliyunVision({
     modelName,
     prompt: getHandwrittenDmsTranscriptionPrompt(),
     imageItems,
     temperature: 0,
     maxTokens: 2200,
-    timeoutMs
+    timeoutMs,
+    stageName,
+    lowValue,
+    familyEvidence: true
   });
   const rawText = response.choices?.[0]?.message?.content || "";
   let coordinates = extractCoordinateLines(rawText);
@@ -7272,19 +7465,91 @@ async function readHandwrittenDmsWithPrompt({ imageItems, modelName = aliyunVisi
   };
 }
 
-async function runLocalOcrFallback(imageBuffer, reason = "") {
-  const result = await Tesseract.recognize(imageBuffer, "eng", {
-    logger: info => console.log(info.status, info.progress)
+async function runLocalOcrFallback(imageBuffer, reason = "", {
+  stageName = "local_ocr",
+  stageCapMs = 12_000,
+  minRequiredMs = 1_500,
+  lowValue = true
+} = {}) {
+  const budget = getRecognitionBudget();
+  budget?.assertCanContinue({ stageName, minRequiredMs, lowValue });
+  const effectiveTimeoutMs = budget ? budget.effectiveTimeout(stageCapMs) : stageCapMs;
+  if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < minRequiredMs) {
+    const error = new Error("Insufficient remaining budget for local OCR.");
+    error.code = RECOGNITION_BUDGET_CODE;
+    error.reason = "insufficient_remaining_budget";
+    error.stageName = stageName;
+    throw error;
+  }
+
+  const stageEvent = budget?.stageStarted(stageName, {
+    configuredTimeoutMs: stageCapMs,
+    effectiveTimeoutMs
   });
-  const rawText = result.data.text || "";
-  const coordinates = extractCoordinateLines(rawText);
+  let stageResult = "success";
+  try {
+    const result = await runCancellableOcrJob({
+      createWorker: () => Tesseract.createWorker("eng", 1, {
+        logger: info => console.log(info.status, info.progress)
+      }),
+      image: imageBuffer,
+      signal: getRecognitionDeadlineSignal(),
+      timeoutMs: effectiveTimeoutMs,
+      deadlineCode: RECOGNITION_DEADLINE_CODE,
+      timeoutCode: RECOGNITION_BUDGET_CODE
+    });
+    const rawText = result.data.text || "";
+    const coordinates = extractCoordinateLines(rawText);
+
+    return {
+      model: "local-tesseract-fallback",
+      rawText,
+      coordinates,
+      precisionMode: "local-ocr-dms-fallback",
+      warning: `备用OCR，结果需人工核对。${reason ? `主识别错误：${reason}` : ""}`
+    };
+  } catch (error) {
+    stageResult = error?.code === RECOGNITION_DEADLINE_CODE
+      ? "aborted"
+      : error?.code === RECOGNITION_BUDGET_CODE
+        ? "timeout"
+        : "failed";
+    throw error;
+  } finally {
+    budget?.stageCompleted(stageEvent, { result: stageResult });
+  }
+}
+
+function buildManualTextCoordinateResult(text) {
+  const value = String(text || "").trim();
+  const dmsLines = extractDmsCoordinateLines(value);
+  if (dmsLines.length > 0) {
+    return {
+      precisionMode: "dms-coordinates",
+      parserTrace: ["TEXT", "DMS:accepted"],
+      coordinates: dmsLines.join("\n"),
+      pointCount: dmsLines.length,
+      geometry: inferGeometry(dmsLines)
+    };
+  }
+
+  const points = parseManualLongitudeLatitudeText(value);
+  if (points) {
+    return {
+      precisionMode: "wgs84-chat-coordinates",
+      parserTrace: ["TEXT", "MANUAL_LON_LAT:accepted"],
+      coordinates: formatChatCoordinateRows(points),
+      pointCount: points.length,
+      geometry: inferGeometry(points)
+    };
+  }
 
   return {
-    model: "local-tesseract-fallback",
-    rawText,
-    coordinates,
-    precisionMode: "local-ocr-dms-fallback",
-    warning: `备用OCR，结果需人工核对。${reason ? `主识别错误：${reason}` : ""}`
+    precisionMode: "preserve-original-decimals-and-parse-dms",
+    parserTrace: ["TEXT", "FALLBACK:no_coordinates"],
+    coordinates: "",
+    pointCount: 0,
+    geometry: ""
   };
 }
 
@@ -7750,6 +8015,11 @@ function buildCoteDIvoireGeographicDmsV2Result(payload = {}, options = {}) {
 
 function inferCoordinateEngineV2Type(payload = {}) {
   const precisionMode = String(payload.precisionMode || "");
+  const boundaryType = inferStructuredBoundaryType(payload);
+
+  if (boundaryType) {
+    return boundaryType;
+  }
 
   if (precisionMode === "mozambique-geographic-table" || payload.mozambiqueGeographicTable?.isMozambiqueGeographicTable) {
     return "mozambique_geographic_table";
@@ -7782,7 +8052,7 @@ function inferCoordinateEngineV2Type(payload = {}) {
   return "";
 }
 
-function parseCoordinateEngineV2PointLine(line, coordinateType, index) {
+function parseCoordinateEngineV2PointLine(line, coordinateType, index, explicitLabel = "") {
   const raw = String(line || "").trim();
   const point = {
     label: String(index + 1),
@@ -7800,6 +8070,11 @@ function parseCoordinateEngineV2PointLine(line, coordinateType, index) {
 
   if (!raw || raw === noCoordinatesText || /^label\s*\|/i.test(raw) || /^point\s*\|/i.test(raw) || /^num\s*\|/i.test(raw) || /^Mozambique Geographic Table/i.test(raw)) {
     return null;
+  }
+
+  const boundaryPoint = parseStructuredBoundaryPoint(raw, coordinateType, index, explicitLabel);
+  if (boundaryPoint) {
+    return { ...point, ...boundaryPoint };
   }
 
   const pipeParts = raw.split("|").map(part => part.trim());
@@ -7898,8 +8173,8 @@ function hasCoordinateEngineV2Wgs84Point(point = {}) {
 
 function hasCoordinateEngineV2ProjectedOrGridPoint(point = {}) {
   return point?.grid_cell
-    || Number.isFinite(Number(point.x))
-    || Number.isFinite(Number(point.y))
+    || hasFiniteNumericValue(point.x)
+    || hasFiniteNumericValue(point.y)
     || Boolean(point.projection);
 }
 
@@ -7922,8 +8197,8 @@ function getCoordinateEngineV2ReadinessPolicy(coordinateType = "", points = [], 
   const projectedPoints = Array.isArray(points) ? points : [];
   const projections = Array.from(new Set(projectedPoints.map(point => String(point?.projection || "").trim()).filter(Boolean)));
   const hasCompleteProjectedPoints = projectedPoints.length >= 3 && projectedPoints.every(point => (
-    Number.isFinite(Number(point?.x))
-    && Number.isFinite(Number(point?.y))
+    hasFiniteNumericValue(point?.x)
+    && hasFiniteNumericValue(point?.y)
     && Boolean(point?.projection)
   ));
   const hasPointReview = projectedPoints.some(point => point?.requires_review);
@@ -7955,11 +8230,12 @@ function normalizeCoordinateEngineV2Point(point = {}, groupRequiresReview = fals
   const normalized = {
     label: String(point.label || ""),
     raw: String(point.raw || ""),
-    lat: point.lat === null || point.lat === undefined || point.lat === "" ? null : (Number.isFinite(Number(point.lat)) ? Number(point.lat) : null),
-    lon: point.lon === null || point.lon === undefined || point.lon === "" ? null : (Number.isFinite(Number(point.lon)) ? Number(point.lon) : null),
-    x: point.x === null || point.x === undefined || point.x === "" ? null : (Number.isFinite(Number(point.x)) ? Number(point.x) : null),
-    y: point.y === null || point.y === undefined || point.y === "" ? null : (Number.isFinite(Number(point.y)) ? Number(point.y) : null),
+    lat: finiteNumberOrNull(point.lat),
+    lon: finiteNumberOrNull(point.lon),
+    x: finiteNumberOrNull(point.x),
+    y: finiteNumberOrNull(point.y),
     projection: point.projection || null,
+    source_crs: point.source_crs || null,
     grid_cell: point.grid_cell || null,
     confidence: Number.isFinite(Number(point.confidence)) ? Number(point.confidence) : 0,
     requires_review: Boolean(point.requires_review || groupRequiresReview),
@@ -8186,6 +8462,7 @@ function getCoordinateEngineV2AxisEvidence(coordinateType = "", result = {}, opt
     "mozambique_geographic_table",
     "cote_divoire_geographic_dms_table",
     "mgrs_utm_grid_reference",
+    "projected_xy",
     "standard_dms_table",
     "handwritten_dms_experimental"
   ]);
@@ -8870,19 +9147,16 @@ function buildCoordinateEngineV2ValidationReport(group = {}, coordinateType = ""
 }
 
 function buildCoordinateEngineV2Groups(payload = {}, coordinateType = "") {
-  const text = String(payload.coordinates || "");
-  const blocks = text
-    .split(/\n\s*\n/g)
-    .map(block => block.split(/\r?\n/).map(line => line.trim()).filter(Boolean))
+  const blocks = getStructuredCoordinateBlocks(payload, coordinateType)
     .filter(block => block.length > 0);
 
   if (blocks.length === 0) {
     return [];
   }
 
-  return blocks.map((lines, groupIndex) => {
-    const points = lines
-      .map((line, pointIndex) => parseCoordinateEngineV2PointLine(line, coordinateType, pointIndex))
+  return blocks.map((entries, groupIndex) => {
+    const points = entries
+      .map((entry, pointIndex) => parseCoordinateEngineV2PointLine(entry.line, coordinateType, pointIndex, entry.label))
       .filter(Boolean);
 
     return {
@@ -8946,6 +9220,7 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
     schema_version: "coordinate_engine_v2",
     coordinate_type: coordinateType,
     precision_mode: precisionMode,
+    source_crs: result.source_crs || null,
     confidence: requiresReview ? Math.min(confidence, 0.75) : confidence,
     requires_review: Boolean(requiresReview || validationFailed || orderAmbiguous),
     source: {
@@ -8989,10 +9264,15 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
 }
 
 function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
-  const coteDIvoireResult = buildCoteDIvoireGeographicDmsV2Result(payload, options);
-  if (coteDIvoireResult) {
-    return normalizeCoordinateEngineV2Result(coteDIvoireResult);
-  }
+  const budget = getRecognitionBudget();
+  budget?.assertCanContinue({ stageName: "parser" });
+  const parserStage = budget?.stageStarted("parser");
+  let parserResult = "success";
+  try {
+    const coteDIvoireResult = buildCoteDIvoireGeographicDmsV2Result(payload, options);
+    if (coteDIvoireResult) {
+      return normalizeCoordinateEngineV2Result(coteDIvoireResult);
+    }
 
   const lockedCoordinateType = String(options.lockedCoordinateType || options.candidateTypeLock?.coordinate_type || "");
   const inferredCoordinateType = inferCoordinateEngineV2Type(payload);
@@ -9016,10 +9296,13 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
     ? [inferredCoordinateType, String(payload.precisionMode || "").trim()].filter(Boolean)
     : [];
 
-  return normalizeCoordinateEngineV2Result({
+    return normalizeCoordinateEngineV2Result({
     schema_version: "coordinate_engine_v2",
     coordinate_type: coordinateType,
     precision_mode: precisionMode,
+    source_crs: coordinateType === "projected_xy"
+      ? { id: "EPSG:32630", projection: "utm", zone: 30, hemisphere: "N", axisOrder: "easting_northing" }
+      : null,
     confidence: groups.length > 0
       ? Number((groups.reduce((sum, group) => sum + Number(group.confidence || 0), 0) / groups.length).toFixed(2))
       : 0,
@@ -9037,7 +9320,13 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
       blocked_fallbacks: Array.from(new Set(blockedFallbacks)),
       supplemental_fallbacks: fallbackUsed ? [String(payload.model || "fallback").trim()].filter(Boolean) : []
     }
-  }, { forceRequiresReview: forcedReview });
+    }, { forceRequiresReview: forcedReview });
+  } catch (error) {
+    parserResult = "failed";
+    throw error;
+  } finally {
+    budget?.stageCompleted(parserStage, { result: parserResult });
+  }
 }
 
 function normalizeJudgeOutput(text) {
@@ -11925,6 +12214,161 @@ app.post("/api/regression/parse-coordinate-text", (req, res) => {
   return res.json(buildCoordinateVerificationResponse(regressionPayload, coordinateEngineV2));
 });
 
+app.get("/api/regression/recognition-trace/:requestId", (req, res) => {
+  const regressionTestMode = getRegressionTestMode(req);
+  if (!regressionTestMode.active) {
+    return res.status(403).json({
+      success: false,
+      reason: "regression_test_forbidden",
+      error: regressionTestMode.rejectReason || "Regression trace is only available in localhost regression mode."
+    });
+  }
+  const requestId = String(req.params?.requestId || "").trim();
+  if (!/^recognition_[a-z0-9_-]{1,160}$/i.test(requestId)) {
+    return res.status(400).json({ success: false, reason: "invalid_request_id" });
+  }
+  const trace = regressionRecognitionTraces.get(requestId);
+  if (!trace) return res.status(404).json({ success: false, reason: "trace_not_found" });
+  return res.json({ success: true, trace });
+});
+
+app.post("/api/coordinate-confirmation", (req, res) => {
+  const outcome = confirmFinalizedCoordinateResult({
+    resultId: String(req.body?.resultId || ""),
+    resultRevision: Number(req.body?.resultRevision),
+    geometryHash: String(req.body?.geometryHash || ""),
+    action: String(req.body?.action || "")
+  });
+  if (!outcome.ok) {
+    return res.status(outcome.httpStatus).json({ success: false, code: outcome.code });
+  }
+  return res.json({
+    success: true,
+    idempotent: outcome.idempotent,
+    finalizedCoordinateResult: outcome.finalizedCoordinateResult
+  });
+});
+
+app.post("/api/coordinate-revision", (req, res) => {
+  const identity = {
+    resultId: String(req.body?.resultId || ""),
+    resultRevision: Number(req.body?.resultRevision),
+    geometryHash: String(req.body?.geometryHash || "")
+  };
+  const current = validateFinalizedCoordinateIdentity(identity);
+  if (!current.ok) {
+    return res.status(current.httpStatus).json({ success: false, code: current.code });
+  }
+
+  const coordinateText = String(req.body?.coordinateText || "").trim();
+  if (!coordinateText) {
+    return res.status(400).json({ success: false, code: "COORDINATE_EDIT_TEXT_REQUIRED" });
+  }
+  const parsed = buildManualTextCoordinateResult(coordinateText);
+  if (!parsed.coordinates || parsed.coordinates === noCoordinatesText) {
+    return res.status(422).json({ success: false, code: "COORDINATE_EDIT_INVALID" });
+  }
+  const revisionPayload = {
+    success: true,
+    model: "manual-coordinate-edit",
+    rawText: coordinateText,
+    ...parsed,
+    finalizerRevision: {
+      resultId: current.result.resultId,
+      resultRevision: current.result.resultRevision + 1,
+      currentRevision: current.result.resultRevision + 1,
+      confirmedRevision: null,
+      confirmationStatus: ["accepted", "pending"].includes(current.result.confirmationStatus)
+        ? "pending"
+        : "not_required"
+    }
+  };
+  const coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(revisionPayload, {
+    rawHint: "manual_coordinate_edit"
+  });
+  const response = buildCoordinateVerificationResponse(revisionPayload, coordinateEngineV2, {
+    sourceAuthority: "manual_input"
+  });
+  return res.json({
+    success: true,
+    finalizedCoordinateResult: response.finalizedCoordinateResult
+  });
+});
+
+app.post("/api/coordinate-manual-finalize", (req, res) => {
+  const coordinateText = String(req.body?.coordinateText || "").trim();
+  if (!coordinateText) {
+    return res.status(400).json({ success: false, code: "COORDINATE_EDIT_TEXT_REQUIRED" });
+  }
+  const parsed = buildManualTextCoordinateResult(coordinateText);
+  if (!parsed.coordinates || parsed.coordinates === noCoordinatesText) {
+    return res.status(422).json({ success: false, code: "COORDINATE_EDIT_INVALID" });
+  }
+  const manualPayload = {
+    success: true,
+    model: "manual-coordinate-input",
+    rawText: coordinateText,
+    ...parsed
+  };
+  const coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(manualPayload, {
+    rawHint: "manual_coordinate_input"
+  });
+  const response = buildCoordinateVerificationResponse(manualPayload, coordinateEngineV2, {
+    sourceAuthority: "manual_input"
+  });
+  return res.json({
+    success: true,
+    finalizedCoordinateResult: response.finalizedCoordinateResult
+  });
+});
+
+app.post("/api/map-preview", enforceSpatialApiEnabled, (req, res) => {
+  const identity = {
+    resultId: String(req.body?.resultId || ""),
+    resultRevision: Number(req.body?.resultRevision),
+    geometryHash: String(req.body?.geometryHash || "")
+  };
+  const current = validateFinalizedCoordinateIdentity(identity);
+  if (!current.ok) {
+    return res.status(current.httpStatus).json({ success: false, code: current.code });
+  }
+
+  const mapPreviewObject = mapPreviewAdapter.adapt(current.result, {
+    expectedIdentity: identity
+  });
+  if (!mapPreviewObject.previewEligibility.allowed) {
+    return res.status(422).json({
+      success: false,
+      code: mapPreviewObject.previewReasonCodes[0] || "NO_DRAWABLE_GEOMETRY",
+      mapPreviewObject
+    });
+  }
+
+  let spatialFacts = null;
+  let spatialFactsStatus = "available";
+  try {
+    spatialFacts = calculateSpatialFacts(mapPreviewObject.geometry);
+  } catch (error) {
+    spatialFactsStatus = "unavailable";
+  }
+
+  return res.json({
+    success: true,
+    mapPreviewObject,
+    spatialFacts,
+    spatialFactsStatus,
+    kmlEligibility: {
+      allowed: current.result.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
+        && current.result.kmlReady === true,
+      decisionState: current.result.decisionState,
+      kmlReady: current.result.kmlReady === true
+    },
+    regionalViewCount: null,
+    regionalViewWindow: null,
+    regionalViewScope: null
+  });
+});
+
 /*
  * Coordinate recognition maintenance rules
  * Follow COORDINATE_TYPE_REGISTRY.md for all coordinate-type changes.
@@ -11964,7 +12408,12 @@ app.post("/api/regression/parse-coordinate-text", (req, res) => {
  * override BFTM, do not let DMS override cadastral grid, and do not let a new display layer override
  * recognizedLines.
  */
-app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) => {
+app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.single("image"), async (req, res) => {
+  activateRecognitionDeadlineContext(req);
+  const recognitionBudget = getRecognitionBudget();
+  const uploadStage = recognitionBudget?.stageStarted("upload");
+  recognitionBudget?.stageCompleted(uploadStage);
+  recognitionBudget?.assertCanContinue({ stageName: "pre_route" });
   console.log("---- 收到阿里云识别请求 ----");
   console.log("是否收到图片：", Boolean(req.file));
   console.log("坐标识别环境变量检查：", {
@@ -12021,6 +12470,40 @@ app.post("/api/recognize-coordinates", upload.single("image"), async (req, res) 
         rawText: "",
         coordinates: ""
       });
+    }
+
+    const sr08bDeadlineScenario = regressionTestMode.active
+      ? String(req.get("x-sr08b-deadline-scenario") || "").trim()
+      : "";
+    if (["fast_success", "slow_provider"].includes(sr08bDeadlineScenario)) {
+      if (sr08bDeadlineScenario === "slow_provider") {
+        const waitMs = Math.max(10, Math.floor((getRecognitionHardDeadlineMs() * 0.5)));
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+      }
+      const fixtureText = [
+        `1. 11°00'00.00"N, 08°00'00.00"W`,
+        `2. 11°00'30.00"N, 08°00'00.00"W`,
+        `3. 11°00'30.00"N, 08°00'30.00"W`,
+        `4. 11°00'00.00"N, 08°00'30.00"W`
+      ].join("\n");
+      const fixturePayload = {
+        success: true,
+        model: `sr08b-${sr08bDeadlineScenario}`,
+        rawText: fixtureText,
+        ...buildRegressionTextCoordinateResult(fixtureText)
+      };
+      return res.json(buildCoordinateVerificationResponse(
+        fixturePayload,
+        buildCoordinateEngineV2ShadowResult(fixturePayload)
+      ));
+    }
+    if (["provider_hang", "ocr_hang", "multiple_fallback"].includes(sr08bDeadlineScenario)) {
+      const deadlineSignal = getRecognitionDeadlineSignal();
+      await new Promise(resolve => {
+        if (!deadlineSignal || deadlineSignal.aborted) return resolve();
+        deadlineSignal.addEventListener("abort", resolve, { once: true });
+      });
+      return;
     }
 
     if (!visitorId) {
@@ -12475,6 +12958,77 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
     const useKyrgyzGkPromptFirst = shouldUseKyrgyzGkPromptFirst(req.file, req.body?.rawHint || req.body?.hint || "");
     const useMozambiqueGeographicPromptFirst = !useKyrgyzGkPromptFirst && shouldUseMozambiqueGeographicPromptFirst(req.file, req.body?.rawHint || req.body?.hint || "");
+    const kyrgyzPrimaryRoute = buildPrimaryRouteDecision({
+      family: "kyrgyzstan_gk",
+      evidence: { matched: useKyrgyzGkPromptFirst }
+    });
+    const uploadRouteEvidenceInput = {
+      fileName: req.file?.originalname || "",
+      decodedFileName: Buffer.from(req.file?.originalname || "", "latin1").toString("utf8"),
+      rawHint: req.body?.rawHint || req.body?.hint || ""
+    };
+    const wgs84StrongRouteEvidence = getWgs84StrongRouteEvidence(uploadRouteEvidenceInput);
+    const wgs84PrimaryRoute = buildPrimaryRouteDecision({
+      family: "wgs84_table",
+      evidence: wgs84StrongRouteEvidence
+    });
+    const uploadTableStructure = detectUploadTableStructure(req.file?.buffer, req.file?.mimetype);
+    const madagascarStrongRouteEvidence = getMadagascarCadastralStrongRouteEvidence({
+      ...uploadRouteEvidenceInput,
+      structuralEvidence: uploadTableStructure
+    });
+    const madagascarPrimaryRoute = buildPrimaryRouteDecision({
+      family: "madagascar_cadastral_grid",
+      evidence: madagascarStrongRouteEvidence
+    });
+    const handwrittenAvailabilityEvidence = getHandwrittenDmsTimeoutRoutingEvidence(
+      req.file,
+      req.body?.rawHint || req.body?.hint || ""
+    );
+    const availabilityCandidates = [
+      {
+        family: "kyrgyz_gk",
+        authoritativeEvidence: kyrgyzPrimaryRoute.selected,
+        coordinateType: "kyrgyzstan_gk",
+        precisionMode: "kyrgyz-gk-point-x-y"
+      },
+      {
+        family: "madagascar_cadastral_grid",
+        authoritativeEvidence: madagascarPrimaryRoute.selected,
+        coordinateType: "madagascar_cadastral_grid",
+        precisionMode: "cadastral-grid-num-xv-yv"
+      },
+      {
+        family: "handwritten_dms_experimental",
+        authoritativeEvidence: handwrittenAvailabilityEvidence.shouldRetry === true,
+        coordinateType: "handwritten_dms_experimental",
+        precisionMode: "handwritten-dms-coordinates"
+      }
+    ];
+    const enforcedAvailability = availabilityCandidates
+      .map(candidate => ({
+        ...candidate,
+        availability: evaluateFamilyAvailability(candidate)
+      }))
+      .find(candidate => candidate.availability.enforced === true
+        && candidate.availability.providerCallAllowed === false);
+    if (enforcedAvailability) {
+      recognitionBudget?.recordSkippedStage(
+        "generic_provider",
+        `${enforcedAvailability.family}_availability_blocked`,
+        "skipped"
+      );
+      recognitionBudget?.recordSkippedStage(
+        "family_retry",
+        `${enforcedAvailability.family}_availability_blocked`,
+        "skipped"
+      );
+      return res.status(503).json(buildFamilyAvailabilityBlockedPayload({
+        availability: enforcedAvailability.availability,
+        coordinateType: enforcedAvailability.coordinateType,
+        precisionMode: enforcedAvailability.precisionMode
+      }));
+    }
     let mozambiqueTypeLock = getMozambiqueTypeLockEvidence(req.file, coordinateEngineV2ContextHint, {
       detectorMatched: useMozambiqueGeographicPromptFirst
     });
@@ -12498,7 +13052,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         imageItems,
         temperature: 0,
         maxTokens: 2200,
-        timeoutMs
+        timeoutMs,
+        stageName: "family_retry",
+        lowValue: true,
+        familyEvidence: true
       });
       const rawText = response.choices?.[0]?.message?.content || "";
       const tableInfo = getMozambiqueGeographicInfo(rawText);
@@ -12510,6 +13067,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     };
 
     if (useKyrgyzGkPromptFirst) {
+      recognitionBudget?.recordSkippedStage("generic_provider", kyrgyzPrimaryRoute.genericSkippedReason, "skipped");
       console.log("Kyrgyz GK pre-route matched", {
         fileName: req.file.originalname || "",
         mimetype: req.file.mimetype || "",
@@ -12519,7 +13077,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       try {
         console.log("Kyrgyz GK direct prompt started", {
           model: aliyunVisionModel,
-          timeoutMs: 80000
+          timeoutMs: KYRGYZ_PRIMARY_STAGE_CAP_MS
         });
         const kyrgyzDirectResponse = await callAliyunVision({
           modelName: aliyunVisionModel,
@@ -12527,7 +13085,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           imageItems,
           temperature: 0,
           maxTokens: 2400,
-          timeoutMs: 80000
+          timeoutMs: KYRGYZ_PRIMARY_STAGE_CAP_MS,
+          stageName: "pre_route",
+          lowValue: false
         });
         const kyrgyzDirectRawText = kyrgyzDirectResponse.choices?.[0]?.message?.content || "";
         const kyrgyzDirectInfo = getKyrgyzGkInfo(kyrgyzDirectRawText);
@@ -12578,8 +13138,27 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         console.log("Kyrgyz GK direct prompt failed reason=no_parsable_rows", {
           preview: kyrgyzDirectRawText.slice(0, 500)
         });
+        return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
+          family: "kyrgyzstan_gk",
+          coordinateType: "kyrgyzstan_gk",
+          precisionMode: "kyrgyz-gk-point-x-y",
+          model: `${aliyunVisionModel}+kyrgyz-gk-direct`,
+          warning: "Kyrgyz GK specialized recognition returned no authoritative rows; review is required.",
+          reason: "kyrgyz_specialized_result_unavailable"
+        }));
       } catch (kyrgyzDirectError) {
+        if (isRecognitionStopError(kyrgyzDirectError)) throw kyrgyzDirectError;
         console.error("Kyrgyz GK direct prompt failed reason=", kyrgyzDirectError.message || kyrgyzDirectError);
+        return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
+          family: "kyrgyzstan_gk",
+          coordinateType: "kyrgyzstan_gk",
+          precisionMode: "kyrgyz-gk-point-x-y",
+          model: `${aliyunVisionModel}+kyrgyz-gk-direct`,
+          warning: "Kyrgyz GK specialized recognition is unavailable; no coordinates were inferred.",
+          reason: kyrgyzDirectError?.reason === "timeout" || kyrgyzDirectError?.code === "ALIYUN_TIMEOUT"
+            ? "kyrgyz_specialized_timeout"
+            : "kyrgyz_specialized_provider_unavailable"
+        }));
       }
     }
 
@@ -12710,6 +13289,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           }));
         }
       } catch (mozambiqueDirectError) {
+        if (isRecognitionStopError(mozambiqueDirectError)) throw mozambiqueDirectError;
         console.error("Mozambique geographic table direct prompt failed reason=", mozambiqueDirectError.message || mozambiqueDirectError);
         const isMozambiqueDirectTimeout = mozambiqueDirectError?.reason === "timeout" || mozambiqueDirectError?.code === "ALIYUN_TIMEOUT";
         if (mozambiqueTypeLock.level === "strict") {
@@ -12808,6 +13388,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               ));
             }
           } catch (mozambiqueRetryError) {
+            if (isRecognitionStopError(mozambiqueRetryError)) throw mozambiqueRetryError;
             console.error("Mozambique type lock transcription retry failed reason=", mozambiqueRetryError.message || mozambiqueRetryError);
           }
 
@@ -12835,6 +13416,161 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             typeLock: mozambiqueTypeLock
           }));
         }
+      }
+    }
+
+    if (wgs84PrimaryRoute.selected) {
+      recognitionBudget?.recordSkippedStage("generic_provider", wgs84PrimaryRoute.genericSkippedReason, "skipped");
+      console.log("WGS84 strong route evidence selected specialized primary", {
+        source: wgs84StrongRouteEvidence.source,
+        reasons: wgs84StrongRouteEvidence.reasons,
+        timeoutMs: WGS84_PRIMARY_STAGE_CAP_MS
+      });
+      try {
+        const wgs84PrimaryResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: wgs84LonLatTableDirectPrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 1800,
+          timeoutMs: WGS84_PRIMARY_STAGE_CAP_MS,
+          stageName: "wgs84_primary",
+          lowValue: false,
+          familyEvidence: true
+        });
+        const wgs84PrimaryRawText = wgs84PrimaryResponse.choices?.[0]?.message?.content || "";
+        const wgs84PrimaryInfo = getWgs84TableCoordinatesInfo(wgs84PrimaryRawText, {
+          preserveDuplicatePoints: true
+        });
+        if (!wgs84PrimaryInfo.isWgs84TableCoordinates) {
+          return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
+            family: "wgs84_table",
+            coordinateType: "decimal_latlon",
+            precisionMode: "wgs84-table-coordinates",
+            model: `${aliyunVisionModel}+wgs84-table-primary`,
+            warning: "WGS84 specialized recognition returned no authoritative table; review is required.",
+            reason: "wgs84_specialized_result_unavailable",
+            blockedFallbacks: ["local_ocr_fallback", "wgs84_retry"]
+          }));
+        }
+        const consumeResult = await consumeCoordinateUsage({
+          note: "Coordinate recognition consumed after WGS84 specialized primary"
+        });
+        if (!consumeResult.success) {
+          return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+            success: false,
+            reason: consumeResult.reason || "db_error",
+            code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+            error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const wgs84PrimaryPayload = {
+          model: `${aliyunVisionModel}+wgs84-table-primary`,
+          rawText: wgs84PrimaryRawText,
+          coordinates: formatChatCoordinateRows(wgs84PrimaryInfo.points),
+          precisionMode: "wgs84-table-coordinates",
+          warning: wgs84PrimaryInfo.warning || "已通过强 WGS84 表格证据选择专用视觉主路径；请结合原图核对。",
+          wgs84TableCoordinates: wgs84PrimaryInfo,
+          chatCoordinates: getChatCoordinatesInfo(wgs84PrimaryRawText),
+          parserTrace: ["WGS84_STRONG_ROUTE_EVIDENCE", "WGS84_TABLE:specialized_primary", "WGS84_TABLE:accepted"],
+          quota: consumeResult.quota
+        };
+        return res.json(buildCoordinateVerificationResponse(
+          wgs84PrimaryPayload,
+          buildCoordinateEngineV2ShadowResult(wgs84PrimaryPayload, {
+            fileName: uploadedFileName,
+            rawHint: coordinateEngineV2ContextHint
+          })
+        ));
+      } catch (wgs84PrimaryError) {
+        if (wgs84PrimaryError?.code === RECOGNITION_DEADLINE_CODE) throw wgs84PrimaryError;
+        return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
+          family: "wgs84_table",
+          coordinateType: "decimal_latlon",
+          precisionMode: "wgs84-table-coordinates",
+          model: `${aliyunVisionModel}+wgs84-table-primary`,
+          warning: "WGS84 specialized recognition is unavailable; no coordinates were inferred.",
+          reason: "wgs84_specialized_provider_unavailable",
+          blockedFallbacks: ["local_ocr_fallback", "wgs84_retry"]
+        }));
+      }
+    }
+
+    if (madagascarPrimaryRoute.selected) {
+      recognitionBudget?.recordSkippedStage("generic_provider", madagascarPrimaryRoute.genericSkippedReason, "skipped");
+      console.log("Madagascar cadastral strong route evidence selected specialized primary", {
+        source: madagascarStrongRouteEvidence.source,
+        reasons: madagascarStrongRouteEvidence.reasons,
+        timeoutMs: MADAGASCAR_PRIMARY_STAGE_CAP_MS
+      });
+      try {
+        const cadastralPrimaryResponse = await callAliyunVision({
+          modelName: aliyunVisionModel,
+          prompt: cadastralGridTablePrompt,
+          imageItems,
+          temperature: 0,
+          maxTokens: 1800,
+          timeoutMs: MADAGASCAR_PRIMARY_STAGE_CAP_MS,
+          stageName: "cadastral_grid",
+          lowValue: false,
+          familyEvidence: true
+        });
+        const cadastralPrimaryRawText = cadastralPrimaryResponse.choices?.[0]?.message?.content || "";
+        const cadastralPrimaryInfo = getCadastralGridInfo(cadastralPrimaryRawText);
+        if (!cadastralPrimaryInfo.isCadastralGrid) {
+          return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
+            family: "madagascar_cadastral_grid",
+            coordinateType: "madagascar_cadastral_grid",
+            precisionMode: "cadastral-grid-num-xv-yv",
+            model: `${aliyunVisionModel}+cadastral-grid-primary`,
+            warning: "Madagascar cadastral recognition returned no authoritative rows; review is required.",
+            reason: "madagascar_specialized_result_unavailable",
+            blockedFallbacks: ["cadastral_layout", "projected_xy"]
+          }));
+        }
+        const consumeResult = await consumeCoordinateUsage({
+          note: "Coordinate recognition consumed after Madagascar cadastral specialized primary"
+        });
+        if (!consumeResult.success) {
+          return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+            success: false,
+            reason: consumeResult.reason || "db_error",
+            code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+            error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const cadastralPrimaryPayload = {
+          model: `${aliyunVisionModel}+cadastral-grid-primary`,
+          rawText: cadastralPrimaryRawText,
+          coordinates: formatCadastralGridRows(cadastralPrimaryInfo.rows),
+          precisionMode: "cadastral-grid-num-xv-yv",
+          warning: "已通过 Madagascar cadastral 强证据选择专用网格主路径；请结合原图核对。",
+          cadastralGrid: cadastralPrimaryInfo,
+          parserTrace: ["MADAGASCAR_CADASTRAL_STRONG_ROUTE_EVIDENCE", "MADAGASCAR_CADASTRAL:specialized_primary", "MADAGASCAR_CADASTRAL:accepted"],
+          quota: consumeResult.quota
+        };
+        return res.json(buildCoordinateVerificationResponse(
+          cadastralPrimaryPayload,
+          buildCoordinateEngineV2ShadowResult(cadastralPrimaryPayload, {
+            fileName: uploadedFileName,
+            rawHint: coordinateEngineV2ContextHint
+          })
+        ));
+      } catch (cadastralPrimaryError) {
+        if (cadastralPrimaryError?.code === RECOGNITION_DEADLINE_CODE) throw cadastralPrimaryError;
+        return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
+          family: "madagascar_cadastral_grid",
+          coordinateType: "madagascar_cadastral_grid",
+          precisionMode: "cadastral-grid-num-xv-yv",
+          model: `${aliyunVisionModel}+cadastral-grid-primary`,
+          warning: "Madagascar cadastral recognition is unavailable; no coordinates were inferred.",
+          reason: "madagascar_specialized_provider_unavailable",
+          blockedFallbacks: ["cadastral_layout", "projected_xy"]
+        }));
       }
     }
 
@@ -12902,6 +13638,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           console.log("Handwritten DMS evidence retry did not return stable rows:", handwrittenRead.rawText.slice(0, 500));
         }
       } catch (handwrittenEvidenceRetryError) {
+        if (isRecognitionStopError(handwrittenEvidenceRetryError)) throw handwrittenEvidenceRetryError;
         handwrittenVisionRouting = {
           ...handwrittenVisionRouting,
           retrySuccess: false,
@@ -12944,7 +13681,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           imageItems,
           temperature: 0,
           maxTokens: 1600,
-          timeoutMs: 60000
+          timeoutMs: 60000,
+          stageName: "family_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const dmsGroupedRetryRawText = dmsGroupedRetryResponse.choices?.[0]?.message?.content || "";
         const dmsGroupedRetryInfo = getDmsGroupedCoordinateInfo(dmsGroupedRetryRawText);
@@ -12963,6 +13703,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         }
       } catch (dmsGroupedRetryError) {
+        if (isRecognitionStopError(dmsGroupedRetryError)) throw dmsGroupedRetryError;
         console.error("DMS grouped direct prompt failed:", dmsGroupedRetryError.message || dmsGroupedRetryError);
       }
     }
@@ -12987,7 +13728,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           imageItems,
           temperature: 0,
           maxTokens: 1400,
-          timeoutMs: 60000
+          timeoutMs: 60000,
+          stageName: "family_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const frenchPerimeterRawText = frenchPerimeterResponse.choices?.[0]?.message?.content || "";
         const frenchPerimeterRetryInfo = getFrenchPerimeterDmsInfo(frenchPerimeterRawText);
@@ -13010,6 +13754,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         }
       } catch (frenchPerimeterError) {
+        if (isRecognitionStopError(frenchPerimeterError)) throw frenchPerimeterError;
         console.error("French perimeter DMS direct prompt failed:", frenchPerimeterError.message || frenchPerimeterError);
       }
     }
@@ -13054,6 +13799,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               console.log("Mozambique geographic table late direct prompt success rows=", mozambiqueLateRows.length);
             }
           } catch (mozambiqueLateError) {
+            if (isRecognitionStopError(mozambiqueLateError)) throw mozambiqueLateError;
             console.error("Mozambique geographic table late direct prompt failed reason=", mozambiqueLateError.message || mozambiqueLateError);
           }
         }
@@ -13111,7 +13857,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           imageItems,
           temperature: 0,
           maxTokens: 1800,
-          timeoutMs: 60000
+          timeoutMs: 60000,
+          stageName: "wgs84_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const wgs84TableRetryRawText = wgs84TableRetryResponse.choices?.[0]?.message?.content || "";
         const wgs84TableRetryInfo = getWgs84TableCoordinatesInfo(wgs84TableRetryRawText, {
@@ -13134,6 +13883,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         }
       } catch (wgs84TableRetryError) {
+        if (isRecognitionStopError(wgs84TableRetryError)) throw wgs84TableRetryError;
         console.error("WGS84 lon/lat table direct prompt failed:", wgs84TableRetryError.message || wgs84TableRetryError);
       }
     }
@@ -13163,7 +13913,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           imageItems,
           temperature: 0,
           maxTokens: 1600,
-          timeoutMs: 60000
+          timeoutMs: 60000,
+          stageName: "mgrs_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const mgrsRetryRawText = mgrsRetryResponse.choices?.[0]?.message?.content || "";
         const mgrsRetryInfo = getMgrsInfo(mgrsRetryRawText);
@@ -13181,6 +13934,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         }
       } catch (mgrsRetryError) {
+        if (isRecognitionStopError(mgrsRetryError)) throw mgrsRetryError;
         console.error("MGRS direct prompt failed:", mgrsRetryError.message || mgrsRetryError);
       }
     }
@@ -13264,7 +14018,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           imageItems,
           temperature: 0,
           maxTokens: 2200,
-          timeoutMs: 35000
+          timeoutMs: 35000,
+          stageName: "kyrgyz_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const kyrgyzRawText = kyrgyzResponse.choices?.[0]?.message?.content || "";
         const kyrgyzInfo = getKyrgyzGkInfo(kyrgyzRawText);
@@ -13279,6 +14036,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           console.log("Kyrgyzstan GK priority read did not return parsable rows:", kyrgyzRawText.slice(0, 500));
         }
       } catch (kyrgyzError) {
+        if (isRecognitionStopError(kyrgyzError)) throw kyrgyzError;
         console.error("Kyrgyzstan GK priority check failed:", kyrgyzError.message || kyrgyzError);
       }
     }
@@ -13292,7 +14050,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           imageItems,
           temperature: 0,
           maxTokens: 80,
-          timeoutMs: 25000
+          timeoutMs: 25000,
+          stageName: "cadastral_layout",
+          lowValue: true,
+          familyEvidence: true
         });
         const layoutText = layoutResponse.choices?.[0]?.message?.content || "";
 
@@ -13304,7 +14065,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             imageItems,
             temperature: 0,
             maxTokens: 1400,
-            timeoutMs: 35000
+            timeoutMs: 35000,
+            stageName: "cadastral_grid",
+            attempt: 2,
+            lowValue: true,
+            familyEvidence: true
           });
           const gridRawText = gridResponse.choices?.[0]?.message?.content || "";
           const gridInfo = getCadastralGridInfo(gridRawText);
@@ -13320,6 +14085,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           }
         }
       } catch (gridPriorityError) {
+        if (isRecognitionStopError(gridPriorityError)) throw gridPriorityError;
         console.error("Cadastral grid layout/table priority check failed:", gridPriorityError.message || gridPriorityError);
       }
     }
@@ -13331,7 +14097,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           modelName: aliyunOcrModel,
           prompt: bftmRetryPrompt,
           imageItems,
-          temperature: 0
+          temperature: 0,
+          stageName: "family_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const bftmRetryRawText = bftmRetryResponse.choices?.[0]?.message?.content || "";
         const bftmRetryCoordinates = extractCoordinateLines(bftmRetryRawText);
@@ -13354,6 +14123,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           warning = "BFTM / X-Y 坐标疑似列配对错误，请人工核对原表。";
         }
       } catch (bftmRetryError) {
+        if (isRecognitionStopError(bftmRetryError)) throw bftmRetryError;
         console.error("BFTM/X-Y row-wise retry failed:", bftmRetryError.message || bftmRetryError);
         if (!warning) {
           warning = "BFTM / X-Y 坐标疑似列配对错误，请人工核对原表。";
@@ -13368,7 +14138,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           modelName: aliyunVisionModel,
           prompt: bftmVisionRetryPrompt,
           imageItems,
-          temperature: 0
+          temperature: 0,
+          stageName: "family_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const bftmVisionRawText = bftmVisionRetryResponse.choices?.[0]?.message?.content || "";
         const bftmVisionCoordinates = extractCoordinateLines(bftmVisionRawText);
@@ -13391,6 +14164,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           warning = "BFTM / X-Y 坐标未能稳定识别，请人工核对原表。";
         }
       } catch (bftmVisionRetryError) {
+        if (isRecognitionStopError(bftmVisionRetryError)) throw bftmVisionRetryError;
         console.error("BFTM/X-Y vision layout retry failed:", bftmVisionRetryError.message || bftmVisionRetryError);
         if (!warning) {
           warning = "BFTM / X-Y 坐标未能稳定识别，请人工核对原表。";
@@ -13406,7 +14180,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           prompt: pointAzDmsRetryPrompt,
           imageItems,
           temperature: 0,
-          maxTokens: 1600
+          maxTokens: 1600,
+          stageName: "family_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const pointAzRetryRawText = pointAzRetryResponse.choices?.[0]?.message?.content || "";
         const pointAzTableRows = extractPointDmsTableCoordinateRows(pointAzRetryRawText);
@@ -13431,6 +14208,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           console.log("Point A-Z / long DMS retry did not return enough labeled rows:", pointAzRetryRawText.slice(0, 1000));
         }
       } catch (pointAzRetryError) {
+        if (isRecognitionStopError(pointAzRetryError)) throw pointAzRetryError;
         console.error("Point A-Z / long DMS visual retry failed:", pointAzRetryError.message || pointAzRetryError);
       }
     }
@@ -13453,7 +14231,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           modelName: aliyunOcrModel,
           prompt: retryPrompt,
           imageItems,
-          temperature: 0
+          temperature: 0,
+          stageName: "family_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
         const retryCoordinates = extractCoordinateLines(retryRawText);
@@ -13465,6 +14246,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           warning = extractRecognitionWarning(retryRawText) || warning;
         }
       } catch (retryError) {
+        if (isRecognitionStopError(retryError)) throw retryError;
         console.error("阿里云OCR重试失败：", retryError.message || retryError);
       }
     }
@@ -13483,6 +14265,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           warning = "阿里云识别结果较少，请人工核对。";
         }
       } catch (fallbackError) {
+        if (isRecognitionStopError(fallbackError)) throw fallbackError;
         console.error("备用OCR失败：", fallbackError.message || fallbackError);
         if (!warning) {
           warning = "阿里云识别结果较少，请人工核对。";
@@ -13687,7 +14470,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           imageItems,
           temperature: 0,
           maxTokens: 2400,
-          timeoutMs: 70000
+          timeoutMs: 70000,
+          stageName: "cote_divoire_retry",
+          lowValue: true,
+          familyEvidence: true
         });
         const coteDIvoireRawText = coteDIvoireResponse.choices?.[0]?.message?.content || "";
         const coteDIvoireV2 = buildCoteDIvoireGeographicDmsV2Result({
@@ -13709,6 +14495,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         }
       } catch (coteDIvoireError) {
+        if (isRecognitionStopError(coteDIvoireError)) throw coteDIvoireError;
         console.error("Cote d'Ivoire V2 geographic DMS prompt failed:", coteDIvoireError.message || coteDIvoireError);
         coordinateEngineV2 = {
           ...coordinateEngineV2,
@@ -13725,6 +14512,19 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
     res.json(buildCoordinateVerificationResponse(recognitionPayload, coordinateEngineV2));
   } catch (error) {
+    if (getRecognitionDeadlineSignal()?.aborted || res.headersSent || error?.code === RECOGNITION_DEADLINE_CODE) {
+      return;
+    }
+    if (error?.code === RECOGNITION_BUDGET_CODE) {
+      return res.status(503).json({
+        success: false,
+        reason: error.reason || "budget_exhausted",
+        code: RECOGNITION_BUDGET_CODE,
+        error: "Recognition stopped because the remaining request budget was insufficient.",
+        rawText: "",
+        coordinates: ""
+      });
+    }
     const errorMessage = getAliyunErrorMessage(error);
     console.error("阿里云识别失败，尝试备用OCR。真实错误信息：", {
       message: error.message,
@@ -13742,6 +14542,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
 
       let timeoutRoutingOcrFallback = null;
+      let timeoutRoutingOcrAttempted = false;
+      let wgs84TimeoutRetryAttempted = false;
       let handwrittenTimeoutRoutingEvidence = null;
       const isAliyunTimeout = error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT";
       const timeoutRoutingHint = req.body?.rawHint || req.body?.hint || "";
@@ -13776,6 +14578,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
         if (!handwrittenTimeoutRoutingEvidence.shouldRetry) {
           try {
+            timeoutRoutingOcrAttempted = true;
             timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
             handwrittenTimeoutRoutingEvidence = getHandwrittenDmsTimeoutRoutingEvidence(req.file, timeoutRoutingHint, {
               ocrText: timeoutRoutingOcrFallback.rawText
@@ -13786,6 +14589,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               ocrPreview: String(timeoutRoutingOcrFallback.rawText || "").slice(0, 300)
             });
           } catch (routingOcrError) {
+            if (isRecognitionStopError(routingOcrError)) throw routingOcrError;
             console.error("Handwritten DMS timeout routing OCR failed:", routingOcrError.message || routingOcrError);
           }
         } else {
@@ -13874,6 +14678,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
           console.log("Handwritten DMS timeout retry did not return stable rows:", retryRawText.slice(0, 500));
         } catch (handwrittenRetryError) {
+          if (isRecognitionStopError(handwrittenRetryError)) throw handwrittenRetryError;
           console.error("Handwritten DMS timeout visual retry failed:", handwrittenRetryError.message || handwrittenRetryError);
         }
 
@@ -13895,7 +14700,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         ));
       }
 
-      if (isAliyunTimeout && aliyunApiKey && req.file) {
+      const hasKyrgyzTimeoutEvidence = shouldUseKyrgyzGkPromptFirst(
+        req.file,
+        req.body?.rawHint || req.body?.hint || ""
+      );
+      if (isAliyunTimeout && aliyunApiKey && req.file && hasKyrgyzTimeoutEvidence) {
         try {
           console.log("Aliyun timed out; retrying Kyrgyzstan GK visual table extraction before local OCR fallback.");
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
@@ -13929,7 +14738,10 @@ If the table is not readable, output only: ${noCoordinatesText}`;
             }],
             temperature: 0,
             maxTokens: 2400,
-            timeoutMs: 80000
+            timeoutMs: 80000,
+            stageName: "kyrgyz_retry",
+            lowValue: true,
+            familyEvidence: true
           });
           const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
           const retryKyrgyzGk = getKyrgyzGkInfo(retryRawText);
@@ -13978,11 +14790,19 @@ If the table is not readable, output only: ${noCoordinatesText}`;
 
           console.log("Kyrgyzstan GK timeout retry did not return parsable rows:", retryRawText.slice(0, 500));
         } catch (retryError) {
+          if (isRecognitionStopError(retryError)) throw retryError;
           console.error("Kyrgyzstan GK timeout visual retry failed:", retryError.message || retryError);
         }
       }
 
-      if (isAliyunTimeout && aliyunApiKey && req.file && shouldRetryWgs84TableOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")) {
+      if (
+        isAliyunTimeout
+        && aliyunApiKey
+        && req.file
+        && shouldRunWgs84TimeoutRescue({ localOcrAttempted: timeoutRoutingOcrAttempted })
+        && shouldRetryWgs84TableOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")
+      ) {
+        wgs84TimeoutRetryAttempted = true;
         try {
           console.log("Aliyun timed out; retrying WGS84 longitude/latitude table visual extraction before local OCR fallback.", {
             fileName: req.file?.originalname || "",
@@ -14028,7 +14848,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             }],
             temperature: 0,
             maxTokens: 1800,
-            timeoutMs: 80000
+            timeoutMs: 80000,
+            stageName: "wgs84_retry",
+            lowValue: true,
+            familyEvidence: true
           });
           const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
           const retryWgs84Table = getWgs84TableCoordinatesInfo(retryRawText, {
@@ -14081,11 +14904,28 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
           console.log("WGS84 lon/lat table timeout retry did not return parsable rows:", retryRawText.slice(0, 500));
         } catch (retryError) {
+          if (isRecognitionStopError(retryError)) throw retryError;
           console.error("WGS84 lon/lat table timeout visual retry failed:", retryError.message || retryError);
         }
       }
 
-      const fallback = timeoutRoutingOcrFallback || await runLocalOcrFallback(req.file.buffer, errorMessage);
+      if (wgs84TimeoutRetryAttempted) {
+        return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
+          family: "wgs84_table",
+          coordinateType: "decimal_latlon",
+          precisionMode: "wgs84-table-coordinates",
+          model: `${aliyunVisionModel}+wgs84-table-timeout-retry`,
+          warning: "WGS84 timeout retry did not produce an authoritative result; local OCR was not chained afterward.",
+          reason: "wgs84_timeout_retry_unavailable",
+          blockedFallbacks: ["local_ocr_fallback"]
+        }));
+      }
+
+      if (!timeoutRoutingOcrFallback) {
+        timeoutRoutingOcrAttempted = true;
+        timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
+      }
+      const fallback = timeoutRoutingOcrFallback;
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
       const fallbackMgrs = getMgrsInfo(fallback.rawText);
       let fallbackMozambiqueGeographicTable = getMozambiqueGeographicInfo(fallback.rawText);
@@ -14230,7 +15070,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             }],
             temperature: 0,
             maxTokens: 900,
-            timeoutMs: 35000
+            timeoutMs: 35000,
+            stageName: "family_retry",
+            lowValue: true,
+            familyEvidence: true
           });
           const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
           const retryCoordinates = extractCoordinateLines(retryRawText);
@@ -14248,6 +15091,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
           }
         } catch (retryError) {
+          if (isRecognitionStopError(retryError)) throw retryError;
           console.error("BFTM long table Aliyun retry failed:", retryError.message || retryError);
         }
       }
@@ -14266,7 +15110,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         || countDmsCoordinateRows(fallback.rawText) > 0
         || countDmsCoordinateRows(fallback.coordinates) > 0;
 
-      if ((error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT") && aliyunApiKey && req.file && !fallbackHasStableCoordinateResult) {
+      if (
+        (error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT")
+        && aliyunApiKey
+        && req.file
+        && !fallbackHasStableCoordinateResult
+        && shouldRunWgs84TimeoutRescue({ localOcrAttempted: timeoutRoutingOcrAttempted })
+      ) {
         try {
           console.log("Fallback OCR produced no stable coordinates after timeout; running WGS84 table timeout rescue.", {
             fileName: req.file?.originalname || "",
@@ -14312,7 +15162,11 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
             }],
             temperature: 0,
             maxTokens: 1800,
-            timeoutMs: 80000
+            timeoutMs: 80000,
+            stageName: "wgs84_retry",
+            attempt: 2,
+            lowValue: true,
+            familyEvidence: true
           });
           const rescueRawText = rescueResponse.choices?.[0]?.message?.content || "";
           const rescueWgs84Table = getWgs84TableCoordinatesInfo(rescueRawText, {
@@ -14334,6 +15188,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
             console.log("WGS84 table timeout rescue did not return parsable rows:", rescueRawText.slice(0, 500));
           }
         } catch (rescueError) {
+          if (isRecognitionStopError(rescueError)) throw rescueError;
           console.error("WGS84 table timeout rescue failed:", rescueError.message || rescueError);
         }
       }
@@ -14372,12 +15227,30 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
 
       res.json(buildCoordinateVerificationResponse(fallback, fallback.coordinateEngineV2));
     } catch (fallbackError) {
+      if (getRecognitionDeadlineSignal()?.aborted || res.headersSent || fallbackError?.code === RECOGNITION_DEADLINE_CODE) {
+        return;
+      }
+      if (fallbackError?.code === RECOGNITION_BUDGET_CODE) {
+        return res.status(503).json({
+          success: false,
+          reason: fallbackError.reason || "budget_exhausted",
+          code: RECOGNITION_BUDGET_CODE,
+          error: "Recognition fallback stopped because the remaining request budget was insufficient.",
+          rawText: "",
+          coordinates: ""
+        });
+      }
       console.error(fallbackError);
       res.status(500).json({
         error: `${errorMessage}；备用OCR也失败：${fallbackError.message || "未知错误"}`,
         rawText: "",
         coordinates: ""
       });
+    }
+  } finally {
+    recognitionBudget?.markHandlerCompleted();
+    if (regressionTestMode.active) {
+      storeRegressionRecognitionTrace(recognitionBudget?.toSanitizedTrace());
     }
   }
 });

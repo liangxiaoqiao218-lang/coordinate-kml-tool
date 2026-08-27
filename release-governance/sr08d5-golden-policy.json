@@ -1,0 +1,158 @@
+{
+  "schemaVersion": "sr08d5_golden_policy_governance_v1",
+  "approval": {
+    "status": "APPROVED",
+    "source": "SR-08D.4_HUMAN_APPROVAL",
+    "date": "2026-08-26",
+    "personalInformationRecorded": false
+  },
+  "productionSourceHash": "d4fcb16d13c3e2214248b3102290a4e5ae8e65dc689ac8db816d8ee532d9193c",
+  "fixtureSetHash": "ada8e2c6827fff89f5aebdd4c0dfe5ba7ee79b34eacd070ae8801babfed9f0b2",
+  "governanceLayers": [
+    "Coordinate Truth",
+    "Release Policy",
+    "Evidence Metadata"
+  ],
+  "maturityModel": [
+    "CONFIRMED_TRUTH",
+    "CONFIRMED_POLICY",
+    "PROVIDER_VARIANCE_TRACKED",
+    "BASELINE_ONLY",
+    "PLACEHOLDER_POLICY",
+    "MISSING_TRUTH"
+  ],
+  "runnerClassifications": [
+    "COORDINATE_TRUTH_FAILURE",
+    "GEOMETRY_FAILURE",
+    "CRS_FAILURE",
+    "UNSAFE_GATE_FAILURE",
+    "CONSERVATIVE_REVIEW",
+    "METADATA_MISMATCH",
+    "PROVIDER_VARIANCE",
+    "RELIABILITY_TIMEOUT"
+  ],
+  "postDeadlineWorkStatus": "UNPROVEN",
+  "cases": {
+    "kyrgyz_gk_001": {
+      "truthMaturity": "CONFIRMED_TRUTH",
+      "policyMaturity": "CONFIRMED_POLICY",
+      "approvedTruthSha256": "dfbb1bbbd0e2fabdffad067a94935141c98343be245d7c741c7555eae2defacb",
+      "releasePolicy": {
+        "policy": "BLOCKED_BY_PROVIDER",
+        "expectedAvailability": "BLOCKED_BY_PROVIDER",
+        "expectedKmlReady": false,
+        "expectedDecisionStates": ["BLOCKED"],
+        "confirmationMayOverrideAvailability": false
+      },
+      "evidenceMetadata": {
+        "coordinateTruthChangeApproved": true,
+        "approvalSource": "SR-08H.3B_HUMAN_APPROVAL",
+        "approvalDate": "2026-08-26",
+        "confirmedRowCount": 65
+      }
+    },
+    "madagascar_cadastral_candidate_001": {
+      "truthMaturity": "CONFIRMED_TRUTH",
+      "policyMaturity": "CONFIRMED_POLICY",
+      "approvedTruthSha256": "459911634768e758f3cf7b9c89e131707df37b5c2ede211bf25134e869de43d7",
+      "releasePolicy": {
+        "policy": "BLOCKED_BY_PROVIDER",
+        "expectedAvailability": "BLOCKED_BY_PROVIDER",
+        "expectedFamily": "madagascar_cadastral_grid",
+        "projectedXyTakeover": false,
+        "expectedKmlReady": false,
+        "expectedDecisionStates": ["BLOCKED"],
+        "confirmationMayOverrideAvailability": false
+      },
+      "evidenceMetadata": {
+        "coordinateTruthChangeApproved": true,
+        "approvalSource": "SR-08H.3B_HUMAN_APPROVAL",
+        "approvalDate": "2026-08-26",
+        "confirmedRowCount": 32,
+        "valueConflict": false,
+        "maturityGovernanceConflict": "RESOLVED"
+      }
+    },
+    "utm30_burkina_003": {
+      "truthMaturity": "CONFIRMED_TRUTH",
+      "policyMaturity": "CONFIRMED_POLICY",
+      "approvedTruthSha256": "cfa2a035eec483bc435430d237c359b0ae57d948615b6e1cbc36b4961bf96775",
+      "releasePolicy": {
+        "policy": "REVIEW_REQUIRED",
+        "expectedRequiresReview": true,
+        "expectedKmlReady": false,
+        "expectedDecisionStates": ["BLOCKED"],
+        "geometryBlockerMustRemainActive": true,
+        "confirmationMayOverrideGeometry": false
+      },
+      "evidenceMetadata": {
+        "coordinateTruthChangeApproved": false,
+        "reason": "SELF_INTERSECTION_REQUIRES_FAIL_CLOSED"
+      }
+    },
+    "point_az_dms_table_001": {
+      "truthMaturity": "CONFIRMED_TRUTH",
+      "policyMaturity": "CONFIRMED_POLICY",
+      "approvedTruthSha256": "075d6f9108cb26ee3686cc978e9d47b384a22af2501486e32d5421db0bc93950",
+      "releasePolicy": {
+        "policy": "REVIEW_REQUIRED_UNTIL_CONFIRMATION",
+        "expectedRequiresReview": true,
+        "expectedKmlReady": false,
+        "expectedDecisionStates": ["BLOCKED", "REVIEW_REQUIRED"],
+        "expectedConfirmationStatus": "pending",
+        "familyPolicyId": "POINT_AZ_TEMPORARY_REVIEW_POLICY",
+        "familyPolicyVersion": "1",
+        "confirmationMayOverrideIndependentBlockers": false
+      },
+      "evidenceMetadata": {
+        "coordinateTruthChangeApproved": false,
+        "evidenceCoverageContract": "point_az_evidence_coverage_v1"
+      }
+    },
+    "handwritten_dms_001": {
+      "truthMaturity": "CONFIRMED_TRUTH",
+      "policyMaturity": "CONFIRMED_POLICY",
+      "approvedTruthSha256": "112dc85cb721e66f171eb5e9a43d73f87127dff2579989bab5f9b06f77a58a70",
+      "providerVarianceMaturity": "PROVIDER_VARIANCE_TRACKED",
+      "releasePolicy": {
+        "policy": "REVIEW_REQUIRED",
+        "expectedRequiresReview": true,
+        "expectedKmlReady": false,
+        "expectedDecisionStates": ["BLOCKED", "REVIEW_REQUIRED"]
+      },
+      "evidenceMetadata": {
+        "coordinateTruthChangeApproved": false,
+        "providerDriftMayUpdateTruth": false,
+        "note": "Stable real-provider character drift is tracked separately from confirmed truth."
+      }
+    },
+    "low_clarity_blurry_dms_001": {
+      "truthMaturity": "MISSING_TRUTH",
+      "policyMaturity": "CONFIRMED_POLICY",
+      "releasePolicy": {
+        "policy": "REVIEW_REQUIRED",
+        "expectedRequiresReview": true,
+        "expectedKmlReady": false,
+        "expectedDecisionStates": ["BLOCKED", "REVIEW_REQUIRED"]
+      },
+      "evidenceMetadata": {
+        "expectedReviewGroupIndexes": [1],
+        "coordinateTruthQualified": false
+      }
+    },
+    "oblique_dms_001": {
+      "truthMaturity": "MISSING_TRUTH",
+      "policyMaturity": "CONFIRMED_POLICY",
+      "releasePolicy": {
+        "policy": "REVIEW_REQUIRED",
+        "expectedRequiresReview": true,
+        "expectedKmlReady": false,
+        "expectedDecisionStates": ["BLOCKED", "REVIEW_REQUIRED"]
+      },
+      "evidenceMetadata": {
+        "expectedReviewGroupIndexes": [1, 2],
+        "coordinateTruthQualified": false
+      }
+    }
+  }
+}

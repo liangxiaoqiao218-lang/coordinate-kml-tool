@@ -1,0 +1,245 @@
+schema_version: "1.0"
+purpose: "GeoKit Lab v1.0.3 OCR P0 Golden Record formalization"
+record_count: 6
+confirmed_count: 5
+baseline_only_count: 1
+initial_scope_positive_count: 3
+development_gate: READY
+development_gate_reason: >-
+  Three confirmed records are positive-path samples inside the approved initial
+  WGS84 decimal/DMS single-Polygon scope, satisfying the development entry rule.
+
+records:
+  - sample_id: OCR-GR-WGS84-TABLE-CAR-001
+    original_image: "C:/Users/Mir-1/Documents/Codex/2026-08-07/coordinate-engine-v2-utm-router/artifacts/fixtures/structural-expansion/刚果，两个坐标在同一张图.jpg"
+    image_hash_sha256: "b3835c80e6ab4709542c91335cf363efc2b08b3d72bf5dfda37f60395fa6a41a"
+    image_bytes: 859893
+    source_type: "mobile screenshot of a translated mining-permit page containing two printed coordinate tables"
+    country_region: "unresolved; filename says Congo while visible document text references the Central African Republic"
+    resolution: "1260x2844"
+    coordinate_text_ground_truth:
+      - "Area 1 A | 16.0320 | 3.7638"
+      - "Area 1 B | 16.0407 | 3.7634"
+      - "Area 1 C | 16.0410 | 3.7578"
+      - "Area 1 D | 16.0433 | 3.7537"
+      - "Area 1 E | 16.0435 | 3.7502"
+      - "Area 1 F | 16.0366 | 3.7524"
+      - "Area 1 G | 16.0366 | 3.7524"
+      - "Area 2 A | 16.0358 | 3.7502"
+      - "Area 2 B | 16.0435 | 3.7502"
+      - "Area 2 C | 16.0378 | 3.7348"
+      - "Area 2 D | 16.0348 | 3.7351"
+    ocr_expected_text:
+      - "point label | 经度东 | 北纬"
+      - "the eleven coordinate rows above, preserving the duplicate Area 1 F/G boundary row"
+    crs: "EPSG:4326 (historical baseline; visible table is decimal longitude/latitude)"
+    axis_order: "source columns longitude, latitude; KML longitude,latitude,altitude"
+    geometry: "unresolved: the image shows two areas while the historical regression baseline records one Polygon"
+    expected_wgs84_order: [longitude, latitude]
+    expected_wgs84:
+      - [16.0320, 3.7638]
+      - [16.0407, 3.7634]
+      - [16.0410, 3.7578]
+      - [16.0433, 3.7537]
+      - [16.0435, 3.7502]
+      - [16.0366, 3.7524]
+      - [16.0366, 3.7524]
+      - [16.0358, 3.7502]
+      - [16.0435, 3.7502]
+      - [16.0378, 3.7348]
+      - [16.0348, 3.7351]
+    expected_kml: null
+    expected_kml_reason: "group semantics must be human-confirmed before a closed KML truth is frozen"
+    evidence_level: baseline_only
+    validation_status: "NOT_READY_FOR_INITIAL_SCOPE"
+    evidence:
+      - "COORDINATE_RECOGNITION_GOLDEN_BASELINE.json#wgs84_table_rc2_congo_001"
+      - "regression-samples/RC2/baseline.json"
+
+  - sample_id: OCR-GR-DMS-TABLE-CIV-001
+    original_image: "C:/Users/Mir-1/Documents/Codex/2026-08-07/coordinate-engine-v2-utm-router/artifacts/fixtures/cote-divoire-dms-real-001.jpeg"
+    image_hash_sha256: "cf2b03310403b5389765dbc5e436152e6d58bb847ead8f69fcf83c79c52d1e05"
+    image_bytes: 102211
+    source_type: "cropped printed coordinate table"
+    country_region: "Côte d'Ivoire fixture classification"
+    resolution: "964x229"
+    coordinate_text_ground_truth:
+      - "1 | 11°52'11.93\" N | 08°53'32.66\" W"
+      - "2 | 11°52'17.21\" N | 08°53'33.18\" W"
+      - "3 | 11°52'12.57\" N | 08°53'54.03\" W"
+      - "4 | 11°52'07.65\" N | 08°53'53.56\" W"
+    ocr_expected_text:
+      - "Point | Latitude nord | Longitude ouest"
+      - "the four coordinate rows above in source order"
+    crs: "EPSG:4326 geographic DMS"
+    axis_order: "source latitude, longitude; N positive and Ouest/W negative; KML longitude,latitude,altitude"
+    geometry: Polygon
+    expected_wgs84_order: [longitude, latitude]
+    expected_wgs84:
+      - [-8.892405555556, 11.869980555556]
+      - [-8.892550000000, 11.871447222222]
+      - [-8.898341666667, 11.870158333333]
+      - [-8.898211111111, 11.868791666667]
+    expected_kml:
+      - "-8.892405555556,11.869980555556,0"
+      - "-8.892550000000,11.871447222222,0"
+      - "-8.898341666667,11.870158333333,0"
+      - "-8.898211111111,11.868791666667,0"
+      - "-8.892405555556,11.869980555556,0"
+    evidence_level: confirmed
+    validation_status: "READY_INITIAL_SCOPE_POSITIVE"
+    evidence:
+      - "original image inspection"
+      - "Coordinate Engine V3 core validated fixture"
+      - "historical real-image ground-truth PASS"
+
+  - sample_id: OCR-GR-DMS-PERMIT-FR-001
+    original_image: "C:/Users/Mir-1/Documents/Codex/2026-08-07/coordinate-engine-v2-utm-router/artifacts/fixtures/structural-expansion/模糊坐标.jpg"
+    image_hash_sha256: "281ea16ac7c4e27e8b5dbb991ebe015b88c0de5acc1232f3aa0f8a115c1e4a56"
+    image_bytes: 69632
+    source_type: "low-clarity scanned French mining-permit page with coordinates embedded in prose"
+    country_region: "not confirmed by the available evidence"
+    resolution: "737x1070"
+    coordinate_text_ground_truth:
+      - "A | 12°04'00\" N | 8°50'00\" W"
+      - "B | 12°04'00\" N | 8°45'00\" W"
+      - "C | 12°02'12\" N | 8°45'00\" W"
+      - "D | 12°02'12\" N | 8°50'00\" W"
+    ocr_expected_text:
+      - "Coordonnées du périmètre"
+      - "Point A through Point D coordinate-bearing prose, preserving each DMS value"
+    crs: "EPSG:4326 geographic DMS"
+    axis_order: "prose varies by point; hemisphere labels determine latitude/longitude; KML longitude,latitude,altitude"
+    geometry: Polygon
+    expected_wgs84_order: [longitude, latitude]
+    expected_wgs84:
+      - [-8.833333333333, 12.066666666667]
+      - [-8.750000000000, 12.066666666667]
+      - [-8.750000000000, 12.036666666667]
+      - [-8.833333333333, 12.036666666667]
+    expected_kml:
+      - "-8.833333333333,12.066666666667,0"
+      - "-8.750000000000,12.066666666667,0"
+      - "-8.750000000000,12.036666666667,0"
+      - "-8.833333333333,12.036666666667,0"
+      - "-8.833333333333,12.066666666667,0"
+    evidence_level: confirmed
+    validation_status: "CONFIRMED_NEGATIVE_BOUNDARY_REQUIRES_REVIEW"
+    evidence:
+      - "original image inspection"
+      - "historical human-verified French perimeter regression"
+      - "regression-samples/FRENCH_PERIMETER_DMS/README.md"
+
+  - sample_id: OCR-GR-UTM50S-MAP-IDN-001
+    original_image: "C:/Users/Mir-1/Documents/Codex/2026-08-07/coordinate-engine-v2-utm-router/artifacts/fixtures/indonesia-utm50s-real-001.jpg"
+    image_hash_sha256: "2f508653305fee7c08470218f9bf94f75b56d26d7b28edcd7d8d68cd8f88eaf6"
+    image_bytes: 277506
+    source_type: "mining-area satellite map with an embedded coordinate table"
+    country_region: "Indonesia, West Sulawesi"
+    resolution: "1600x1132"
+    coordinate_text_ground_truth:
+      - "1 | X 779271.176 | Y 9720912.526 | 2°31'21.134\" S | 119°30'40.863\" E"
+      - "2 | X 779554.165 | Y 9720912.526 | 2°31'21.116\" S | 119°30'50.018\" E"
+      - "3 | X 779554.165 | Y 9720734.464 | 2°31'26.910\" S | 119°30'50.029\" E"
+      - "4 | X 779271.176 | Y 9720734.464 | 2°31'26.928\" S | 119°30'40.874\" E"
+    ocr_expected_text:
+      - "No. | X | Y | Latitude | Longitude"
+      - "SISTEM KOORDINAT UTM WGS 1984 ZONA 50S"
+      - "the four coordinate rows above in source order"
+    crs: "EPSG:32750 (WGS 84 / UTM zone 50S), with geographic EPSG:4326 columns also printed"
+    axis_order: "projected source X,Y and geographic source latitude,longitude; KML longitude,latitude,altitude"
+    geometry: Polygon
+    expected_wgs84_order: [longitude, latitude]
+    expected_wgs84:
+      - [119.511350833333, -2.522537222222]
+      - [119.513893888889, -2.522532222222]
+      - [119.513896944444, -2.524141666667]
+      - [119.511353888889, -2.524146666667]
+    expected_kml:
+      - "119.511350833333,-2.522537222222,0"
+      - "119.513893888889,-2.522532222222,0"
+      - "119.513896944444,-2.524141666667,0"
+      - "119.511353888889,-2.524146666667,0"
+      - "119.511350833333,-2.522537222222,0"
+    evidence_level: confirmed
+    validation_status: "CONFIRMED_FUTURE_SCOPE_EXCLUDED_FROM_V1.0.3_INITIAL_OCR"
+    evidence:
+      - "original image inspection"
+      - "Coordinate Engine V3 core validated fixture"
+      - "historical Indonesia UTM ground-truth PASS"
+
+  - sample_id: OCR-GR-DMS-TABLE-ARTISANAT-001
+    original_image: "C:/Users/Mir-1/Documents/Codex/2026-08-07/coordinate-engine-v2-utm-router/artifacts/fixtures/structural-expansion/6d2cb08956f2a1e6511fbf18d8922200.png"
+    image_hash_sha256: "f8005d69dd7aee0c41f8e7aa44d18f9a81d130bdbb8b3a9bd8fbb19e1322b0df"
+    image_bytes: 59785
+    source_type: "clear cropped printed coordinate table for one 9.84-hectare artisanal area"
+    country_region: "not confirmed by the available evidence"
+    resolution: "666x186"
+    coordinate_text_ground_truth:
+      - "1 | 11°34'20.50\" N | 8°50'39.50\" O"
+      - "2 | 11°34'8.87\" N | 8°50'22.58\" O"
+      - "3 | 11°34'4.35\" N | 8°50'25.09\" O"
+      - "4 | 11°34'16.50\" N | 8°50'42.40\" O"
+    ocr_expected_text:
+      - "N° | LATITUDE | LONGITUDE"
+      - "the four coordinate rows above in source order"
+      - "Artisanat 9.84 Hectares"
+    crs: "EPSG:4326 geographic DMS"
+    axis_order: "source latitude, longitude; N positive and O/Ouest negative; KML longitude,latitude,altitude"
+    geometry: Polygon
+    expected_wgs84_order: [longitude, latitude]
+    expected_wgs84:
+      - [-8.844305555556, 11.572361111111]
+      - [-8.839605555556, 11.569130555556]
+      - [-8.840302777778, 11.567875000000]
+      - [-8.845111111111, 11.571250000000]
+    expected_kml:
+      - "-8.844305555556,11.572361111111,0"
+      - "-8.839605555556,11.569130555556,0"
+      - "-8.840302777778,11.567875000000,0"
+      - "-8.845111111111,11.571250000000,0"
+      - "-8.844305555556,11.572361111111,0"
+    evidence_level: confirmed
+    validation_status: "READY_INITIAL_SCOPE_POSITIVE"
+    evidence:
+      - "original image inspection"
+      - "SHA-256, byte size, and resolution independently verified"
+      - "visible single-area label and four-row coordinate table establish Polygon grouping"
+
+  - sample_id: OCR-GR-DMS-TABLE-CIV-003
+    original_image: "C:/Users/Mir-1/Documents/Codex/2026-08-07/coordinate-engine-v2-utm-router/artifacts/fixtures/structural-expansion/科特迪瓦03.png"
+    image_hash_sha256: "dfb3dd70592da74d96dc55db20b52d4b4e3fb7ae54cd633cd6ccbae1d408f030"
+    image_bytes: 13419
+    source_type: "clear cropped printed coordinate table for one 99.75-hectare area"
+    country_region: "Côte d'Ivoire fixture classification"
+    resolution: "620x269"
+    coordinate_text_ground_truth:
+      - "1 | 05°35'29,00\" N | 2°47'26,00\" W"
+      - "2 | 05°35'29,00\" N | 2°46'53,00\" W"
+      - "3 | 05°34'57,00\" N | 2°46'53,00\" W"
+      - "4 | 05°34'57,00\" N | 2°47'26,00\" W"
+    ocr_expected_text:
+      - "Point | Latitude | Longitude"
+      - "the four coordinate rows above in source order, preserving decimal commas"
+      - "Superficies (ha) 99,75"
+    crs: "EPSG:4326 geographic DMS"
+    axis_order: "source latitude, longitude; N positive and W negative; KML longitude,latitude,altitude"
+    geometry: Polygon
+    expected_wgs84_order: [longitude, latitude]
+    expected_wgs84:
+      - [-2.790555555556, 5.591388888889]
+      - [-2.781388888889, 5.591388888889]
+      - [-2.781388888889, 5.582500000000]
+      - [-2.790555555556, 5.582500000000]
+    expected_kml:
+      - "-2.790555555556,5.591388888889,0"
+      - "-2.781388888889,5.591388888889,0"
+      - "-2.781388888889,5.582500000000,0"
+      - "-2.790555555556,5.582500000000,0"
+      - "-2.790555555556,5.591388888889,0"
+    evidence_level: confirmed
+    validation_status: "READY_INITIAL_SCOPE_POSITIVE"
+    evidence:
+      - "original image inspection"
+      - "SHA-256, byte size, and resolution independently verified"
+      - "visible single-area surface and four-row coordinate table establish Polygon grouping"

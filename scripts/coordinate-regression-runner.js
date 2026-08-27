@@ -1,17 +1,30 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
+import {
+  applyGoldenGovernance,
+  classifyGoldenRun,
+  summarizeReleaseSemantics,
+  summarizeSemanticRuns,
+  validateGoldenGovernance,
+} from '../release-governance/runner-semantics.js';
+import { validateReleaseEvidenceBinding } from '../release-governance/evidence-binding.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const defaultBaselinePath = path.join(repoRoot, 'COORDINATE_RECOGNITION_GOLDEN_BASELINE.json');
 const defaultErrorLibraryPath = path.join(repoRoot, 'COORDINATE_ERROR_LIBRARY.json');
+const defaultGovernancePath = path.join(repoRoot, 'release-governance', 'sr08d5-golden-policy.json');
+const defaultEvidenceArtifactPath = path.join(repoRoot, 'release-evidence', 'coordinate-regression-runner-latest.json');
 const defaultApiUrl = 'http://127.0.0.1:3000/api/recognize-coordinates';
 const defaultTextApiUrl = 'http://127.0.0.1:3000/api/regression/parse-coordinate-text';
 const apiUrl = process.env.COORDINATE_REGRESSION_API_URL || defaultApiUrl;
 const textApiUrl = process.env.COORDINATE_REGRESSION_TEXT_API_URL || defaultTextApiUrl;
+const apiOrigin = new URL(apiUrl).origin;
+const versionApiUrl = `${apiOrigin}/api/version`;
+const traceApiBaseUrl = `${apiOrigin}/api/regression/recognition-trace`;
 const coordinateTolerance = Number(process.env.COORDINATE_REGRESSION_TOLERANCE || '1e-6');
 const allowedLayers = new Set(['Vision', 'Parser', 'Engine', 'Resolver', 'KML', 'UI', 'Gate']);
 
@@ -54,7 +67,8 @@ function getFindingLayer(field, explicitLayer = '') {
   if (/precision|coordinate_type|group|geometry|review/i.test(key)) return 'Engine';
   return 'Gate';
 }
-const fixtureRoot = process.env.COORDINATE_REGRESSION_FIXTURE_ROOT || 'D:\\关于西非的业务\\测试素材';
+const fixtureRoot = process.env.COORDINATE_REGRESSION_FIXTURE_ROOT
+  || path.join(repoRoot, 'regression-samples', 'fixtures');
 
 const knownLocalFixtureNames = {
   wgs84_table_rc2_congo_001: '刚果，两个坐标在同一张图.jpg',
@@ -239,10 +253,6 @@ function normalizePathSeparators(value) {
 }
 
 function getKnownFixturePath(sample) {
-  if (sample?.sample_id === 'handwritten_dms_001') {
-    return 'D:\\关于西非的业务\\测试素材\\手写坐标.jpg';
-  }
-
   const fileName = knownLocalFixtureNames[sample.sample_id];
   return fileName ? path.join(fixtureRoot, fileName) : '';
 }
@@ -609,7 +619,10 @@ function isTimeout(data, text) {
 
 function summarizeApiResponse(data, responseMeta = {}) {
   const engine = data?.coordinateEngineV2 || data?.coordinate_engine_v2 || {};
+  const finalized = data?.finalizedCoordinateResult || {};
+  const verification = data?.verification || {};
   const groups = Array.isArray(engine.groups) ? engine.groups : [];
+  const finalizedGroups = Array.isArray(finalized.groups) ? finalized.groups : [];
   const coordinatesText = data?.coordinates || data?.formatted || data?.result || '';
   const gridRows = extractGridRows(engine, coordinatesText);
   const mozambiqueRows = extractMozambiqueRows(engine, coordinatesText);
@@ -634,8 +647,13 @@ function summarizeApiResponse(data, responseMeta = {}) {
     : normalizeGeometry(data?.geometry || engine.geometry || inferGeometry(pointCount));
   const topRequiresReview = typeof engine.requires_review === 'boolean' ? engine.requires_review : null;
   const groupRequiresReview = groups.some((group) => group?.requires_review === true);
-  const requiresReview = topRequiresReview ?? groupRequiresReview;
+  const requiresReview = typeof finalized.requiresReview === 'boolean'
+    ? finalized.requiresReview
+    : topRequiresReview ?? groupRequiresReview;
   const allGroupsKmlReady = getAllGroupsKmlReady(groups);
+  const effectiveReviewGroupIndexes = finalizedGroups.length
+    ? finalizedGroups.map((group, index) => (group?.requiresReview === true ? index + 1 : null)).filter(value => value !== null)
+    : getReviewGroupIndexes(groups);
 
   return {
     httpStatus: responseMeta.httpStatus ?? null,
@@ -648,12 +666,24 @@ function summarizeApiResponse(data, responseMeta = {}) {
     pointCount,
     geometry,
     requiresReview,
-    kmlReady: typeof engine.kml_ready === 'boolean' ? engine.kml_ready : allGroupsKmlReady,
+    kmlReady: typeof finalized.kmlReady === 'boolean'
+      ? finalized.kmlReady
+      : typeof engine.kml_ready === 'boolean' ? engine.kml_ready : allGroupsKmlReady,
     firstPoint,
     lastPoint,
     groupPointCounts: groups.map((group) => (Array.isArray(group?.points) ? group.points.length : 0)),
     polygonCount: groups.length || countCoordinateBlocks(coordinatesText),
-    reviewGroupIndexes: getReviewGroupIndexes(groups),
+    reviewGroupIndexes: effectiveReviewGroupIndexes,
+    decisionState: finalized.decisionState || '',
+    confirmationStatus: finalized.confirmationStatus || '',
+    qualityGateStatus: finalized.qualityGateStatus || '',
+    reasonCodes: Array.isArray(finalized.reasonCodes) ? finalized.reasonCodes : [],
+    blockingReasons: Array.isArray(finalized.blockingReasons) ? finalized.blockingReasons : [],
+    finalizerWarnings: Array.isArray(finalized.warnings) ? finalized.warnings : [],
+    finalizerEvaluated: Boolean(finalized?.schemaVersion && finalized?.decisionState),
+    familyPolicyId: finalized.familySafetyPolicy?.policyId || '',
+    familyPolicyVersion: finalized.familySafetyPolicy?.policyVersion || '',
+    geometryWarnings: Array.isArray(verification.geometryWarnings) ? verification.geometryWarnings : [],
     country: getActualCountry(engine, data),
     areaHa: getActualArea(engine),
     gridRows,
@@ -664,10 +694,59 @@ function summarizeApiResponse(data, responseMeta = {}) {
     fallbackUsed: isFallbackUsed(data, engine),
     retryUsed: isRetryUsed(data),
     timeout: isTimeout(data, responseMeta.responseText || ''),
+    responseCode: data?.code || data?.error_code || '',
+    responseReason: data?.reason || '',
+    requestStartedAt: responseMeta.requestStartedAt || null,
+    deadlineTriggeredAt: data?.deadlineTriggeredAt || null,
+    responseReturnedAt: responseMeta.responseReturnedAt || null,
+    requestId: responseMeta.requestId || null,
+    stageTrace: responseMeta.stageTrace || null,
+    reportedElapsedMs: Number.isFinite(Number(data?.elapsedMs)) ? Number(data.elapsedMs) : null,
+    handlerDeadlineMs: Number.isFinite(Number(data?.deadlineMs)) ? Number(data.deadlineMs) : null,
+    runnerDeadlineMs: null,
+    verificationStatus: verification?.status || null,
+    verificationConflicts: Array.isArray(verification?.conflicts) ? verification.conflicts : [],
+    providerRawEvidenceAvailable: Boolean(data?.rawText),
+    normalizedEvidenceAvailable: Boolean(data?.coordinates || finalized?.geometry),
     fallbackType: getFallbackType(data),
     errorCode: data?.code || data?.error_code || '',
     raw: data,
   };
+}
+
+async function fetchRecognitionTrace(requestId, caseId) {
+  if (!requestId) {
+    const error = new Error(`Recognition response for ${caseId} did not include X-Recognition-Request-Id.`);
+    error.code = 'TRACE_CORRELATION_MISSING';
+    throw error;
+  }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await fetch(`${traceApiBaseUrl}/${encodeURIComponent(requestId)}`, {
+      headers: {
+        'x-regression-test': 'true',
+        'x-regression-case-id': caseId,
+      },
+    });
+    if (response.status === 404) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      continue;
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.trace) {
+      const error = new Error(`Recognition trace fetch failed for ${caseId}: HTTP ${response.status}`);
+      error.code = 'TRACE_CORRELATION_MISSING';
+      throw error;
+    }
+    if (payload.trace.requestId !== requestId || payload.trace.caseId !== caseId) {
+      const error = new Error(`Recognition trace correlation mismatch for ${caseId}.`);
+      error.code = 'TRACE_CORRELATION_MISMATCH';
+      throw error;
+    }
+    return payload.trace;
+  }
+  const error = new Error(`Recognition trace was not persisted for ${caseId}.`);
+  error.code = 'TRACE_CORRELATION_MISSING';
+  throw error;
 }
 
 async function callImageApi(sample) {
@@ -688,6 +767,7 @@ async function callImageApi(sample) {
   form.append('visitorId', visitorId);
   form.append('regressionSampleId', sample.sample_id);
 
+  const requestStartedAt = new Date().toISOString();
   const startedAt = performance.now();
   const response = await fetch(apiUrl, {
     method: 'POST',
@@ -696,10 +776,14 @@ async function callImageApi(sample) {
       'x-visitor-id': visitorId,
       'x-source': 'coordinate-regression-runner',
       'x-regression-test': 'true',
+      'x-regression-case-id': sample.sample_id,
     },
   });
   const responseText = await response.text();
   const durationMs = Math.round(performance.now() - startedAt);
+  const responseReturnedAt = new Date().toISOString();
+  const requestId = response.headers.get('x-recognition-request-id');
+  const stageTrace = await fetchRecognitionTrace(requestId, sample.sample_id);
 
   let data;
   try {
@@ -708,6 +792,10 @@ async function callImageApi(sample) {
     return {
       httpStatus: response.status,
       durationMs,
+      requestStartedAt,
+      responseReturnedAt,
+      requestId,
+      stageTrace,
       error: `API returned non-JSON response: ${responseText.slice(0, 240)}`,
     };
   }
@@ -717,11 +805,11 @@ async function callImageApi(sample) {
       httpStatus: response.status,
       durationMs,
       error: data?.error || data?.message || responseText.slice(0, 240),
-      actual: summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText }),
+      actual: summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText, requestStartedAt, responseReturnedAt, requestId, stageTrace }),
     };
   }
 
-  return summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText });
+  return summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText, requestStartedAt, responseReturnedAt, requestId, stageTrace });
 }
 
 async function callTextApi(sample) {
@@ -735,6 +823,7 @@ async function callTextApi(sample) {
     };
   }
 
+  const requestStartedAt = new Date().toISOString();
   const startedAt = performance.now();
   const response = await fetch(textApiUrl, {
     method: 'POST',
@@ -748,6 +837,7 @@ async function callTextApi(sample) {
   });
   const responseText = await response.text();
   const durationMs = Math.round(performance.now() - startedAt);
+  const responseReturnedAt = new Date().toISOString();
 
   let data;
   try {
@@ -756,6 +846,8 @@ async function callTextApi(sample) {
     return {
       httpStatus: response.status,
       durationMs,
+      requestStartedAt,
+      responseReturnedAt,
       error: `Text API returned non-JSON response: ${responseText.slice(0, 240)}`,
     };
   }
@@ -765,11 +857,11 @@ async function callTextApi(sample) {
       httpStatus: response.status,
       durationMs,
       error: data?.error || data?.message || responseText.slice(0, 240),
-      actual: summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText }),
+      actual: summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText, requestStartedAt, responseReturnedAt }),
     };
   }
 
-  return summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText });
+  return summarizeApiResponse(data, { httpStatus: response.status, durationMs, responseText, requestStartedAt, responseReturnedAt });
 }
 
 async function loadTextFixture(sample) {
@@ -980,6 +1072,12 @@ function compareGolden(sample, actual) {
   compareField(diffs, 'requires_review', sample.expected_requires_review, actual.requiresReview, { normalize: 'boolean' });
   compareField(diffs, 'kml_ready', sample.expected_kml_ready, actual.kmlReady, { normalize: 'boolean' });
   compareField(diffs, 'reviewGroupIndexes', sample.expected_review_group_indexes, actual.reviewGroupIndexes, { normalize: 'array' });
+  if (Array.isArray(sample.expected_decision_states) && !sample.expected_decision_states.includes(actual.decisionState)) {
+    addFinding(diffs, 'BLOCKER', 'decision_state', sample.expected_decision_states, actual.decisionState || null, 'Gate');
+  }
+  compareField(diffs, 'confirmation_status', sample.expected_confirmation_status, actual.confirmationStatus, { normalize: 'enum', layer: 'Gate' });
+  compareField(diffs, 'family_policy_id', sample.expected_family_policy_id, actual.familyPolicyId, { layer: 'Gate' });
+  compareField(diffs, 'family_policy_version', sample.expected_family_policy_version, actual.familyPolicyVersion, { layer: 'Gate' });
   compareField(diffs, 'country', sample.expected_country, actual.country, { severity: 'WARNING' });
   compareGridRows(diffs, sample.expected_grid_rows, actual.gridRows, Number(sample.tolerance?.xv_yv ?? 0.01));
   compareMozambiqueRows(diffs, sample.expected_rows, actual.mozambiqueRows, Number(sample.tolerance?.lat_lon ?? 0.0008));
@@ -1403,7 +1501,8 @@ async function runSample(sample, options, errorLibrary) {
       ? await callTextApi(sample)
       : await callImageApi(sample);
     const { diffs, warnings } = compareGolden(sample, actual.actual || actual);
-    runs.push({ actual, diffs, warnings });
+    const semantics = classifyGoldenRun({ sample, actual: actual.actual || actual, diffs });
+    runs.push({ actual, diffs, warnings, semantics });
     diffs.forEach((diff) => allDiffs.push({ run: runIndex + 1, ...diff }));
     warnings.forEach((warning) => allWarnings.push({ run: runIndex + 1, ...warning }));
 
@@ -1451,6 +1550,7 @@ async function runSample(sample, options, errorLibrary) {
     runs,
     diffs: allDiffs,
     warnings: allWarnings,
+    semanticSummary: summarizeSemanticRuns(runs),
   };
 }
 
@@ -1511,6 +1611,16 @@ function printResult(result) {
     : 'PASS';
   console.log(`  V1 Legacy Result: ${v1Result}`);
   console.log(`  V2 Engine Result: ${v2Result}`);
+  const semantic = result.semanticSummary || summarizeSemanticRuns(result.runs);
+  console.log(`  TRUTH_STATUS=${semantic.truthStatus}`);
+  console.log(`  POLICY_STATUS=${semantic.policyStatus}`);
+  console.log(`  GATE_SAFETY_STATUS=${semantic.gateSafetyStatus}`);
+  console.log(`  METADATA_STATUS=${semantic.metadataStatus}`);
+  console.log(`  PROVIDER_VARIANCE_STATUS=${semantic.providerVarianceStatus}`);
+  console.log(`  RELIABILITY_STATUS=${semantic.reliabilityStatus}`);
+  console.log(`  FINALIZER_STATUS=${semantic.finalizerStatus}`);
+  console.log(`  TIMEOUT_STAGE=${semantic.timeoutStage}`);
+  console.log(`  CLASSIFICATIONS=${semantic.classifications.join(',') || 'NONE'}`);
 
   if (result.diffs.length) {
     console.log('  Diff:');
@@ -1556,6 +1666,21 @@ function summarizeResults(results) {
     durations: [],
     timeoutCount: 0,
     fallbackCount: 0,
+    semanticClassifications: {},
+    truthPassCount: 0,
+    truthFailureCount: 0,
+    truthEvaluatedCount: 0,
+    truthNotEvaluatedCount: 0,
+    truthNotQualifiedCount: 0,
+    policyPassCount: 0,
+    policyFailureCount: 0,
+    policyEvaluatedCount: 0,
+    policyNotEvaluatedCount: 0,
+    policyNotQualifiedCount: 0,
+    unsafeGateFailureCount: 0,
+    conservativeReviewCount: 0,
+    metadataMismatchCount: 0,
+    providerVarianceCount: 0,
   };
 
   const countLayer = (layer) => {
@@ -1593,6 +1718,24 @@ function summarizeResults(results) {
       if (actual?.timeout) summary.timeoutCount += 1;
       if (actual?.fallbackUsed) summary.fallbackCount += 1;
     }
+    for (const classification of result.semanticSummary?.classifications || []) {
+      summary.semanticClassifications[classification] = (summary.semanticClassifications[classification] || 0) + 1;
+    }
+    const semantic = result.semanticSummary || {};
+    if (semantic.truthStatus === 'MATCH') summary.truthPassCount += 1;
+    if (semantic.truthStatus === 'MISMATCH') summary.truthFailureCount += 1;
+    if (['MATCH', 'MISMATCH'].includes(semantic.truthStatus)) summary.truthEvaluatedCount += 1;
+    if (semantic.truthStatus === 'NOT_EVALUATED') summary.truthNotEvaluatedCount += 1;
+    if (semantic.truthStatus === 'NOT_QUALIFIED') summary.truthNotQualifiedCount += 1;
+    if (semantic.policyStatus === 'MATCH') summary.policyPassCount += 1;
+    if (semantic.policyStatus === 'MISMATCH') summary.policyFailureCount += 1;
+    if (['MATCH', 'MISMATCH'].includes(semantic.policyStatus)) summary.policyEvaluatedCount += 1;
+    if (semantic.policyStatus === 'NOT_EVALUATED') summary.policyNotEvaluatedCount += 1;
+    if (semantic.policyStatus === 'NOT_QUALIFIED') summary.policyNotQualifiedCount += 1;
+    if (semantic.classifications?.includes('UNSAFE_GATE_FAILURE')) summary.unsafeGateFailureCount += 1;
+    if (semantic.classifications?.includes('CONSERVATIVE_REVIEW')) summary.conservativeReviewCount += 1;
+    if (semantic.classifications?.includes('METADATA_MISMATCH')) summary.metadataMismatchCount += 1;
+    if (semantic.classifications?.includes('PROVIDER_VARIANCE')) summary.providerVarianceCount += 1;
   }
 
   summary.avgMs = summary.durations.length
@@ -1605,8 +1748,125 @@ function summarizeResults(results) {
     : summary.passWithWarning > 0 || summary.warningCount > 0
       ? 'PASS WITH WARNING'
       : 'PASS';
+  Object.assign(summary, summarizeReleaseSemantics(results));
 
   return summary;
+}
+
+function unwrapActual(run = {}) {
+  return run.actual?.actual || run.actual || {};
+}
+
+export function buildEvidenceCase(result) {
+  return {
+    caseId: result.sample.sample_id,
+    attempts: result.runs.map((run, index) => {
+      const actual = unwrapActual(run);
+      const semantics = run.semantics || {};
+      return {
+        attempt: index + 1,
+        requestId: actual.requestId || null,
+        stageTrace: actual.stageTrace || null,
+        httpStatus: actual.httpStatus ?? null,
+        elapsedMs: actual.durationMs ?? null,
+        responseCode: actual.responseCode || actual.errorCode || null,
+        responseReason: actual.responseReason || null,
+        requestStartedAt: actual.requestStartedAt || null,
+        deadlineTriggeredAt: actual.deadlineTriggeredAt || null,
+        responseReturnedAt: actual.responseReturnedAt || null,
+        handlerDeadlineMs: actual.handlerDeadlineMs ?? null,
+        runnerDeadlineMs: actual.runnerDeadlineMs ?? null,
+        timeoutStage: semantics.timeoutStage || 'NOT_APPLICABLE',
+        truthMaturity: semantics.truthMaturity || null,
+        policyMaturity: semantics.policyMaturity || null,
+        truthStatus: semantics.truthStatus || 'NOT_EVALUATED',
+        policyStatus: semantics.policyStatus || 'NOT_EVALUATED',
+        gateSafetyStatus: semantics.gateSafetyStatus || 'NOT_EVALUATED',
+        metadataStatus: semantics.metadataStatus || 'NOT_EVALUATED',
+        providerVarianceStatus: semantics.providerVarianceStatus || 'NOT_EVALUATED',
+        reliabilityStatus: semantics.reliabilityStatus || 'PASS',
+        finalizerStatus: semantics.finalizerStatus || 'NOT_EVALUATED',
+        runtime: {
+          decisionState: actual.finalizerEvaluated ? actual.decisionState || null : null,
+          requiresReview: actual.finalizerEvaluated ? actual.requiresReview : null,
+          kmlReady: actual.finalizerEvaluated ? actual.kmlReady : null
+        },
+        finalizedCoordinateResult: actual.finalizerEvaluated ? {
+          confirmationStatus: actual.confirmationStatus || null,
+          qualityGateStatus: actual.qualityGateStatus || null,
+          decisionState: actual.decisionState || null,
+          blockingReasons: actual.blockingReasons || []
+        } : 'FINALIZER_NOT_EVALUATED',
+        verification: {
+          status: actual.verificationStatus || null,
+          conflicts: actual.verificationConflicts || [],
+          geometryWarnings: actual.geometryWarnings || []
+        },
+        providerEvidenceAvailability: {
+          raw: actual.providerRawEvidenceAvailable === true,
+          normalized: actual.normalizedEvidenceAvailable === true
+        },
+        fallbackUsed: actual.fallbackUsed === true,
+        timeout: actual.timeout === true
+      };
+    })
+  };
+}
+
+export async function writeEvidenceArtifact(results, summary, governance, evidenceBinding) {
+  const artifactPath = process.env.COORDINATE_REGRESSION_ARTIFACT_PATH || defaultEvidenceArtifactPath;
+  const traces = results.flatMap(result => result.runs.map(run => unwrapActual(run).stageTrace).filter(Boolean));
+  const postDeadlineWorkStatus = traces.length > 0
+    && traces.every(trace => trace.postDeadlineWorkStatus === 'PROVEN_NONE')
+    ? 'PROVEN_NONE'
+    : 'UNPROVEN';
+  const artifact = {
+    schemaVersion: 'coordinate_regression_evidence_v3',
+    generatedAt: new Date().toISOString(),
+    approvalSource: governance.approval?.source || null,
+    evidenceBindingStatus: evidenceBinding.status,
+    productionSourceHash: evidenceBinding.productionSourceHash,
+    runtimeSourceHash: evidenceBinding.runtimeSourceHash,
+    releaseGovernanceHash: evidenceBinding.releaseGovernanceHash,
+    fixtureSetHash: evidenceBinding.fixtureSetHash,
+    postDeadlineWorkStatus,
+    summary: {
+      safetyStatus: summary.safetyStatus,
+      truthStatus: summary.truthStatus,
+      policyStatus: summary.policyStatus,
+      reliabilityStatus: summary.reliabilityStatus,
+      governanceStatus: summary.governanceStatus,
+      liveCoordinateGoldenStatus: summary.liveCoordinateGoldenStatus,
+      truthEvaluatedCount: summary.truthEvaluatedCount,
+      truthNotEvaluatedCount: summary.truthNotEvaluatedCount,
+      policyEvaluatedCount: summary.policyEvaluatedCount,
+      policyNotEvaluatedCount: summary.policyNotEvaluatedCount,
+      timeoutCount: summary.timeoutCount
+    },
+    cases: results.map(buildEvidenceCase)
+  };
+  await mkdir(path.dirname(artifactPath), { recursive: true });
+  await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+  return artifactPath;
+}
+
+async function establishEvidenceBinding() {
+  const response = await fetch(versionApiUrl);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.runtimeIdentity) {
+    const error = new Error(`EVIDENCE_BINDING_MISMATCH: /api/version returned HTTP ${response.status}`);
+    error.code = 'EVIDENCE_BINDING_MISMATCH';
+    throw error;
+  }
+  return validateReleaseEvidenceBinding({
+    repoRoot,
+    runtimeIdentity: payload.runtimeIdentity,
+    frozenIdentity: {
+      productionSourceHash: process.env.FROZEN_PRODUCTION_SOURCE_HASH,
+      releaseGovernanceHash: process.env.FROZEN_RELEASE_GOVERNANCE_HASH,
+      fixtureSetHash: process.env.FROZEN_FIXTURE_SET_HASH,
+    },
+  });
 }
 
 async function main() {
@@ -1657,7 +1917,25 @@ async function main() {
     linkedSampleIds.forEach((sampleId) => options.sampleIds.add(sampleId));
   }
 
-  let samples = baseline.samples.filter((sample) => sampleMatchesFilters(sample, options));
+  let governance;
+  try {
+    governance = await readJson(defaultGovernancePath);
+  } catch (error) {
+    console.error(`Golden governance load failed: ${defaultGovernancePath}`);
+    console.error(error.message || String(error));
+    process.exitCode = 1;
+    return;
+  }
+  const governanceErrors = validateGoldenGovernance(governance);
+  if (governanceErrors.length) {
+    console.error('Golden governance validation failed:');
+    governanceErrors.forEach(error => console.error(`- ${error}`));
+    process.exitCode = 1;
+    return;
+  }
+  let samples = baseline.samples
+    .map(sample => applyGoldenGovernance(sample, governance))
+    .filter((sample) => sampleMatchesFilters(sample, options));
   if (options.maxSamples !== null) samples = samples.slice(0, options.maxSamples);
 
   if (options.list || options.dryRun) {
@@ -1672,9 +1950,19 @@ async function main() {
     return;
   }
 
+  let evidenceBinding;
+  try {
+    evidenceBinding = await establishEvidenceBinding();
+  } catch (error) {
+    console.error(`EVIDENCE_BINDING_MISMATCH: ${error.message || String(error)}`);
+    process.exitCode = 1;
+    return;
+  }
+
   console.log('Coordinate Recognition Regression Report');
   console.log(`Baseline: ${path.relative(repoRoot, options.baselinePath)}`);
   console.log(`Error Library: ${path.relative(repoRoot, options.errorLibraryPath)}`);
+  console.log(`Golden Governance: ${path.relative(repoRoot, defaultGovernancePath)}`);
   printErrorLibraryStats(errorLibrary);
   console.log(`API: ${apiUrl}`);
   console.log(`Path: ${options.pathId}`);
@@ -1718,14 +2006,38 @@ async function main() {
   console.log(`Layers: ${Object.entries(summary.layerCounts).map(([layer, count]) => `${layer}=${count}`).join(' ') || '(none)'}`);
   console.log(`Timeout: ${summary.timeoutCount}`);
   console.log(`Fallback: ${summary.fallbackCount}`);
+  console.log(`Semantic Classifications: ${Object.entries(summary.semanticClassifications).map(([name, count]) => `${name}=${count}`).join(' ') || 'NONE'}`);
+  console.log(`SAFETY_STATUS=${summary.safetyStatus}`);
+  console.log(`TRUTH_STATUS=${summary.truthStatus}`);
+  console.log(`POLICY_STATUS=${summary.policyStatus}`);
+  console.log(`RELIABILITY_STATUS=${summary.reliabilityStatus}`);
+  console.log(`GOVERNANCE_STATUS=${summary.governanceStatus}`);
+  console.log(`LIVE_COORDINATE_GOLDEN_STATUS=${summary.liveCoordinateGoldenStatus}`);
+  console.log(`TRUTH_PASS_COUNT=${summary.truthPassCount}`);
+  console.log(`TRUTH_FAILURE_COUNT=${summary.truthFailureCount}`);
+  console.log(`TRUTH_EVALUATED_COUNT=${summary.truthEvaluatedCount}`);
+  console.log(`TRUTH_NOT_EVALUATED_COUNT=${summary.truthNotEvaluatedCount}`);
+  console.log(`TRUTH_NOT_QUALIFIED_COUNT=${summary.truthNotQualifiedCount}`);
+  console.log(`POLICY_PASS_COUNT=${summary.policyPassCount}`);
+  console.log(`POLICY_FAILURE_COUNT=${summary.policyFailureCount}`);
+  console.log(`POLICY_EVALUATED_COUNT=${summary.policyEvaluatedCount}`);
+  console.log(`POLICY_NOT_EVALUATED_COUNT=${summary.policyNotEvaluatedCount}`);
+  console.log(`POLICY_NOT_QUALIFIED_COUNT=${summary.policyNotQualifiedCount}`);
+  console.log(`TIMEOUT_COUNT=${summary.timeoutCount}`);
+  console.log(`POST_DEADLINE_WORK_STATUS=${summary.postDeadlineWorkStatus}`);
   console.log(`[INFO] Duration: avg=${summary.avgMs ?? 'n/a'}ms min=${summary.minMs ?? 'n/a'}ms max=${summary.maxMs ?? 'n/a'}ms`);
+
+  const evidenceArtifactPath = await writeEvidenceArtifact(results, summary, governance, evidenceBinding);
+  console.log(`Evidence Artifact: ${path.relative(repoRoot, evidenceArtifactPath)}`);
 
   if (summary.gateResult === 'FAIL') {
     process.exitCode = 1;
   }
 }
 
-main().catch((error) => {
-  console.error(error.stack || error.message || String(error));
-  process.exitCode = 1;
-});
+if (path.resolve(process.argv[1] || '') === __filename) {
+  main().catch((error) => {
+    console.error(error.stack || error.message || String(error));
+    process.exitCode = 1;
+  });
+}

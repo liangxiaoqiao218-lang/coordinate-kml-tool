@@ -2,12 +2,16 @@
   "typeId": "madagascar-cadastral-grid",
   "sampleName": "Madagascar cadastral grid",
   "inputType": "image",
-  "inputFile": "PENDING:stable-original-sample-missing",
+  "inputFile": "D:/关于西非的业务/测试素材/马达加斯加坐标.png",
   "expectedPrecisionMode": "cadastral-grid-num-xv-yv",
   "expectedParserTrace": ["OCR", "MADAGASCAR_CADASTRAL:accepted"],
   "expectedPointCount": 32,
-  "expectedFirstKml": "PENDING:expected-first-kml",
-  "expectedLastKml": "PENDING:expected-last-kml",
-  "status": "pending",
-  "notes": "Stable original sample is missing; current available sample does not reliably read the right-side table."
+  "expectedFirstKml": "NOT_EVALUATED:FAMILY_BLOCKED_BY_PROVIDER",
+  "expectedLastKml": "NOT_EVALUATED:FAMILY_BLOCKED_BY_PROVIDER",
+  "status": "active_confirmed_truth_provider_blocked",
+  "truthMaturity": "CONFIRMED_TRUTH",
+  "humanReviewed": true,
+  "reviewedAt": "2026-08-26",
+  "approvalSource": "SR-08H.3B_HUMAN_APPROVAL",
+  "notes": "Human approval confirmed the complete 32-row num/XV/YV truth. KML remains not evaluated while the Madagascar family is BLOCKED_BY_PROVIDER."
 }

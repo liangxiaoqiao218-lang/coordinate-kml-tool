@@ -8,6 +8,20 @@
     "evidence-regression": "node scripts/evidence-regression.js",
     "evidence-acquisition-regression": "node scripts/evidence-acquisition-regression.js",
     "verification-regression": "node scripts/coordinate-verification-regression.js",
+    "sr08-regression": "node scripts/sr08-coordinate-finalizer-regression.js",
+    "sr08b-regression": "node scripts/sr08b-confirmation-runtime-regression.js",
+    "sr08b-http-regression": "node scripts/sr08b-http-lifecycle-regression.js",
+    "sr08d1-specialized-regression": "node scripts/sr08d1-structured-coordinate-boundary-regression.js",
+    "sr08d3b-regression": "node scripts/sr08d3b-point-az-temporary-review-regression.js",
+    "sr08f-regression": "node scripts/sr08f-recognition-budget-regression.js",
+    "sr08f7-regression": "node scripts/sr08f7-family-critical-path-regression.js",
+    "sr08f4-regression": "node scripts/sr08f4-persisted-trace-regression.js",
+    "sr08g2-regression": "node scripts/sr08g2-family-availability-regression.js",
+    "p04-regression": "node scripts/p04-map-preview-regression.js",
+    "p05r1-regression": "node scripts/p05r1-axis-order-regression.js",
+    "ocr-golden": "node scripts/ocr-golden-runner.js",
+    "sr08c-manual-regression": "node scripts/sr08c-manual-finalizer-regression.js",
+    "sr08c-evidence": "node scripts/sr08c-build-release-evidence.js",
     "start": "node server.js"
   },
   "dependencies": {
@@ -16,5 +30,8 @@
     "express": "^4.21.2",
     "multer": "^1.4.5-lts.1",
     "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "yaml": "^2.8.1"
   }
 }

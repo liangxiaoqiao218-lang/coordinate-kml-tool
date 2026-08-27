@@ -1,0 +1,69 @@
+{
+  "policyId": "coordinate_family_availability_policy",
+  "policyVersion": "1",
+  "effectiveFrom": "2026-08-26",
+  "approvalSource": "SR-08G.1_PROVIDER_RELIABILITY_ADJUDICATION",
+  "scope": "family_scoped_recognition_authority",
+  "wholeProductUnsafe": false,
+  "entries": [
+    {
+      "family": "kyrgyz_gk",
+      "status": "BLOCKED_BY_PROVIDER",
+      "reasonCode": "FAMILY_BLOCKED_BY_PROVIDER",
+      "evidenceReference": "SR-08G_KYRGYZ_0_OF_5_TIMEOUT_DOMINANT",
+      "removalConditions": [
+        "REPLACEMENT_OR_PROVIDER_CANDIDATE_IDENTIFIED",
+        "REAL_FIXTURE_RELIABILITY_VALIDATED",
+        "ROUTING_STABLE",
+        "LATENCY_WITHIN_APPROVED_BUDGET",
+        "TRUTH_AND_GATE_REGRESSION_PASSED",
+        "RELEASE_AUTHORITY_APPROVED"
+      ]
+    },
+    {
+      "family": "madagascar_cadastral_grid",
+      "status": "BLOCKED_BY_PROVIDER",
+      "reasonCode": "FAMILY_BLOCKED_BY_PROVIDER",
+      "evidenceReference": "SR-08G_MADAGASCAR_0_OF_5_TIMEOUT_DOMINANT",
+      "removalConditions": [
+        "REPLACEMENT_OR_PROVIDER_CANDIDATE_IDENTIFIED",
+        "REAL_FIXTURE_RELIABILITY_VALIDATED",
+        "ROUTING_STABLE",
+        "LATENCY_WITHIN_APPROVED_BUDGET",
+        "TRUTH_AND_GATE_REGRESSION_PASSED",
+        "RELEASE_AUTHORITY_APPROVED"
+      ]
+    },
+    {
+      "family": "handwritten_dms_experimental",
+      "status": "TEMPORARILY_UNAVAILABLE",
+      "reasonCode": "FAMILY_TEMPORARILY_UNAVAILABLE",
+      "evidenceReference": "SR-08G_HANDWRITTEN_0_OF_5_TIMEOUT_DOMINANT",
+      "removalConditions": [
+        "USABLE_RECOGNITION_RESTORED",
+        "PROVIDER_VARIANCE_ACCEPTABLE_OR_REPLACEMENT_PROVEN",
+        "REVIEW_SEMANTICS_VALIDATED",
+        "REAL_IMAGE_REGRESSION_PASSED",
+        "RELEASE_AUTHORITY_APPROVED"
+      ]
+    }
+  ],
+  "unaffectedFamilies": [
+    "wgs84_table",
+    "standard_dms",
+    "point_az_dms_table",
+    "utm30",
+    "mgrs",
+    "bftm",
+    "cote_divoire",
+    "manual_input"
+  ],
+  "failClosedContract": {
+    "providerCallAllowed": false,
+    "coordinateInferenceAllowed": false,
+    "autoExportAllowed": false,
+    "kmlAllowed": false,
+    "unrelatedFallbackAllowed": false,
+    "confirmationCanOverride": false
+  }
+}

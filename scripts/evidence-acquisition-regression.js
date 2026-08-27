@@ -155,8 +155,9 @@ const phase2Response = {
   })
 };
 const phase3Response = buildCoordinateVerificationResponse(legacyPayload, legacyPayload.coordinateEngineV2);
-const { evidenceAcquisition, ...responseWithoutAcquisition } = phase3Response;
+const { evidenceAcquisition, finalizedCoordinateResult, ...responseWithoutAcquisition } = phase3Response;
 assert.ok(evidenceAcquisition, "response must append evidenceAcquisition shadow data");
+assert.ok(finalizedCoordinateResult, "response must append the authoritative finalized result");
 assert.deepEqual(responseWithoutAcquisition, phase2Response, "removing evidenceAcquisition must restore the Phase 2 response");
 assert.deepEqual(legacyPayload, legacySnapshot, "acquisition must not mutate the legacy response");
 assert.equal(phase3Response.coordinates, legacySnapshot.coordinates, "coordinates must remain unchanged");

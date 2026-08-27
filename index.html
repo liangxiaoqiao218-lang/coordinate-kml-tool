@@ -4219,6 +4219,134 @@
       pointer-events: none;
       object-fit: cover;
     }
+    .map-preview-action {
+      width: 100%;
+      margin: 10px 0 0;
+      border-color: #0f766e;
+      color: #0f766e;
+      font-weight: 800;
+    }
+
+    .map-preview-action:disabled {
+      border-color: #d7dfdb;
+      color: #94a39b;
+      background: #f5f7f6;
+    }
+
+    .spatial-result-page {
+      max-width: 760px;
+      margin: 0 auto;
+      padding-bottom: 34px;
+    }
+
+    .spatial-result-nav,
+    .spatial-result-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .spatial-return-action {
+      min-height: 36px;
+      padding: 6px 0;
+      border: 0;
+      background: transparent;
+      color: #0f766e;
+      font-size: 13px;
+      font-weight: 800;
+      box-shadow: none;
+    }
+
+    .spatial-result-status {
+      color: #64748b;
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .spatial-result-status.is-normal { color: #0f766e; }
+    .spatial-result-status.is-warning { color: #a16207; }
+
+    .spatial-result-title-row { margin: 12px 0 14px; }
+    .spatial-result-title-row h1 { margin: 2px 0 0; }
+    .spatial-result-eyebrow { margin: 0; color: #0f766e; font-size: 11px; font-weight: 900; letter-spacing: .12em; }
+    .spatial-geometry-type { padding: 6px 9px; border-radius: 999px; background: #e9f5f0; color: #0f766e; font-size: 11px; font-weight: 800; }
+
+    .spatial-result-warning {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border: 1px solid #ead7b6;
+      border-radius: 10px;
+      background: #fffbeb;
+      color: #92400e;
+      font-size: 12px;
+    }
+
+    .spatial-map-card {
+      position: relative;
+      height: 390px;
+      overflow: hidden;
+      border: 1px solid #d9e4de;
+      border-radius: 18px;
+      background: #e8efe9;
+    }
+
+    .spatial-map-grid {
+      position: absolute;
+      inset: 0;
+      background-image: linear-gradient(rgba(78, 112, 94, .09) 1px, transparent 1px), linear-gradient(90deg, rgba(78, 112, 94, .09) 1px, transparent 1px), linear-gradient(24deg, transparent 46%, rgba(255,255,255,.7) 47%, rgba(255,255,255,.7) 49%, transparent 50%);
+      background-size: 46px 46px, 46px 46px, 100% 100%;
+    }
+
+    #spatialGeometrySvg { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .spatial-geometry-shape { fill: rgba(15,118,110,.18); stroke: #0f766e; stroke-width: 3; vector-effect: non-scaling-stroke; }
+    .spatial-geometry-line { fill: none; }
+    .spatial-geometry-point { fill: #fff; stroke: #0f766e; stroke-width: 2; vector-effect: non-scaling-stroke; }
+
+    .spatial-map-failure {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(245,247,246,.94);
+      text-align: center;
+    }
+
+    .spatial-map-failure strong { font-size: 16px; }
+    .spatial-map-failure span { margin-top: 6px; color: #64748b; font-size: 12px; }
+    .spatial-map-failure[hidden] { display: none; }
+
+    .spatial-facts {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 14px;
+      overflow: hidden;
+      border: 1px solid #e2e8e5;
+      border-radius: 14px;
+      background: #e2e8e5;
+    }
+
+    .spatial-facts > div { min-height: 78px; padding: 14px; background: #fff; display: flex; flex-direction: column; gap: 6px; }
+    .spatial-facts > div[hidden] { display: none; }
+    .spatial-facts span { color: #64748b; font-size: 11px; }
+    .spatial-facts strong { font-size: 16px; }
+    .spatial-facts .spatial-primary-fact strong { font-size: 26px; }
+
+    .spatial-regional-view { margin-top: 12px; color: #64748b; font-size: 12px; }
+    .spatial-kml-action { width: 100%; margin-top: 14px; }
+    .spatial-kml-action:disabled { background: #cfd8d3; border-color: #cfd8d3; box-shadow: none; cursor: not-allowed; }
+    .spatial-overview-entry { width: 100%; margin-top: 10px; padding: 13px 14px; border: 1px solid #e2e8e5; border-radius: 12px; background: #fff; color: #334155; display: flex; align-items: center; justify-content: space-between; text-align: left; }
+    .spatial-overview-entry span { display: flex; flex-direction: column; gap: 3px; }
+    .spatial-overview-entry small { color: #94a3b8; }
+    .spatial-result-diagnostic { color: #64748b; font-size: 11px; }
+
+    @media (max-width: 640px) {
+      .spatial-map-card { height: 330px; border-radius: 14px; }
+      .spatial-result-status { max-width: 170px; }
+    }
   </style>
   <script src="pricing-config.js"></script>
 </head>
@@ -4329,6 +4457,7 @@
     </div>
 
     <button type="button" class="primary-action kml-download-action" onclick="downloadKml()">&#29983;&#25104; KML</button>
+    <button id="mapPreviewAction" type="button" class="secondary map-preview-action" onclick="openSpatialResult()" hidden disabled>查看地图</button>
 
     <details id="debugPanel" class="panel debug-panel" open>
       <summary class="panel-title-row debug-title-row">
@@ -4433,6 +4562,44 @@
         <p>GeoKit Lab 面向矿区边界、野外截图、投影坐标表和 KML 生成流程，重点处理真实项目中的复杂坐标格式。</p>
       </details>
     </section>
+    </section>
+
+    <section id="spatialResultPage" class="view spatial-result-page" aria-labelledby="spatialResultTitle">
+      <div class="spatial-result-nav">
+        <button type="button" class="spatial-return-action" onclick="returnToCoordinate()" aria-label="返回坐标">← 返回坐标</button>
+        <span id="spatialResultStatus" class="spatial-result-status">地图基于当前坐标生成</span>
+      </div>
+      <div class="spatial-result-title-row">
+        <div>
+          <p class="spatial-result-eyebrow">地图预览</p>
+          <h1 id="spatialResultTitle">当前 Geometry</h1>
+        </div>
+        <span id="spatialGeometryType" class="spatial-geometry-type"></span>
+      </div>
+      <div id="spatialResultWarning" class="spatial-result-warning" hidden></div>
+
+      <section class="spatial-map-card" aria-label="当前坐标地图预览">
+        <div class="spatial-map-grid" aria-hidden="true"></div>
+        <svg id="spatialGeometrySvg" viewBox="0 0 360 280" role="img" aria-label="当前坐标 Geometry">
+          <g id="spatialGeometryLayer"></g>
+        </svg>
+        <div id="spatialMapFailure" class="spatial-map-failure" hidden>
+          <strong>地图暂时无法加载</strong>
+          <span>坐标结果与 KML 权限不受影响</span>
+        </div>
+      </section>
+
+      <section class="spatial-facts" aria-label="空间基础信息">
+        <div id="spatialAreaFact" class="spatial-primary-fact" hidden><span>面积</span><strong id="spatialAreaValue"></strong></div>
+        <div id="spatialLengthFact" hidden><span id="spatialLengthLabel">周长</span><strong id="spatialLengthValue"></strong></div>
+        <div><span>坐标点</span><strong id="spatialPointCount"></strong></div>
+        <div><span>中心位置</span><strong id="spatialCentroid"></strong></div>
+      </section>
+
+      <div id="spatialRegionalView" class="spatial-regional-view" hidden></div>
+      <button id="spatialKmlAction" type="button" class="primary-action spatial-kml-action" onclick="downloadKml()" disabled>下载 KML</button>
+      <button type="button" class="spatial-overview-entry" disabled><span><strong>空间概况</strong><small>地形 · 水系 · 道路 · 卫星</small></span><b>›</b></button>
+      <p id="spatialResultDiagnostic" class="spatial-result-diagnostic" hidden></p>
     </section>
 
     <section id="judgePage" class="view">
@@ -4828,9 +4995,26 @@ Au值 = 纯度 × 10 后取整数</div>
     const homeGoldEntry = document.getElementById("homeGoldEntry");
     const goldCalculatorPanel = document.getElementById("goldCalculatorPanel");
     const goldUnavailableNotice = document.getElementById("goldUnavailableNotice");
+    const mapPreviewAction = document.getElementById("mapPreviewAction");
+    const spatialResultStatus = document.getElementById("spatialResultStatus");
+    const spatialGeometryType = document.getElementById("spatialGeometryType");
+    const spatialResultWarning = document.getElementById("spatialResultWarning");
+    const spatialGeometryLayer = document.getElementById("spatialGeometryLayer");
+    const spatialMapFailure = document.getElementById("spatialMapFailure");
+    const spatialAreaFact = document.getElementById("spatialAreaFact");
+    const spatialAreaValue = document.getElementById("spatialAreaValue");
+    const spatialLengthFact = document.getElementById("spatialLengthFact");
+    const spatialLengthLabel = document.getElementById("spatialLengthLabel");
+    const spatialLengthValue = document.getElementById("spatialLengthValue");
+    const spatialPointCount = document.getElementById("spatialPointCount");
+    const spatialCentroid = document.getElementById("spatialCentroid");
+    const spatialRegionalView = document.getElementById("spatialRegionalView");
+    const spatialKmlAction = document.getElementById("spatialKmlAction");
+    const spatialResultDiagnostic = document.getElementById("spatialResultDiagnostic");
     const pages = {
       home: document.getElementById("homePage"),
       coordinate: document.getElementById("coordinatePage"),
+      spatialResult: document.getElementById("spatialResultPage"),
       judge: document.getElementById("judgePage"),
       gold: document.getElementById("goldPage")
     };
@@ -4890,6 +5074,13 @@ Au值 = 纯度 × 10 后取整数</div>
     let internalKmlSourceDirty = false;
     let activeCoordinatePrecisionMode = "";
     let activeCoordinateEngineV2 = null;
+    let activeFinalizedCoordinateResult = null;
+    let finalizedCoordinateTextSnapshot = "";
+    let finalizedCoordinateDirty = false;
+    let spatialResultEnabled = false;
+    let spatialRegressionTestMode = false;
+    let activeMapPreviewResponse = null;
+    let activeMapPreviewCacheKey = "";
     const HANDWRITTEN_DMS_REVIEW_STATUS = Object.freeze({
       NOT_APPLICABLE: "NOT_APPLICABLE",
       PENDING: "PENDING",
@@ -4922,6 +5113,7 @@ Au值 = 纯度 × 10 后取整数</div>
     });
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
+    loadSpatialRuntimeConfig();
     loadUserQuota();
     cleanupJudgeHistoryStorage();
     renderJudgeRecent();
@@ -4939,6 +5131,12 @@ Au值 = 纯度 × 10 后取整数</div>
         path: "/coordinate",
         title: "GeoKit Lab｜坐标处理工具",
         desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
+        image: "https://geokitlab.com/share-coordinate-og.jpg"
+      },
+      spatialResult: {
+        path: "/coordinate/map",
+        title: "GeoKit Lab｜空间结果",
+        desc: "查看当前坐标形成的地图预览与基础空间事实。",
         image: "https://geokitlab.com/share-coordinate-og.jpg"
       },
       judge: {
@@ -5079,6 +5277,9 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function resolvePageFromPath(pathname = location.pathname, hash = location.hash) {
+      if (pathname === "/coordinate/map") {
+        return { pageName: "spatialResult", focusTarget: "" };
+      }
       if (pathname === "/coordinate" || pathname === "/coordinate-tool" || pathname === "/tool" || pathname === "/convert" || hash === "#coordinate") {
         return { pageName: "coordinate", focusTarget: "" };
       }
@@ -6370,38 +6571,328 @@ Au值 = 纯度 × 10 后取整数</div>
       renderHandwrittenDmsReviewState();
     }
 
-    function confirmHandwrittenDmsReview() {
-      if (!handwrittenDmsReviewState.required) return;
+    function getFinalizedCoordinateIdentity(result = activeFinalizedCoordinateResult) {
+      if (!result?.resultId || !Number.isSafeInteger(result?.resultRevision) || !result?.geometryHash) return null;
+      return {
+        resultId: result.resultId,
+        resultRevision: result.resultRevision,
+        geometryHash: result.geometryHash
+      };
+    }
 
-      handwrittenDmsReviewState = createHandwrittenDmsReviewState({
-        ...handwrittenDmsReviewState,
-        status: HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED,
-        confirmedRevision: handwrittenDmsReviewState.revision
+    function getSpatialPreviewCacheKey(identity = getFinalizedCoordinateIdentity()) {
+      if (!identity) return "";
+      return `${identity.resultId}:${identity.resultRevision}:${identity.geometryHash}`;
+    }
+
+    function invalidateSpatialPreview() {
+      activeMapPreviewResponse = null;
+      activeMapPreviewCacheKey = "";
+      if (pages.spatialResult) delete pages.spatialResult.dataset.spatialCacheKey;
+    }
+
+    function refreshMapPreviewAction() {
+      if (!mapPreviewAction) return;
+      mapPreviewAction.hidden = !spatialResultEnabled;
+      mapPreviewAction.disabled = !spatialResultEnabled || !String(input?.value || "").trim();
+    }
+
+    function formatSpatialMeters(value) {
+      if (!Number.isFinite(value)) return "";
+      return value >= 1000 ? `${(value / 1000).toFixed(2)} km` : `${Math.round(value)} m`;
+    }
+
+    function formatSpatialArea(value) {
+      if (!Number.isFinite(value)) return "";
+      return value >= 1000000 ? `${(value / 1000000).toFixed(2)} km²` : `${Math.round(value).toLocaleString()} m²`;
+    }
+
+    function getSpatialPositions(geometry) {
+      if (!geometry) return [];
+      if (geometry.type === "Point") return [geometry.coordinates];
+      if (geometry.type === "LineString") return geometry.coordinates;
+      if (geometry.type === "Polygon") return geometry.coordinates.flat();
+      if (geometry.type === "MultiPolygon") return geometry.coordinates.flat(2);
+      return [];
+    }
+
+    function projectSpatialPosition(position, bounds) {
+      const width = Math.max(bounds.maxX - bounds.minX, 0.000001);
+      const height = Math.max(bounds.maxY - bounds.minY, 0.000001);
+      const scale = Math.min(310 / width, 230 / height);
+      const drawnWidth = width * scale;
+      const drawnHeight = height * scale;
+      return [
+        25 + (310 - drawnWidth) / 2 + (position[0] - bounds.minX) * scale,
+        25 + (230 - drawnHeight) / 2 + (bounds.maxY - position[1]) * scale
+      ];
+    }
+
+    function renderSpatialGeometry(geometry) {
+      spatialGeometryLayer.replaceChildren();
+      const positions = getSpatialPositions(geometry);
+      if (!positions.length) throw new Error("NO_DRAWABLE_GEOMETRY");
+      const bounds = {
+        minX: Math.min(...positions.map(position => position[0])),
+        minY: Math.min(...positions.map(position => position[1])),
+        maxX: Math.max(...positions.map(position => position[0])),
+        maxY: Math.max(...positions.map(position => position[1]))
+      };
+      const svgNamespace = "http://www.w3.org/2000/svg";
+      const pathForLine = line => line.map((position, index) => {
+        const [x, y] = projectSpatialPosition(position, bounds);
+        return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+      }).join(" ");
+      const appendPath = (pathData, className) => {
+        const path = document.createElementNS(svgNamespace, "path");
+        path.setAttribute("d", pathData);
+        path.setAttribute("class", className);
+        spatialGeometryLayer.appendChild(path);
+      };
+
+      if (geometry.type === "Point") {
+        const [x, y] = projectSpatialPosition(geometry.coordinates, bounds);
+        const circle = document.createElementNS(svgNamespace, "circle");
+        circle.setAttribute("cx", x);
+        circle.setAttribute("cy", y);
+        circle.setAttribute("r", "8");
+        circle.setAttribute("class", "spatial-geometry-point");
+        spatialGeometryLayer.appendChild(circle);
+      } else if (geometry.type === "LineString") {
+        appendPath(pathForLine(geometry.coordinates), "spatial-geometry-shape spatial-geometry-line");
+      } else if (geometry.type === "Polygon") {
+        geometry.coordinates.forEach(ring => appendPath(`${pathForLine(ring)} Z`, "spatial-geometry-shape"));
+      } else if (geometry.type === "MultiPolygon") {
+        geometry.coordinates.flat().forEach(ring => appendPath(`${pathForLine(ring)} Z`, "spatial-geometry-shape"));
+      }
+    }
+
+    function spatialWarningText(warnings = []) {
+      if (warnings.some(value => /self[-_ ]?intersection|自交/i.test(String(value)))) {
+        return "当前边界可能存在自相交，请返回坐标核对；地图仅用于预览，KML 仍保持阻止。";
+      }
+      if (warnings.length) return "当前结果需要核对；地图仅用于预览，不会改变 KML 权限。";
+      return "";
+    }
+
+    function renderSpatialResult(payload) {
+      const preview = payload.mapPreviewObject;
+      const e2eFailureMode = spatialRegressionTestMode
+        ? new URLSearchParams(location.search).get("spatial-e2e-failure")
+        : "";
+      const facts = payload.spatialFactsStatus === "available" && e2eFailureMode !== "facts"
+        ? payload.spatialFacts
+        : null;
+      spatialGeometryType.textContent = preview.geometryType || "Geometry";
+      const warning = spatialWarningText(preview.previewWarnings || []);
+      spatialResultWarning.hidden = !warning;
+      spatialResultWarning.textContent = warning;
+      spatialResultStatus.textContent = warning ? "可预览 · 需要核对" : "地图基于当前坐标生成";
+      spatialResultStatus.className = `spatial-result-status ${warning ? "is-warning" : "is-normal"}`;
+      spatialMapFailure.hidden = true;
+      try {
+        if (e2eFailureMode === "map") throw new Error("REGRESSION_MAP_FAILURE");
+        renderSpatialGeometry(preview.geometry);
+      } catch (error) {
+        spatialGeometryLayer.replaceChildren();
+        spatialMapFailure.hidden = false;
+      }
+
+      spatialAreaFact.hidden = !Number.isFinite(facts?.areaMeters2);
+      spatialAreaValue.textContent = formatSpatialArea(facts?.areaMeters2);
+      const linearValue = Number.isFinite(facts?.perimeterMeters) ? facts.perimeterMeters : facts?.lengthMeters;
+      spatialLengthFact.hidden = !Number.isFinite(linearValue);
+      spatialLengthLabel.textContent = Number.isFinite(facts?.perimeterMeters) ? "周长" : "长度";
+      spatialLengthValue.textContent = formatSpatialMeters(linearValue);
+      spatialPointCount.textContent = Number.isFinite(facts?.pointCount) ? `${facts.pointCount} 个` : "—";
+      spatialCentroid.textContent = Array.isArray(facts?.centroid)
+        ? `${facts.centroid[1].toFixed(5)}, ${facts.centroid[0].toFixed(5)}`
+        : "—";
+
+      const regionalCount = Number(payload.regionalViewCount);
+      spatialRegionalView.hidden = !Number.isFinite(regionalCount) || regionalCount <= 0;
+      spatialRegionalView.textContent = spatialRegionalView.hidden ? "" : `区域内已有 ${regionalCount} 条真实记录`;
+      spatialKmlAction.disabled = payload?.kmlEligibility?.allowed !== true;
+      const factsAvailable = payload.spatialFactsStatus === "available" && e2eFailureMode !== "facts";
+      spatialResultDiagnostic.hidden = factsAvailable;
+      spatialResultDiagnostic.textContent = factsAvailable ? "" : "部分空间信息暂时无法计算，地图和原坐标仍可使用。";
+    }
+
+    async function openSpatialResult() {
+      if (!spatialResultEnabled) return;
+      mapPreviewAction.disabled = true;
+      try {
+        await ensureManualInputFinalized();
+        const identity = getFinalizedCoordinateIdentity();
+        if (!identity) throw new Error("当前坐标还不能形成地图预览。");
+        const cacheKey = getSpatialPreviewCacheKey(identity);
+        let payload = activeMapPreviewCacheKey === cacheKey ? activeMapPreviewResponse : null;
+        if (!payload) {
+          const response = await fetch("/api/map-preview", {
+            method: "POST",
+            headers: getSourceHeaders({ "content-type": "application/json" }),
+            body: JSON.stringify(identity)
+          });
+          payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload?.mapPreviewObject?.previewEligibility?.allowed) {
+            throw new Error("当前坐标还不能形成地图预览，请先核对坐标内容。");
+          }
+          const currentKey = getSpatialPreviewCacheKey();
+          const responseKey = `${payload.mapPreviewObject.sourceResultId}:${payload.mapPreviewObject.sourceRevision}:${payload.mapPreviewObject.sourceGeometryHash}`;
+          if (!currentKey || responseKey !== currentKey) throw new Error("坐标已更新，请重新打开地图。");
+          activeMapPreviewResponse = payload;
+          activeMapPreviewCacheKey = currentKey;
+        }
+        renderSpatialResult(payload);
+        pages.spatialResult.dataset.spatialCacheKey = activeMapPreviewCacheKey;
+        showPage("spatialResult");
+      } catch (error) {
+        showMessage(error?.message || "地图预览暂时不可用。", true, 6000);
+      } finally {
+        refreshMapPreviewAction();
+      }
+    }
+
+    function returnToCoordinate() {
+      showPage("coordinate");
+      refreshMapPreviewAction();
+    }
+
+    async function loadSpatialRuntimeConfig() {
+      try {
+        const response = await fetch("/api/version", { cache: "no-store" });
+        const payload = await response.json().catch(() => ({}));
+        spatialResultEnabled = response.ok && payload?.runtimeIdentity?.spatialResultEnabled === true;
+        spatialRegressionTestMode = response.ok && payload?.runtimeIdentity?.regressionTestMode === true;
+      } catch (error) {
+        spatialResultEnabled = false;
+        spatialRegressionTestMode = false;
+      }
+      refreshMapPreviewAction();
+      if (pages.spatialResult?.classList.contains("active") && (!spatialResultEnabled || !activeMapPreviewResponse)) {
+        showPage("coordinate", "", true);
+      }
+    }
+
+    function getCoordinateFlowUserMessage(code, fallback) {
+      const messages = {
+        COORDINATE_EDIT_INVALID: "坐标格式不正确，请检查经纬度。",
+        COORDINATE_EDIT_TEXT_REQUIRED: "请输入需要处理的坐标。"
+      };
+      return messages[String(code || "")] || fallback || "无法处理当前坐标，请检查后重试。";
+    }
+
+    async function requestEditedCoordinateRevision() {
+      const identity = getFinalizedCoordinateIdentity();
+      if (!identity) throw new Error("当前坐标结果缺少服务端确认身份，请重新识别。");
+      const response = await fetch("/api/coordinate-revision", {
+        method: "POST",
+        headers: getSourceHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ ...identity, coordinateText: input.value })
       });
-      renderHandwrittenDmsReviewState();
-      trackEvent("handwritten_dms_review_confirm", {
-        revision: handwrittenDmsReviewState.revision
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.finalizedCoordinateResult) {
+        throw new Error(getCoordinateFlowUserMessage(payload.code, "坐标修改未能完成，请检查后重试。"));
+      }
+      activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;
+      invalidateSpatialPreview();
+      finalizedCoordinateTextSnapshot = String(input.value || "");
+      finalizedCoordinateDirty = false;
+      return activeFinalizedCoordinateResult;
+    }
+
+    async function ensureManualInputFinalized() {
+      if (activeFinalizedCoordinateResult) {
+        if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) {
+          await requestEditedCoordinateRevision();
+        }
+        return activeFinalizedCoordinateResult;
+      }
+      const response = await fetch("/api/coordinate-manual-finalize", {
+        method: "POST",
+        headers: getSourceHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ coordinateText: input.value })
       });
-      showMessage("已记录当前手写 DMS 坐标的人工核对确认。再次修改后需要重新核对。", false, 5000);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.finalizedCoordinateResult) {
+        throw new Error(getCoordinateFlowUserMessage(payload.code, "无法处理当前坐标，请检查后重试。"));
+      }
+      activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;
+      invalidateSpatialPreview();
+      finalizedCoordinateTextSnapshot = String(input.value || "");
+      finalizedCoordinateDirty = false;
+      return activeFinalizedCoordinateResult;
+    }
+
+    async function confirmHandwrittenDmsReview(event) {
+      if (!handwrittenDmsReviewState.required) return;
+      const button = event?.currentTarget;
+      if (button) {
+        button.disabled = true;
+        button.textContent = "正在确认…";
+      }
+      try {
+        if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) {
+          await requestEditedCoordinateRevision();
+        }
+        const identity = getFinalizedCoordinateIdentity();
+        if (!identity) throw new Error("当前坐标结果缺少服务端确认身份，请重新识别。");
+        const response = await fetch("/api/coordinate-confirmation", {
+          method: "POST",
+          headers: getSourceHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({ ...identity, action: "accept" })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.finalizedCoordinateResult) {
+          throw new Error(getCoordinateFlowUserMessage(payload.code, "当前坐标确认未能完成，请稍后重试。"));
+        }
+        activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;
+        invalidateSpatialPreview();
+        if (activeFinalizedCoordinateResult.decisionState !== "AUTO_EXPORT") {
+          throw new Error((activeFinalizedCoordinateResult.reasonCodes || []).join(", ") || "当前结果仍未通过统一安全 Gate。");
+        }
+        handwrittenDmsReviewState = createHandwrittenDmsReviewState({
+          ...handwrittenDmsReviewState,
+          status: HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED,
+          confirmedRevision: handwrittenDmsReviewState.revision
+        });
+        renderHandwrittenDmsReviewState();
+        trackEvent("handwritten_dms_review_confirm", {
+          revision: activeFinalizedCoordinateResult.resultRevision
+        });
+        showMessage("已由服务端确认当前手写 DMS 坐标。再次修改后需要重新核对。", false, 5000);
+      } catch (error) {
+        renderHandwrittenDmsReviewState();
+        showMessage(error?.message || "坐标确认失败，请重试。", true, 6000);
+      }
     }
 
     function markCoordinateTextChanged() {
       activeCoordinatePrecisionMode = "";
       activeCoordinateEngineV2 = null;
+      if (activeFinalizedCoordinateResult) finalizedCoordinateDirty = true;
       handwrittenDmsReviewState = getHandwrittenDmsReviewStateAfterTextChange(handwrittenDmsReviewState);
       renderHandwrittenDmsReviewState();
       clearRecognitionSummary();
       internalKmlSourceDirty = true;
       setCoordinateOrderReviewVisible(false);
+      invalidateSpatialPreview();
+      refreshMapPreviewAction();
     }
 
     function shouldBlockHandwrittenDmsKml() {
+      if (activeFinalizedCoordinateResult) return false;
       if (!handwrittenDmsReviewState.required) {
         return false;
       }
 
       return handwrittenDmsReviewState.status !== HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED
         || handwrittenDmsReviewState.confirmedRevision !== handwrittenDmsReviewState.revision;
+    }
+
+    function shouldBlockFinalizedCoordinateKml() {
+      if (!activeFinalizedCoordinateResult) return false;
+      return finalizedCoordinateDirty || activeFinalizedCoordinateResult.decisionState !== "AUTO_EXPORT";
     }
 
     function scrollToCoordinateReviewGroup(groupIndex) {
@@ -11966,6 +12457,28 @@ ${placemarks}
         return;
       }
 
+      try {
+        await ensureManualInputFinalized();
+      } catch (error) {
+        showKmlFailure({
+          code: "KML_FINALIZER_UNAVAILABLE",
+          title: "坐标尚未形成安全结果",
+          reason: error?.message || "服务端无法验证当前坐标。",
+          suggestion: "请检查坐标内容后重试。"
+        });
+        return;
+      }
+
+      if (shouldBlockFinalizedCoordinateKml()) {
+        showKmlFailure({
+          code: "KML_FINALIZED_GATE_BLOCKED",
+          title: "坐标尚未通过安全确认",
+          reason: (activeFinalizedCoordinateResult?.reasonCodes || []).join("、") || "当前坐标已修改或尚未通过统一安全 Gate。",
+          suggestion: "请完成当前坐标核对与服务端确认后再生成 KML。"
+        });
+        return;
+      }
+
       if (shouldBlockHandwrittenDmsKml()) {
         showKmlFailure({
           code: "KML_REVIEW_REQUIRED",
@@ -12506,6 +13019,10 @@ ${placemarks}
       supportPanel.style.display = "none";
       clearUploadMessage();
       activeCoordinateEngineV2 = null;
+      activeFinalizedCoordinateResult = null;
+      invalidateSpatialPreview();
+      finalizedCoordinateTextSnapshot = "";
+      finalizedCoordinateDirty = false;
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
@@ -12725,9 +13242,14 @@ ${placemarks}
         const summaryGroups = Array.isArray(summaryEngine.groups) ? summaryEngine.groups : [];
         const displayCoordinates = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
         activeCoordinateEngineV2 = summaryEngine || null;
+        activeFinalizedCoordinateResult = data.finalizedCoordinateResult || null;
+        invalidateSpatialPreview();
 
         rememberState();
         input.value = displayCoordinates || finalCoordinates;
+        refreshMapPreviewAction();
+        finalizedCoordinateTextSnapshot = String(input.value || "");
+        finalizedCoordinateDirty = false;
         initializeHandwrittenDmsReviewState(summaryEngine);
         coordinateOrder.value = "auto";
         setCoordinateOrderReviewVisible(hasOrderReview);
