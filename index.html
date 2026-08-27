@@ -9516,7 +9516,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return String(line || "")
         .replace(/^\s*(?:point|pt|ponto|sommet|vertex)\s*[-#:]?\s*\d{1,3}\s*[\).:：-]?\s*/i, "")
         .replace(/^\s*[A-Z]\s*[\).:：-]\s*/i, "")
-        .replace(/^\s*\d{1,3}\s*[\).:：-]\s*/, "");
+        .replace(/^\s*\d{1,3}\s*(?:\.\s+|[\):：-]\s*)/, "");
     }
 
     function normalizeDmsLineForParsing(line) {
