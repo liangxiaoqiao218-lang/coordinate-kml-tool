@@ -6785,10 +6785,11 @@ Au值 = 纯度 × 10 后取整数</div>
     async function requestEditedCoordinateRevision() {
       const identity = getFinalizedCoordinateIdentity();
       if (!identity) throw new Error("当前坐标结果缺少服务端确认身份，请重新识别。");
+      const normalizedCoordinateText = normalizeManualCoordinateTextForFinalizer(input.value);
       const response = await fetch("/api/coordinate-revision", {
         method: "POST",
         headers: getSourceHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ ...identity, coordinateText: input.value })
+        body: JSON.stringify({ ...identity, coordinateText: normalizedCoordinateText })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.finalizedCoordinateResult) {
@@ -6808,10 +6809,11 @@ Au值 = 纯度 × 10 后取整数</div>
         }
         return activeFinalizedCoordinateResult;
       }
+      const normalizedCoordinateText = normalizeManualCoordinateTextForFinalizer(input.value);
       const response = await fetch("/api/coordinate-manual-finalize", {
         method: "POST",
         headers: getSourceHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ coordinateText: input.value })
+        body: JSON.stringify({ coordinateText: normalizedCoordinateText })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.finalizedCoordinateResult) {
@@ -9519,6 +9521,13 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         .replace(/^\s*\d{1,3}\s*(?:\.\s+|[\):：-]\s*)/, "");
     }
 
+    function normalizeManualCoordinateTextForFinalizer(rawText) {
+      return String(rawText || "")
+        .split(/\r?\n/)
+        .map(line => stripLeadingCoordinateLabel(line))
+        .join("\n");
+    }
+
     function normalizeDmsLineForParsing(line) {
       return stripLeadingCoordinateLabel(String(line || "")
         .replace(/[°潞藲]/g, "掳")
@@ -11454,7 +11463,8 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     function getCoordinateGroupsFromText(text) {
-      const mozambiqueRows = extractMozambiqueGeographicTableRows(text);
+      const normalizedText = normalizeManualCoordinateTextForFinalizer(text);
+      const mozambiqueRows = extractMozambiqueGeographicTableRows(normalizedText);
       if (mozambiqueRows.length > 0) {
         return [mozambiqueRows.map(row => normalizeKmlPair({
           longitude: row.longitude,
@@ -11462,7 +11472,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         }))];
       }
 
-      const chatRows = extractChatCoordinateRows(text);
+      const chatRows = extractChatCoordinateRows(normalizedText);
       if (chatRows.length > 0) {
         return [chatRows.map(row => normalizeKmlPair({
           longitude: row.lon,
@@ -11470,7 +11480,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         }))];
       }
 
-      const lines = String(text || "").split(/\r?\n/);
+      const lines = normalizedText.split(/\r?\n/);
       const groups = [];
       let currentGroup = [];
 

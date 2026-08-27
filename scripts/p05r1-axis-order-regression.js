@@ -23,6 +23,11 @@ const stripLeadingCoordinateLabel = Function(`
   ${extractFunctionSource(indexHtml, "stripLeadingCoordinateLabel")}
   return stripLeadingCoordinateLabel;
 `)();
+const normalizeManualCoordinateTextForFinalizer = Function(`
+  ${extractFunctionSource(indexHtml, "stripLeadingCoordinateLabel")}
+  ${extractFunctionSource(indexHtml, "normalizeManualCoordinateTextForFinalizer")}
+  return normalizeManualCoordinateTextForFinalizer;
+`)();
 
 const exactCoordinate = "116.391245,39.907654";
 const clientLabelCases = [
@@ -42,6 +47,37 @@ for (const [input, expected] of clientLabelCases) {
   const points = parseManualLongitudeLatitudeText(expected);
   assert.equal(points?.length, 1, `${input} should produce one normalized point`);
 }
+
+const numberedPolygon = [
+  "1. 116.391245,39.907654",
+  "2. 116.392245,39.907654",
+  "3. 116.392245,39.908654",
+  "4. 116.391245,39.908654"
+].join("\n");
+const normalizedPolygon = [
+  "116.391245,39.907654",
+  "116.392245,39.907654",
+  "116.392245,39.908654",
+  "116.391245,39.908654"
+].join("\n");
+const boundaryEqualityCases = [
+  [exactCoordinate, exactCoordinate],
+  [`1. ${exactCoordinate}`, exactCoordinate],
+  [`1) ${exactCoordinate}`, exactCoordinate],
+  [`1: ${exactCoordinate}`, exactCoordinate],
+  [numberedPolygon, normalizedPolygon]
+];
+
+for (const [rawText, expected] of boundaryEqualityCases) {
+  const clientKmlNormalizedText = normalizeManualCoordinateTextForFinalizer(rawText);
+  const manualFinalizerRequestCoordinateText = normalizeManualCoordinateTextForFinalizer(rawText);
+  assert.equal(clientKmlNormalizedText, expected);
+  assert.equal(manualFinalizerRequestCoordinateText, expected);
+  assert.equal(clientKmlNormalizedText, manualFinalizerRequestCoordinateText);
+}
+
+assert.match(indexHtml, /const normalizedText = normalizeManualCoordinateTextForFinalizer\(text\);/);
+assert.equal((indexHtml.match(/coordinateText: normalizedCoordinateText/g) || []).length, 2);
 
 const cases = [
   ["116.391245,39.907654", 116.391245, 39.907654],
@@ -73,4 +109,4 @@ assert.deepEqual(polygon.map(point => [point.lon, point.lat]), [
 ]);
 assert.equal(parseManualLongitudeLatitudeText("200,95"), null);
 assert.equal(parseManualLongitudeLatitudeText("39.907654,116.391245"), null);
-console.log("P-05R1 axis-order and client decimal-prefix regression: 16/16 PASS");
+console.log("P-05R1 axis-order and client/manual-finalizer boundary regression: 23/23 PASS");
