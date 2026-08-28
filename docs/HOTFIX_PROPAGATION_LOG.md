@@ -200,3 +200,106 @@ P09 authorization resumes only at P09B-R1. It does not authorize Satellite
 provider implementation, production deployment, KML authority changes, a V3
 canary, or V3 migration. TRACK-S must use map/drawable eligibility for future
 Satellite consumption and keep KML and Spatial as sibling consumers.
+
+---
+
+## Entry G07-HF-0003
+
+This append-only entry closes the propagation lifecycle opened by
+`G01-HF-0001` and audited by `G06-HF-0002`. The earlier entries remain
+historical evidence; the current status is the closure recorded here.
+
+```text
+LOGGED_AT=2026-08-28
+CLOSURE_ID=G07_P08_CROSS_TRACK_PROPAGATION_CLOSURE
+HOTFIX_ID=P08F_LEGACY_KML_REVIEW_CONFIRMATION_RESTORATION
+HOTFIX_CHAIN=P08F+P08H+P08M+G05
+SOURCE_TRACK=TRACK-L
+SOURCE_PRODUCTION_RELEASE=e925bfba20acc08df3a720293bd010303fbda701
+SOURCE_PRODUCTION_HASH=965b2eee4aa3b6a80a872bb622bd1152c5d8dbbcc63c60189ac2942eb326a5aa
+SOURCE_RELEASE_GOVERNANCE_HASH=4684a01f151446833c58f7cf8f587c9fe0ed902189c82f072f951cdfc9b24df7
+SOURCE_FIXTURE_SET_HASH=dfa774517eabb18bfc47981c1511be0cca4c01dd92e2592803820f0fab435697
+P08G_R2=PASS
+P08_PRODUCTION_CLOSURE=PASS
+CURRENT_PRODUCTION_AUTHORITY=LEGACY_V2
+```
+
+### TRACK-E propagation closure
+
+```text
+TARGET_TRACK=TRACK-E
+PROPAGATION_REQUIREMENT=CONTRACT_AWARENESS_REQUIRED
+TARGET_RECEIPT=PASS
+CONTRACT_AWARENESS=COMPLETED
+MIGRATION_PREREQUISITES_UPDATED=M1,M2,M3,M5,M6
+CODE_PROPAGATION_TO_E=false
+CROSS_TRACK_CHANGE_REQUIRED=false
+TARGET_TRACK_IMPLEMENTED=NOT_APPLICABLE_AWARENESS_ONLY
+TARGET_TRACK_VALIDATED=PASS
+PROPAGATION_STATUS=PROPAGATION_COMPLETE
+TRACK_E_PROPAGATION=CLOSED_PASS
+V3_MODE=TRUE_SHADOW_ONLY
+V3_SHADOW_CONTINUE=true
+V3_CANARY=BLOCKED
+V3_MIGRATION=BLOCKED
+```
+
+TRACK-E recorded the authoritative review/confirmation, `kmlReady`, edit
+invalidation, result identity, and canonical Git-tree identity semantics as
+future migration prerequisites. The current V3 shadow does not depend on the
+Legacy KML gate, Confirmation UI, or the handwritten private family gate.
+TRACK-G does not require TRACK-E to commit or push its `PROJECT_STATE.md`
+receipt; that workspace remains owned by TRACK-E.
+
+### TRACK-S propagation closure
+
+```text
+TARGET_TRACK=TRACK-S
+PROPAGATION_REQUIREMENT=TEST_PROPAGATION_REQUIRED
+TARGET_RECEIPT=PASS
+TEST_PROPAGATION=COMPLETED
+TEST_PROPAGATION_COMMIT=6855b2d14e3590a1c01fb47c136a77c10bca5ea3
+TEST_PROPAGATION_REMOTE=origin/spatial/g06-contract-propagation
+CODE_PROPAGATION_TO_S=false
+TARGET_TRACK_IMPLEMENTED=PASS_TEST_ONLY
+TARGET_TRACK_VALIDATED=PASS_8_OF_8
+CANONICAL_IDENTITY_VALIDATED=PASS_19_OF_19
+PROPAGATION_STATUS=PROPAGATION_COMPLETE
+TRACK_S_PROPAGATION=CLOSED_PASS
+KML_SPATIAL_SIBLING_RULE=PRESERVED
+MAP_KML_PERMISSION_SEPARATION=PRESERVED
+EXPORT_GRADE_ADAPTER_STATUS=PRESERVED_AUTO_EXPORT_ONLY
+SATELLITE_GENERAL_MAP_GATE=MAP_PREVIEW_DRAWABLE_ELIGIBILITY
+RELEASE_IDENTITY_AUTHORITY=GIT_CANONICAL_RELEASE_TREE
+WORKING_TREE_HASH_AUTHORITY=DIAGNOSTIC_ONLY
+```
+
+TRACK-S validated pending and accepted review paths, drawable Map behavior,
+KML blocking independence, invalid-geometry blocking, renderer-failure
+isolation, canonical `finalized_coordinate_result_v1` input, and LF/CRLF
+invariance. The receipt adds only governance regression content and changes no
+Spatial, Coordinate, KML, or Production runtime.
+
+### Final closure and P09 resume boundary
+
+```text
+SHARED_TRUTH_PROPAGATION=false
+P08_HOTFIX_PROPAGATION=PROPAGATION_COMPLETE
+P09_PRECONDITION_P08G=PASS
+P09_PRECONDITION_PROPAGATION=PASS
+P09_STATUS=RESUME_AUTHORIZED
+P09_RESUME_GATE=P09B_R1_PROVIDER_OR_LICENSE_VALIDATION
+P09A_RERUN_AUTHORIZED=false
+PHASE2_IMPLEMENTATION_AUTHORIZED=false
+TRACK_L_STATUS=STABLE_PRODUCTION
+TRACK_E_STATUS=TRUE_SHADOW_DEVELOPMENT
+TRACK_S_STATUS=P09_RESUME_AUTHORIZED
+TRACK_G_STATUS=GOVERNANCE_ACTIVE
+V3_PRODUCTION_AUTHORITY=false
+```
+
+P09 may resume only at P09B-R1 provider/license validation. This closure does
+not perform a Provider call and does not authorize Satellite runtime
+implementation. Any later implementation gate must continue to consume
+`finalized_coordinate_result_v1`, use Map Preview / drawable eligibility, and
+must not use the `AUTO_EXPORT`-only export adapter as a general Map gate.
