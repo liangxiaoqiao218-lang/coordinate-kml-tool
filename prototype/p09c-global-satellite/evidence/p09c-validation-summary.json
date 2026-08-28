@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "p09c_validation_evidence_v1",
+  "track": "TRACK-S",
+  "task": "P09C_GLOBAL_SATELLITE_PROTOTYPE",
+  "mode": "ISOLATED_PROTOTYPE_ONLY",
+  "sourceGovernanceClosure": "7079275a02c1e92f3843074637ab262a8a8d9bff",
+  "recommendedBase": "6855b2d14e3590a1c01fb47c136a77c10bca5ea3",
+  "deterministicPrototypeTests": {
+    "executed": 20,
+    "passed": 20,
+    "failed": 0
+  },
+  "existingMapPreviewRegression": {
+    "executed": 12,
+    "passed": 12,
+    "failed": 0
+  },
+  "g06SpatialContractPropagation": {
+    "executed": 8,
+    "passed": 8,
+    "failed": 0
+  },
+  "desktopBrowser": {
+    "status": "PASS_LOCAL_SVG_FALLBACK_ONLY",
+    "providerState": "FALLBACK_LOCAL_SVG",
+    "chinaProviderState": "PROVIDER_PENDING",
+    "consoleErrors": 0,
+    "credentialConfigured": false
+  },
+  "responsiveBrowser": {
+    "viewport": "390x844",
+    "status": "PASS",
+    "horizontalOverflow": false
+  },
+  "mapTilerLive": "BLOCKED_BY_CREDENTIAL_NOT_PRESENT_IN_EXECUTION_ENVIRONMENT",
+  "androidTest": "NOT_EXECUTED_DEVICE_UNAVAILABLE",
+  "providerCalls": 0,
+  "credentialLeakage": 0,
+  "applicationRuntimeModified": false,
+  "productionFilesModified": 0,
+  "deploymentPerformed": false
+}

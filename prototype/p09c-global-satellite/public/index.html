@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GeoKit Lab · P09C Global Satellite Prototype</title>
+  <link rel="stylesheet" href="/vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main id="map-shell" class="map-shell" data-mode="map">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">TRACK-S · ISOLATED PROTOTYPE</p>
+        <h1>全球卫星地图预览</h1>
+      </div>
+      <button id="return-button" type="button">返回坐标结果</button>
+    </header>
+
+    <section class="status-row" aria-live="polite">
+      <span>Global Provider <strong id="provider-state">IDLE</strong></span>
+      <span>China Provider <strong id="china-status">PROVIDER_PENDING</strong></span>
+    </section>
+
+    <section class="toolbar" aria-label="地图控制">
+      <div class="segmented" aria-label="底图切换">
+        <button type="button" data-style="satellite" data-active="true">卫星</button>
+        <button type="button" data-style="hybrid" data-active="false">混合</button>
+        <button type="button" data-style="map" data-active="false">地图</button>
+      </div>
+      <button id="fullscreen-button" type="button">全屏地图</button>
+    </section>
+
+    <section class="map-stage">
+      <div id="map" aria-label="空间结果地图"></div>
+      <div id="attribution" class="attribution" hidden></div>
+    </section>
+
+    <section id="result-summary" class="result-summary" tabindex="-1">
+      <h2>坐标结果边界</h2>
+      <p id="authority-warning"></p>
+      <p>地图只消费 finalized_coordinate_result_v1；地图状态不会改变 KML 权限。</p>
+    </section>
+  </main>
+
+  <script src="/runtime-config.js"></script>
+  <script src="/vendor/maplibre-gl.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
