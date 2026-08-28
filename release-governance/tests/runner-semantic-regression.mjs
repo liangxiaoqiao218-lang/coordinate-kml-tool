@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { computeCanonicalGitReleaseFingerprints } from "../evidence-binding.js";
+import {
+  computeCanonicalGitCommitFingerprints,
+  computeCanonicalGitReleaseFingerprints,
+  computeFixtureSetFingerprint,
+  computeProductionSourceFingerprint,
+  computeReleaseGovernanceFingerprint,
+  validateReleaseEvidenceBinding
+} from "../evidence-binding.js";
 import { classifyGoldenRun } from "../runner-semantics.js";
 
 const execFileAsync = promisify(execFile);
+const testDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(testDir, "..", "..");
 
 const rule = {
   truthMaturity: "CONFIRMED_TRUTH",
@@ -75,6 +85,10 @@ try {
   const realIndexBefore = await git(canonicalRepo, ["write-tree"]);
 
   await writeFile(demoPath, "export const value = 'beta';\r\n", "utf8");
+  const commitFromCrlfCheckout = await computeCanonicalGitCommitFingerprints({
+    repoRoot: canonicalRepo,
+    commit: baseCommit
+  });
   const crlf = await computeCanonicalGitReleaseFingerprints({
     repoRoot: canonicalRepo,
     baseCommit,
@@ -83,6 +97,13 @@ try {
   passed.push("G16_LF_CRLF_EQUIVALENCE");
 
   await writeFile(demoPath, "export const value = 'beta';\n", "utf8");
+  const commitFromLfCheckout = await computeCanonicalGitCommitFingerprints({
+    repoRoot: canonicalRepo,
+    commit: baseCommit
+  });
+  assert.equal(commitFromCrlfCheckout.source.hash, commitFromLfCheckout.source.hash);
+  assert.equal(commitFromCrlfCheckout.authority, "GIT_CANONICAL_RELEASE_TREE");
+  passed.push("G17A_COMMIT_TREE_LINE_ENDING_INVARIANCE");
   const lf = await computeCanonicalGitReleaseFingerprints({
     repoRoot: canonicalRepo,
     baseCommit,
@@ -151,5 +172,66 @@ try {
   await rm(canonicalRepo, { recursive: true, force: true });
 }
 
+const currentCanonical = await computeCanonicalGitCommitFingerprints({ repoRoot, commit: "HEAD" });
+assert.equal(currentCanonical.authority, "GIT_CANONICAL_RELEASE_TREE");
+assert.equal(currentCanonical.source.files.includes("scripts/coordinate-regression-runner.js"), true);
+assert.equal(currentCanonical.source.files.some(file => file.startsWith("docs/")), false);
+assert.equal(currentCanonical.source.files.some(file => file.startsWith("release-governance/")), false);
+assert.equal(currentCanonical.source.files.some(file => file.startsWith("regression-samples/")), false);
+assert.equal(currentCanonical.governance.files.includes("scripts/coordinate-regression-runner.js"), true);
+assert.equal(currentCanonical.governance.files.some(file => file.startsWith("release-governance/")), true);
+assert.equal(currentCanonical.governance.files.some(file => file.startsWith("docs/")), false);
+assert.equal(currentCanonical.fixture.files.some(file => file.startsWith("regression-samples/")), true);
+assert.equal(currentCanonical.fixture.files.some(file => file.startsWith("docs/")), false);
+passed.push("G25_RELEASE_SCOPE_AUTHORITY");
+
+const canonicalBinding = await validateReleaseEvidenceBinding({
+  repoRoot,
+  canonicalCommit: "HEAD",
+  runtimeIdentity: { runtimeSourceSha256: currentCanonical.source.hash },
+  frozenIdentity: {
+    productionSourceHash: currentCanonical.source.hash,
+    releaseGovernanceHash: currentCanonical.governance.hash,
+    fixtureSetHash: currentCanonical.fixture.hash
+  }
+});
+assert.equal(canonicalBinding.status, "BOUND");
+assert.equal(canonicalBinding.sourceIdentityAuthority, "GIT_CANONICAL_RELEASE_TREE");
+assert.equal(canonicalBinding.releaseIdentityAuthority, true);
+passed.push("G26_CANONICAL_BINDING_AUTHORITY");
+
+await assert.rejects(validateReleaseEvidenceBinding({
+  repoRoot,
+  runtimeIdentity: { runtimeSourceSha256: "0".repeat(64) },
+  frozenIdentity: {
+    productionSourceHash: "0".repeat(64),
+    releaseGovernanceHash: "0".repeat(64),
+    fixtureSetHash: "0".repeat(64)
+  }
+}), { code: "CANONICAL_RELEASE_IDENTITY_REQUIRED" });
+passed.push("G27_LEGACY_AUTO_FALLBACK_BLOCKED");
+
+const [legacySource, legacyGovernance, legacyFixture] = await Promise.all([
+  computeProductionSourceFingerprint(repoRoot),
+  computeReleaseGovernanceFingerprint(repoRoot),
+  computeFixtureSetFingerprint(repoRoot)
+]);
+const legacyDiagnostic = await validateReleaseEvidenceBinding({
+  repoRoot,
+  legacyDiagnostic: true,
+  runtimeIdentity: { runtimeSourceSha256: legacySource.hash },
+  frozenIdentity: {
+    productionSourceHash: legacySource.hash,
+    releaseGovernanceHash: legacyGovernance.hash,
+    fixtureSetHash: legacyFixture.hash
+  }
+});
+assert.equal(legacyDiagnostic.status, "DIAGNOSTIC_ONLY");
+assert.equal(legacyDiagnostic.sourceIdentityAuthority, "WORKING_TREE_BYTES_LEGACY_DIAGNOSTIC_NON_AUTHORITY");
+assert.equal(legacyDiagnostic.releaseIdentityAuthority, false);
+passed.push("G28_LEGACY_DIAGNOSTIC_NON_AUTHORITY");
+
 console.log(`RUNNER_SEMANTIC_REGRESSION=PASS (${passed.length}/${passed.length})`);
 console.log(`CASES=${passed.join(",")}`);
+console.log("CROSS_PLATFORM_LINE_ENDING_INVARIANCE=PASS");
+console.log("CANONICAL_IDENTITY_ONLY=PASS");

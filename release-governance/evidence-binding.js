@@ -139,6 +139,46 @@ async function indexEntryModes(repoRoot, indexEnv) {
   });
 }
 
+async function hashCanonicalIndex(repoRoot, indexEnv) {
+  const entries = await indexEntryModes(repoRoot, indexEnv);
+  const submodules = entries.filter(entry => entry.mode === "160000");
+  if (submodules.length) {
+    const error = new Error("CANONICAL_RELEASE_SUBMODULE_UNSUPPORTED");
+    error.code = "CANONICAL_RELEASE_SUBMODULE_UNSUPPORTED";
+    error.paths = submodules.map(entry => entry.path);
+    throw error;
+  }
+  const treePaths = entries.map(entry => entry.path);
+  const [source, governance, fixture] = await Promise.all([
+    hashGitIndexFileSet(repoRoot, indexEnv, productionPathsFromGitTree(treePaths)),
+    hashGitIndexFileSet(repoRoot, indexEnv, governancePathsFromGitTree(treePaths)),
+    hashGitIndexFileSet(repoRoot, indexEnv, fixturePathsFromGitTree(treePaths))
+  ]);
+  return {
+    symlinkCount: entries.filter(entry => entry.mode === "120000").length,
+    source,
+    governance,
+    fixture
+  };
+}
+
+export async function computeCanonicalGitCommitFingerprints({ repoRoot, commit = "HEAD" }) {
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "geokit-canonical-commit-index-"));
+  const temporaryIndex = path.join(temporaryDirectory, "index");
+  const indexEnv = { GIT_INDEX_FILE: temporaryIndex };
+  try {
+    await runGit(repoRoot, ["read-tree", String(commit)], { env: indexEnv });
+    const fingerprints = await hashCanonicalIndex(repoRoot, indexEnv);
+    return Object.freeze({
+      authority: "GIT_CANONICAL_RELEASE_TREE",
+      commit: String(commit),
+      ...fingerprints
+    });
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 /**
  * Build the proposed release tree in an isolated temporary Git index and hash
  * Git's canonical blob bytes. The real index and OS-specific checkout bytes are
@@ -169,20 +209,7 @@ export async function computeCanonicalGitReleaseFingerprints({ repoRoot, baseCom
       throw error;
     }
 
-    const entries = await indexEntryModes(repoRoot, indexEnv);
-    const submodules = entries.filter(entry => entry.mode === "160000");
-    if (submodules.length) {
-      const error = new Error("CANONICAL_RELEASE_SUBMODULE_UNSUPPORTED");
-      error.code = "CANONICAL_RELEASE_SUBMODULE_UNSUPPORTED";
-      error.paths = submodules.map(entry => entry.path);
-      throw error;
-    }
-    const treePaths = entries.map(entry => entry.path);
-    const [source, governance, fixture] = await Promise.all([
-      hashGitIndexFileSet(repoRoot, indexEnv, productionPathsFromGitTree(treePaths)),
-      hashGitIndexFileSet(repoRoot, indexEnv, governancePathsFromGitTree(treePaths)),
-      hashGitIndexFileSet(repoRoot, indexEnv, fixturePathsFromGitTree(treePaths))
-    ]);
+    const fingerprints = await hashCanonicalIndex(repoRoot, indexEnv);
     return Object.freeze({
       authority: "GIT_CANONICAL_RELEASE_TREE",
       baseCommit: String(baseCommit || "HEAD"),
@@ -190,10 +217,7 @@ export async function computeCanonicalGitReleaseFingerprints({ repoRoot, baseCom
       changedFileCount: changedPaths.length,
       unapprovedPaths: Object.freeze(unapprovedPaths),
       missingApprovedPaths: Object.freeze(missingApprovedPaths),
-      symlinkCount: entries.filter(entry => entry.mode === "120000").length,
-      source,
-      governance,
-      fixture
+      ...fingerprints
     });
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
@@ -245,20 +269,34 @@ export async function validateReleaseEvidenceBinding({
   repoRoot,
   runtimeIdentity,
   frozenIdentity,
-  canonicalRelease = null
+  canonicalRelease = null,
+  canonicalCommit = null,
+  legacyDiagnostic = false
 }) {
   const frozen = {
     productionSourceHash: requireHash(frozenIdentity?.productionSourceHash, "FROZEN_PRODUCTION_SOURCE_HASH"),
     releaseGovernanceHash: requireHash(frozenIdentity?.releaseGovernanceHash, "FROZEN_RELEASE_GOVERNANCE_HASH"),
     fixtureSetHash: requireHash(frozenIdentity?.fixtureSetHash, "FROZEN_FIXTURE_SET_HASH")
   };
-  const canonicalFingerprints = canonicalRelease
-    ? await computeCanonicalGitReleaseFingerprints({ repoRoot, ...canonicalRelease })
-    : null;
+  if (canonicalRelease && canonicalCommit) {
+    const error = new Error("CANONICAL_RELEASE_IDENTITY_INPUT_CONFLICT");
+    error.code = "CANONICAL_RELEASE_IDENTITY_INPUT_CONFLICT";
+    throw error;
+  }
+  const canonicalFingerprints = canonicalCommit
+    ? await computeCanonicalGitCommitFingerprints({ repoRoot, commit: canonicalCommit })
+    : canonicalRelease
+      ? await computeCanonicalGitReleaseFingerprints({ repoRoot, ...canonicalRelease })
+      : null;
+  if (!canonicalFingerprints && legacyDiagnostic !== true) {
+    const error = new Error("CANONICAL_RELEASE_IDENTITY_REQUIRED");
+    error.code = "CANONICAL_RELEASE_IDENTITY_REQUIRED";
+    throw error;
+  }
   const [source, governance, fixture] = await Promise.all([
     canonicalFingerprints?.source || computeProductionSourceFingerprint(repoRoot),
     canonicalFingerprints?.governance || computeReleaseGovernanceFingerprint(repoRoot),
-    computeFixtureSetFingerprint(repoRoot)
+    canonicalFingerprints?.fixture || computeFixtureSetFingerprint(repoRoot)
   ]);
   const runtimeSourceHash = requireHash(runtimeIdentity?.runtimeSourceSha256, "RUNTIME_SOURCE_SHA256");
   const actual = {
@@ -281,8 +319,9 @@ export async function validateReleaseEvidenceBinding({
     throw error;
   }
   return Object.freeze({
-    status: "BOUND",
-    sourceIdentityAuthority: canonicalFingerprints?.authority || "WORKING_TREE_BYTES_LEGACY",
+    status: canonicalFingerprints ? "BOUND" : "DIAGNOSTIC_ONLY",
+    sourceIdentityAuthority: canonicalFingerprints?.authority || "WORKING_TREE_BYTES_LEGACY_DIAGNOSTIC_NON_AUTHORITY",
+    releaseIdentityAuthority: Boolean(canonicalFingerprints),
     ...frozen,
     runtimeSourceHash,
     sourceFileCount: source.fileCount,

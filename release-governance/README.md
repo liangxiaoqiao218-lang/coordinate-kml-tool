@@ -25,6 +25,23 @@ Its scope is:
 
 This hash is independent from `PRODUCTION_SOURCE_HASH` and `FIXTURE_SET_HASH`.
 
+## Release Identity Authority
+
+All current release qualification and release reports must calculate
+`PRODUCTION_SOURCE_HASH`, `RELEASE_GOVERNANCE_HASH`, and `FIXTURE_SET_HASH`
+from `GIT_CANONICAL_RELEASE_TREE`. Git object/tree bytes are authoritative;
+checkout bytes are not.
+
+`computeProductionSourceFingerprint`, `computeReleaseGovernanceFingerprint`,
+and `computeFixtureSetFingerprint` are retained only for historical
+compatibility diagnostics. Their output is `WORKING_TREE_BYTES_LEGACY_DIAGNOSTIC_NON_AUTHORITY`
+and must never be frozen or accepted by a current release gate. This prevents
+`core.autocrlf`, `.gitattributes`, OS newline conversion, or mixed LF/CRLF
+working trees from changing release identity.
+
+The formal regression runner requires `CANONICAL_RELEASE_COMMIT`; absence of a
+canonical commit fails closed with `CANONICAL_RELEASE_IDENTITY_REQUIRED`.
+
 ## SR-08G.2 Family Availability Policy
 
 `family-availability-policy-v1.json` records the approved family-scoped recognition availability contract.

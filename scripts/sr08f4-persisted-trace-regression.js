@@ -170,6 +170,7 @@ const [sourceFingerprint, governanceFingerprint, fixtureFingerprint] = await Pro
 ]);
 const binding = await validateReleaseEvidenceBinding({
   repoRoot,
+  legacyDiagnostic: true,
   runtimeIdentity: { runtimeSourceSha256: sourceFingerprint.hash },
   frozenIdentity: {
     productionSourceHash: sourceFingerprint.hash,
@@ -184,6 +185,7 @@ await test("E13", "fixture hash correct", () => assert.equal(binding.fixtureSetH
 await test("E14", "mismatched hash fail closed", async () => {
   await assert.rejects(validateReleaseEvidenceBinding({
     repoRoot,
+    legacyDiagnostic: true,
     runtimeIdentity: { runtimeSourceSha256: sourceFingerprint.hash },
     frozenIdentity: {
       productionSourceHash: "0".repeat(64),

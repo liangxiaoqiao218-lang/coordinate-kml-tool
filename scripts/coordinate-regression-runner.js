@@ -1860,6 +1860,7 @@ async function establishEvidenceBinding() {
   }
   return validateReleaseEvidenceBinding({
     repoRoot,
+    canonicalCommit: process.env.CANONICAL_RELEASE_COMMIT,
     runtimeIdentity: payload.runtimeIdentity,
     frozenIdentity: {
       productionSourceHash: process.env.FROZEN_PRODUCTION_SOURCE_HASH,
