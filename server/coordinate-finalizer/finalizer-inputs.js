@@ -43,13 +43,9 @@ function commonInput({
   }));
   const familyPolicyApplies = String(structuredResult.coordinate_type || "").toLowerCase() === "standard_dms_table"
     && String(structuredResult.precision_mode || "").toLowerCase() === "point-az-dms-table";
-  const needsConfirmation = confirmationRequired(structuredResult) || familyPolicyApplies;
-  const confirmationOnlyReview = needsConfirmation
-    && verification?.status === "REVIEW"
-    && verification?.validation_scope === "coordinate_and_geometry"
-    && (!Array.isArray(verification?.conflicts) || verification.conflicts.length === 0)
-    && (!Array.isArray(verification?.geometryWarnings) || verification.geometryWarnings.length === 0)
-    && geometryResult.ok;
+  const reviewOnlyTechnicalKmlReady = verification?.status === "REVIEW" && technicalKmlReady;
+  const needsConfirmation = confirmationRequired(structuredResult) || familyPolicyApplies || reviewOnlyTechnicalKmlReady;
+  const confirmationOnlyReview = needsConfirmation && reviewOnlyTechnicalKmlReady;
   const confirmationStatus = revision.confirmationStatus || (needsConfirmation
     ? COORDINATE_CONFIRMATION_STATUS.PENDING
     : COORDINATE_CONFIRMATION_STATUS.NOT_REQUIRED);

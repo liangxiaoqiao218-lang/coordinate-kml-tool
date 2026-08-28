@@ -6462,8 +6462,24 @@ Au值 = 纯度 × 10 后取整数</div>
         status: HANDWRITTEN_DMS_REVIEW_STATUS.NOT_APPLICABLE,
         revision: 0,
         confirmedRevision: null,
+        source: "none",
         ...overrides
       };
+    }
+
+    function finalizedCoordinateResultRequiresUserConfirmation(result = activeFinalizedCoordinateResult) {
+      if (!result) return false;
+      const confirmationStatus = String(result.confirmationStatus || "").toLowerCase();
+      const qualityGateStatus = String(result.qualityGateStatus || "").toLowerCase();
+      const technicalKmlReady = result.technicalKmlReady === true;
+      return confirmationStatus === "pending"
+        && qualityGateStatus !== "failed"
+        && technicalKmlReady
+        && Boolean(getFinalizedCoordinateIdentity(result));
+    }
+
+    function syncCoordinateReviewConfirmationState(engine = activeCoordinateEngineV2 || {}, result = activeFinalizedCoordinateResult) {
+      initializeHandwrittenDmsReviewState(engine, result);
     }
 
     function setHandwrittenDmsReviewGuardContext(required) {
@@ -6536,10 +6552,10 @@ Au值 = 纯度 × 10 后取整数</div>
       const statusText = document.createElement("span");
       statusText.className = "handwritten-dms-review-text";
       statusText.textContent = isConfirmed
-        ? "已确认当前手写 DMS 坐标；再次修改后需要重新核对。"
+        ? "已确认当前坐标；再次修改后需要重新核对。"
         : handwrittenDmsReviewState.status === HANDWRITTEN_DMS_REVIEW_STATUS.EDITED_PENDING
-          ? "手写 DMS 坐标已修改，请对照原图重新核对。"
-          : "手写 DMS 识别结果需要对照原图人工核对。";
+          ? "当前坐标已修改，请对照原图重新核对。"
+          : "当前坐标需要对照原图人工核对。";
       handwrittenDmsReviewPanel.appendChild(statusText);
 
       if (!isConfirmed) {
@@ -6558,13 +6574,16 @@ Au值 = 纯度 × 10 后取整数</div>
       renderHandwrittenDmsReviewState();
     }
 
-    function initializeHandwrittenDmsReviewState(engine = {}) {
+    function initializeHandwrittenDmsReviewState(engine = {}, result = activeFinalizedCoordinateResult) {
       const type = String(engine?.coordinate_type || engine?.coordinateType || "").trim();
-      const required = type === "handwritten_dms_experimental" && engine?.requires_review === true;
+      const serverRequiresConfirmation = finalizedCoordinateResultRequiresUserConfirmation(result);
+      const legacyHandwrittenRequiresReview = !result && type === "handwritten_dms_experimental" && engine?.requires_review === true;
+      const required = serverRequiresConfirmation || legacyHandwrittenRequiresReview;
       handwrittenDmsReviewState = required
         ? createHandwrittenDmsReviewState({
             required: true,
-            status: HANDWRITTEN_DMS_REVIEW_STATUS.PENDING
+            status: HANDWRITTEN_DMS_REVIEW_STATUS.PENDING,
+            source: serverRequiresConfirmation ? "finalized_coordinate_result_v1" : "handwritten_dms_legacy"
           })
         : createHandwrittenDmsReviewState();
       setHandwrittenDmsReviewGuardContext(required);
@@ -6799,6 +6818,7 @@ Au值 = 纯度 × 10 后取整数</div>
       invalidateSpatialPreview();
       finalizedCoordinateTextSnapshot = String(input.value || "");
       finalizedCoordinateDirty = false;
+      syncCoordinateReviewConfirmationState(activeCoordinateEngineV2, activeFinalizedCoordinateResult);
       return activeFinalizedCoordinateResult;
     }
 
@@ -6823,6 +6843,7 @@ Au值 = 纯度 × 10 后取整数</div>
       invalidateSpatialPreview();
       finalizedCoordinateTextSnapshot = String(input.value || "");
       finalizedCoordinateDirty = false;
+      syncCoordinateReviewConfirmationState(activeCoordinateEngineV2, activeFinalizedCoordinateResult);
       return activeFinalizedCoordinateResult;
     }
 
@@ -6862,7 +6883,7 @@ Au值 = 纯度 × 10 后取整数</div>
         trackEvent("handwritten_dms_review_confirm", {
           revision: activeFinalizedCoordinateResult.resultRevision
         });
-        showMessage("已由服务端确认当前手写 DMS 坐标。再次修改后需要重新核对。", false, 5000);
+        showMessage("已由服务端确认当前坐标。再次修改后需要重新核对。", false, 5000);
       } catch (error) {
         renderHandwrittenDmsReviewState();
         showMessage(error?.message || "坐标确认失败，请重试。", true, 6000);
@@ -13260,7 +13281,7 @@ ${placemarks}
         refreshMapPreviewAction();
         finalizedCoordinateTextSnapshot = String(input.value || "");
         finalizedCoordinateDirty = false;
-        initializeHandwrittenDmsReviewState(summaryEngine);
+        syncCoordinateReviewConfirmationState(summaryEngine, activeFinalizedCoordinateResult);
         coordinateOrder.value = "auto";
         setCoordinateOrderReviewVisible(hasOrderReview);
         updateCadastralGridPanel();
