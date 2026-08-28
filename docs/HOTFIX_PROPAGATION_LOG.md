@@ -105,3 +105,98 @@ P08G_GOVERNANCE_AUTHORIZATION=AUTHORIZED
 ```
 
 TRACK-G does not execute P08G. G-02 authorization permits TRACK-L to execute `P08G_CONTROLLED_PRODUCTION_REDEPLOYMENT`. TRACK-E and TRACK-S remain `AUDIT_REQUIRED`; propagation cannot be marked complete until P08G production regression closure and the later target audits.
+
+---
+
+## Entry G06-HF-0002
+
+This append-only entry records the G-06 post-production audit and supersedes only
+the pending propagation judgments in `G01-HF-0001`. It does not alter that
+historical entry.
+
+```text
+LOGGED_AT=2026-08-28
+AUDIT_ID=G06_P08F_P08H_P08M_G05_PRODUCTION_CLOSURE
+SUPERSEDES_PROPAGATION_JUDGMENT=G01-HF-0001
+SOURCE_TRACK=TRACK-L
+SOURCE_PRODUCTION_RELEASE=e925bfba20acc08df3a720293bd010303fbda701
+SOURCE_PRODUCTION_HASH=965b2eee4aa3b6a80a872bb622bd1152c5d8dbbcc63c60189ac2942eb326a5aa
+SOURCE_RELEASE_GOVERNANCE_HASH=4684a01f151446833c58f7cf8f587c9fe0ed902189c82f072f951cdfc9b24df7
+SOURCE_FIXTURE_SET_HASH=dfa774517eabb18bfc47981c1511be0cca4c01dd92e2592803820f0fab435697
+SOURCE_PRODUCTION_REGRESSION=CLOSED_PASS
+CURRENT_PRODUCTION_AUTHORITY=LEGACY_V2
+V3_PRODUCTION_AUTHORITY=false
+```
+
+### TRACK-E audit closure
+
+```text
+TARGET_TRACK=TRACK-E
+AUDITED_BRANCH=v3/isolated-recognizers
+AUDITED_COMMIT=c565c950f95c2c999fe75058c195b3988e121fb5
+CURRENT_MODE=TRUE_SHADOW_ONLY
+PRIMARY_PROPAGATION_CLASS=CONTRACT_AWARENESS_REQUIRED
+CODE_PROPAGATION_REQUIRED=false
+TEST_PROPAGATION_REQUIRED=false
+GOVERNANCE_AWARENESS_REQUIRED=true
+LIFECYCLE_STATUS=CHANGE_REQUIRED
+CHANGE_SCOPE=FUTURE_AUTHORITY_MIGRATION_PREREQUISITE_RECORD_ONLY
+V3_SHADOW_CONTINUE=true
+V3_CANARY=BLOCKED
+V3_MIGRATION=BLOCKED
+```
+
+TRACK-E must preserve the distinction between private V3 `technicalKmlReady`
+and authoritative Legacy/server `kmlReady`. P08F/P08H review, revision-bound
+confirmation, edit invalidation, reconfirmation, and final KML authority belong
+in future M1/M2/M3/M5/M6 canonical-adapter evidence. They do not justify
+importing the Legacy finalizer or confirmation UI into the current shadow
+runtime. TRACK-E contains no current release-identity authority calculator, so
+G05 requires governance awareness only there.
+
+### TRACK-S audit closure
+
+```text
+TARGET_TRACK=TRACK-S
+AUDITED_BRANCH=integration/spatial-result-release
+AUDITED_COMMIT=cd25d4478fad1ba41ee61afae6a7158476c6ef19
+CURRENT_ROLE=DOWNSTREAM_CONSUMER
+PRIMARY_PROPAGATION_CLASS=TEST_PROPAGATION_REQUIRED
+BUSINESS_RUNTIME_CODE_PROPAGATION_REQUIRED=false
+CONTRACT_AWARENESS_REQUIRED=true
+TEST_PROPAGATION_REQUIRED=true
+GOVERNANCE_AWARENESS_REQUIRED=true
+LIFECYCLE_STATUS=CHANGE_REQUIRED
+MAP_PREVIEW_REGRESSION=PASS_12_OF_12
+MAP_KML_PERMISSION_SEPARATION=PRESERVED
+P09_PHASE2_RUNTIME_CODE_BLOCKER=false
+RELEASE_QUALIFICATION_TOOLING_ACTION_REQUIRED=true
+```
+
+The existing Phase 1 `MapPreviewAdapter` correctly allows drawable canonical
+geometry while review or confirmation is pending and treats KML blocking as a
+warning rather than a Map blocker. `FinalizedResultSpatialGeometryAdapter`
+remains export-grade / `AUTO_EXPORT`-oriented and is not a general Satellite
+eligibility adapter. Before TRACK-S performs any future frozen release-identity
+qualification, its release-evidence tooling must adopt
+`GIT_CANONICAL_RELEASE_TREE` as sole authority and demote working-tree-byte
+calculations to diagnostic-only status. This tooling/test action does not block
+the non-authority-changing P09B-R1 provider/license validation stage.
+
+### P08M truth context and P09 decision
+
+```text
+P08M_CHANGE_SCOPE=TRACK_L_ACTIVE_TEST_EXPECTATIONS_ONLY
+SHARED_TRUTH_PROPAGATION_REQUIRED=false
+V3_STRUCT_REAL_019_LEVEL_1=UNCHANGED
+P09_RESUME_ELIGIBILITY=true
+P09_RESUME_GOVERNANCE_DECISION=AUTHORIZED
+P09_RESUME_GATE=P09B_R1_PROVIDER_OR_LICENSE_VALIDATION
+P09A_RERUN_AUTHORIZED=false
+PRODUCTION_AUTHORITY_CHANGE_AUTHORIZED=false
+```
+
+P09 authorization resumes only at P09B-R1. It does not authorize Satellite
+provider implementation, production deployment, KML authority changes, a V3
+canary, or V3 migration. TRACK-S must use map/drawable eligibility for future
+Satellite consumption and keep KML and Spatial as sibling consumers.
