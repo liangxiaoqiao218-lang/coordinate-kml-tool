@@ -1,13 +1,16 @@
 {
   "schemaVersion": "p09c_validation_evidence_v1",
   "track": "TRACK-S",
-  "task": "P09C_GLOBAL_SATELLITE_PROTOTYPE",
+  "task": "P09C_R2_EVIDENCE_BINDING_AND_STYLE_WARNING_CLOSURE",
   "mode": "ISOLATED_PROTOTYPE_ONLY",
+  "sourceCommit": "9193ef5e111529d02c1d7cfcb647ed2c50244323",
+  "sourceBranch": "spatial/p09c-global-satellite-prototype",
   "sourceGovernanceClosure": "7079275a02c1e92f3843074637ab262a8a8d9bff",
   "recommendedBase": "6855b2d14e3590a1c01fb47c136a77c10bca5ea3",
+  "p09cR1Status": "PASS_WITH_CONSTRAINTS",
   "deterministicPrototypeTests": {
-    "executed": 20,
-    "passed": 20,
+    "executed": 21,
+    "passed": 21,
     "failed": 0
   },
   "existingMapPreviewRegression": {
@@ -21,21 +24,53 @@
     "failed": 0
   },
   "desktopBrowser": {
-    "status": "PASS_LOCAL_SVG_FALLBACK_ONLY",
-    "providerState": "FALLBACK_LOCAL_SVG",
+    "status": "PASS_MAPTILER_LIVE_LOCAL_DESKTOP_ONLY",
+    "liveOrigin": "http://localhost:3000",
+    "originRestriction": "PASS",
+    "providerState": "READY",
     "chinaProviderState": "PROVIDER_PENDING",
     "consoleErrors": 0,
-    "credentialConfigured": false
+    "credentialConfigured": true,
+    "mapShellTimeMs": 132,
+    "firstMeaningfulTileTimeMs": 612,
+    "interactiveTimeMs": 2007
   },
   "responsiveBrowser": {
     "viewport": "390x844",
-    "status": "PASS",
+    "status": "PASS_MAPTILER_LIVE",
     "horizontalOverflow": false
   },
-  "mapTilerLive": "BLOCKED_BY_CREDENTIAL_NOT_PRESENT_IN_EXECUTION_ENVIRONMENT",
+  "mapTilerLive": "PASS_LOCAL_DESKTOP_ONLY",
+  "networkQualification": "LOCAL_DESKTOP_ONLY",
+  "liveGeometryPerformance": {
+    "vertex8TimeMs": 1597,
+    "vertex100TimeMs": 1584,
+    "vertex500TimeMs": 1671,
+    "vertex1000TimeMs": 1748,
+    "renderPlan": "SINGLE_GEOJSON_SOURCE"
+  },
+  "mapLayerStyleWarning": {
+    "warningClass": "NON_BLOCKING_STYLE_ASSET_WARNING",
+    "warningCategory": "MISSING_STYLE_IMAGE",
+    "sanitizedSpriteIdentifier": "transportation:road_",
+    "warningIdentityAvailable": true,
+    "blocker": false,
+    "visibleStyleDefectObserved": false,
+    "mapLayerRenderingOutcome": "PASS",
+    "labelOutcome": "PASS_VISIBLE_LABELS_OBSERVED",
+    "geometryOutcome": "PASS",
+    "interactionOutcome": "PASS",
+    "attributionOutcome": "PASS",
+    "fullscreenOutcome": "PASS",
+    "returnFlowOutcome": "PASS"
+  },
   "androidTest": "NOT_EXECUTED_DEVICE_UNAVAILABLE",
-  "providerCalls": 0,
+  "providerCalls": "LIVE_EXECUTED_AT_LEAST_100_SANITIZED_HTTP_REQUESTS_OBSERVED",
   "credentialLeakage": 0,
+  "authorityMutationCount": 0,
+  "canonicalContractOnly": true,
+  "generalMapGate": "MAP_PREVIEW_DRAWABLE_ELIGIBILITY",
+  "autoExportAdapterUsedAsMapGate": false,
   "applicationRuntimeModified": false,
   "productionFilesModified": 0,
   "deploymentPerformed": false
