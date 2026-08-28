@@ -28,7 +28,10 @@
         <button type="button" data-style="hybrid" data-active="false">混合</button>
         <button type="button" data-style="map" data-active="false">地图</button>
       </div>
-      <button id="fullscreen-button" type="button">全屏地图</button>
+      <div class="map-actions">
+        <button id="fit-button" type="button">适配图形</button>
+        <button id="fullscreen-button" type="button">全屏地图</button>
+      </div>
     </section>
 
     <section class="map-stage">
@@ -44,7 +47,6 @@
   </main>
 
   <script src="/runtime-config.js"></script>
-  <script src="/vendor/maplibre-gl.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

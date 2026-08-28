@@ -14,6 +14,7 @@ const contentTypes = Object.freeze({
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8"
 });
 
@@ -70,8 +71,7 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/app.js") return respondFile(response, publicRoot, "app.js");
   if (url.pathname === "/styles.css") return respondFile(response, publicRoot, "styles.css");
   if (url.pathname.startsWith("/src/")) return respondFile(response, sourceRoot, url.pathname.slice(5));
-  if (url.pathname === "/vendor/maplibre-gl.js") return respondFile(response, vendorRoot, "maplibre-gl.js");
-  if (url.pathname === "/vendor/maplibre-gl.css") return respondFile(response, vendorRoot, "maplibre-gl.css");
+  if (url.pathname.startsWith("/vendor/")) return respondFile(response, vendorRoot, url.pathname.slice(8));
   response.writeHead(404).end("Not found");
 });
 

@@ -45,6 +45,25 @@ test("provider deadline is bounded and falls back", async () => {
   assert.equal(result.authorityPreserved, true);
 });
 
+test("provider error falls back without mutating authority", async () => {
+  const fallback = new FakeFallback();
+  const states = [];
+  const controller = new MapProductController({
+    provider: new MapTilerTestProvider({ apiKey: "test-client-key" }),
+    renderer: { async render() { throw Object.assign(new Error("CONTROLLED_PROVIDER_ERROR"), { code: "CONTROLLED_PROVIDER_ERROR" }); } },
+    fallbackRenderer: fallback,
+    onState: ({ state }) => states.push(state)
+  });
+  const input = await finalized(geometries.Polygon, { kmlReady: false, decisionState: "BLOCKED" });
+  const before = structuredClone(input);
+  const result = await controller.open(input);
+  assert.equal(result.state, PROVIDER_STATE.FALLBACK_LOCAL_SVG);
+  assert.deepEqual(states, [PROVIDER_STATE.LOADING, PROVIDER_STATE.PROVIDER_ERROR, PROVIDER_STATE.FALLBACK_LOCAL_SVG]);
+  assert.equal(fallback.calls, 1);
+  assert.equal(result.authorityPreserved, true);
+  assert.deepEqual(input, before);
+});
+
 test("MapTiler style switching uses only approved read-only style endpoints", () => {
   const provider = new MapTilerTestProvider({ apiKey: "test-client-key" });
   assert.match(provider.styleUrl("satellite"), /\/maps\/satellite-v4\/style\.json\?key=/);

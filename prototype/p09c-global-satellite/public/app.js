@@ -1,3 +1,4 @@
+import * as maplibregl from "/vendor/maplibre-gl.mjs";
 import { MapProductController } from "../src/map-product-controller.js";
 import { MapTilerTestProvider, ChinaProviderStub } from "../src/providers.js";
 import { MapLibreRenderer, LocalSvgRenderer } from "../src/maplibre-renderer.js";
@@ -10,6 +11,7 @@ const elements = {
   state: document.querySelector("#provider-state"),
   warning: document.querySelector("#authority-warning"),
   styles: [...document.querySelectorAll("[data-style]")],
+  fit: document.querySelector("#fit-button"),
   fullscreen: document.querySelector("#fullscreen-button"),
   returnButton: document.querySelector("#return-button"),
   china: document.querySelector("#china-status")
@@ -18,7 +20,7 @@ const elements = {
 const runtime = globalThis.__P09C_RUNTIME_CONFIG__ || { mapTilerConfigured: false, mapTilerTestKey: null };
 const provider = new MapTilerTestProvider({ apiKey: runtime.mapTilerTestKey });
 const renderer = new MapLibreRenderer({
-  maplibregl: globalThis.maplibregl,
+  maplibregl,
   container: elements.map,
   attributionElement: elements.attribution
 });
@@ -48,6 +50,8 @@ elements.styles.forEach(button => button.addEventListener("click", async () => {
     elements.state.textContent = "FALLBACK_LOCAL_SVG";
   }
 }));
+
+elements.fit.addEventListener("click", () => renderer.fitGeometry());
 
 elements.fullscreen.addEventListener("click", async () => {
   if (!document.fullscreenElement) await elements.shell.requestFullscreen();

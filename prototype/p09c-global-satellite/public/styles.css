@@ -52,6 +52,7 @@ button {
 }
 button:hover, button:focus-visible { border-color: #276f9e; outline: 2px solid #c6e4f6; outline-offset: 1px; }
 .segmented { display: flex; gap: 6px; }
+.map-actions { display: flex; gap: 6px; }
 .segmented button[data-active="true"] { background: #183d57; color: #fff; border-color: #183d57; }
 
 .map-stage { position: relative; overflow: hidden; min-height: 480px; border-radius: 18px; background: #dce5ea; box-shadow: 0 10px 30px rgb(25 54 72 / .12); }
@@ -65,9 +66,11 @@ button:hover, button:focus-visible { border-color: #276f9e; outline: 2px solid #
 
 @media (max-width: 640px) {
   .map-shell { padding: 10px; grid-template-rows: auto auto auto minmax(420px, 1fr) auto; }
-  .topbar { align-items: flex-start; }
+  .topbar { flex-direction: column; align-items: flex-start; }
+  #return-button { order: -1; align-self: flex-start; }
   .toolbar { position: relative; flex-direction: column; align-items: stretch; }
   .segmented { display: grid; grid-template-columns: repeat(3, 1fr); }
-  .segmented button, #fullscreen-button { width: 100%; min-height: 46px; }
+  .map-actions { display: grid; grid-template-columns: repeat(2, 1fr); }
+  .segmented button, .map-actions button { width: 100%; min-height: 46px; }
   .map-stage { min-height: 420px; }
 }

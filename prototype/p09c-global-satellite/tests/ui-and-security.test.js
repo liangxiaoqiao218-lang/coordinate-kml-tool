@@ -17,11 +17,14 @@ test("UI exposes layer switching, fullscreen, return flow, mobile layout and att
   assert.match(html, /data-style="hybrid"/);
   assert.match(html, /data-style="map"/);
   assert.match(html, /id="fullscreen-button"/);
+  assert.match(html, /id="fit-button"/);
   assert.match(html, /id="return-button"/);
   assert.match(html, /id="attribution"/);
   assert.match(app, /requestFullscreen/);
   assert.match(app, /switchStyle/);
+  assert.match(app, /renderer\.fitGeometry\(\)/);
   assert.match(css, /@media \(max-width: 640px\)/);
+  assert.match(css, /#return-button \{ order: -1;/);
 });
 
 test("static prototype files contain no credential value or service token", async () => {
@@ -55,7 +58,10 @@ test("server health and logs expose configured status but not key value", async 
     new Promise((_, reject) => setTimeout(() => reject(new Error("SERVER_START_TIMEOUT")), 3000))
   ]);
   const health = await (await fetch(`http://127.0.0.1:${port}/health`)).text();
+  const mapLibreModule = await fetch(`http://127.0.0.1:${port}/vendor/maplibre-gl.mjs`);
   assert.match(health, /"mapTilerConfigured":true/);
+  assert.equal(mapLibreModule.status, 200);
+  assert.match(mapLibreModule.headers.get("content-type") || "", /text\/javascript/);
   assert.doesNotMatch(health, new RegExp(fakeSecret));
   assert.doesNotMatch(output, new RegExp(fakeSecret));
 });
