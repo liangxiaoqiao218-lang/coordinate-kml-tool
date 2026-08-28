@@ -87,11 +87,17 @@ const kmlGateSource = extractFunctionSource(html, "shouldBlockFinalizedCoordinat
 assert.match(kmlGateSource, /finalizedCoordinateDirty/, "dirty edits block KML");
 assert.match(kmlGateSource, /activeFinalizedCoordinateResult\.kmlReady !== true/, "KML follows server-authoritative kmlReady");
 
+const dumbaImageSha256 = "c080f48b23ac2926d622da040601e7bd7458208ce92f2693edce27ddc2be80f4";
+const dumbaLine2HumanTruth = `11°43'09.20"N,09°00'56.03"W`;
+const dumbaPoint2HumanTruth = Object.freeze([-9.015563888888888, 11.719222222222223]);
+assert.equal(dumbaLine2HumanTruth, `11°43'09.20"N,09°00'56.03"W`);
+assert.deepEqual(dumbaPoint2HumanTruth, Object.freeze([-9.015563888888888, 11.719222222222223]));
+assert.equal(dumbaImageSha256.length, 64);
 const dmsPolygon = Object.freeze({
   type: "Polygon",
   coordinates: Object.freeze([Object.freeze([
     Object.freeze([-9.020463888888889, 11.72123611111111]),
-    Object.freeze([-9.015638888888889, 11.719222222222223]),
+    dumbaPoint2HumanTruth,
     Object.freeze([-9.016297222222223, 11.717605555555556]),
     Object.freeze([-9.02090277777778, 11.719805555555556]),
     Object.freeze([-9.020463888888889, 11.72123611111111])
@@ -100,7 +106,7 @@ const dmsPolygon = Object.freeze({
 
 const reviewOnlyInput = createLegacyFinalizerInput({
   recognitionResult: {
-    coordinates: "-9.020463888888889,11.72123611111111\n-9.015638888888889,11.719222222222223\n-9.016297222222223,11.717605555555556\n-9.02090277777778,11.719805555555556",
+    coordinates: "-9.020463888888889,11.72123611111111\n-9.015563888888888,11.719222222222223\n-9.016297222222223,11.717605555555556\n-9.02090277777778,11.719805555555556",
     precisionMode: "preserve-original-decimals-and-parse-dms"
   },
   coordinateEngineV2: {
