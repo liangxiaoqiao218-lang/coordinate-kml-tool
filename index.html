@@ -6599,6 +6599,11 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
+    function shouldRequireManualFinalizerConfirmation() {
+      return handwrittenDmsReviewState.required
+        && handwrittenDmsReviewState.status !== HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED;
+    }
+
     function getSpatialPreviewCacheKey(identity = getFinalizedCoordinateIdentity()) {
       if (!identity) return "";
       return `${identity.resultId}:${identity.resultRevision}:${identity.geometryHash}`;
@@ -6808,7 +6813,11 @@ Au值 = 纯度 × 10 后取整数</div>
       const response = await fetch("/api/coordinate-revision", {
         method: "POST",
         headers: getSourceHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ ...identity, coordinateText: normalizedCoordinateText })
+        body: JSON.stringify({
+          ...identity,
+          coordinateText: normalizedCoordinateText,
+          requireConfirmation: shouldRequireManualFinalizerConfirmation()
+        })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.finalizedCoordinateResult) {
@@ -6833,7 +6842,10 @@ Au值 = 纯度 × 10 后取整数</div>
       const response = await fetch("/api/coordinate-manual-finalize", {
         method: "POST",
         headers: getSourceHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ coordinateText: normalizedCoordinateText })
+        body: JSON.stringify({
+          coordinateText: normalizedCoordinateText,
+          requireConfirmation: shouldRequireManualFinalizerConfirmation()
+        })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.finalizedCoordinateResult) {
@@ -6855,7 +6867,9 @@ Au值 = 纯度 × 10 后取整数</div>
         button.textContent = "正在确认…";
       }
       try {
-        if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) {
+        if (!getFinalizedCoordinateIdentity()) {
+          await ensureManualInputFinalized();
+        } else if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) {
           await requestEditedCoordinateRevision();
         }
         const identity = getFinalizedCoordinateIdentity();

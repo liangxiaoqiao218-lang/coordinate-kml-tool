@@ -75,6 +75,55 @@ assert.equal(stale.payload.code, "STALE_CONFIRMATION_REVISION");
 const invalid = await post("/api/coordinate-manual-finalize", { coordinateText: "not coordinates" });
 assert.equal(invalid.response.status, 422);
 
+const originalLines = [
+  `1. 11°00'00.00"N, 08°00'00.00"W`,
+  `2. 11°00'30.00"N, 08°00'00.00"W`,
+  `3. 11°00'30.00"N, 08°00'30.00"W`,
+  `4. 11°00'00.00"N, 08°00'30.00"W`
+];
+const editedLines = [...originalLines];
+editedLines[3] = `4. 11°00'00.00"N, 08°00'45.00"W`;
+
+const reviewPending = await post("/api/coordinate-manual-finalize", {
+  coordinateText: originalLines.join("\n"),
+  requireConfirmation: true
+});
+assert.equal(reviewPending.response.status, 200);
+const pendingRevision1 = reviewPending.payload.finalizedCoordinateResult;
+assert.equal(pendingRevision1.confirmationStatus, "pending");
+assert.equal(pendingRevision1.decisionState, "REVIEW_REQUIRED");
+assert.equal(pendingRevision1.technicalKmlReady, true);
+assert.equal(pendingRevision1.kmlReady, false);
+assert.ok(pendingRevision1.resultId);
+assert.ok(pendingRevision1.geometryHash);
+
+const reviewPendingEdit = await post("/api/coordinate-revision", {
+  resultId: pendingRevision1.resultId,
+  resultRevision: pendingRevision1.resultRevision,
+  geometryHash: pendingRevision1.geometryHash,
+  coordinateText: editedLines.join("\n"),
+  requireConfirmation: true
+});
+assert.equal(reviewPendingEdit.response.status, 200);
+const pendingRevision2 = reviewPendingEdit.payload.finalizedCoordinateResult;
+assert.equal(pendingRevision2.resultId, pendingRevision1.resultId);
+assert.equal(pendingRevision2.resultRevision, pendingRevision1.resultRevision + 1);
+assert.notEqual(pendingRevision2.geometryHash, pendingRevision1.geometryHash);
+assert.equal(pendingRevision2.confirmationStatus, "pending");
+assert.equal(pendingRevision2.decisionState, "REVIEW_REQUIRED");
+assert.equal(pendingRevision2.kmlReady, false);
+
+const reviewConfirmed = await post("/api/coordinate-confirmation", {
+  resultId: pendingRevision2.resultId,
+  resultRevision: pendingRevision2.resultRevision,
+  geometryHash: pendingRevision2.geometryHash,
+  action: "accept"
+});
+assert.equal(reviewConfirmed.response.status, 200);
+assert.equal(reviewConfirmed.payload.finalizedCoordinateResult.confirmationStatus, "accepted");
+assert.equal(reviewConfirmed.payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
+assert.equal(reviewConfirmed.payload.finalizedCoordinateResult.kmlReady, true);
+
 const exactCoordinate = "116.391245,39.907654";
 const numberedPolygon = [
   "1. 116.391245,39.907654",
@@ -114,7 +163,7 @@ assert.match(html, /fetch\("\/api\/coordinate-manual-finalize"/);
 
 console.log(JSON.stringify({
   suite: "sr08c-manual-finalizer-regression",
-  passed: 11,
-  cases: ["MANUAL_FINALIZE", "MANUAL_REVISION", "STALE_REJECTED", "INVALID_BLOCKED", "RAW_DECIMAL", "NUMBERED_DOT", "NUMBERED_PAREN", "NUMBERED_COLON", "NUMBERED_POLYGON", "SERVER_STRICT_BOUNDARY", "KML_AUTHORITY_ORDER"]
+  passed: 14,
+  cases: ["MANUAL_FINALIZE", "MANUAL_REVISION", "STALE_REJECTED", "INVALID_BLOCKED", "REVIEW_PENDING_MANUAL_IDENTITY", "REVIEW_PENDING_EDIT_REOPENS_CONFIRMATION", "REVIEW_PENDING_CONFIRM_RELEASES_KML", "RAW_DECIMAL", "NUMBERED_DOT", "NUMBERED_PAREN", "NUMBERED_COLON", "NUMBERED_POLYGON", "SERVER_STRICT_BOUNDARY", "KML_AUTHORITY_ORDER"]
 }, null, 2));
 

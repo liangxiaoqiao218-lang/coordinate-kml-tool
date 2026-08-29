@@ -9286,7 +9286,8 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
   const forcedReview = coordinateType === "handwritten_dms_experimental"
     || precisionMode === "local-ocr-dms-fallback"
     || fallbackUsed
-    || reviewWarnings.length > 0;
+    || reviewWarnings.length > 0
+    || Boolean(options.forceRequiresReview);
   const groups = buildCoordinateEngineV2Groups(payload, coordinateType);
   const matchedDetectors = [
     coordinateType,
@@ -12264,6 +12265,7 @@ app.post("/api/coordinate-revision", (req, res) => {
   if (!coordinateText) {
     return res.status(400).json({ success: false, code: "COORDINATE_EDIT_TEXT_REQUIRED" });
   }
+  const requireConfirmation = req.body?.requireConfirmation === true;
   const parsed = buildManualTextCoordinateResult(coordinateText);
   if (!parsed.coordinates || parsed.coordinates === noCoordinatesText) {
     return res.status(422).json({ success: false, code: "COORDINATE_EDIT_INVALID" });
@@ -12278,13 +12280,14 @@ app.post("/api/coordinate-revision", (req, res) => {
       resultRevision: current.result.resultRevision + 1,
       currentRevision: current.result.resultRevision + 1,
       confirmedRevision: null,
-      confirmationStatus: ["accepted", "pending"].includes(current.result.confirmationStatus)
+      confirmationStatus: requireConfirmation || ["accepted", "pending"].includes(current.result.confirmationStatus)
         ? "pending"
         : "not_required"
     }
   };
   const coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(revisionPayload, {
-    rawHint: "manual_coordinate_edit"
+    rawHint: "manual_coordinate_edit",
+    forceRequiresReview: requireConfirmation
   });
   const response = buildCoordinateVerificationResponse(revisionPayload, coordinateEngineV2, {
     sourceAuthority: "manual_input"
@@ -12300,6 +12303,7 @@ app.post("/api/coordinate-manual-finalize", (req, res) => {
   if (!coordinateText) {
     return res.status(400).json({ success: false, code: "COORDINATE_EDIT_TEXT_REQUIRED" });
   }
+  const requireConfirmation = req.body?.requireConfirmation === true;
   const parsed = buildManualTextCoordinateResult(coordinateText);
   if (!parsed.coordinates || parsed.coordinates === noCoordinatesText) {
     return res.status(422).json({ success: false, code: "COORDINATE_EDIT_INVALID" });
@@ -12311,7 +12315,8 @@ app.post("/api/coordinate-manual-finalize", (req, res) => {
     ...parsed
   };
   const coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(manualPayload, {
-    rawHint: "manual_coordinate_input"
+    rawHint: "manual_coordinate_input",
+    forceRequiresReview: requireConfirmation
   });
   const response = buildCoordinateVerificationResponse(manualPayload, coordinateEngineV2, {
     sourceAuthority: "manual_input"

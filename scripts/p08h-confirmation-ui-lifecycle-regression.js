@@ -73,8 +73,11 @@ assert.match(revisionSource, /syncCoordinateReviewConfirmationState\(activeCoord
 
 const manualFinalizeSource = extractFunctionSource(html, "ensureManualInputFinalized");
 assert.match(manualFinalizeSource, /syncCoordinateReviewConfirmationState\(activeCoordinateEngineV2, activeFinalizedCoordinateResult\)/, "manual finalize also syncs canonical UI state");
+assert.match(manualFinalizeSource, /requireConfirmation: shouldRequireManualFinalizerConfirmation\(\)/, "manual finalize preserves pending review confirmation when creating a missing server identity");
 
 const confirmSource = extractFunctionSource(html, "confirmHandwrittenDmsReview");
+assert.match(confirmSource, /!getFinalizedCoordinateIdentity\(\)/, "confirmation can recover a missing finalized identity before server confirmation");
+assert.match(confirmSource, /await ensureManualInputFinalized\(\)/, "confirmation creates a server identity without requiring re-recognition");
 assert.match(confirmSource, /fetch\("\/api\/coordinate-confirmation"/, "confirmation action remains server-authoritative");
 assert.match(confirmSource, /activeFinalizedCoordinateResult\.decisionState !== "AUTO_EXPORT"/, "UI confirmation cannot bypass unified gate");
 assert.match(confirmSource, /HANDWRITTEN_DMS_REVIEW_STATUS\.CONFIRMED/, "accepted server confirmation resolves UI state");
@@ -178,7 +181,7 @@ assert.equal(hardFailureFinalized.decisionState, COORDINATE_DECISION_STATE.BLOCK
 
 console.log(JSON.stringify({
   suite: "p08h-confirmation-ui-lifecycle-regression",
-  passed: 12,
+  passed: 14,
   cases: [
     "PENDING_FINALIZED_RESULT_SHOWS_CONFIRMATION_UI",
     "CONFIRMATION_RENDER_SOURCE_CANONICAL_FINALIZED_RESULT",
@@ -186,6 +189,8 @@ console.log(JSON.stringify({
     "ACCEPTED_STATE_RESOLVES_PANEL",
     "EDIT_REOPENS_PENDING_CONFIRMATION",
     "RECONFIRM_USES_SERVER_CONFIRMATION",
+    "MISSING_IDENTITY_CREATES_SERVER_FINALIZED_RESULT",
+    "MANUAL_FINALIZE_PRESERVES_PENDING_REVIEW",
     "AUTO_EXPORT_CLEAN_PATH_HIDDEN_BY_DEFAULT",
     "QUALITY_FAILED_CANNOT_OVERRIDE",
     "RECOGNITION_ADOPTION_SYNCS_UI",
