@@ -9,9 +9,10 @@ const elements = {
   local: document.querySelector("#spatialLocalMapCanvas"),
   attribution: document.querySelector("#spatialProviderAttribution"),
   state: document.querySelector("#spatialProviderState"),
+  compactState: document.querySelector("#spatialProviderCompact"),
   failure: document.querySelector("#spatialMapFailure"),
   retry: document.querySelector("#spatialMapRetryAction"),
-  fullscreen: document.querySelector("#spatialFullscreenAction")
+  fit: document.querySelector("#spatialFitGeometryAction")
 };
 
 let runtimeConfig = Object.freeze({
@@ -38,6 +39,7 @@ function updateState({ state, detail = null }) {
   const unavailable = state === "FALLBACK_LOCAL_SVG";
   if (elements.failure) elements.failure.hidden = !unavailable;
   if (elements.retry) elements.retry.hidden = !unavailable;
+  if (elements.compactState) elements.compactState.hidden = !unavailable;
 }
 
 async function loadRuntimeConfig() {
@@ -138,16 +140,22 @@ async function retry() {
   return result;
 }
 
+async function fitGeometry() {
+  if (!controller) return false;
+  const providerFit = await controller.fitGeometry({ reason: "user-fit" });
+  if (providerFit) return true;
+  if (!controller.preview) return false;
+  await controller.fallbackRenderer.render(controller.preview.geometry);
+  return true;
+}
+
+function destroy() {
+  controller?.destroy();
+  if (elements.providerCanvas) elements.providerCanvas.hidden = true;
+  if (elements.local) elements.local.hidden = false;
+}
+
 elements.retry?.addEventListener("click", retry);
-elements.fullscreen?.addEventListener("click", async () => {
-  if (!elements.shell) return;
-  if (!document.fullscreenElement) await elements.shell.requestFullscreen();
-  else await document.exitFullscreen();
-});
+elements.fit?.addEventListener("click", () => fitGeometry().catch(() => {}));
 
-document.addEventListener("fullscreenchange", () => {
-  if (elements.fullscreen) elements.fullscreen.textContent = document.fullscreenElement ? "退出全屏" : "全屏地图";
-  controller?.fitGeometry({ reason: "fullscreenchange" }).catch(() => {});
-});
-
-globalThis.GeoKitSatelliteMap = Object.freeze({ open, initialize, retry, destroy: () => controller?.destroy() });
+globalThis.GeoKitSatelliteMap = Object.freeze({ open, initialize, retry, fitGeometry, destroy });

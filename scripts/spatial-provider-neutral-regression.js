@@ -329,18 +329,142 @@ test("SPN-31", "destroy releases provider resources", async () => {
   assert.equal(item.value.state, PROVIDER_STATE.IDLE);
 });
 
-test("SPN-32", "390px UI has no switcher and keeps return download fullscreen retry", () => {
+test("SPN-32", "390px direct task UI keeps back fit KML retry without a fullscreen step", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
   assert.match(html, />生成地图<\/button>/);
   assert.doesNotMatch(html, /data-spatial-map-style=/);
   assert.match(html, /spatialMapRetryAction/);
-  assert.match(html, /spatialFullscreenAction/);
+  assert.match(html, /spatialFitGeometryAction/);
+  assert.doesNotMatch(html, /spatialFullscreenAction/);
   assert.match(html, /spatialKmlAction/);
   assert.match(html, /returnToCoordinate\(\)/);
   assert.match(css, /@media \(width: 390px\)/);
-  assert.match(css, /max-width: 100%/);
+  assert.match(css, /max-width: 100vw/);
   assert.match(css, /touch-action: none/);
+});
+
+test("SPN-UX-01", "provider failure is a compact non-blocking status with approved copy", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const failureCss = html.match(/\.spatial-map-failure\s*\{[\s\S]*?\}/)?.[0] || "";
+  assert.match(html, /卫星地图暂时不可用/);
+  assert.doesNotMatch(html, /地图暂时无法加载/);
+  assert.match(failureCss, /display:\s*flex/);
+  assert.match(failureCss, /border-bottom/);
+  assert.doesNotMatch(failureCss, /inset:\s*0/);
+  assert.doesNotMatch(failureCss, /position:\s*absolute/);
+  assert.doesNotMatch(failureCss, /rgba\([^)]*,\s*\.94\)/);
+  assert.match(html, /class="spatial-result-card"[\s\S]*id="spatialMapFailure"[\s\S]*id="spatialMapRetryAction"/);
+});
+
+test("SPN-UX-02", "Point fallback auto-fit centers single-axis geometry", () => {
+  const source = fs.readFileSync(path.join(root, "assets/spatial-map/maplibre-renderer.js"), "utf8");
+  assert.match(source, /west === east \? width \/ 2/);
+  assert.match(source, /south === north \? height \/ 2/);
+  assert.match(source, /r:\s*9,\s*fill:\s*"#1976D2",\s*stroke:\s*"#E53935"/);
+});
+
+test("SPN-UX-03", "Point LineString and Polygon fallback keep high-contrast SVG styles", () => {
+  const source = fs.readFileSync(path.join(root, "assets/spatial-map/maplibre-renderer.js"), "utf8");
+  assert.match(source, /geometry\.type === "Point"/);
+  assert.match(source, /geometry\.type === "LineString" \? "polyline" : "polygon"/);
+  assert.match(source, /stroke:\s*"#E53935"/);
+  assert.match(source, /fill:\s*geometry\.type === "LineString" \? "none" : "#1976D2"/);
+});
+
+test("SPN-UX-04", "390px summary and controls remain reachable without horizontal overflow", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  assert.match(css, /height:\s*100dvh/);
+  assert.match(css, /left:\s*max\(8px, env\(safe-area-inset-left\)\)/);
+  assert.match(html, /id="spatialMapRetryAction"[^>]*>重试<\/button>/);
+  assert.match(html, /onclick="returnToCoordinate\(\)"/);
+  assert.match(html, /id="spatialKmlAction"/);
+  assert.match(html, /id="spatialFitGeometryAction"/);
+  assert.doesNotMatch(html, /id="spatialFullscreenAction"/);
+});
+
+test("SPN-FS-01", "Spatial result is a fixed 100dvh task view with safe-area support", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  assert.match(html, /\.spatial-result-page\.active\s*\{[\s\S]*position:\s*fixed[\s\S]*inset:\s*0[\s\S]*height:\s*100dvh/);
+  assert.match(css, /env\(safe-area-inset-top\)/);
+  assert.match(css, /env\(safe-area-inset-bottom\)/);
+  assert.match(html, /body\.spatial-task-active[\s\S]*overflow:\s*hidden/);
+});
+
+test("SPN-FS-02", "secondary Browser Fullscreen API and UI are absent", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const source = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
+  assert.doesNotMatch(html, /spatialFullscreenAction|全屏地图/);
+  assert.doesNotMatch(source, /requestFullscreen|exitFullscreen|fullscreenchange|document\.fullscreenElement/);
+});
+
+test("SPN-FS-03", "direct stale map route fails closed to coordinate", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
+  const route = server.match(/app\.get\("\/coordinate\/map"[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(html, /route\.pageName === "spatialResult" && !activeMapPreviewResponse[\s\S]*showPage\("coordinate", "", false\)[\s\S]*syncPageUrl\("coordinate", "", "replace"\)/);
+  assert.match(route, /res\.redirect\(302, "\/coordinate"\)/);
+  assert.match(route, /Cache-Control", "no-store/);
+  assert.doesNotMatch(route, /geometry|resultId|preview|cookie|session/);
+});
+
+test("SPN-FS-04", "provider opens only after task activation and settled layout", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const flow = html.match(/async function openSpatialResult\(\)[\s\S]*?function returnToCoordinate/)?.[0] || "";
+  assert.ok(flow.indexOf('showPage("spatialResult")') < flow.indexOf("renderSpatialResult(payload)"));
+  assert.ok(flow.indexOf("renderSpatialResult(payload)") < flow.indexOf("await waitForSpatialLayout()"));
+  assert.ok(flow.indexOf("await waitForSpatialLayout()") < flow.indexOf("GeoKitSatelliteMap?.open(payload)"));
+});
+
+test("SPN-FS-05", "back uses browser history and exit destroys provider resources", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const flow = html.match(/function returnToCoordinate\(\)[\s\S]*?async function loadSpatialRuntimeConfig/)?.[0] || "";
+  assert.match(flow, /GeoKitSatelliteMap\?\.destroy/);
+  assert.match(flow, /history\.back\(\)/);
+  assert.doesNotMatch(flow, /showPage\("coordinate"\);/);
+});
+
+test("SPN-FS-06", "mobile summaries cover Point LineString and Polygon with hectare preference", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /geometryType === "Point"[\s\S]*geometryType === "LineString"[\s\S]*geometryType === "Polygon"/);
+  assert.match(html, /value \/ 10000[\s\S]*ha/);
+  assert.match(html, /id="spatialResultSheetToggle"[\s\S]*aria-expanded="false"[\s\S]*aria-controls="spatialResultDetails"/);
+});
+
+test("SPN-FS-07", "review state is compact when collapsed and detailed only in the sheet", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /id="spatialReviewCompact"[^>]*hidden>待核对/);
+  assert.match(html, /spatialReviewCompact\.hidden = !warning/);
+  assert.match(html, /id="spatialResultWarning"[^>]*hidden/);
+});
+
+test("SPN-FS-08", "KML action lives inside expandable result details", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /id="spatialResultDetails"[\s\S]*id="spatialKmlAction"/);
+  assert.match(html, /spatialKmlAction\.disabled = payload\?\.kmlEligibility\?\.allowed !== true/);
+});
+
+test("SPN-FS-09", "sheet expansion is presentation-only", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const toggle = html.match(/function setSpatialSheetExpanded[\s\S]*?function spatialCollapsedSummaryText/)?.[0] || "";
+  assert.match(toggle, /aria-expanded/);
+  assert.doesNotMatch(toggle, /kml|review|confirmation|geometryHash|activeFinalizedCoordinateResult/);
+});
+
+test("SPN-FS-10", "reopen uses the cached canonical preview identity", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /activeMapPreviewCacheKey === cacheKey \? activeMapPreviewResponse : null/);
+  assert.match(html, /pages\.spatialResult\.dataset\.spatialCacheKey = activeMapPreviewCacheKey/);
+});
+
+test("SPN-FS-11", "provider failure stays in compact result UI and never covers the map", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  assert.match(html, /id="spatialProviderCompact"[^>]*hidden>卫星地图暂时不可用/);
+  assert.match(html, /class="spatial-result-card"[\s\S]*id="spatialMapFailure"/);
+  assert.doesNotMatch(css, /\.spatial-map-failure\s*\{[\s\S]*?position:\s*absolute/);
 });
 
 test("SPN-R1-01", "AMap map is initialized with the documented Satellite tile layer", async () => {
@@ -419,7 +543,7 @@ test("SPN-R1-03", "conservative mainland policy excludes approved border matrix 
 });
 
 assert.equal(isSpatialMapProvider(fakeProvider()), true);
-assert.equal(tests.length, 35);
+assert.equal(tests.length, 50);
 
 let passed = 0;
 for (const entry of tests) {

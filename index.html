@@ -4233,47 +4233,36 @@
       background: #f5f7f6;
     }
 
-    .spatial-result-page {
-      max-width: 760px;
-      margin: 0 auto;
-      padding-bottom: 34px;
+    body.spatial-task-active {
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      padding-bottom: 0;
     }
 
-    .spatial-result-nav,
-    .spatial-result-title-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
+    body.spatial-task-active .site-footer,
+    body.spatial-task-active .version-stamp { display: none; }
+
+    body.spatial-task-active .page {
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: 0;
     }
 
-    .spatial-return-action {
-      min-height: 36px;
-      padding: 6px 0;
-      border: 0;
-      background: transparent;
-      color: #0f766e;
-      font-size: 13px;
-      font-weight: 800;
-      box-shadow: none;
+    .spatial-result-page.active {
+      position: fixed;
+      z-index: 1000;
+      inset: 0;
+      width: 100%;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      background: #dce7e1;
     }
-
-    .spatial-result-status {
-      color: #64748b;
-      font-size: 12px;
-      text-align: right;
-    }
-
-    .spatial-result-status.is-normal { color: #0f766e; }
-    .spatial-result-status.is-warning { color: #a16207; }
-
-    .spatial-result-title-row { margin: 12px 0 14px; }
-    .spatial-result-title-row h1 { margin: 2px 0 0; }
-    .spatial-result-eyebrow { margin: 0; color: #0f766e; font-size: 11px; font-weight: 900; letter-spacing: .12em; }
-    .spatial-geometry-type { padding: 6px 9px; border-radius: 999px; background: #e9f5f0; color: #0f766e; font-size: 11px; font-weight: 800; }
 
     .spatial-result-warning {
-      margin-bottom: 12px;
+      margin: 8px 0 0;
       padding: 10px 12px;
       border: 1px solid #ead7b6;
       border-radius: 10px;
@@ -4304,49 +4293,51 @@
     .spatial-geometry-point { fill: #fff; stroke: #0f766e; stroke-width: 2; vector-effect: non-scaling-stroke; }
 
     .spatial-map-failure {
-      position: absolute;
-      inset: 0;
       display: flex;
-      flex-direction: column;
       align-items: center;
-      justify-content: center;
-      background: rgba(245,247,246,.94);
-      text-align: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(180, 83, 9, .22);
+      border: 1px solid rgba(180, 83, 9, .22);
+      background: rgba(255, 251, 235, .92);
+      color: #92400e;
     }
 
-    .spatial-map-failure strong { font-size: 16px; }
-    .spatial-map-failure span { margin-top: 6px; color: #64748b; font-size: 12px; }
+    .spatial-map-failure strong { font-size: 13px; }
+    .spatial-map-failure span { color: #78350f; font-size: 11px; }
+    .spatial-map-failure button {
+      min-height: 34px;
+      margin-left: auto;
+      padding: 6px 12px;
+      border: 1px solid rgba(180, 83, 9, .3);
+      border-radius: 8px;
+      background: #fff;
+      color: #92400e;
+      font-weight: 800;
+    }
     .spatial-map-failure[hidden] { display: none; }
 
     .spatial-facts {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 1px;
-      margin-top: 14px;
+      margin-top: 10px;
       overflow: hidden;
       border: 1px solid #e2e8e5;
       border-radius: 14px;
       background: #e2e8e5;
     }
 
-    .spatial-facts > div { min-height: 78px; padding: 14px; background: #fff; display: flex; flex-direction: column; gap: 6px; }
+    .spatial-facts > div { min-height: 58px; padding: 10px; background: #fff; display: flex; flex-direction: column; gap: 4px; }
     .spatial-facts > div[hidden] { display: none; }
     .spatial-facts span { color: #64748b; font-size: 11px; }
     .spatial-facts strong { font-size: 16px; }
-    .spatial-facts .spatial-primary-fact strong { font-size: 26px; }
+    .spatial-facts .spatial-primary-fact strong { font-size: 18px; }
 
     .spatial-regional-view { margin-top: 12px; color: #64748b; font-size: 12px; }
-    .spatial-kml-action { width: 100%; margin-top: 14px; }
+    .spatial-kml-action { width: 100%; margin-top: 10px; }
     .spatial-kml-action:disabled { background: #cfd8d3; border-color: #cfd8d3; box-shadow: none; cursor: not-allowed; }
-    .spatial-overview-entry { width: 100%; margin-top: 10px; padding: 13px 14px; border: 1px solid #e2e8e5; border-radius: 12px; background: #fff; color: #334155; display: flex; align-items: center; justify-content: space-between; text-align: left; }
-    .spatial-overview-entry span { display: flex; flex-direction: column; gap: 3px; }
-    .spatial-overview-entry small { color: #94a3b8; }
     .spatial-result-diagnostic { color: #64748b; font-size: 11px; }
-
-    @media (max-width: 640px) {
-      .spatial-map-card { height: 330px; border-radius: 14px; }
-      .spatial-result-status { max-width: 170px; }
-    }
   </style>
   <script src="pricing-config.js"></script>
   <link rel="stylesheet" href="/assets/spatial-map/spatial-map.css" />
@@ -4565,20 +4556,7 @@
     </section>
     </section>
 
-    <section id="spatialResultPage" class="view spatial-result-page" aria-labelledby="spatialResultTitle">
-      <div class="spatial-result-nav">
-        <button type="button" class="spatial-return-action" onclick="returnToCoordinate()" aria-label="返回坐标">← 返回坐标</button>
-        <span id="spatialResultStatus" class="spatial-result-status">地图基于当前坐标生成</span>
-      </div>
-      <div class="spatial-result-title-row">
-        <div>
-          <p class="spatial-result-eyebrow">地图预览</p>
-          <h1 id="spatialResultTitle">当前 Geometry</h1>
-        </div>
-        <span id="spatialGeometryType" class="spatial-geometry-type"></span>
-      </div>
-      <div id="spatialResultWarning" class="spatial-result-warning" hidden></div>
-
+    <section id="spatialResultPage" class="view spatial-result-page" aria-label="空间地图结果">
       <section id="spatialMapShell" class="spatial-map-shell" aria-label="当前坐标地图预览">
         <div class="spatial-map-stage">
           <div id="spatialProviderCanvas" class="spatial-map-canvas" hidden></div>
@@ -4588,33 +4566,40 @@
               <g id="spatialGeometryLayer"></g>
             </svg>
           </div>
-          <button type="button" class="spatial-map-control spatial-map-back" onclick="returnToCoordinate()">← 返回</button>
-          <button id="spatialFullscreenAction" type="button" class="spatial-map-control spatial-fullscreen-control">全屏地图</button>
-          <button id="spatialMapRetryAction" type="button" class="spatial-map-control spatial-retry-control" hidden>重试</button>
+          <button type="button" class="spatial-map-control spatial-map-back" onclick="returnToCoordinate()" aria-label="返回坐标">←</button>
+          <button id="spatialFitGeometryAction" type="button" class="spatial-map-control spatial-fit-control">适配图形</button>
           <div id="spatialProviderAttribution" class="spatial-provider-attribution">本地 SVG 预览 · 未请求底图服务</div>
-          <div id="spatialMapFailure" class="spatial-map-failure" hidden>
-            <strong>地图暂时无法加载</strong>
-            <span>已保留本地预览；坐标结果与 KML 权限不受影响</span>
+        </div>
+        <aside id="spatialResultCard" class="spatial-result-card" aria-label="空间结果详情">
+          <button id="spatialResultSheetToggle" type="button" class="spatial-sheet-toggle" aria-expanded="false" aria-controls="spatialResultDetails" onclick="toggleSpatialResultSheet()">
+            <span id="spatialCollapsedSummary">—</span>
+            <span id="spatialReviewCompact" class="spatial-review-compact" hidden>待核对</span>
+            <span id="spatialProviderCompact" class="spatial-provider-compact" hidden>卫星地图暂时不可用</span>
+            <span class="spatial-sheet-chevron" aria-hidden="true">⌃</span>
+          </button>
+          <div id="spatialResultDetails" class="spatial-result-details">
+            <div class="spatial-detail-heading">
+              <span id="spatialGeometryType" class="spatial-geometry-type"></span>
+              <strong id="spatialProviderState">地图结果</strong>
+            </div>
+            <div id="spatialMapFailure" class="spatial-map-failure" role="status" aria-live="polite" hidden>
+              <strong>卫星地图暂时不可用</strong>
+              <span>已显示本地坐标图形</span>
+              <button id="spatialMapRetryAction" type="button" hidden>重试</button>
+            </div>
+            <div id="spatialResultWarning" class="spatial-result-warning" hidden></div>
+            <section class="spatial-facts" aria-label="空间基础信息">
+              <div id="spatialAreaFact" class="spatial-primary-fact" hidden><span>面积</span><strong id="spatialAreaValue"></strong></div>
+              <div id="spatialLengthFact" hidden><span id="spatialLengthLabel">周长</span><strong id="spatialLengthValue"></strong></div>
+              <div><span>坐标点</span><strong id="spatialPointCount"></strong></div>
+              <div><span>中心位置</span><strong id="spatialCentroid"></strong></div>
+            </section>
+            <div id="spatialRegionalView" class="spatial-regional-view" hidden></div>
+            <button id="spatialKmlAction" type="button" class="primary-action spatial-kml-action" onclick="downloadKml()" disabled>下载 KML</button>
+            <p id="spatialResultDiagnostic" class="spatial-result-diagnostic" hidden></p>
           </div>
-        </div>
-        <div class="spatial-compact-summary" aria-label="当前 Geometry 摘要">
-          <div><span>Geometry</span><strong id="spatialCompactGeometry">—</strong></div>
-          <div><span>结果标识</span><strong id="spatialCompactIdentity">—</strong></div>
-          <div><span>地图状态</span><strong id="spatialProviderState">地图预览</strong></div>
-        </div>
+        </aside>
       </section>
-
-      <section class="spatial-facts" aria-label="空间基础信息">
-        <div id="spatialAreaFact" class="spatial-primary-fact" hidden><span>面积</span><strong id="spatialAreaValue"></strong></div>
-        <div id="spatialLengthFact" hidden><span id="spatialLengthLabel">周长</span><strong id="spatialLengthValue"></strong></div>
-        <div><span>坐标点</span><strong id="spatialPointCount"></strong></div>
-        <div><span>中心位置</span><strong id="spatialCentroid"></strong></div>
-      </section>
-
-      <div id="spatialRegionalView" class="spatial-regional-view" hidden></div>
-      <button id="spatialKmlAction" type="button" class="primary-action spatial-kml-action" onclick="downloadKml()" disabled>下载 KML</button>
-      <button type="button" class="spatial-overview-entry" disabled><span><strong>空间概况</strong><small>地形 · 水系 · 道路 · 卫星</small></span><b>›</b></button>
-      <p id="spatialResultDiagnostic" class="spatial-result-diagnostic" hidden></p>
     </section>
 
     <section id="judgePage" class="view">
@@ -5011,8 +4996,11 @@ Au值 = 纯度 × 10 后取整数</div>
     const goldCalculatorPanel = document.getElementById("goldCalculatorPanel");
     const goldUnavailableNotice = document.getElementById("goldUnavailableNotice");
     const mapPreviewAction = document.getElementById("mapPreviewAction");
-    const spatialResultStatus = document.getElementById("spatialResultStatus");
     const spatialGeometryType = document.getElementById("spatialGeometryType");
+    const spatialResultSheetToggle = document.getElementById("spatialResultSheetToggle");
+    const spatialResultDetails = document.getElementById("spatialResultDetails");
+    const spatialCollapsedSummary = document.getElementById("spatialCollapsedSummary");
+    const spatialReviewCompact = document.getElementById("spatialReviewCompact");
     const spatialResultWarning = document.getElementById("spatialResultWarning");
     const spatialGeometryLayer = document.getElementById("spatialGeometryLayer");
     const spatialMapFailure = document.getElementById("spatialMapFailure");
@@ -5315,6 +5303,9 @@ Au值 = 纯度 × 10 后取整数</div>
       const safePageName = pages[pageName] ? pageName : "home";
       const nextPage = pages[safePageName] || pages.home;
       nextPage.classList.add("active");
+      const spatialTaskActive = safePageName === "spatialResult";
+      document.body.classList.toggle("spatial-task-active", spatialTaskActive);
+      if (!spatialTaskActive) globalThis.GeoKitSatelliteMap?.destroy?.();
       updateShareMetaForPage(safePageName);
 
       if (updateUrl) {
@@ -5340,6 +5331,12 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function openPageFromPath(options = {}) {
       const route = resolvePageFromPath();
+      if (route.pageName === "spatialResult" && !activeMapPreviewResponse) {
+        showPage("coordinate", "", false);
+        syncPageUrl("coordinate", "", "replace");
+        setTimeout(() => showPage("coordinate", "", false), 0);
+        return;
+      }
       showPage(route.pageName, route.focusTarget, false);
       if (options.replaceState) {
         const previousState = history.state && typeof history.state === "object" ? history.state : {};
@@ -6646,6 +6643,40 @@ Au值 = 纯度 × 10 后取整数</div>
       return value >= 1000000 ? `${(value / 1000000).toFixed(2)} km²` : `${Math.round(value).toLocaleString()} m²`;
     }
 
+    function formatSpatialCollapsedArea(value) {
+      if (!Number.isFinite(value)) return "";
+      return value >= 10000 ? `${(value / 10000).toFixed(2)} ha` : formatSpatialArea(value);
+    }
+
+    function setSpatialSheetExpanded(expanded) {
+      const next = expanded === true;
+      spatialResultSheetToggle?.setAttribute("aria-expanded", String(next));
+      if (spatialResultDetails) spatialResultDetails.hidden = false;
+    }
+
+    function toggleSpatialResultSheet() {
+      const expanded = spatialResultSheetToggle?.getAttribute("aria-expanded") === "true";
+      setSpatialSheetExpanded(!expanded);
+    }
+
+    function spatialCollapsedSummaryText(preview, facts) {
+      const pointCount = Number.isFinite(facts?.pointCount) ? facts.pointCount : getSpatialPositions(preview?.geometry).length;
+      if (preview?.geometryType === "Point") return `${pointCount || 1}点`;
+      if (preview?.geometryType === "LineString") {
+        const length = formatSpatialMeters(facts?.lengthMeters) || "线段";
+        return `${length} · ${pointCount}点`;
+      }
+      if (preview?.geometryType === "Polygon" || preview?.geometryType === "MultiPolygon") {
+        const area = formatSpatialCollapsedArea(facts?.areaMeters2) || "区域";
+        return `${area} · ${pointCount}点`;
+      }
+      return `${preview?.geometryType || "Geometry"} · ${pointCount}点`;
+    }
+
+    function waitForSpatialLayout() {
+      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }
+
     function getSpatialPositions(geometry) {
       if (!geometry) return [];
       if (geometry.type === "Point") return [geometry.coordinates];
@@ -6726,8 +6757,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const warning = spatialWarningText(preview.previewWarnings || []);
       spatialResultWarning.hidden = !warning;
       spatialResultWarning.textContent = warning;
-      spatialResultStatus.textContent = warning ? "可预览 · 需要核对" : "地图基于当前坐标生成";
-      spatialResultStatus.className = `spatial-result-status ${warning ? "is-warning" : "is-normal"}`;
+      spatialReviewCompact.hidden = !warning;
       spatialMapFailure.hidden = true;
       try {
         if (e2eFailureMode === "map") throw new Error("REGRESSION_MAP_FAILURE");
@@ -6752,23 +6782,10 @@ Au值 = 纯度 × 10 后取整数</div>
       spatialRegionalView.hidden = !Number.isFinite(regionalCount) || regionalCount <= 0;
       spatialRegionalView.textContent = spatialRegionalView.hidden ? "" : `区域内已有 ${regionalCount} 条真实记录`;
       spatialKmlAction.disabled = payload?.kmlEligibility?.allowed !== true;
+      spatialCollapsedSummary.textContent = spatialCollapsedSummaryText(preview, facts);
       const factsAvailable = payload.spatialFactsStatus === "available" && e2eFailureMode !== "facts";
       spatialResultDiagnostic.hidden = factsAvailable;
       spatialResultDiagnostic.textContent = factsAvailable ? "" : "部分空间信息暂时无法计算，地图和原坐标仍可使用。";
-      const compactGeometry = document.getElementById("spatialCompactGeometry");
-      const compactIdentity = document.getElementById("spatialCompactIdentity");
-      if (compactGeometry) compactGeometry.textContent = preview.geometryType || "Geometry";
-      if (compactIdentity) compactIdentity.textContent = `${preview.sourceResultId} · r${preview.sourceRevision}`;
-      globalThis.GeoKitSatelliteMap?.open(payload).then(result => {
-        if (result?.authorityMutationCount > 0) {
-          spatialMapFailure.hidden = false;
-          spatialResultDiagnostic.hidden = false;
-          spatialResultDiagnostic.textContent = "地图预览已停止：检测到结果身份变化。";
-        }
-      }).catch(() => {
-        spatialResultDiagnostic.hidden = false;
-        spatialResultDiagnostic.textContent = "卫星底图暂时不可用，已保留本地 Geometry 预览。";
-      });
     }
 
     async function openSpatialResult() {
@@ -6796,10 +6813,22 @@ Au值 = 纯度 × 10 后取整数</div>
           activeMapPreviewResponse = payload;
           activeMapPreviewCacheKey = currentKey;
         }
-        renderSpatialResult(payload);
         pages.spatialResult.dataset.spatialCacheKey = activeMapPreviewCacheKey;
         showPage("spatialResult");
+        renderSpatialResult(payload);
+        setSpatialSheetExpanded(!window.matchMedia("(max-width: 640px)").matches);
+        await waitForSpatialLayout();
+        const mapResult = await globalThis.GeoKitSatelliteMap?.open(payload);
+        if (mapResult?.authorityMutationCount > 0) {
+          spatialMapFailure.hidden = false;
+          spatialResultDiagnostic.hidden = false;
+          spatialResultDiagnostic.textContent = "地图预览已停止：检测到结果身份变化。";
+        }
       } catch (error) {
+        if (pages.spatialResult?.classList.contains("active")) {
+          spatialResultDiagnostic.hidden = false;
+          spatialResultDiagnostic.textContent = "卫星底图暂时不可用，已保留本地 Geometry 预览。";
+        }
         showMessage(error?.message || "地图预览暂时不可用。", true, 6000);
       } finally {
         refreshMapPreviewAction();
@@ -6807,8 +6836,14 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function returnToCoordinate() {
-      showPage("coordinate");
-      refreshMapPreviewAction();
+      globalThis.GeoKitSatelliteMap?.destroy?.();
+      document.body.classList.remove("spatial-task-active");
+      if (location.pathname === "/coordinate/map" && history.state?.pageName === "spatialResult" && history.length > 1) {
+        history.back();
+        return;
+      }
+      showPage("coordinate", "", false);
+      syncPageUrl("coordinate", "", "replace");
     }
 
     async function loadSpatialRuntimeConfig() {

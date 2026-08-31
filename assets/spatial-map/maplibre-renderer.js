@@ -11,8 +11,8 @@ function projectedGroups(geometry, bounds, width, height, padding) {
   const rangeX = Math.max(east - west, 0.000001);
   const rangeY = Math.max(north - south, 0.000001);
   const project = ([x, y]) => [
-    padding + ((x - west) / rangeX) * (width - padding * 2),
-    height - padding - ((y - south) / rangeY) * (height - padding * 2)
+    west === east ? width / 2 : padding + ((x - west) / rangeX) * (width - padding * 2),
+    south === north ? height / 2 : height - padding - ((y - south) / rangeY) * (height - padding * 2)
   ];
   if (geometry.type === "Point") return [[project(geometry.coordinates)]];
   if (geometry.type === "LineString") return [geometry.coordinates.map(project)];

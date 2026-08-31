@@ -758,7 +758,14 @@ function renderIndexWithMeta(req, res) {
   res.type("html").send(html);
 }
 
-app.get(["/", "/index.html", "/coordinate", "/coordinate/map", "/coordinate-tool", "/tool", "/convert", "/ocr", "/mining", "/mining-judge", "/mining-analysis", "/judge", "/gold", "/gold-calculator"], renderIndexWithMeta);
+app.get("/coordinate/map", (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  res.redirect(302, "/coordinate");
+});
+
+app.get(["/", "/index.html", "/coordinate", "/coordinate-tool", "/tool", "/convert", "/ocr", "/mining", "/mining-judge", "/mining-analysis", "/judge", "/gold", "/gold-calculator"], renderIndexWithMeta);
 
 app.get("/robots.txt", (req, res) => {
   res.type("text/plain").send("User-agent: *\nAllow: /\n\nSitemap: https://geokitlab.com/sitemap.xml\n");

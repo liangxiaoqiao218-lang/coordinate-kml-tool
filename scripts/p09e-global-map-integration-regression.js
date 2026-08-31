@@ -169,23 +169,27 @@ test("P09E-17", "production HTML exposes the provider-neutral Spatial hooks", ()
   assert.match(providerSource, /layers: \[this\.satelliteLayer\]/);
   assert.doesNotMatch(providerSource, /mapStyle:\s*["']amap:\/\/styles\/satellite/);
 });
-test("P09E-18", "390 mobile fullscreen closure is encoded", () => {
+test("P09E-18", "390 mobile direct fullscreen task closure is encoded", () => {
   const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(css, /@media \(width: 390px\)/);
-  assert.match(css, /max-width: 100%/);
+  assert.match(css, /height: 100dvh/);
   assert.match(css, /touch-action: none/);
-  assert.match(css, /spatial-retry-control/);
+  assert.match(css, /env\(safe-area-inset-bottom\)/);
+  assert.match(html, /class="spatial-result-card"[\s\S]*id="spatialMapFailure"[\s\S]*id="spatialMapRetryAction"/);
+  assert.doesNotMatch(css, /spatial-retry-control/);
 });
 test("P09E-19", "legacy local SVG renderer remains available", () => {
   const source = fs.readFileSync(path.join(root, "assets/spatial-map/maplibre-renderer.js"), "utf8");
   assert.match(source, /export class LocalSvgRenderer/);
   assert.match(source, /本地 SVG 预览/);
 });
-test("P09E-20", "fullscreen and return flow preserve result ownership", () => {
+test("P09E-20", "direct task back and fit flow preserve result ownership", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const source = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
   assert.match(html, /onclick="returnToCoordinate\(\)"/);
-  assert.match(source, /requestFullscreen/);
+  assert.match(html, /id="spatialFitGeometryAction"/);
+  assert.doesNotMatch(source, /requestFullscreen|exitFullscreen|fullscreenchange/);
   assert.doesNotMatch(source, /activeFinalizedCoordinateResult\s*=/);
 });
 test("P09E-21", "runtime config route exposes only public readiness", () => {
@@ -215,7 +219,48 @@ test("P09E-24", "Spatial runtime imports no recognition, KML or V3 implementatio
   assert.doesNotMatch(files, /coordinate-engine-v3|recognize-coordinates|downloadKml|kmlReady\s*=|technicalKmlReady\s*=/);
 });
 
-assert.equal(tests.length, 24);
+test("P09E-25", "Generate Map activates the task view before provider initialization", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const flow = html.match(/async function openSpatialResult\(\)[\s\S]*?function returnToCoordinate/)?.[0] || "";
+  assert.ok(flow.indexOf('showPage("spatialResult")') < flow.indexOf("GeoKitSatelliteMap?.open(payload)"));
+  assert.ok(flow.indexOf("waitForSpatialLayout") < flow.indexOf("GeoKitSatelliteMap?.open(payload)"));
+});
+
+test("P09E-26", "mobile bottom sheet and desktop result card share one bounded result model", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  assert.match(html, /id="spatialResultCard"/);
+  assert.match(html, /id="spatialResultSheetToggle"[^>]*aria-expanded="false"[^>]*aria-controls="spatialResultDetails"/);
+  assert.match(css, /width: min\(360px/);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*bottom: max\(8px, env\(safe-area-inset-bottom\)\)/);
+});
+
+test("P09E-27", "KML remains inside details and bound only to server eligibility", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /id="spatialResultDetails"[\s\S]*id="spatialKmlAction"/);
+  assert.match(html, /spatialKmlAction\.disabled = payload\?\.kmlEligibility\?\.allowed !== true/);
+});
+
+test("P09E-28", "route fail-closed cached reopen and provider teardown are encoded", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const source = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
+  assert.match(html, /route\.pageName === "spatialResult" && !activeMapPreviewResponse/);
+  assert.match(html, /activeMapPreviewCacheKey === cacheKey \? activeMapPreviewResponse : null/);
+  assert.match(html, /GeoKitSatelliteMap\?\.destroy/);
+  assert.match(source, /function destroy\(\)[\s\S]*controller\?\.destroy/);
+});
+
+test("P09E-29", "direct HTTP map route redirects without creating map authority", () => {
+  const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
+  const route = server.match(/app\.get\("\/coordinate\/map"[\s\S]*?\n\}\);/)?.[0] || "";
+  assert.match(route, /res\.redirect\(302, "\/coordinate"\)/);
+  assert.match(route, /Cache-Control", "no-store/);
+  assert.doesNotMatch(route, /mapPreview|geometry|resultId|geometryHash|review|confirmation|kml/i);
+  const renderRoutes = server.match(/app\.get\(\["\/"[\s\S]*?renderIndexWithMeta\);/)?.[0] || "";
+  assert.doesNotMatch(renderRoutes, /\/coordinate\/map/);
+});
+
+assert.equal(tests.length, 29);
 let passed = 0;
 for (const entry of tests) {
   try {
