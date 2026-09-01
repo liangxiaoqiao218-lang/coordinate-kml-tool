@@ -332,7 +332,7 @@ test("SPN-31", "destroy releases provider resources", async () => {
 test("SPN-32", "390px direct task UI keeps back fit KML retry without a fullscreen step", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
-  assert.match(html, />生成地图<\/button>/);
+    assert.match(html, /id="mapPreviewAction"[^>]*>查看地图<\/button>/);
   assert.doesNotMatch(html, /data-spatial-map-style=/);
   assert.match(html, /spatialMapRetryAction/);
   assert.match(html, /spatialFitGeometryAction/);
@@ -350,7 +350,8 @@ test("SPN-UX-01", "provider failure is a compact non-blocking status with approv
   assert.match(html, /卫星地图暂时不可用/);
   assert.doesNotMatch(html, /地图暂时无法加载/);
   assert.match(failureCss, /display:\s*flex/);
-  assert.match(failureCss, /border-bottom/);
+  assert.match(failureCss, /border:\s*1px/);
+  assert.match(failureCss, /border-radius:\s*10px/);
   assert.doesNotMatch(failureCss, /inset:\s*0/);
   assert.doesNotMatch(failureCss, /position:\s*absolute/);
   assert.doesNotMatch(failureCss, /rgba\([^)]*,\s*\.94\)/);
@@ -426,10 +427,10 @@ test("SPN-FS-05", "back uses browser history and exit destroys provider resource
   assert.doesNotMatch(flow, /showPage\("coordinate"\);/);
 });
 
-test("SPN-FS-06", "mobile summaries cover Point LineString and Polygon with hectare preference", () => {
+test("SPN-FS-06", "mobile summaries cover Point LineString and Polygon with Chinese hectare presentation", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(html, /geometryType === "Point"[\s\S]*geometryType === "LineString"[\s\S]*geometryType === "Polygon"/);
-  assert.match(html, /value \/ 10000[\s\S]*ha/);
+    assert.match(html, /value \/ 10000\)\.toFixed\(2\)[\s\S]*公顷/);
   assert.match(html, /id="spatialResultSheetToggle"[\s\S]*aria-expanded="false"[\s\S]*aria-controls="spatialResultDetails"/);
 });
 
@@ -462,7 +463,8 @@ test("SPN-FS-10", "reopen uses the cached canonical preview identity", () => {
 test("SPN-FS-11", "provider failure stays in compact result UI and never covers the map", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
-  assert.match(html, /id="spatialProviderCompact"[^>]*hidden>卫星地图暂时不可用/);
+    assert.equal((html.match(/卫星地图暂时不可用/g) || []).length, 1);
+    assert.doesNotMatch(html, /id="spatialProviderCompact"/);
   assert.match(html, /class="spatial-result-card"[\s\S]*id="spatialMapFailure"/);
   assert.doesNotMatch(css, /\.spatial-map-failure\s*\{[\s\S]*?position:\s*absolute/);
 });
@@ -542,8 +544,17 @@ test("SPN-R1-03", "conservative mainland policy excludes approved border matrix 
   assert.equal(conversionRequests, Object.keys(inland).length);
 });
 
+test("SPN-R1-04", "mobile provider failure stays single-instance and retryable outside collapsed details", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const source = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
+  assert.equal((html.match(/卫星地图暂时不可用/g) || []).length, 1);
+  assert.match(source, /mobileResultQuery\?\.matches[\s\S]*elements\.card\.insertBefore\(elements\.failure, elements\.details\)/);
+  assert.match(source, /if \(elements\.failure\) elements\.failure\.hidden = !unavailable/);
+  assert.match(source, /if \(elements\.retry\) elements\.retry\.hidden = !unavailable/);
+});
+
 assert.equal(isSpatialMapProvider(fakeProvider()), true);
-assert.equal(tests.length, 50);
+assert.equal(tests.length, 51);
 
 let passed = 0;
 for (const entry of tests) {

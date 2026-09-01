@@ -1,4 +1,5 @@
 .spatial-map-shell {
+  --spatial-sheet-occlusion: 0px;
   position: relative;
   width: 100%;
   height: 100vh;
@@ -19,8 +20,12 @@
 .spatial-map-canvas,
 .spatial-local-map-canvas {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: var(--spatial-sheet-occlusion);
+  left: 0;
   touch-action: none;
+  transition: bottom .2s ease;
 }
 
 .spatial-local-map-canvas svg { width: 100%; height: 100%; }
@@ -43,22 +48,29 @@
 .spatial-map-back {
   top: max(12px, env(safe-area-inset-top));
   left: max(12px, env(safe-area-inset-left));
+  width: 44px;
+  height: 44px;
   padding: 0;
+  border-radius: 50%;
   font-size: 22px;
 }
 
 .spatial-fit-control {
-  top: 50%;
-  right: calc(max(16px, env(safe-area-inset-right)) + 376px);
-  transform: translateY(-50%);
-  padding: 0 12px;
+  top: calc(max(12px, env(safe-area-inset-top)) + 52px);
+  left: max(12px, env(safe-area-inset-left));
+  width: 44px;
+  height: 44px;
+  padding: 10px;
+  border-radius: 50%;
 }
+
+.spatial-fit-control svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 .spatial-provider-attribution {
   position: absolute;
   z-index: 7;
   left: max(8px, env(safe-area-inset-left));
-  bottom: max(8px, env(safe-area-inset-bottom));
+  bottom: calc(var(--spatial-sheet-occlusion) + max(8px, env(safe-area-inset-bottom)));
   max-width: calc(100% - 420px);
   padding: 3px 6px;
   border-radius: 4px;
@@ -92,7 +104,7 @@
   gap: 8px;
   padding: 10px 14px;
   border: 0;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid rgba(226, 232, 240, .8);
   border-radius: 0;
   background: transparent;
   color: #0f172a;
@@ -107,16 +119,6 @@
   background: #fef3c7;
   color: #92400e;
   font-size: 11px;
-}
-
-.spatial-provider-compact {
-  min-width: 0;
-  overflow: hidden;
-  color: #92400e;
-  font-size: 10px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .spatial-sheet-chevron {
@@ -151,25 +153,32 @@
     bottom: max(8px, env(safe-area-inset-bottom));
     left: max(8px, env(safe-area-inset-left));
     width: auto;
-    max-height: min(72dvh, 620px);
+    max-height: min(40dvh, 420px);
     border-radius: 16px;
   }
 
-  .spatial-sheet-toggle[aria-expanded="false"] + .spatial-result-details { display: none; }
-  .spatial-result-details { max-height: calc(72dvh - 50px); padding-bottom: max(14px, env(safe-area-inset-bottom)); }
-  .spatial-fit-control {
-    top: calc(max(12px, env(safe-area-inset-top)) + 56px);
-    right: auto;
-    left: 50%;
-    transform: translateX(-50%);
+  .spatial-sheet-toggle[aria-expanded="false"] ~ .spatial-result-details { display: none; }
+  .spatial-result-card > .spatial-map-failure {
+    margin: 0 12px 8px;
+    padding: 5px 8px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.3;
   }
+  .spatial-result-card > .spatial-map-failure button {
+    min-height: 30px;
+    padding: 4px 9px;
+    font-size: 12px;
+  }
+  .spatial-result-details { max-height: calc(40dvh - 50px); padding-bottom: max(14px, env(safe-area-inset-bottom)); overflow-y: auto; }
+  .spatial-result-card[data-provider-unavailable="true"] .spatial-result-details { max-height: calc(40dvh - 94px); }
   .spatial-provider-attribution {
     left: max(6px, env(safe-area-inset-left));
-    bottom: calc(max(8px, env(safe-area-inset-bottom)) + 62px);
+    bottom: calc(var(--spatial-sheet-occlusion) + max(8px, env(safe-area-inset-bottom)));
     max-width: calc(100% - 12px);
   }
   .spatial-map-failure { min-width: 0; padding: 7px 8px; }
-  .spatial-map-failure strong, .spatial-map-failure span { min-width: 0; }
+  .spatial-map-failure strong { min-width: 0; }
 }
 
 @media (width: 390px) {

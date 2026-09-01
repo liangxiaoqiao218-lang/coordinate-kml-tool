@@ -8,8 +8,10 @@ const elements = {
   providerCanvas: document.querySelector("#spatialProviderCanvas"),
   local: document.querySelector("#spatialLocalMapCanvas"),
   attribution: document.querySelector("#spatialProviderAttribution"),
+  card: document.querySelector("#spatialResultCard"),
+  toggle: document.querySelector("#spatialResultSheetToggle"),
+  details: document.querySelector("#spatialResultDetails"),
   state: document.querySelector("#spatialProviderState"),
-  compactState: document.querySelector("#spatialProviderCompact"),
   failure: document.querySelector("#spatialMapFailure"),
   retry: document.querySelector("#spatialMapRetryAction"),
   fit: document.querySelector("#spatialFitGeometryAction")
@@ -23,23 +25,32 @@ let runtimeConfig = Object.freeze({
 });
 let controller = null;
 let initializationPromise = null;
+const mobileResultQuery = globalThis.matchMedia?.("(max-width: 640px)");
+
+function placeProviderFailure() {
+  if (!elements.failure || !elements.details) return;
+  if (mobileResultQuery?.matches && elements.card) {
+    elements.card.insertBefore(elements.failure, elements.details);
+    return;
+  }
+  const warning = elements.details.querySelector("#spatialResultWarning");
+  elements.details.insertBefore(elements.failure, warning);
+}
 
 function updateState({ state, detail = null }) {
   if (elements.state) {
     elements.state.textContent = state === "READY"
-      ? "卫星地图已加载"
+      ? "卫星地图"
       : state === "LOADING"
         ? "正在加载卫星地图"
-        : state === "FALLBACK_LOCAL_SVG"
-          ? "本地 Geometry 预览"
-          : "地图预览";
+        : "地块详情";
     elements.state.dataset.providerState = state;
     elements.state.dataset.detail = detail || "";
   }
   const unavailable = state === "FALLBACK_LOCAL_SVG";
+  if (elements.card) elements.card.dataset.providerUnavailable = String(unavailable);
   if (elements.failure) elements.failure.hidden = !unavailable;
   if (elements.retry) elements.retry.hidden = !unavailable;
-  if (elements.compactState) elements.compactState.hidden = !unavailable;
 }
 
 async function loadRuntimeConfig() {
@@ -123,7 +134,7 @@ async function open(payload) {
     elements.providerCanvas.hidden = false;
     elements.local.hidden = true;
     if (elements.attribution) {
-      elements.attribution.textContent = "卫星地图 · Geometry 仅用于显示";
+      elements.attribution.textContent = "卫星地图";
       elements.attribution.hidden = false;
     }
   }
@@ -157,5 +168,7 @@ function destroy() {
 
 elements.retry?.addEventListener("click", retry);
 elements.fit?.addEventListener("click", () => fitGeometry().catch(() => {}));
+mobileResultQuery?.addEventListener?.("change", placeProviderFailure);
+placeProviderFailure();
 
 globalThis.GeoKitSatelliteMap = Object.freeze({ open, initialize, retry, fitGeometry, destroy });

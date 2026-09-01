@@ -10,9 +10,11 @@ function projectedGroups(geometry, bounds, width, height, padding) {
   const { west, south, east, north } = bounds;
   const rangeX = Math.max(east - west, 0.000001);
   const rangeY = Math.max(north - south, 0.000001);
+  const paddingX = Number.isFinite(padding?.x) ? padding.x : Number(padding) || 0;
+  const paddingY = Number.isFinite(padding?.y) ? padding.y : Number(padding) || 0;
   const project = ([x, y]) => [
-    west === east ? width / 2 : padding + ((x - west) / rangeX) * (width - padding * 2),
-    south === north ? height / 2 : height - padding - ((y - south) / rangeY) * (height - padding * 2)
+    west === east ? width / 2 : paddingX + ((x - west) / rangeX) * (width - paddingX * 2),
+    south === north ? height / 2 : height - paddingY - ((y - south) / rangeY) * (height - paddingY * 2)
   ];
   if (geometry.type === "Point") return [[project(geometry.coordinates)]];
   if (geometry.type === "LineString") return [geometry.coordinates.map(project)];
@@ -34,10 +36,13 @@ export class LocalSvgRenderer {
     const svg = svgElement("svg", {
       viewBox: `0 0 ${width} ${height}`,
       role: "img",
-      "aria-label": "本地坐标 Geometry 预览"
+      "aria-label": "当前地块地图"
     });
     svg.append(svgElement("rect", { x: 0, y: 0, width, height, fill: "#edf2f6" }));
-    const groups = projectedGroups(geometry, this.plan.bounds, width, height, 52);
+    const groups = projectedGroups(geometry, this.plan.bounds, width, height, {
+      x: width * 0.16,
+      y: height * 0.16
+    });
     if (geometry.type === "Point") {
       const [x, y] = groups[0][0];
       svg.append(svgElement("circle", {
@@ -59,8 +64,8 @@ export class LocalSvgRenderer {
     this.container.hidden = false;
     this.container.replaceChildren(svg);
     if (this.attributionElement) {
-      this.attributionElement.textContent = "本地 SVG 预览 · 未请求底图服务";
-      this.attributionElement.hidden = false;
+      this.attributionElement.textContent = "";
+      this.attributionElement.hidden = true;
     }
   }
 }

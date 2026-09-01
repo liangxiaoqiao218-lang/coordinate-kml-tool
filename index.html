@@ -1137,6 +1137,37 @@
       background: #0f766e;
     }
 
+    .coordinate-result-actions {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .coordinate-result-actions .map-preview-action {
+      margin: 0;
+      border-color: #0f766e;
+      background: #0f766e;
+      color: #ffffff;
+      box-shadow: 0 12px 24px rgba(15, 118, 110, .18);
+      font-size: 17px;
+      font-weight: 900;
+    }
+
+    .coordinate-result-actions .map-preview-action:hover { background: #115e59; }
+
+    .coordinate-result-actions .coordinate-kml-action {
+      width: 100%;
+      min-height: 42px;
+      margin: 0;
+      padding: 9px 14px;
+      border-color: #cbd5e1;
+      background: #ffffff;
+      color: #334155;
+      box-shadow: none;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
     .coordinate-upload-card.is-complete + .kml-download-action {
       margin-top: 10px;
       box-shadow: 0 16px 30px rgba(37, 99, 235, 0.24);
@@ -4222,8 +4253,6 @@
     .map-preview-action {
       width: 100%;
       margin: 10px 0 0;
-      border-color: #0f766e;
-      color: #0f766e;
       font-weight: 800;
     }
 
@@ -4297,14 +4326,13 @@
       align-items: center;
       gap: 8px;
       padding: 8px 12px;
-      border-bottom: 1px solid rgba(180, 83, 9, .22);
       border: 1px solid rgba(180, 83, 9, .22);
+      border-radius: 10px;
       background: rgba(255, 251, 235, .92);
       color: #92400e;
     }
 
     .spatial-map-failure strong { font-size: 13px; }
-    .spatial-map-failure span { color: #78350f; font-size: 11px; }
     .spatial-map-failure button {
       min-height: 34px;
       margin-left: auto;
@@ -4318,25 +4346,24 @@
     .spatial-map-failure[hidden] { display: none; }
 
     .spatial-facts {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 1px;
+      display: block;
       margin-top: 10px;
       overflow: hidden;
-      border: 1px solid #e2e8e5;
-      border-radius: 14px;
-      background: #e2e8e5;
+      border-top: 1px solid #e2e8f0;
+      border-bottom: 1px solid #e2e8f0;
+      background: transparent;
     }
 
-    .spatial-facts > div { min-height: 58px; padding: 10px; background: #fff; display: flex; flex-direction: column; gap: 4px; }
+    .spatial-facts > div { min-height: 42px; padding: 9px 2px; background: transparent; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid #f1f5f9; }
+    .spatial-facts > div:last-child { border-bottom: 0; }
     .spatial-facts > div[hidden] { display: none; }
-    .spatial-facts span { color: #64748b; font-size: 11px; }
-    .spatial-facts strong { font-size: 16px; }
-    .spatial-facts .spatial-primary-fact strong { font-size: 18px; }
+    .spatial-facts span { color: #64748b; font-size: 12px; }
+    .spatial-facts strong { color: #0f172a; font-size: 14px; text-align: right; }
+    .spatial-facts .spatial-primary-fact strong { font-size: 15px; }
 
     .spatial-regional-view { margin-top: 12px; color: #64748b; font-size: 12px; }
-    .spatial-kml-action { width: 100%; margin-top: 10px; }
-    .spatial-kml-action:disabled { background: #cfd8d3; border-color: #cfd8d3; box-shadow: none; cursor: not-allowed; }
+    .spatial-kml-action { width: 100%; min-height: 40px; margin-top: 10px; border-color: #cbd5e1; background: #fff; color: #334155; box-shadow: none; font-weight: 800; }
+    .spatial-kml-action:disabled { background: #f1f5f9; border-color: #e2e8f0; color: #94a3b8; box-shadow: none; cursor: not-allowed; }
     .spatial-result-diagnostic { color: #64748b; font-size: 11px; }
   </style>
   <script src="pricing-config.js"></script>
@@ -4438,7 +4465,7 @@
         </div>
       </section>
 
-      <div id="recognitionSummary" class="recognition-status" aria-live="polite"></div>
+      <div id="recognitionSummary" class="recognition-status" aria-live="polite" hidden></div>
       <div id="recognitionProgress" class="recognition-status" aria-live="polite"></div>
       <div id="handwrittenDmsReviewPanel" class="handwritten-dms-review-panel" aria-live="polite"></div>
 
@@ -4448,12 +4475,14 @@
       <p class="cadastral-grid-hint">不填写时默认生成识别表格里的全部网格。已识别为马达加斯加矿权格网，当前默认按 XV/YV 为单格中心点生成网格。生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。</p>
     </div>
 
-    <button type="button" class="primary-action kml-download-action" onclick="downloadKml()">&#29983;&#25104; KML</button>
-    <button id="mapPreviewAction" type="button" class="secondary map-preview-action" onclick="openSpatialResult()" hidden disabled>生成地图</button>
+    <div class="coordinate-result-actions" aria-label="坐标结果操作">
+      <button id="mapPreviewAction" type="button" class="primary-action map-preview-action" onclick="openSpatialResult()" hidden disabled>查看地图</button>
+      <button type="button" class="secondary kml-download-action coordinate-kml-action" onclick="downloadKml()">下载 KML</button>
+    </div>
 
-    <details id="debugPanel" class="panel debug-panel" open>
+    <details id="debugPanel" class="panel debug-panel">
       <summary class="panel-title-row debug-title-row">
-        <strong>&#26597;&#30475;&#35782;&#21035;&#35814;&#24773;</strong>
+        <strong>识别详情</strong>
         <button type="button" class="debug-copy-button" onclick="event.preventDefault(); event.stopPropagation(); copyDebugText()">&#10697; &#22797;&#21046;&#35814;&#24773;</button>
       </summary>
       <textarea id="debugText" readonly></textarea>
@@ -4562,40 +4591,40 @@
           <div id="spatialProviderCanvas" class="spatial-map-canvas" hidden></div>
           <div id="spatialLocalMapCanvas" class="spatial-local-map-canvas">
             <div class="spatial-map-grid" aria-hidden="true"></div>
-            <svg id="spatialGeometrySvg" viewBox="0 0 360 280" role="img" aria-label="当前坐标 Geometry">
+            <svg id="spatialGeometrySvg" viewBox="0 0 360 280" role="img" aria-label="当前地块地图">
               <g id="spatialGeometryLayer"></g>
             </svg>
           </div>
-          <button type="button" class="spatial-map-control spatial-map-back" onclick="returnToCoordinate()" aria-label="返回坐标">←</button>
-          <button id="spatialFitGeometryAction" type="button" class="spatial-map-control spatial-fit-control">适配图形</button>
-          <div id="spatialProviderAttribution" class="spatial-provider-attribution">本地 SVG 预览 · 未请求底图服务</div>
+          <button type="button" class="spatial-map-control spatial-map-back" onclick="returnToCoordinate()" aria-label="返回坐标" title="返回坐标"><span aria-hidden="true">←</span></button>
+          <button id="spatialFitGeometryAction" type="button" class="spatial-map-control spatial-fit-control" aria-label="适配图形" title="适配图形">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4M8 8h8v8H8z" /></svg>
+          </button>
+          <div id="spatialProviderAttribution" class="spatial-provider-attribution" hidden></div>
         </div>
-        <aside id="spatialResultCard" class="spatial-result-card" aria-label="空间结果详情">
+        <aside id="spatialResultCard" class="spatial-result-card" aria-label="地块详情">
           <button id="spatialResultSheetToggle" type="button" class="spatial-sheet-toggle" aria-expanded="false" aria-controls="spatialResultDetails" onclick="toggleSpatialResultSheet()">
             <span id="spatialCollapsedSummary">—</span>
             <span id="spatialReviewCompact" class="spatial-review-compact" hidden>待核对</span>
-            <span id="spatialProviderCompact" class="spatial-provider-compact" hidden>卫星地图暂时不可用</span>
             <span class="spatial-sheet-chevron" aria-hidden="true">⌃</span>
           </button>
           <div id="spatialResultDetails" class="spatial-result-details">
             <div class="spatial-detail-heading">
               <span id="spatialGeometryType" class="spatial-geometry-type"></span>
-              <strong id="spatialProviderState">地图结果</strong>
+              <strong id="spatialProviderState">地块详情</strong>
             </div>
             <div id="spatialMapFailure" class="spatial-map-failure" role="status" aria-live="polite" hidden>
               <strong>卫星地图暂时不可用</strong>
-              <span>已显示本地坐标图形</span>
               <button id="spatialMapRetryAction" type="button" hidden>重试</button>
             </div>
             <div id="spatialResultWarning" class="spatial-result-warning" hidden></div>
-            <section class="spatial-facts" aria-label="空间基础信息">
+            <section class="spatial-facts" aria-label="地块详情">
               <div id="spatialAreaFact" class="spatial-primary-fact" hidden><span>面积</span><strong id="spatialAreaValue"></strong></div>
               <div id="spatialLengthFact" hidden><span id="spatialLengthLabel">周长</span><strong id="spatialLengthValue"></strong></div>
               <div><span>坐标点</span><strong id="spatialPointCount"></strong></div>
               <div><span>中心位置</span><strong id="spatialCentroid"></strong></div>
             </section>
             <div id="spatialRegionalView" class="spatial-regional-view" hidden></div>
-            <button id="spatialKmlAction" type="button" class="primary-action spatial-kml-action" onclick="downloadKml()" disabled>下载 KML</button>
+            <button id="spatialKmlAction" type="button" class="secondary spatial-kml-action" onclick="downloadKml()" disabled>下载 KML</button>
             <p id="spatialResultDiagnostic" class="spatial-result-diagnostic" hidden></p>
           </div>
         </aside>
@@ -4996,6 +5025,8 @@ Au值 = 纯度 × 10 后取整数</div>
     const goldCalculatorPanel = document.getElementById("goldCalculatorPanel");
     const goldUnavailableNotice = document.getElementById("goldUnavailableNotice");
     const mapPreviewAction = document.getElementById("mapPreviewAction");
+    const spatialMapShell = document.getElementById("spatialMapShell");
+    const spatialResultCard = document.getElementById("spatialResultCard");
     const spatialGeometryType = document.getElementById("spatialGeometryType");
     const spatialResultSheetToggle = document.getElementById("spatialResultSheetToggle");
     const spatialResultDetails = document.getElementById("spatialResultDetails");
@@ -6640,18 +6671,29 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function formatSpatialArea(value) {
       if (!Number.isFinite(value)) return "";
-      return value >= 1000000 ? `${(value / 1000000).toFixed(2)} km²` : `${Math.round(value).toLocaleString()} m²`;
+      return `${(value / 10000).toFixed(2)} 公顷`;
     }
 
     function formatSpatialCollapsedArea(value) {
-      if (!Number.isFinite(value)) return "";
-      return value >= 10000 ? `${(value / 10000).toFixed(2)} ha` : formatSpatialArea(value);
+      return formatSpatialArea(value);
+    }
+
+    async function syncSpatialMapViewport() {
+      if (!spatialMapShell) return;
+      const mobile = window.matchMedia("(max-width: 640px)").matches;
+      const sheetHeight = mobile && spatialResultCard
+        ? Math.ceil(spatialResultCard.getBoundingClientRect().height + 16)
+        : 0;
+      spatialMapShell.style.setProperty("--spatial-sheet-occlusion", `${sheetHeight}px`);
+      await waitForSpatialLayout();
+      await globalThis.GeoKitSatelliteMap?.fitGeometry?.();
     }
 
     function setSpatialSheetExpanded(expanded) {
       const next = expanded === true;
       spatialResultSheetToggle?.setAttribute("aria-expanded", String(next));
       if (spatialResultDetails) spatialResultDetails.hidden = false;
+      void syncSpatialMapViewport();
     }
 
     function toggleSpatialResultSheet() {
@@ -6689,12 +6731,14 @@ Au值 = 纯度 × 10 后取整数</div>
     function projectSpatialPosition(position, bounds) {
       const width = Math.max(bounds.maxX - bounds.minX, 0.000001);
       const height = Math.max(bounds.maxY - bounds.minY, 0.000001);
-      const scale = Math.min(310 / width, 230 / height);
+      const drawableWidth = 244;
+      const drawableHeight = 190;
+      const scale = Math.min(drawableWidth / width, drawableHeight / height);
       const drawnWidth = width * scale;
       const drawnHeight = height * scale;
       return [
-        25 + (310 - drawnWidth) / 2 + (position[0] - bounds.minX) * scale,
-        25 + (230 - drawnHeight) / 2 + (bounds.maxY - position[1]) * scale
+        58 + (drawableWidth - drawnWidth) / 2 + (position[0] - bounds.minX) * scale,
+        45 + (drawableHeight - drawnHeight) / 2 + (bounds.maxY - position[1]) * scale
       ];
     }
 
@@ -6774,9 +6818,7 @@ Au值 = 纯度 × 10 后取整数</div>
       spatialLengthLabel.textContent = Number.isFinite(facts?.perimeterMeters) ? "周长" : "长度";
       spatialLengthValue.textContent = formatSpatialMeters(linearValue);
       spatialPointCount.textContent = Number.isFinite(facts?.pointCount) ? `${facts.pointCount} 个` : "—";
-      spatialCentroid.textContent = Array.isArray(facts?.centroid)
-        ? `${facts.centroid[1].toFixed(5)}, ${facts.centroid[0].toFixed(5)}`
-        : "—";
+      spatialCentroid.textContent = Array.isArray(facts?.centroid) ? "查看" : "—";
 
       const regionalCount = Number(payload.regionalViewCount);
       spatialRegionalView.hidden = !Number.isFinite(regionalCount) || regionalCount <= 0;
@@ -6819,6 +6861,7 @@ Au值 = 纯度 × 10 后取整数</div>
         setSpatialSheetExpanded(!window.matchMedia("(max-width: 640px)").matches);
         await waitForSpatialLayout();
         const mapResult = await globalThis.GeoKitSatelliteMap?.open(payload);
+        await syncSpatialMapViewport();
         if (mapResult?.authorityMutationCount > 0) {
           spatialMapFailure.hidden = false;
           spatialResultDiagnostic.hidden = false;
@@ -6826,8 +6869,9 @@ Au值 = 纯度 × 10 后取整数</div>
         }
       } catch (error) {
         if (pages.spatialResult?.classList.contains("active")) {
-          spatialResultDiagnostic.hidden = false;
-          spatialResultDiagnostic.textContent = "卫星底图暂时不可用，已保留本地 Geometry 预览。";
+          spatialMapFailure.hidden = false;
+          spatialResultDiagnostic.hidden = true;
+          spatialResultDiagnostic.textContent = "";
         }
         showMessage(error?.message || "地图预览暂时不可用。", true, 6000);
       } finally {
@@ -7122,9 +7166,11 @@ Au值 = 纯度 × 10 后取整数</div>
         chipWrap.appendChild(chip);
       });
       recognitionSummary.appendChild(chipWrap);
+      recognitionSummary.hidden = true;
     }
 
     function clearRecognitionSummary() {
+      recognitionSummary.hidden = true;
       recognitionSummary.style.display = "none";
       recognitionSummary.textContent = "";
       recognitionSummary.className = "recognition-status";

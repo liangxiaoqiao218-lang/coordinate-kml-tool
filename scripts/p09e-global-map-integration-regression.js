@@ -162,7 +162,7 @@ test("P09E-17", "production HTML exposes the provider-neutral Spatial hooks", ()
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const providerSource = fs.readFileSync(path.join(root, "assets/spatial-map/amap-provider-adapter.js"), "utf8");
   assert.match(html, /id="spatialProviderCanvas"/);
-  assert.match(html, />生成地图<\/button>/);
+  assert.match(html, /id="mapPreviewAction"[^>]*class="primary-action map-preview-action"[^>]*>查看地图<\/button>/);
   assert.doesNotMatch(html, /data-spatial-map-style=/);
   assert.match(html, /spatial-map-product\.js/);
   assert.match(providerSource, /new this\.runtime\.TileLayer\.Satellite/);
@@ -182,7 +182,9 @@ test("P09E-18", "390 mobile direct fullscreen task closure is encoded", () => {
 test("P09E-19", "legacy local SVG renderer remains available", () => {
   const source = fs.readFileSync(path.join(root, "assets/spatial-map/maplibre-renderer.js"), "utf8");
   assert.match(source, /export class LocalSvgRenderer/);
-  assert.match(source, /本地 SVG 预览/);
+  assert.match(source, /"aria-label": "当前地块地图"/);
+  assert.match(source, /x: width \* 0\.16[\s\S]*y: height \* 0\.16/);
+  assert.doesNotMatch(source, /本地 SVG 预览|本地 Geometry 预览/);
 });
 test("P09E-20", "direct task back and fit flow preserve result ownership", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
@@ -260,7 +262,53 @@ test("P09E-29", "direct HTTP map route redirects without creating map authority"
   assert.doesNotMatch(renderRoutes, /\/coordinate\/map/);
 });
 
-assert.equal(tests.length, 29);
+test("P09E-30", "Coordinate Result presents Map as primary and KML as secondary", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /class="coordinate-result-actions"[\s\S]*id="mapPreviewAction"[^>]*class="primary-action map-preview-action"[\s\S]*class="secondary kml-download-action coordinate-kml-action"/);
+  assert.match(html, />查看地图<\/button>[\s\S]*>下载 KML<\/button>/);
+});
+
+test("P09E-31", "recognition summary contract remains computed but is hidden from the product surface", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /id="recognitionSummary"[^>]*hidden/);
+  assert.match(html, /function setRecognitionSummary[\s\S]*区域概览[\s\S]*recognitionSummary\.hidden = true/);
+});
+
+test("P09E-32", "fallback presentation contains one approved failure message and no technical copy", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const source = fs.readFileSync(path.join(root, "assets/spatial-map/maplibre-renderer.js"), "utf8");
+  assert.equal((html.match(/卫星地图暂时不可用/g) || []).length, 1);
+  assert.doesNotMatch(html + source, /本地 SVG 预览|未请求底图服务|本地 Geometry 预览|Geometry 仅用于显示/);
+});
+
+test("P09E-33", "mobile result sheet remains within 40dvh and internally scrollable", () => {
+  const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*max-height: min\(40dvh, 420px\)/);
+  assert.match(css, /\.spatial-result-details\s*\{[\s\S]*max-height: calc\(40dvh - 50px\)[\s\S]*overflow-y: auto/);
+});
+
+test("P09E-34", "sheet transitions recalculate the usable map viewport and refit geometry", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  assert.match(html, /async function syncSpatialMapViewport[\s\S]*--spatial-sheet-occlusion[\s\S]*GeoKitSatelliteMap\?\.fitGeometry/);
+  assert.match(html, /function setSpatialSheetExpanded[\s\S]*syncSpatialMapViewport/);
+  assert.match(css, /--spatial-sheet-occlusion: 0px/);
+  assert.match(css, /bottom: var\(--spatial-sheet-occlusion\)/);
+});
+
+test("P09E-35", "mobile collapsed and expanded states reuse one tappable provider-failure node", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const source = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
+  const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  assert.equal((html.match(/卫星地图暂时不可用/g) || []).length, 1);
+  assert.match(source, /function placeProviderFailure[\s\S]*elements\.card\.insertBefore\(elements\.failure, elements\.details\)/);
+  assert.match(source, /elements\.details\.insertBefore\(elements\.failure, warning\)/);
+  assert.match(source, /dataset\.providerUnavailable = String\(unavailable\)/);
+  assert.match(html, /id="spatialMapRetryAction"[^>]*>重试<\/button>/);
+  assert.match(css, /\.spatial-result-card > \.spatial-map-failure[\s\S]*font-size: 12px/);
+});
+
+assert.equal(tests.length, 35);
 let passed = 0;
 for (const entry of tests) {
   try {
