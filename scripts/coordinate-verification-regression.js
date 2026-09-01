@@ -307,6 +307,7 @@ assert.deepEqual(mapperResponse.coordinateEngineV2.review_reason, representative
 const serverSource = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
 assert.match(serverSource, /requires_review: normalizedRequiresReview,\s*review_reason: deriveCoordinateReviewReason\(/);
 assert.match(serverSource, /candidateFieldConflict: payload\.handwrittenVisionRouting\?\.candidateSelectionDecision === "KEEP_CURRENT_AND_REQUIRE_REVIEW"/);
+assert.match(serverSource, /pointReviewRequired \|\| options\.forceRequiresReview === true/);
 assert.match(serverSource, /group\.warnings\.some\(isCoordinateEngineV2ReviewWarning\)/);
 const reviewReasonModuleSource = fs.readFileSync(new URL("../server/coordinate-review-reason.js", import.meta.url), "utf8");
 assert.doesNotMatch(reviewReasonModuleSource, /kml_ready|confirmationStatus|decisionState/);

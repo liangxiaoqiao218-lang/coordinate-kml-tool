@@ -9427,7 +9427,7 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
     crsConfirmationRequired ? COORDINATE_REVIEW_REASON_CODE.CRS_CONFIRMATION_REQUIRED : null,
     orderAmbiguous ? COORDINATE_REVIEW_REASON_CODE.AXIS_ORDER_AMBIGUOUS : null,
     options.candidateFieldConflict === true ? COORDINATE_REVIEW_REASON_CODE.CANDIDATE_FIELD_CONFLICT : null,
-    pointReviewRequired ? COORDINATE_REVIEW_REASON_CODE.POINT_REVIEW_REQUIRED : null,
+    (pointReviewRequired || options.forceRequiresReview === true) ? COORDINATE_REVIEW_REASON_CODE.POINT_REVIEW_REQUIRED : null,
     fallbackUsed ? COORDINATE_REVIEW_REASON_CODE.FALLBACK_RESULT_REVIEW : null,
     coordinateType === "handwritten_dms_experimental" ? COORDINATE_REVIEW_REASON_CODE.HANDWRITTEN_EXPERIMENTAL_REVIEW : null,
     reviewWarningPresent ? COORDINATE_REVIEW_REASON_CODE.REVIEW_WARNING_PRESENT : null
