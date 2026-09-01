@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex,nofollow,noarchive" />
+  <meta name="referrer" content="no-referrer" />
+  <title>共享地块结果 · GeoKit Lab</title>
+  <link rel="stylesheet" href="/assets/spatial-map/spatial-map.css" />
+  <link rel="stylesheet" href="/assets/spatial-map/spatial-share.css" />
+</head>
+<body>
+  <main id="sharedSpatialPage" class="shared-spatial-page">
+    <section id="spatialMapShell" class="spatial-map-shell" aria-label="共享地块地图">
+      <div class="spatial-map-stage">
+        <div id="spatialProviderCanvas" class="spatial-map-canvas" hidden></div>
+        <div id="spatialLocalMapCanvas" class="spatial-local-map-canvas"></div>
+        <button id="spatialFitGeometryAction" type="button" class="spatial-map-control spatial-fit-control" aria-label="适配图形" title="适配图形">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4M8 8h8v8H8z" /></svg>
+        </button>
+        <div id="spatialProviderAttribution" class="spatial-provider-attribution" hidden></div>
+      </div>
+      <aside id="spatialResultCard" class="spatial-result-card shared-result-card" aria-label="共享地块详情">
+        <button id="spatialResultSheetToggle" type="button" class="spatial-sheet-toggle" aria-expanded="false" aria-controls="spatialResultDetails">
+          <span id="spatialCollapsedSummary">正在读取…</span>
+          <span id="spatialReviewCompact" class="spatial-review-compact" hidden>待核对</span>
+          <span class="spatial-sheet-chevron" aria-hidden="true">⌃</span>
+        </button>
+        <div id="spatialResultDetails" class="spatial-result-details">
+          <div class="spatial-detail-heading">
+            <span id="spatialGeometryType" class="spatial-geometry-type"></span>
+            <strong id="spatialProviderState">地块详情</strong>
+          </div>
+          <div id="spatialMapFailure" class="spatial-map-failure" role="status" aria-live="polite" hidden>
+            <strong>卫星地图暂时不可用</strong>
+            <button id="spatialMapRetryAction" type="button" hidden>重试</button>
+          </div>
+          <div id="spatialResultWarning" class="spatial-result-warning" hidden></div>
+          <section class="spatial-facts" aria-label="地块详情">
+            <div id="spatialAreaFact" class="spatial-primary-fact" hidden><span>面积</span><strong id="spatialAreaValue"></strong></div>
+            <div id="spatialPerimeterFact" hidden><span>周长</span><strong id="spatialPerimeterValue"></strong></div>
+            <div><span>坐标点</span><strong id="spatialPointCount"></strong></div>
+          </section>
+          <details class="shared-coordinate-details">
+            <summary><span>坐标详情</span><button id="sharedCopyCoordinatesAction" type="button" class="shared-copy-action">复制坐标</button></summary>
+            <pre id="sharedCoordinateText"></pre>
+          </details>
+          <div class="shared-page-actions">
+            <button id="sharedEditAction" type="button" class="shared-edit-action" hidden>编辑坐标</button>
+            <a class="shared-acquisition-link" href="/coordinate?from=shared_spatial_result">识别新的坐标 <span aria-hidden="true">→</span></a>
+            <button id="sharedRevokeAction" type="button" class="shared-revoke-action" hidden>停止分享</button>
+          </div>
+        </div>
+      </aside>
+    </section>
+    <section id="sharedUnavailable" class="shared-unavailable" hidden>
+      <h1>此分享不可用</h1>
+      <p>链接已停止分享或不可用。</p>
+      <a href="/coordinate?from=shared_spatial_result">识别新的坐标</a>
+    </section>
+  </main>
+  <script type="module" src="/assets/spatial-map/spatial-map-product.js"></script>
+  <script type="module" src="/assets/spatial-map/spatial-share-page.js"></script>
+</body>
+</html>

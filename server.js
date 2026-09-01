@@ -33,6 +33,20 @@ import { parseManualLongitudeLatitudeText } from "./server/manual-coordinate-inp
 import { calculateSpatialFacts } from "./server/spatial/spatial-facts.js";
 import { createAmapSecurityProxy } from "./server/spatial/amap-security-proxy.js";
 import {
+  SHARE_ACCESS_SCOPE,
+  SHARE_USAGE_PERMISSION,
+  buildSharedSpatialSnapshot,
+  createManagerCapability,
+  createRecipientCapability,
+  createShareId,
+  hashManagerCapability,
+  hashRecipientCapability,
+  isValidShareId,
+  managerCapabilityMatches,
+  publicSharedSpatialResult
+} from "./server/spatial/sharing/shared-spatial-result-v1.js";
+import { SupabaseSpatialShareStore } from "./server/spatial/sharing/supabase-share-store.js";
+import {
   COORDINATE_DECISION_STATE,
   FINALIZED_COORDINATE_SCHEMA_VERSION,
   CONFIRMATION_RUNTIME_VERSION,
@@ -71,11 +85,34 @@ const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "
 const supabase = supabaseUrl && supabaseServiceRoleKey
   ? createClient(supabaseUrl, supabaseServiceRoleKey)
   : null;
+const spatialShareStore = new SupabaseSpatialShareStore({ supabase });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
 const regressionRecognitionTraces = new Map();
 const MAX_REGRESSION_RECOGNITION_TRACES = 200;
+const spatialShareReviewReasonRegistry = new Map();
+const MAX_SPATIAL_SHARE_REVIEW_REASONS = 500;
+
+function spatialShareSourceIdentityKey(result = {}) {
+  if (!result?.resultId || !Number.isSafeInteger(result?.resultRevision) || !result?.geometryHash) return "";
+  return `${result.resultId}:${result.resultRevision}:${result.geometryHash}`;
+}
+
+function captureSpatialShareReviewReason(payload = {}) {
+  const result = payload?.finalizedCoordinateResult;
+  const key = spatialShareSourceIdentityKey(result);
+  if (!key || !payload?.coordinateEngineV2
+    || !Object.hasOwn(payload.coordinateEngineV2, "review_reason")) return;
+  const reviewReason = payload.coordinateEngineV2.review_reason ?? null;
+  spatialShareReviewReasonRegistry.delete(key);
+  spatialShareReviewReasonRegistry.set(key, reviewReason && typeof reviewReason === "object"
+    ? Object.freeze(structuredClone(reviewReason))
+    : null);
+  while (spatialShareReviewReasonRegistry.size > MAX_SPATIAL_SHARE_REVIEW_REASONS) {
+    spatialShareReviewReasonRegistry.delete(spatialShareReviewReasonRegistry.keys().next().value);
+  }
+}
 
 function storeRegressionRecognitionTrace(trace) {
   if (!trace?.requestId || !trace?.caseId) return false;
@@ -456,6 +493,14 @@ function getStructuredData(meta, canonicalPath) {
 }
 
 app.use(express.json({ limit: "1mb" }));
+app.use((req, res, next) => {
+  const sendJson = res.json.bind(res);
+  res.json = payload => {
+    captureSpatialShareReviewReason(payload);
+    return sendJson(payload);
+  };
+  next();
+});
 
 const appBrand = "GeoKit Lab";
 const appVersion = "v1.0.2";
@@ -491,6 +536,7 @@ app.use((req, res, next) => {
 const SECURITY_EVENT_LIMIT = 200;
 const securityEvents = [];
 const rateLimitBuckets = new Map();
+const spatialShareRateLimitBuckets = new Map();
 const rateLimitRules = {
   admin: { windowMs: 60 * 1000, max: 240 },
   usage: { windowMs: 60 * 1000, max: 120 },
@@ -711,6 +757,105 @@ function rateLimitGuard(req, res, next) {
   return next();
 }
 
+function consumeSpatialShareRateLimit(key, { windowMs, max }) {
+  const now = Date.now();
+  const bucket = spatialShareRateLimitBuckets.get(key);
+  if (!bucket || now > bucket.resetAt) {
+    spatialShareRateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  bucket.count += 1;
+  return bucket.count <= max;
+}
+
+function parseCookieHeader(req) {
+  return Object.fromEntries(String(req.get("cookie") || "")
+    .split(";")
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const separator = part.indexOf("=");
+      if (separator < 0) return [part, ""];
+      const name = part.slice(0, separator);
+      const value = part.slice(separator + 1);
+      try {
+        return [name, decodeURIComponent(value)];
+      } catch (_) {
+        return [name, ""];
+      }
+    }));
+}
+
+const SPATIAL_SHARE_MANAGER_COOKIE = "__Host-geokit_spatial_share_manager";
+const SPATIAL_SHARE_RECIPIENT_COOKIE = "__Host-geokit_spatial_share_recipient";
+
+function getSpatialShareManagerCapability(req) {
+  return String(parseCookieHeader(req)[SPATIAL_SHARE_MANAGER_COOKIE] || "");
+}
+
+function setSpatialShareManagerCapability(res, capability) {
+  res.append("Set-Cookie", `${SPATIAL_SHARE_MANAGER_COOKIE}=${encodeURIComponent(capability)}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict`);
+}
+
+function getSpatialShareRecipientCapability(req) {
+  return String(parseCookieHeader(req)[SPATIAL_SHARE_RECIPIENT_COOKIE] || "");
+}
+
+function setSpatialShareRecipientCapability(res, capability) {
+  res.append("Set-Cookie", `${SPATIAL_SHARE_RECIPIENT_COOKIE}=${encodeURIComponent(capability)}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax`);
+}
+
+function sameOriginSpatialShareMutation(req) {
+  const source = req.get("origin") || req.get("referer") || "";
+  if (!source) return false;
+  try {
+    return new URL(source).origin === new URL(getRequestOrigin(req)).origin;
+  } catch (_) {
+    return false;
+  }
+}
+
+function spatialShareMutationGuard(req, res, next) {
+  if (sameOriginSpatialShareMutation(req)) return next();
+  return res.status(403).json({ success: false, code: "SHARE_ORIGIN_FORBIDDEN" });
+}
+
+function spatialShareCreateRateLimit(req, res, next) {
+  let managerCapability = getSpatialShareManagerCapability(req);
+  if (!managerCapability) {
+    managerCapability = createManagerCapability();
+    req.spatialShareManagerCapability = managerCapability;
+    setSpatialShareManagerCapability(res, managerCapability);
+  }
+  const ipAllowed = consumeSpatialShareRateLimit(
+    `share-create-ip:${getRequestIpForSecurity(req)}`,
+    { windowMs: 10 * 60 * 1000, max: 5 }
+  );
+  const managerHash = hashManagerCapability(managerCapability);
+  const managerAllowed = consumeSpatialShareRateLimit(
+    `share-create-manager:${managerHash}`,
+    { windowMs: 24 * 60 * 60 * 1000, max: 20 }
+  );
+  if (ipAllowed && managerAllowed) return next();
+  return res.status(429).json({ success: false, code: "SHARE_RATE_LIMITED" });
+}
+
+function spatialShareReadRateLimit(req, res, next) {
+  const allowed = consumeSpatialShareRateLimit(
+    `share-read-ip:${getRequestIpForSecurity(req)}`,
+    { windowMs: 60 * 1000, max: 60 }
+  );
+  return allowed ? next() : res.status(429).json({ success: false, code: "SHARE_RATE_LIMITED" });
+}
+
+function spatialShareRevokeRateLimit(req, res, next) {
+  const allowed = consumeSpatialShareRateLimit(
+    `share-revoke-ip:${getRequestIpForSecurity(req)}`,
+    { windowMs: 10 * 60 * 1000, max: 10 }
+  );
+  return allowed ? next() : res.status(429).json({ success: false, code: "SHARE_RATE_LIMITED" });
+}
+
 app.use(originGuard);
 app.use(rateLimitGuard);
 
@@ -766,10 +911,32 @@ app.get("/coordinate/map", (req, res) => {
   res.redirect(302, "/coordinate");
 });
 
+function setSharedSpatialResultHeaders(res) {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; script-src 'self' https://webapi.amap.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://*.amap.com; worker-src 'self' blob:");
+}
+
+app.get("/s/:shareId", spatialShareReadRateLimit, async (req, res) => {
+  setSharedSpatialResultHeaders(res);
+  let record = null;
+  try {
+    if (isValidShareId(req.params.shareId) && spatialShareStore.isConfigured()) {
+      record = await spatialShareStore.findActive(req.params.shareId);
+    }
+  } catch (_) {}
+  if (!record) res.status(404);
+  return res.type("html").send(fs.readFileSync(path.join(__dirname, "share-result.html"), "utf8"));
+});
+
 app.get(["/", "/index.html", "/coordinate", "/coordinate-tool", "/tool", "/convert", "/ocr", "/mining", "/mining-judge", "/mining-analysis", "/judge", "/gold", "/gold-calculator"], renderIndexWithMeta);
 
 app.get("/robots.txt", (req, res) => {
-  res.type("text/plain").send("User-agent: *\nAllow: /\n\nSitemap: https://geokitlab.com/sitemap.xml\n");
+  res.type("text/plain").send("User-agent: *\nAllow: /\nDisallow: /s/\nDisallow: /api/spatial-shares/\n\nSitemap: https://geokitlab.com/sitemap.xml\n");
 });
 
 app.get("/sitemap.xml", (req, res) => {
@@ -12433,6 +12600,151 @@ app.post("/api/map-preview", enforceSpatialApiEnabled, (req, res) => {
     regionalViewScope: null
   });
 });
+
+app.post(
+  "/api/spatial-shares",
+  spatialShareMutationGuard,
+  spatialShareCreateRateLimit,
+  async (req, res) => {
+    if (!spatialShareStore.isConfigured()) {
+      return res.status(503).json({ success: false, code: "SHARE_STORE_UNAVAILABLE" });
+    }
+    const allowedFields = new Set(["resultId", "resultRevision", "geometryHash", "accessScope", "usagePermission"]);
+    const bodyFields = Object.keys(req.body && typeof req.body === "object" ? req.body : {});
+    if (bodyFields.includes("geometry")) {
+      return res.status(400).json({ success: false, code: "CLIENT_GEOMETRY_FORBIDDEN" });
+    }
+    if (bodyFields.some(field => !allowedFields.has(field))) {
+      return res.status(400).json({ success: false, code: "SHARE_REQUEST_FIELDS_INVALID" });
+    }
+    const identity = {
+      resultId: String(req.body?.resultId || ""),
+      resultRevision: Number(req.body?.resultRevision),
+      geometryHash: String(req.body?.geometryHash || "")
+    };
+    const current = validateFinalizedCoordinateIdentity(identity);
+    if (!current.ok) {
+      return res.status(current.httpStatus).json({ success: false, code: current.code });
+    }
+    try {
+      const existingCapability = getSpatialShareManagerCapability(req);
+      const managerCapability = existingCapability || req.spatialShareManagerCapability || createManagerCapability();
+      const managerCapabilityHash = hashManagerCapability(managerCapability);
+      const snapshot = buildSharedSpatialSnapshot({
+        finalizedResult: current.result,
+        reviewReason: spatialShareReviewReasonRegistry.get(spatialShareSourceIdentityKey(current.result)) ?? null,
+        shareId: createShareId(),
+        accessScope: String(req.body?.accessScope || SHARE_ACCESS_SCOPE.RECIPIENT_ONLY),
+        usagePermission: String(req.body?.usagePermission || SHARE_USAGE_PERMISSION.VIEW_ONLY)
+      });
+      await spatialShareStore.create({ snapshot, managerCapabilityHash });
+      if (!existingCapability && !req.spatialShareManagerCapability) setSpatialShareManagerCapability(res, managerCapability);
+      const shareUrl = `${getRequestOrigin(req)}/s/${snapshot.shareId}`;
+      return res.status(201).json({
+        success: true,
+        shareUrl,
+        shareId: snapshot.shareId
+      });
+    } catch (error) {
+      const clientCodes = new Set([
+        "SHARE_ACCESS_SCOPE_INVALID",
+        "SHARE_USAGE_PERMISSION_INVALID",
+        "SHARE_SOURCE_INVALID",
+        "SHARE_CRS_INVALID",
+        "SHARE_GEOMETRY_INVALID",
+        "SHARE_GEOMETRY_IDENTITY_MISMATCH",
+        "SHARE_VERTEX_LIMIT_EXCEEDED",
+        "SHARE_SNAPSHOT_TOO_LARGE"
+      ]);
+      const code = clientCodes.has(error?.code) ? error.code : "SHARE_CREATE_FAILED";
+      return res.status(clientCodes.has(code) ? 422 : 503).json({ success: false, code });
+    }
+  }
+);
+
+app.post(
+  "/api/spatial-shares/:shareId/access",
+  spatialShareMutationGuard,
+  spatialShareReadRateLimit,
+  async (req, res) => {
+    setSharedSpatialResultHeaders(res);
+    try {
+      if (req.get("x-geokit-active-share-access") !== "1") {
+        return res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+      }
+      if (!isValidShareId(req.params.shareId) || !spatialShareStore.isConfigured()) {
+        return res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+      }
+      const activeRecord = await spatialShareStore.findActive(req.params.shareId);
+      if (!activeRecord) return res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+      if (managerCapabilityMatches(getSpatialShareManagerCapability(req), activeRecord.managerCapabilityHash)) {
+        return res.status(204).end();
+      }
+      const existingCapability = getSpatialShareRecipientCapability(req);
+      const recipientCapability = existingCapability || createRecipientCapability();
+      const recipientCapabilityHash = hashRecipientCapability(recipientCapability);
+      const record = await spatialShareStore.bindRecipient(req.params.shareId, recipientCapabilityHash);
+      if (!record) return res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+      if (!existingCapability && record.snapshot.accessScope === SHARE_ACCESS_SCOPE.RECIPIENT_ONLY) {
+        setSpatialShareRecipientCapability(res, recipientCapability);
+      }
+      return res.status(204).end();
+    } catch (_) {
+      return res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+    }
+  }
+);
+
+app.get("/api/spatial-shares/:shareId", spatialShareReadRateLimit, async (req, res) => {
+  setSharedSpatialResultHeaders(res);
+  try {
+    const recipientCapabilityHash = hashRecipientCapability(getSpatialShareRecipientCapability(req));
+    const activeRecord = isValidShareId(req.params.shareId) && spatialShareStore.isConfigured()
+      ? await spatialShareStore.findActive(req.params.shareId)
+      : null;
+    const creatorAuthorized = activeRecord && managerCapabilityMatches(
+      getSpatialShareManagerCapability(req),
+      activeRecord.managerCapabilityHash
+    );
+    const record = creatorAuthorized
+      ? activeRecord
+      : await spatialShareStore.findAuthorized(req.params.shareId, recipientCapabilityHash);
+    if (!record) return res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+    const canRevoke = managerCapabilityMatches(
+      getSpatialShareManagerCapability(req),
+      record.managerCapabilityHash
+    );
+    return res.json({
+      success: true,
+      sharedSpatialResult: publicSharedSpatialResult(record, { canRevoke })
+    });
+  } catch (_) {
+    return res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+  }
+});
+
+app.delete(
+  "/api/spatial-shares/:shareId",
+  spatialShareMutationGuard,
+  spatialShareRevokeRateLimit,
+  async (req, res) => {
+    try {
+      const capability = getSpatialShareManagerCapability(req);
+      const record = isValidShareId(req.params.shareId) && spatialShareStore.isConfigured()
+        ? await spatialShareStore.findActive(req.params.shareId)
+        : null;
+      if (!record || !managerCapabilityMatches(capability, record.managerCapabilityHash)) {
+        return res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+      }
+      const revoked = await spatialShareStore.revoke(req.params.shareId, hashManagerCapability(capability));
+      return revoked
+        ? res.status(204).end()
+        : res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+    } catch (_) {
+      return res.status(404).json({ success: false, code: "SHARE_UNAVAILABLE" });
+    }
+  }
+);
 
 /*
  * Coordinate recognition maintenance rules

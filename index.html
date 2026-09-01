@@ -1168,6 +1168,62 @@
       font-weight: 800;
     }
 
+    .coordinate-secondary-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .coordinate-result-actions .spatial-share-action {
+      min-height: 42px;
+      padding: 9px 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #334155;
+      box-shadow: none;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .spatial-share-card-action {
+      position: absolute;
+      z-index: 2;
+      top: 7px;
+      right: 42px;
+      width: 36px;
+      min-width: 36px;
+      min-height: 36px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: #eef6f4;
+      color: #0f766e;
+      box-shadow: none;
+      font-size: 18px;
+    }
+
+    .spatial-result-card .spatial-sheet-toggle { padding-right: 84px; }
+
+    .spatial-share-dialog {
+      width: min(420px, calc(100vw - 32px));
+      padding: 0;
+      border: 0;
+      border-radius: 16px;
+      box-shadow: 0 24px 70px rgba(15, 23, 42, .28);
+    }
+
+    .spatial-share-dialog::backdrop { background: rgba(15, 23, 42, .54); }
+    .spatial-share-dialog-card { display: grid; gap: 14px; padding: 22px; }
+    .spatial-share-dialog h3, .spatial-share-dialog p { margin: 0; }
+    .spatial-share-dialog p { color: #475569; line-height: 1.55; }
+    .spatial-share-options { display: grid; gap: 8px; padding: 0; margin: 0; border: 0; }
+    .spatial-share-options legend { margin-bottom: 7px; color: #334155; font-weight: 800; }
+    .spatial-share-option { display: grid; grid-template-columns: auto 1fr; gap: 2px 9px; align-items: start; padding: 10px 11px; border: 1px solid #e2e8f0; border-radius: 10px; color: #1e293b; font-weight: 700; cursor: pointer; }
+    .spatial-share-option input { grid-row: 1 / span 2; margin-top: 3px; }
+    .spatial-share-option small { color: #64748b; font-weight: 500; }
+    .spatial-share-dialog-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
     .coordinate-upload-card.is-complete + .kml-download-action {
       margin-top: 10px;
       box-shadow: 0 16px 30px rgba(37, 99, 235, 0.24);
@@ -4477,7 +4533,10 @@
 
     <div class="coordinate-result-actions" aria-label="坐标结果操作">
       <button id="mapPreviewAction" type="button" class="primary-action map-preview-action" onclick="openSpatialResult()" hidden disabled>查看地图</button>
-      <button type="button" class="secondary kml-download-action coordinate-kml-action" onclick="downloadKml()">下载 KML</button>
+      <div class="coordinate-secondary-actions">
+        <button type="button" class="secondary kml-download-action coordinate-kml-action" onclick="downloadKml()">下载 KML</button>
+        <button id="shareResultAction" type="button" class="spatial-share-action" onclick="openSpatialShareDialog()" hidden disabled>分享结果</button>
+      </div>
     </div>
 
     <details id="debugPanel" class="panel debug-panel">
@@ -4602,6 +4661,7 @@
           <div id="spatialProviderAttribution" class="spatial-provider-attribution" hidden></div>
         </div>
         <aside id="spatialResultCard" class="spatial-result-card" aria-label="地块详情">
+          <button id="spatialShareCardAction" type="button" class="spatial-share-card-action" onclick="openSpatialShareDialog()" aria-label="分享结果" title="分享结果" hidden>↗</button>
           <button id="spatialResultSheetToggle" type="button" class="spatial-sheet-toggle" aria-expanded="false" aria-controls="spatialResultDetails" onclick="toggleSpatialResultSheet()">
             <span id="spatialCollapsedSummary">—</span>
             <span id="spatialReviewCompact" class="spatial-review-compact" hidden>待核对</span>
@@ -4861,6 +4921,26 @@ Au值 = 纯度 × 10 后取整数</div>
   </footer>
   <div id="goldCopyFloat" class="copy-float">结果已复制，可直接发送或对比报价</div>
 
+  <dialog id="spatialShareDialog" class="spatial-share-dialog">
+    <form method="dialog" class="spatial-share-dialog-card" onsubmit="return false">
+      <h3>分享地块结果</h3>
+      <fieldset class="spatial-share-options">
+        <legend>谁可以查看</legend>
+        <label class="spatial-share-option"><input type="radio" name="spatialShareAccessScope" value="RECIPIENT_ONLY" checked><span>仅接收者</span><small>默认推荐</small></label>
+        <label class="spatial-share-option"><input type="radio" name="spatialShareAccessScope" value="ANYONE_WITH_LINK"><span>获得链接的人</span><small>可继续转发查看</small></label>
+      </fieldset>
+      <fieldset class="spatial-share-options">
+        <legend>允许对方</legend>
+        <label class="spatial-share-option"><input type="radio" name="spatialShareUsagePermission" value="VIEW_ONLY" checked><span>仅查看</span></label>
+        <label class="spatial-share-option"><input type="radio" name="spatialShareUsagePermission" value="ALLOW_EDIT"><span>允许修改</span></label>
+      </fieldset>
+      <div class="spatial-share-dialog-actions">
+        <button type="button" class="secondary" onclick="closeSpatialShareDialog()">取消</button>
+        <button id="spatialShareCreateAction" type="button" onclick="createSpatialShare()">创建分享链接</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="imageModal" class="image-modal" onclick="closeImageModal()">
     <div class="image-modal-content" onclick="event.stopPropagation()">
       <button type="button" class="image-modal-close" onclick="closeImageModal()" aria-label="关闭图片预览">×</button>
@@ -5025,6 +5105,10 @@ Au值 = 纯度 × 10 后取整数</div>
     const goldCalculatorPanel = document.getElementById("goldCalculatorPanel");
     const goldUnavailableNotice = document.getElementById("goldUnavailableNotice");
     const mapPreviewAction = document.getElementById("mapPreviewAction");
+    const shareResultAction = document.getElementById("shareResultAction");
+    const spatialShareCardAction = document.getElementById("spatialShareCardAction");
+    const spatialShareDialog = document.getElementById("spatialShareDialog");
+    const spatialShareCreateAction = document.getElementById("spatialShareCreateAction");
     const spatialMapShell = document.getElementById("spatialMapShell");
     const spatialResultCard = document.getElementById("spatialResultCard");
     const spatialGeometryType = document.getElementById("spatialGeometryType");
@@ -5134,6 +5218,36 @@ Au值 = 纯度 × 10 后取整数</div>
       "judgeBestScore"
     ];
 
+    function hydrateSharedRecipientWorkingCopy() {
+      if (new URLSearchParams(location.search).get("from") !== "shared_spatial_result_edit") return;
+      let payload = null;
+      try {
+        payload = JSON.parse(sessionStorage.getItem("geokit.sharedRecipientWorkingCopy.v1") || "null");
+      } catch (_) {}
+      sessionStorage.removeItem("geokit.sharedRecipientWorkingCopy.v1");
+      const geometry = payload?.geometry;
+      if (payload?.schemaVersion !== "shared_recipient_working_copy_v1"
+        || payload?.axisOrder !== "longitude_latitude"
+        || payload?.crs?.id !== "EPSG:4326"
+        || !geometry || !["Point", "LineString", "Polygon", "MultiPolygon"].includes(geometry.type)) return;
+      let positions = geometry.type === "Point" ? [geometry.coordinates]
+        : geometry.type === "LineString" ? geometry.coordinates
+          : geometry.type === "Polygon" ? geometry.coordinates[0]
+            : geometry.coordinates[0]?.[0];
+      if (!Array.isArray(positions) || positions.some(position => !Array.isArray(position)
+        || position.length < 2 || !position.slice(0, 2).every(Number.isFinite))) return;
+      if ((geometry.type === "Polygon" || geometry.type === "MultiPolygon")
+        && positions.length > 1
+        && positions[0][0] === positions.at(-1)[0]
+        && positions[0][1] === positions.at(-1)[1]) positions = positions.slice(0, -1);
+      input.value = positions.map(position => `${position[0]},${position[1]}`).join("\n");
+      activeFinalizedCoordinateResult = null;
+      finalizedCoordinateTextSnapshot = "";
+      finalizedCoordinateDirty = true;
+      invalidateSpatialPreview();
+      showMessage("已创建独立坐标副本；修改后将生成新结果。", false, 5000);
+    }
+
     imageInput.addEventListener("change", recognizeImage);
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
     judgeImageInput.multiple = false;
@@ -5145,6 +5259,7 @@ Au值 = 纯度 × 10 后取整数</div>
       markCoordinateTextChanged();
       updateCadastralGridPanel();
     });
+    hydrateSharedRecipientWorkingCopy();
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
     loadSpatialRuntimeConfig();
@@ -6662,6 +6777,92 @@ Au值 = 纯度 × 10 后取整数</div>
       if (!mapPreviewAction) return;
       mapPreviewAction.hidden = !spatialResultEnabled;
       mapPreviewAction.disabled = !spatialResultEnabled || !String(input?.value || "").trim();
+      refreshSpatialShareActions();
+    }
+
+    function refreshSpatialShareActions() {
+      const shareReady = spatialResultEnabled && Boolean(getFinalizedCoordinateIdentity());
+      if (shareResultAction) {
+        shareResultAction.hidden = !spatialResultEnabled;
+        shareResultAction.disabled = !shareReady;
+      }
+      if (spatialShareCardAction) {
+        spatialShareCardAction.hidden = !shareReady;
+        spatialShareCardAction.disabled = !shareReady;
+      }
+    }
+
+    async function ensureSpatialShareIdentity() {
+      await ensureManualInputFinalized();
+      const identity = getFinalizedCoordinateIdentity();
+      if (!identity) throw new Error("当前坐标还不能创建分享链接，请先完成识别或核对。");
+      return identity;
+    }
+
+    async function openSpatialShareDialog() {
+      try {
+        await ensureSpatialShareIdentity();
+        spatialShareDialog?.showModal?.();
+      } catch (error) {
+        showMessage(error?.message || "当前结果暂时无法分享。", true, 5000);
+      }
+    }
+
+    function closeSpatialShareDialog() {
+      spatialShareDialog?.close?.();
+    }
+
+    async function copySpatialShareUrl(shareUrl) {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        const copyTarget = document.createElement("textarea");
+        copyTarget.value = shareUrl;
+        copyTarget.setAttribute("readonly", "");
+        copyTarget.style.position = "fixed";
+        copyTarget.style.opacity = "0";
+        document.body.appendChild(copyTarget);
+        copyTarget.select();
+        const copied = document.execCommand("copy");
+        copyTarget.remove();
+        if (!copied) throw new Error("分享链接复制失败，请在浏览器地址栏中复制。");
+      }
+      showMessage("分享链接已复制。", false, 3500);
+    }
+
+    async function createSpatialShare() {
+      if (spatialShareCreateAction?.disabled) return;
+      spatialShareCreateAction.disabled = true;
+      try {
+        const identity = await ensureSpatialShareIdentity();
+        const response = await fetch("/api/spatial-shares", {
+          method: "POST",
+          headers: getSourceHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            ...identity,
+            accessScope: document.querySelector('input[name="spatialShareAccessScope"]:checked')?.value || "RECIPIENT_ONLY",
+            usagePermission: document.querySelector('input[name="spatialShareUsagePermission"]:checked')?.value || "VIEW_ONLY"
+          })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || typeof payload.shareUrl !== "string") {
+          throw new Error("分享链接创建失败，请稍后重试。");
+        }
+        closeSpatialShareDialog();
+        if (typeof navigator.share === "function") {
+          try {
+            await navigator.share({ title: "GeoKit Lab 地块结果", url: payload.shareUrl });
+            return;
+          } catch (error) {
+            if (error?.name === "AbortError") return;
+          }
+        }
+        await copySpatialShareUrl(payload.shareUrl);
+      } catch (error) {
+        showMessage(error?.message || "分享链接创建失败，请稍后重试。", true, 5000);
+      } finally {
+        spatialShareCreateAction.disabled = false;
+      }
     }
 
     function formatSpatialMeters(value) {
