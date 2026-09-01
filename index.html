@@ -4349,6 +4349,7 @@
     }
   </style>
   <script src="pricing-config.js"></script>
+  <link rel="stylesheet" href="/assets/spatial-map/spatial-map.css" />
 </head>
 <body>
   <img id="socialShareFallbackImage" class="social-share-fallback-image" src="<!--IMAGE-->" alt="GeoKit Lab 分享预览图" width="300" height="300" />
@@ -4457,7 +4458,7 @@
     </div>
 
     <button type="button" class="primary-action kml-download-action" onclick="downloadKml()">&#29983;&#25104; KML</button>
-    <button id="mapPreviewAction" type="button" class="secondary map-preview-action" onclick="openSpatialResult()" hidden disabled>查看地图</button>
+    <button id="mapPreviewAction" type="button" class="secondary map-preview-action" onclick="openSpatialResult()" hidden disabled>生成地图</button>
 
     <details id="debugPanel" class="panel debug-panel" open>
       <summary class="panel-title-row debug-title-row">
@@ -4578,14 +4579,28 @@
       </div>
       <div id="spatialResultWarning" class="spatial-result-warning" hidden></div>
 
-      <section class="spatial-map-card" aria-label="当前坐标地图预览">
-        <div class="spatial-map-grid" aria-hidden="true"></div>
-        <svg id="spatialGeometrySvg" viewBox="0 0 360 280" role="img" aria-label="当前坐标 Geometry">
-          <g id="spatialGeometryLayer"></g>
-        </svg>
-        <div id="spatialMapFailure" class="spatial-map-failure" hidden>
-          <strong>地图暂时无法加载</strong>
-          <span>坐标结果与 KML 权限不受影响</span>
+      <section id="spatialMapShell" class="spatial-map-shell" aria-label="当前坐标地图预览">
+        <div class="spatial-map-stage">
+          <div id="spatialProviderCanvas" class="spatial-map-canvas" hidden></div>
+          <div id="spatialLocalMapCanvas" class="spatial-local-map-canvas">
+            <div class="spatial-map-grid" aria-hidden="true"></div>
+            <svg id="spatialGeometrySvg" viewBox="0 0 360 280" role="img" aria-label="当前坐标 Geometry">
+              <g id="spatialGeometryLayer"></g>
+            </svg>
+          </div>
+          <button type="button" class="spatial-map-control spatial-map-back" onclick="returnToCoordinate()">← 返回</button>
+          <button id="spatialFullscreenAction" type="button" class="spatial-map-control spatial-fullscreen-control">全屏地图</button>
+          <button id="spatialMapRetryAction" type="button" class="spatial-map-control spatial-retry-control" hidden>重试</button>
+          <div id="spatialProviderAttribution" class="spatial-provider-attribution">本地 SVG 预览 · 未请求底图服务</div>
+          <div id="spatialMapFailure" class="spatial-map-failure" hidden>
+            <strong>地图暂时无法加载</strong>
+            <span>已保留本地预览；坐标结果与 KML 权限不受影响</span>
+          </div>
+        </div>
+        <div class="spatial-compact-summary" aria-label="当前 Geometry 摘要">
+          <div><span>Geometry</span><strong id="spatialCompactGeometry">—</strong></div>
+          <div><span>结果标识</span><strong id="spatialCompactIdentity">—</strong></div>
+          <div><span>地图状态</span><strong id="spatialProviderState">地图预览</strong></div>
         </div>
       </section>
 
@@ -6740,6 +6755,20 @@ Au值 = 纯度 × 10 后取整数</div>
       const factsAvailable = payload.spatialFactsStatus === "available" && e2eFailureMode !== "facts";
       spatialResultDiagnostic.hidden = factsAvailable;
       spatialResultDiagnostic.textContent = factsAvailable ? "" : "部分空间信息暂时无法计算，地图和原坐标仍可使用。";
+      const compactGeometry = document.getElementById("spatialCompactGeometry");
+      const compactIdentity = document.getElementById("spatialCompactIdentity");
+      if (compactGeometry) compactGeometry.textContent = preview.geometryType || "Geometry";
+      if (compactIdentity) compactIdentity.textContent = `${preview.sourceResultId} · r${preview.sourceRevision}`;
+      globalThis.GeoKitSatelliteMap?.open(payload).then(result => {
+        if (result?.authorityMutationCount > 0) {
+          spatialMapFailure.hidden = false;
+          spatialResultDiagnostic.hidden = false;
+          spatialResultDiagnostic.textContent = "地图预览已停止：检测到结果身份变化。";
+        }
+      }).catch(() => {
+        spatialResultDiagnostic.hidden = false;
+        spatialResultDiagnostic.textContent = "卫星底图暂时不可用，已保留本地 Geometry 预览。";
+      });
     }
 
     async function openSpatialResult() {
@@ -13399,5 +13428,6 @@ ${placemarks}
       }
     }
   </script>
+  <script type="module" src="/assets/spatial-map/spatial-map-product.js"></script>
 </body>
 </html>

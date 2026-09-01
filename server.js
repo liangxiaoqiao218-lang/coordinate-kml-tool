@@ -30,6 +30,7 @@ import { buildCoordinateVerificationResponse } from "./server/verification/index
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
 import { parseManualLongitudeLatitudeText } from "./server/manual-coordinate-input.js";
 import { calculateSpatialFacts } from "./server/spatial/spatial-facts.js";
+import { createAmapSecurityProxy } from "./server/spatial/amap-security-proxy.js";
 import {
   COORDINATE_DECISION_STATE,
   FINALIZED_COORDINATE_SCHEMA_VERSION,
@@ -712,6 +713,10 @@ function rateLimitGuard(req, res, next) {
 app.use(originGuard);
 app.use(rateLimitGuard);
 
+app.use("/_AMapService", createAmapSecurityProxy({
+  securityJsCode: process.env.AMAP_SECURITY_JSCODE || ""
+}));
+
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -799,6 +804,18 @@ app.get("/api/version", (req, res) => {
       runtimeSourceSha256: process.env.RUNTIME_SOURCE_SHA256 || null,
       fixtureSetSha256: process.env.FIXTURE_SET_SHA256 || null
     }
+  });
+});
+
+app.get("/api/map-runtime-config", enforceSpatialApiEnabled, (req, res) => {
+  const webJsKey = String(process.env.AMAP_WEB_JS_KEY || "").trim();
+  const securityProxyReady = Boolean(String(process.env.AMAP_SECURITY_JSCODE || "").trim());
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.json({
+    amapWebJsKey: webJsKey,
+    amapWebJsConfigured: Boolean(webJsKey),
+    amapSecurityProxyReady: securityProxyReady,
+    providerTimeoutMs: 8000
   });
 });
 
