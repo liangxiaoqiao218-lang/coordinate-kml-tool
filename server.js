@@ -20,6 +20,7 @@ import {
   shouldRunWgs84TimeoutRescue
 } from "./server/recognition/family-primary-routing.js";
 import { finiteNumberOrNull, hasFiniteNumericValue } from "./server/coordinate-values.js";
+import { COORDINATE_REVIEW_REASON_CODE, deriveCoordinateReviewReason } from "./server/coordinate-review-reason.js";
 import { utmToWgs84 } from "./server/projection/utm.js";
 import {
   getStructuredCoordinateBlocks,
@@ -4696,6 +4697,7 @@ function buildFamilyAvailabilityBlockedPayload({ availability, coordinateType, p
   payload.coordinateEngineV2 = {
     ...unavailableEngine,
     requires_review: false,
+    review_reason: null,
     kml_ready: false,
     groups: []
   };
@@ -9221,6 +9223,10 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
     || fallbackUsed
     || Boolean(options.forceRequiresReview);
   const rawGroups = Array.isArray(result.groups) ? result.groups : [];
+  const pointReviewRequired = rawGroups.some(group => (
+    group?.requires_review === true
+    || (Array.isArray(group?.points) && group.points.some(point => point?.requires_review === true))
+  ));
   const groups = rawGroups.map((group, index) => normalizeCoordinateEngineV2Group({
     ...group,
     group_id: group.group_id || `group_${index + 1}`,
@@ -9239,6 +9245,26 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
   const validationWarnings = groups.flatMap(group => group.validation?.candidates?.[0]?.warnings || []);
   const validationFailed = validationReports.some(report => report.status === "scored" && report.candidate_score < 70);
   const orderAmbiguous = validationReports.some(report => report.order_status === "ambiguous");
+  const normalizedRequiresReview = Boolean(requiresReview || validationFailed || orderAmbiguous);
+  const missingValidCoordinates = missingGroups || groups.some(group => !Array.isArray(group.points) || group.points.length === 0);
+  const crsConfirmationRequired = groups.some(group => (
+    group.validation?.readinessPolicy === "projected_or_grid"
+    && group.validation?.readiness_status === "projected_or_grid_incomplete"
+  ));
+  const reviewWarningPresent = reviewWarnings.length > 0 || groups.some(group => (
+    Array.isArray(group.warnings) && group.warnings.some(isCoordinateEngineV2ReviewWarning)
+  ));
+  const reviewReasonCauses = [
+    missingValidCoordinates ? COORDINATE_REVIEW_REASON_CODE.MISSING_VALID_COORDINATES : null,
+    validationFailed ? COORDINATE_REVIEW_REASON_CODE.COORDINATE_VALIDATION_FAILED : null,
+    crsConfirmationRequired ? COORDINATE_REVIEW_REASON_CODE.CRS_CONFIRMATION_REQUIRED : null,
+    orderAmbiguous ? COORDINATE_REVIEW_REASON_CODE.AXIS_ORDER_AMBIGUOUS : null,
+    options.candidateFieldConflict === true ? COORDINATE_REVIEW_REASON_CODE.CANDIDATE_FIELD_CONFLICT : null,
+    pointReviewRequired ? COORDINATE_REVIEW_REASON_CODE.POINT_REVIEW_REQUIRED : null,
+    fallbackUsed ? COORDINATE_REVIEW_REASON_CODE.FALLBACK_RESULT_REVIEW : null,
+    coordinateType === "handwritten_dms_experimental" ? COORDINATE_REVIEW_REASON_CODE.HANDWRITTEN_EXPERIMENTAL_REVIEW : null,
+    reviewWarningPresent ? COORDINATE_REVIEW_REASON_CODE.REVIEW_WARNING_PRESENT : null
+  ].filter(Boolean);
 
   const normalizedResult = {
     schema_version: "coordinate_engine_v2",
@@ -9246,7 +9272,11 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
     precision_mode: precisionMode,
     source_crs: result.source_crs || null,
     confidence: requiresReview ? Math.min(confidence, 0.75) : confidence,
-    requires_review: Boolean(requiresReview || validationFailed || orderAmbiguous),
+    requires_review: normalizedRequiresReview,
+    review_reason: deriveCoordinateReviewReason({
+      requiresReview: normalizedRequiresReview,
+      causes: reviewReasonCauses
+    }),
     source: {
       image_count: Number.isFinite(Number(result.source?.image_count)) ? Number(result.source.image_count) : 1,
       ocr_engine: String(result.source?.ocr_engine || ""),
@@ -9345,7 +9375,13 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
       blocked_fallbacks: Array.from(new Set(blockedFallbacks)),
       supplemental_fallbacks: fallbackUsed ? [String(payload.model || "fallback").trim()].filter(Boolean) : []
     }
-    }, { forceRequiresReview: forcedReview });
+    }, {
+      forceRequiresReview: forcedReview,
+      candidateFieldConflict: payload.handwrittenVisionRouting?.candidateSelectionDecision === "KEEP_CURRENT_AND_REQUIRE_REVIEW"
+        && payload.handwrittenVisionRouting?.reviewRequired === true
+        && Array.isArray(payload.handwrittenVisionRouting?.fieldConflicts)
+        && payload.handwrittenVisionRouting.fieldConflicts.length > 0
+    });
   } catch (error) {
     parserResult = "failed";
     throw error;

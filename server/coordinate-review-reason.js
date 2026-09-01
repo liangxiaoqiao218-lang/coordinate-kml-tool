@@ -1,0 +1,47 @@
+export const COORDINATE_REVIEW_REASON_SCHEMA_VERSION = "coordinate_review_reason_v1";
+
+export const COORDINATE_REVIEW_REASON_CODE = Object.freeze({
+  HANDWRITTEN_EXPERIMENTAL_REVIEW: "HANDWRITTEN_EXPERIMENTAL_REVIEW",
+  CANDIDATE_FIELD_CONFLICT: "CANDIDATE_FIELD_CONFLICT",
+  CRS_CONFIRMATION_REQUIRED: "CRS_CONFIRMATION_REQUIRED",
+  AXIS_ORDER_AMBIGUOUS: "AXIS_ORDER_AMBIGUOUS",
+  COORDINATE_VALIDATION_FAILED: "COORDINATE_VALIDATION_FAILED",
+  MISSING_VALID_COORDINATES: "MISSING_VALID_COORDINATES",
+  FALLBACK_RESULT_REVIEW: "FALLBACK_RESULT_REVIEW",
+  POINT_REVIEW_REQUIRED: "POINT_REVIEW_REQUIRED",
+  REVIEW_WARNING_PRESENT: "REVIEW_WARNING_PRESENT"
+});
+
+export const COORDINATE_REVIEW_REASON_PRECEDENCE = Object.freeze([
+  COORDINATE_REVIEW_REASON_CODE.MISSING_VALID_COORDINATES,
+  COORDINATE_REVIEW_REASON_CODE.COORDINATE_VALIDATION_FAILED,
+  COORDINATE_REVIEW_REASON_CODE.CRS_CONFIRMATION_REQUIRED,
+  COORDINATE_REVIEW_REASON_CODE.AXIS_ORDER_AMBIGUOUS,
+  COORDINATE_REVIEW_REASON_CODE.CANDIDATE_FIELD_CONFLICT,
+  COORDINATE_REVIEW_REASON_CODE.POINT_REVIEW_REQUIRED,
+  COORDINATE_REVIEW_REASON_CODE.FALLBACK_RESULT_REVIEW,
+  COORDINATE_REVIEW_REASON_CODE.HANDWRITTEN_EXPERIMENTAL_REVIEW,
+  COORDINATE_REVIEW_REASON_CODE.REVIEW_WARNING_PRESENT
+]);
+
+const knownCodes = new Set(COORDINATE_REVIEW_REASON_PRECEDENCE);
+
+export function deriveCoordinateReviewReason({ requiresReview = false, causes = [] } = {}) {
+  if (requiresReview !== true) return null;
+  if (!Array.isArray(causes)) throw new TypeError("coordinate_review_reason_causes_invalid");
+
+  const selected = new Set();
+  for (const cause of causes) {
+    if (!knownCodes.has(cause)) throw new TypeError("coordinate_review_reason_code_invalid");
+    selected.add(cause);
+  }
+
+  const codes = COORDINATE_REVIEW_REASON_PRECEDENCE.filter(code => selected.has(code));
+  if (codes.length === 0) throw new TypeError("coordinate_review_reason_missing_authoritative_cause");
+
+  return Object.freeze({
+    schema_version: COORDINATE_REVIEW_REASON_SCHEMA_VERSION,
+    primary_code: codes[0],
+    codes: Object.freeze(codes)
+  });
+}

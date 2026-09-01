@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { buildCoordinateVerification, buildCoordinateVerificationResponse } from "../server/verification/index.js";
+import {
+  COORDINATE_REVIEW_REASON_CODE,
+  COORDINATE_REVIEW_REASON_PRECEDENCE,
+  COORDINATE_REVIEW_REASON_SCHEMA_VERSION,
+  deriveCoordinateReviewReason
+} from "../server/coordinate-review-reason.js";
 
 function makeDmsPoint(label, raw) {
   return {
@@ -225,9 +232,88 @@ assert.ok(finalizedCoordinateResult, "response wrapper should append the authori
 assert.deepEqual(responseWithoutVerification, responseSnapshot, "removing verification must restore the exact legacy response");
 assert.deepEqual(responseBeforeVerification, responseSnapshot, "response wrapper must not mutate the legacy response");
 
+let reviewReasonPassed = 0;
+const reviewReasonTest = (name, fn) => {
+  fn();
+  reviewReasonPassed += 1;
+  console.log(`PASS REVIEW_REASON_${String(reviewReasonPassed).padStart(2, "0")} ${name}`);
+};
+const reason = (...causes) => deriveCoordinateReviewReason({ requiresReview: true, causes });
+const C = COORDINATE_REVIEW_REASON_CODE;
+
+reviewReasonTest("FALSE_RETURNS_NULL", () => assert.equal(deriveCoordinateReviewReason({ requiresReview: false, causes: [C.REVIEW_WARNING_PRESENT] }), null));
+reviewReasonTest("HANDWRITTEN_EXPERIMENTAL_ONLY", () => assert.deepEqual(reason(C.HANDWRITTEN_EXPERIMENTAL_REVIEW).codes, [C.HANDWRITTEN_EXPERIMENTAL_REVIEW]));
+reviewReasonTest("CANDIDATE_CONFLICT_ONLY", () => assert.equal(reason(C.CANDIDATE_FIELD_CONFLICT).primary_code, C.CANDIDATE_FIELD_CONFLICT));
+reviewReasonTest("R8_R3_CONFLICT_AND_HANDWRITTEN", () => {
+  const output = reason(C.HANDWRITTEN_EXPERIMENTAL_REVIEW, C.CANDIDATE_FIELD_CONFLICT);
+  assert.deepEqual(output.codes, [C.CANDIDATE_FIELD_CONFLICT, C.HANDWRITTEN_EXPERIMENTAL_REVIEW]);
+  assert.equal(output.primary_code, C.CANDIDATE_FIELD_CONFLICT);
+});
+reviewReasonTest("CRS_CONFIRMATION", () => assert.deepEqual(reason(C.CRS_CONFIRMATION_REQUIRED).codes, [C.CRS_CONFIRMATION_REQUIRED]));
+reviewReasonTest("AXIS_AMBIGUITY", () => assert.deepEqual(reason(C.AXIS_ORDER_AMBIGUOUS).codes, [C.AXIS_ORDER_AMBIGUOUS]));
+reviewReasonTest("VALIDATION_FAILURE", () => assert.deepEqual(reason(C.COORDINATE_VALIDATION_FAILED).codes, [C.COORDINATE_VALIDATION_FAILED]));
+reviewReasonTest("MISSING_COORDINATES", () => assert.deepEqual(reason(C.MISSING_VALID_COORDINATES).codes, [C.MISSING_VALID_COORDINATES]));
+reviewReasonTest("FALLBACK_RESULT", () => assert.deepEqual(reason(C.FALLBACK_RESULT_REVIEW).codes, [C.FALLBACK_RESULT_REVIEW]));
+reviewReasonTest("POINT_REVIEW", () => assert.deepEqual(reason(C.POINT_REVIEW_REQUIRED).codes, [C.POINT_REVIEW_REQUIRED]));
+reviewReasonTest("AUTHORITATIVE_WARNING", () => assert.deepEqual(reason(C.REVIEW_WARNING_PRESENT).codes, [C.REVIEW_WARNING_PRESENT]));
+reviewReasonTest("DUPLICATE_CAUSES_DEDUPLICATED", () => assert.deepEqual(reason(C.CANDIDATE_FIELD_CONFLICT, C.CANDIDATE_FIELD_CONFLICT).codes, [C.CANDIDATE_FIELD_CONFLICT]));
+reviewReasonTest("MULTIPLE_CAUSES_STABLE_ORDER", () => {
+  const shuffled = reason(C.REVIEW_WARNING_PRESENT, C.AXIS_ORDER_AMBIGUOUS, C.MISSING_VALID_COORDINATES, C.FALLBACK_RESULT_REVIEW);
+  assert.deepEqual(shuffled.codes, [C.MISSING_VALID_COORDINATES, C.AXIS_ORDER_AMBIGUOUS, C.FALLBACK_RESULT_REVIEW, C.REVIEW_WARNING_PRESENT]);
+});
+reviewReasonTest("PRIMARY_IS_MEMBER", () => {
+  const output = reason(C.POINT_REVIEW_REQUIRED, C.COORDINATE_VALIDATION_FAILED);
+  assert.ok(output.codes.includes(output.primary_code));
+});
+reviewReasonTest("TRUE_REQUIRES_NONEMPTY_CODE", () => assert.throws(() => deriveCoordinateReviewReason({ requiresReview: true, causes: [] }), /missing_authoritative_cause/));
+reviewReasonTest("FALSE_IGNORES_DIAGNOSTIC_CONTEXT", () => assert.equal(deriveCoordinateReviewReason({ requiresReview: false, causes: COORDINATE_REVIEW_REASON_PRECEDENCE }), null));
+reviewReasonTest("GOLDEN_TRUTH_UNAVAILABLE", () => {
+  const source = fs.readFileSync(new URL("../server/coordinate-review-reason.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /golden|ground.?truth/i);
+});
+reviewReasonTest("KML_STATE_UNCHANGED", () => {
+  const authority = { kml_ready: false };
+  const snapshot = structuredClone(authority);
+  reason(C.CANDIDATE_FIELD_CONFLICT);
+  assert.deepEqual(authority, snapshot);
+});
+reviewReasonTest("CONFIRMATION_STATE_UNCHANGED", () => {
+  const authority = { confirmationStatus: "pending" };
+  const snapshot = structuredClone(authority);
+  reason(C.HANDWRITTEN_EXPERIMENTAL_REVIEW);
+  assert.deepEqual(authority, snapshot);
+});
+reviewReasonTest("FINALIZER_STATE_UNCHANGED", () => {
+  const authority = { decisionState: "REVIEW_REQUIRED", qualityGateStatus: "review_required" };
+  const snapshot = structuredClone(authority);
+  reason(C.REVIEW_WARNING_PRESENT);
+  assert.deepEqual(authority, snapshot);
+});
+assert.equal(reviewReasonPassed, 20);
+
+const representativeReviewReason = reason(C.HANDWRITTEN_EXPERIMENTAL_REVIEW, C.CANDIDATE_FIELD_CONFLICT);
+const mapperEngine = {
+  ...handwrittenEngine,
+  review_reason: representativeReviewReason
+};
+const mapperResponse = buildCoordinateVerificationResponse({
+  success: true,
+  rawText: handwrittenVerification,
+  coordinates: handwrittenVerification,
+  coordinateEngineV2: mapperEngine
+}, mapperEngine);
+assert.deepEqual(mapperResponse.coordinateEngineV2.review_reason, representativeReviewReason, "response mapper must preserve review_reason unchanged");
+
+const serverSource = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
+assert.match(serverSource, /requires_review: normalizedRequiresReview,\s*review_reason: deriveCoordinateReviewReason\(/);
+assert.match(serverSource, /candidateFieldConflict: payload\.handwrittenVisionRouting\?\.candidateSelectionDecision === "KEEP_CURRENT_AND_REQUIRE_REVIEW"/);
+assert.match(serverSource, /group\.warnings\.some\(isCoordinateEngineV2ReviewWarning\)/);
+const reviewReasonModuleSource = fs.readFileSync(new URL("../server/coordinate-review-reason.js", import.meta.url), "utf8");
+assert.doesNotMatch(reviewReasonModuleSource, /kml_ready|confirmationStatus|decisionState/);
+
 console.log(JSON.stringify({
   suite: "coordinate-verification-regression",
-  passed: 10,
+  passed: 32,
   cases: [
     { id: "normal_dms", status: normalResult.status, verification_score: normalResult.verification_score },
     { id: "handwritten_digit_conflict", status: handwrittenResult.status, conflicts: handwrittenResult.conflicts.length },
@@ -240,6 +326,10 @@ console.log(JSON.stringify({
     })),
     { id: "existing_v2_geometry", status: engineGeometryResult.status },
     { id: "true_wgs84_axis_ambiguity", status: ambiguousWgs84Result.status },
-    { id: "legacy_response_compatibility", status: "PASS" }
+    { id: "legacy_response_compatibility", status: "PASS" },
+    { id: "review_reason_contract_matrix", status: "PASS", cases: reviewReasonPassed },
+    { id: "r8_r3_review_reason", status: "PASS", review_reason: representativeReviewReason },
+    { id: "review_reason_response_mapping", status: "PASS" },
+    { id: "review_reason_runtime_integration", status: "PASS", schema_version: COORDINATE_REVIEW_REASON_SCHEMA_VERSION }
   ]
 }, null, 2));
