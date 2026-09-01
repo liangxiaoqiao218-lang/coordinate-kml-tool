@@ -51,6 +51,7 @@ export class AMapProviderAdapter {
       this.map = new this.runtime.Map(container, {
         viewMode: "2D",
         layers: [this.satelliteLayer],
+        showOversea: true,
         zoom: 3,
         center: [105, 35],
         dragEnable: true,

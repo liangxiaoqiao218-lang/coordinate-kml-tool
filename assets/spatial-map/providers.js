@@ -29,4 +29,3 @@ export function assertSpatialMapProvider(provider) {
   }
   return provider;
 }
-

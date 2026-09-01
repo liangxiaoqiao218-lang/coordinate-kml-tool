@@ -352,6 +352,8 @@ test("SPN-R1-01", "AMap map is initialized with the documented Satellite tile la
   assert.equal(result.state, PROVIDER_STATE.READY);
   assert.equal(provider.satelliteLayer.constructor, runtime.TileLayer.Satellite);
   assert.deepEqual(provider.map.options.layers, [provider.satelliteLayer]);
+  assert.equal(Object.hasOwn(provider.map.options, "showOversea"), true);
+  assert.equal(provider.map.options.showOversea, true);
   assert.equal(Object.hasOwn(provider.map.options, "mapStyle"), false);
 });
 
