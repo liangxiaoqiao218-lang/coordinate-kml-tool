@@ -75,7 +75,30 @@ test("native share has clipboard fallback", () => {
   assert.match(index, /navigator\.clipboard\?\.writeText|execCommand\("copy"\)/);
 });
 test("migration enables RLS", () => assert.match(migration, /alter table public\.spatial_result_shares enable row level security/));
-test("migration blocks direct anon and authenticated access", () => assert.match(migration, /revoke all on table public\.spatial_result_shares from anon, authenticated/));
+test("migration blocks direct public anon and authenticated table access", () => {
+  assert.match(migration, /revoke all on table public\.spatial_result_shares from public, anon, authenticated/);
+});
+test("migration is explicitly transactional and contains no destructive statements", () => {
+  assert.match(migration, /^\s*begin;/i);
+  assert.match(migration, /commit;\s*$/i);
+  assert.doesNotMatch(migration, /\bdrop\s+(?:table|trigger|function|policy)\b|\btruncate\b|\bdelete\s+from\b/i);
+});
+test("immutable trigger creation is collision-aware and validates exact catalog authority", () => {
+  assert.match(migration, /from pg_catalog\.pg_trigger as trigger_definition/);
+  assert.match(migration, /tgrelid = 'public\.spatial_result_shares'::regclass/);
+  assert.match(migration, /tgfoid <> 'public\.prevent_spatial_result_share_content_update\(\)'::regprocedure/);
+  assert.match(migration, /tgtype <> 19/);
+  assert.match(migration, /tgqual is not null/);
+  assert.match(migration, /tgattr <> ''::int2vector/);
+  assert.match(migration, /if found then[\s\S]*raise exception 'spatial_result_shares_immutable_content_trigger_mismatch'[\s\S]*else[\s\S]*create trigger spatial_result_shares_immutable_content/);
+  assert.doesNotMatch(migration, /drop trigger/i);
+});
+test("migration keeps RPC execution service-role-only", () => {
+  assert.match(migration, /revoke all on function public\.bind_spatial_share_recipient\(text, text\) from public, anon, authenticated/);
+  assert.match(migration, /grant execute on function public\.bind_spatial_share_recipient\(text, text\) to service_role/);
+  assert.match(migration, /revoke all on function public\.prevent_spatial_result_share_content_update\(\) from public, anon, authenticated/);
+  assert.match(migration, /grant execute on function public\.prevent_spatial_result_share_content_update\(\) to service_role/);
+});
 test("migration makes snapshot content immutable", () => assert.match(migration, /spatial_result_share_snapshot_immutable/));
 test("migration allows terminal revocation only", () => assert.match(migration, /spatial_result_share_revocation_terminal/));
 test("migration stores controlled sharing and hash-only recipient binding", () => {

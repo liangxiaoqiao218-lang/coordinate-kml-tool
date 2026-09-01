@@ -1,3 +1,5 @@
+begin;
+
 create table if not exists public.spatial_result_shares (
   share_id text primary key,
   schema_version text not null check (schema_version = 'shared_spatial_result_v1'),
@@ -43,7 +45,7 @@ create index if not exists spatial_result_shares_created_at_idx
   on public.spatial_result_shares (created_at);
 
 alter table public.spatial_result_shares enable row level security;
-revoke all on table public.spatial_result_shares from anon, authenticated;
+revoke all on table public.spatial_result_shares from public, anon, authenticated;
 grant select, insert, update, delete on table public.spatial_result_shares to service_role;
 
 comment on table public.spatial_result_shares is
@@ -96,10 +98,43 @@ $$;
 revoke all on function public.prevent_spatial_result_share_content_update() from public, anon, authenticated;
 grant execute on function public.prevent_spatial_result_share_content_update() to service_role;
 
-drop trigger if exists spatial_result_shares_immutable_content on public.spatial_result_shares;
-create trigger spatial_result_shares_immutable_content
-before update on public.spatial_result_shares
-for each row execute function public.prevent_spatial_result_share_content_update();
+do $migration$
+declare
+  existing_trigger record;
+begin
+  select
+    trigger_definition.tgrelid,
+    trigger_definition.tgfoid,
+    trigger_definition.tgtype,
+    trigger_definition.tgenabled,
+    trigger_definition.tgqual,
+    trigger_definition.tgnargs,
+    trigger_definition.tgattr
+  into existing_trigger
+  from pg_catalog.pg_trigger as trigger_definition
+  where trigger_definition.tgrelid = 'public.spatial_result_shares'::regclass
+    and trigger_definition.tgname = 'spatial_result_shares_immutable_content'
+    and not trigger_definition.tgisinternal;
+
+  if found then
+    if existing_trigger.tgrelid <> 'public.spatial_result_shares'::regclass
+      or existing_trigger.tgfoid <> 'public.prevent_spatial_result_share_content_update()'::regprocedure
+      or existing_trigger.tgtype <> 19
+      or existing_trigger.tgenabled <> 'O'
+      or existing_trigger.tgqual is not null
+      or existing_trigger.tgnargs <> 0
+      or existing_trigger.tgattr <> ''::int2vector then
+      raise exception 'spatial_result_shares_immutable_content_trigger_mismatch';
+    end if;
+  else
+    execute $trigger$
+      create trigger spatial_result_shares_immutable_content
+      before update on public.spatial_result_shares
+      for each row execute function public.prevent_spatial_result_share_content_update()
+    $trigger$;
+  end if;
+end;
+$migration$;
 
 create or replace function public.bind_spatial_share_recipient(
   p_share_id text,
@@ -141,3 +176,5 @@ $$;
 
 revoke all on function public.bind_spatial_share_recipient(text, text) from public, anon, authenticated;
 grant execute on function public.bind_spatial_share_recipient(text, text) to service_role;
+
+commit;
