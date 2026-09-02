@@ -21,20 +21,6 @@
       ]
     },
     {
-      "family": "madagascar_cadastral_grid",
-      "status": "BLOCKED_BY_PROVIDER",
-      "reasonCode": "FAMILY_BLOCKED_BY_PROVIDER",
-      "evidenceReference": "SR-08G_MADAGASCAR_0_OF_5_TIMEOUT_DOMINANT",
-      "removalConditions": [
-        "REPLACEMENT_OR_PROVIDER_CANDIDATE_IDENTIFIED",
-        "REAL_FIXTURE_RELIABILITY_VALIDATED",
-        "ROUTING_STABLE",
-        "LATENCY_WITHIN_APPROVED_BUDGET",
-        "TRUTH_AND_GATE_REGRESSION_PASSED",
-        "RELEASE_AUTHORITY_APPROVED"
-      ]
-    },
-    {
       "family": "handwritten_dms_experimental",
       "status": "TEMPORARILY_UNAVAILABLE",
       "reasonCode": "FAMILY_TEMPORARILY_UNAVAILABLE",
@@ -56,7 +42,8 @@
     "mgrs",
     "bftm",
     "cote_divoire",
-    "manual_input"
+    "manual_input",
+    "madagascar_cadastral_grid"
   ],
   "failClosedContract": {
     "providerCallAllowed": false,

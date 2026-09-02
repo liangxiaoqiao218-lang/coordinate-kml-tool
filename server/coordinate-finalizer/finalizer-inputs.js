@@ -23,6 +23,16 @@ function confirmationRequired(engine) {
   return type.includes("handwritten") || precision.includes("handwritten");
 }
 
+function isP0CurrentAuthorizedGeometryFamily(structuredResult = {}, sourceAuthority = "") {
+  if (sourceAuthority !== "legacy") return false;
+  const type = String(structuredResult.coordinate_type || "").toLowerCase();
+  const precision = String(structuredResult.precision_mode || "").toLowerCase();
+  return type === "indonesia_utm50_projected"
+    || type === "madagascar_cadastral_grid"
+    || precision === "indonesia-utm50s-projected"
+    || precision === "cadastral-grid-num-xv-yv";
+}
+
 function commonInput({
   sourceAuthority,
   recognitionResult = {},
@@ -60,6 +70,8 @@ function commonInput({
   });
   const availabilityStatus = familyAvailability?.status || FAMILY_AVAILABILITY_STATUS.AVAILABLE;
   const availabilityBlocked = isFamilyAvailabilityBlocked({ status: availabilityStatus });
+  const currentAuthorizedGeometryExportable = geometryResult.ok
+    && isP0CurrentAuthorizedGeometryFamily(structuredResult, sourceAuthority);
   return {
     resultId: revision.resultId,
     resultRevision: revision.resultRevision ?? 1,
@@ -80,6 +92,16 @@ function commonInput({
       ? COORDINATE_QUALITY_GATE_STATUS.FAILED
       : verificationQualityStatus(verification),
     technicalKmlReady: availabilityBlocked ? false : technicalKmlReady,
+    currentAuthorizedGeometryExportable,
+    qualityFailureAuthorityImpact: currentAuthorizedGeometryExportable && verification?.authorityImpact === "confidence_only"
+      ? "confidence_only"
+      : null,
+    confirmationRejectionAuthorityImpact: currentAuthorizedGeometryExportable
+      && revision?.confirmationRejectionAuthorityImpact === "confidence_only"
+      ? "confidence_only"
+      : null,
+    crsUncertaintyConfidenceOnly: currentAuthorizedGeometryExportable
+      && verification?.crsUncertaintyConfidenceOnly === true,
     requiresReview: availabilityBlocked ? false : familySafety.requiresReview,
     kmlReady: availabilityBlocked ? false : familySafety.kmlReady,
     groups: familySafety.groups,
@@ -109,8 +131,13 @@ export function createV3FinalizerInput(options = {}) {
       ...commonInput({ ...options, structuredResult: options.coordinateEngineV3, sourceAuthority: "coordinate_engine_v3" }),
       qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.UNKNOWN,
       requiresReview: true,
-      kmlReady: false
+      kmlReady: false,
+      kmlAuthorityBlocked: true,
+      v3ProductionAuthority: false
     };
   }
-  return commonInput({ ...options, structuredResult: options.coordinateEngineV3, sourceAuthority: "coordinate_engine_v3" });
+  return {
+    ...commonInput({ ...options, structuredResult: options.coordinateEngineV3, sourceAuthority: "coordinate_engine_v3" }),
+    v3ProductionAuthority: true
+  };
 }

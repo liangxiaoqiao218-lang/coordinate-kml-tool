@@ -2776,7 +2776,7 @@
       line-height: 1.7;
     }
 
-    .judge-detail-placeholder {
+    .judge-detail-content .judge-detail-placeholder {
       color: #94a3b8;
     }
 
@@ -11909,6 +11909,25 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return getCoordinateGroups();
     }
 
+    function getAuthorizedFinalizedGeometryKmlSource() {
+      if (!activeFinalizedCoordinateResult
+        || finalizedCoordinateDirty
+        || activeFinalizedCoordinateResult.kmlReady !== true) return null;
+      const geometry = activeFinalizedCoordinateResult.geometry;
+      const toPair = position => ({ longitude: Number(position?.[0]), latitude: Number(position?.[1]) });
+      const validPair = pair => Number.isFinite(pair.longitude) && Number.isFinite(pair.latitude)
+        && pair.longitude >= -180 && pair.longitude <= 180
+        && pair.latitude >= -90 && pair.latitude <= 90;
+      let type = String(geometry?.type || "");
+      let groups = [];
+      if (type === "Point") groups = [[toPair(geometry.coordinates)]];
+      if (type === "LineString") groups = [geometry.coordinates.map(toPair)];
+      if (type === "Polygon") groups = [(geometry.coordinates?.[0] || []).map(toPair)];
+      if (type === "MultiPolygon") groups = (geometry.coordinates || []).map(polygon => (polygon?.[0] || []).map(toPair));
+      if (!groups.length || groups.some(group => !group.length || group.some(pair => !validPair(pair)))) return null;
+      return { type, groups };
+    }
+
     function countCoordinatePairsInGroups(groups) {
       return groups.reduce((total, group) => total + group.length, 0);
     }
@@ -12835,17 +12854,50 @@ ${placemarks}
         return;
       }
 
-      if (shouldBlockHandwrittenDmsKml()) {
-        showKmlFailure({
-          code: "KML_REVIEW_REQUIRED",
-          title: "坐标需要核对",
-          reason: "当前手写 DMS 识别结果尚未通过人工核对，不能安全生成 KML。",
-          suggestion: "请对照原图核对坐标，确认无误后再生成。"
+      showRecognitionProgress("正在生成 KML 文件...", "loading");
+
+      const finalizedGeometrySource = getAuthorizedFinalizedGeometryKmlSource();
+      if (finalizedGeometrySource) {
+        const usageAllowed = await consumeUsage("convert");
+        if (!usageAllowed) {
+          showKmlPermissionFailure();
+          return;
+        }
+        const groups = finalizedGeometrySource.groups;
+        const pairs = groups.flat();
+        let placemarks = "";
+        if (finalizedGeometrySource.type === "Point") {
+          placemarks = buildPointKml(pairs);
+        } else if (finalizedGeometrySource.type === "LineString") {
+          placemarks = buildLineStringKml(groups[0], 1);
+        } else {
+          placemarks = groups.map((group, index) => buildPolygonKml(group, index + 1)).join("\n");
+        }
+        const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>GeoKit Lab Authorized Geometry</name>
+    <description>Generated from the current server-authoritative finalized EPSG:4326 geometry.</description>
+${placemarks}
+  </Document>
+</kml>`;
+        const blob = new Blob([kml], { type: "application/vnd.google-earth.kml+xml;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "coordinates.kml";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        trackEvent("kml_download_click", {
+          exportType: `Finalized-${finalizedGeometrySource.type}`,
+          count: pairs.length,
+          source: "finalized_coordinate_result_v1"
         });
+        showMessage(`已从当前安全结果生成 ${finalizedGeometrySource.type} KML。`);
         return;
       }
-
-      showRecognitionProgress("正在生成 KML 文件...", "loading");
 
       if (hasCadastralGridRows(input.value)) {
         const allRows = extractCadastralGridRows(input.value);

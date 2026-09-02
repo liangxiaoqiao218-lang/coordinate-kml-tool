@@ -51,26 +51,79 @@
         "confirmedRowCount": 65
       }
     },
-    "madagascar_cadastral_candidate_001": {
+    "madagascar-cadastral-real-001": {
       "truthMaturity": "CONFIRMED_TRUTH",
       "policyMaturity": "CONFIRMED_POLICY",
-      "approvedTruthSha256": "459911634768e758f3cf7b9c89e131707df37b5c2ede211bf25134e869de43d7",
+      "approvedTruthSha256": "5c52ae6afac0589dc9f628c83fd30043b559544a7e35aeda2c659b1b7f8cd655",
       "releasePolicy": {
-        "policy": "BLOCKED_BY_PROVIDER",
-        "expectedAvailability": "BLOCKED_BY_PROVIDER",
+        "policy": "AVAILABLE_WITH_WARNING",
+        "expectedAvailability": "AVAILABLE_WITH_WARNING",
         "expectedFamily": "madagascar_cadastral_grid",
-        "projectedXyTakeover": false,
-        "expectedKmlReady": false,
-        "expectedDecisionStates": ["BLOCKED"],
+        "projectedXyTakeover": true,
+        "expectedRequiresReview": true,
+        "expectedKmlReady": true,
+        "expectedDecisionStates": ["REVIEW_REQUIRED"],
+        "expectedConfirmationStatus": "pending",
         "confirmationMayOverrideAvailability": false
       },
       "evidenceMetadata": {
         "coordinateTruthChangeApproved": true,
-        "approvalSource": "SR-08H.3B_HUMAN_APPROVAL",
-        "approvalDate": "2026-08-26",
+        "approvalSource": "PRODUCTION_RECOGNITION_P0_REGRESSION_RECONCILIATION",
+        "approvalDate": "2026-09-02",
         "confirmedRowCount": 32,
+        "sourceCrs": "EPSG:29702",
+        "axisOrder": "easting_northing",
+        "cellCount": 32,
+        "cellSizeMeters": 625,
         "valueConflict": false,
         "maturityGovernanceConflict": "RESOLVED"
+      }
+    },
+    "indonesia-dms-real-001": {
+      "truthMaturity": "CONFIRMED_TRUTH",
+      "policyMaturity": "CONFIRMED_POLICY",
+      "approvedTruthSha256": "615d5acb906c4ff07cd767983336a3c1a4d99fcd85e34c327eb674655cdc7044",
+      "releasePolicy": {
+        "policy": "AVAILABLE_WITH_WARNING",
+        "expectedAvailability": "AVAILABLE_WITH_WARNING",
+        "expectedFamily": "indonesia_utm50_projected",
+        "expectedRequiresReview": true,
+        "expectedKmlReady": true,
+        "expectedDecisionStates": ["REVIEW_REQUIRED"],
+        "expectedConfirmationStatus": "pending",
+        "confirmationMayOverrideAvailability": false
+      },
+      "evidenceMetadata": {
+        "coordinateTruthChangeApproved": false,
+        "approvalSource": "PRODUCTION_RECOGNITION_P0_REGRESSION_RECONCILIATION",
+        "approvalDate": "2026-09-02",
+        "confirmedPointCount": 4,
+        "sourceCrs": "EPSG:4326",
+        "axisOrder": "longitude_latitude"
+      }
+    },
+    "indonesia-projected-real-002": {
+      "truthMaturity": "CONFIRMED_TRUTH",
+      "policyMaturity": "CONFIRMED_POLICY",
+      "approvedTruthSha256": "1cc1b22b83a13f634a32f0f37772a7d1c3695f5c4394166a1d9f8819ff75cd03",
+      "releasePolicy": {
+        "policy": "AVAILABLE_WITH_WARNING",
+        "expectedAvailability": "AVAILABLE_WITH_WARNING",
+        "expectedFamily": "indonesia_utm50_projected",
+        "expectedRequiresReview": true,
+        "expectedKmlReady": true,
+        "expectedDecisionStates": ["REVIEW_REQUIRED"],
+        "expectedConfirmationStatus": "pending",
+        "confirmationMayOverrideAvailability": false
+      },
+      "evidenceMetadata": {
+        "coordinateTruthChangeApproved": false,
+        "approvalSource": "PRODUCTION_RECOGNITION_P0_REGRESSION_RECONCILIATION",
+        "approvalDate": "2026-09-02",
+        "confirmedPointCount": 6,
+        "sourceCrs": "EPSG:32750",
+        "axisOrder": "easting_northing",
+        "repeatedSequenceCollapsed": true
       }
     },
     "utm30_burkina_003": {

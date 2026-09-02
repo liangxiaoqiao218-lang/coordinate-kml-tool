@@ -2,11 +2,281 @@ export const WGS84_PRIMARY_STAGE_CAP_MS = 25_000;
 export const KYRGYZ_PRIMARY_STAGE_CAP_MS = 25_000;
 export const MADAGASCAR_PRIMARY_STAGE_CAP_MS = 25_000;
 
+const MADAGASCAR_MAP_TICK_VALUES = new Set([
+  "290625", "295625", "300625", "535625", "540625", "545625", "550625"
+]);
+const MADAGASCAR_LOCAL_ANCHOR = Object.freeze({
+  projectedX: 293437.5,
+  projectedY: 364062.5,
+  longitude: 45.23,
+  latitude: -22.68
+});
+const MADAGASCAR_METERS_PER_DEGREE_LATITUDE = 111320;
+const MADAGASCAR_METERS_PER_DEGREE_LONGITUDE = 102600;
+const MADAGASCAR_DEFAULT_CELL_SIZE_METERS = 625;
+
 function normalizeEvidenceText(value) {
   return String(value || "")
     .normalize("NFKC")
     .replace(/[\u0000-\u001f]+/g, " ")
     .trim();
+}
+
+function normalizeCoordinateEvidenceText(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/\r\n/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[，]/g, ",")
+    .replace(/[｜]/g, "|");
+}
+
+function normalizeDecimalToken(value) {
+  return String(value || "").trim().replace(/,/g, ".").replace(/\s+/g, "");
+}
+
+function normalizeMadagascarCellId(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[|,;:]/g, "")
+    .replace(/\s+/g, "");
+}
+
+function isMadagascarGridCoordinate(value) {
+  const number = Number(normalizeDecimalToken(value));
+  return Number.isFinite(number) && number > 0 && number < 1000000;
+}
+
+function isValidMadagascarCellId(value) {
+  const normalized = normalizeMadagascarCellId(value);
+  return Boolean(normalized) && !/^\d{6,}$/.test(normalized) && /^[A-Za-z0-9-]{1,16}$/.test(normalized);
+}
+
+function parseDmsCoordinate(value, expectedDirections) {
+  const match = String(value || "").match(/(\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′]?\s*(\d{1,2}(?:[.,]\d+)?)\s*["″]?\s*([NSEW])/i);
+  if (!match || !expectedDirections.includes(match[4].toUpperCase())) return null;
+  const degrees = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3].replace(",", "."));
+  if (!Number.isFinite(degrees) || minutes >= 60 || seconds >= 60) return null;
+  const sign = /[SW]/i.test(match[4]) ? -1 : 1;
+  return sign * (degrees + minutes / 60 + seconds / 3600);
+}
+
+export function collapseExactRepeatedCoordinateSequence(rows = [], key = row => JSON.stringify(row)) {
+  const source = Array.isArray(rows) ? rows.slice() : [];
+  for (let blockLength = Math.floor(source.length / 2); blockLength >= 3; blockLength -= 1) {
+    for (let start = 0; start + blockLength * 2 <= source.length; start += 1) {
+      let exact = true;
+      for (let offset = 0; offset < blockLength; offset += 1) {
+        if (key(source[start + offset]) !== key(source[start + blockLength + offset])) {
+          exact = false;
+          break;
+        }
+      }
+      if (exact) return source.slice(0, start + blockLength).concat(source.slice(start + blockLength * 2));
+    }
+  }
+  return source;
+}
+
+export function hasIndonesiaUtm50StructuralEvidence(value = "") {
+  const text = normalizeCoordinateEvidenceText(value);
+  return /UTM\s*WGS\s*1984\s*ZONA\s*50S/i.test(text)
+    && /(?:^|[|\s])X(?:[|\s]|$)/im.test(text)
+    && /(?:^|[|\s])Y(?:[|\s]|$)/im.test(text);
+}
+
+export function hasStrongPrintedProjectedTableEvidence(value = "") {
+  const text = normalizeCoordinateEvidenceText(value);
+  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+  const hasProjectedHeader = lines.some(line => {
+    const normalized = line.replace(/[|;\t]+/g, " ").replace(/\s+/g, " ").trim();
+    return /(?:^|\s)(?:No\.?|Point|Titik|ID|Label)?\s*(?:X|Easting)\s+(?:Y|Northing)(?:\s|$)/i.test(normalized);
+  });
+  const projectedRows = lines.filter(line => {
+    const cells = line.split(/[|;\t]/).map(cell => cell.trim()).filter(Boolean);
+    if (cells.length < 3) return false;
+    const x = Number(normalizeDecimalToken(cells[1]));
+    const y = Number(normalizeDecimalToken(cells[2]));
+    return Number.isFinite(x) && x >= 100000 && x <= 900000
+      && Number.isFinite(y) && y >= 0 && y <= 10000000;
+  }).length;
+  return hasProjectedHeader && projectedRows >= 3;
+}
+
+export function getIndonesiaUtm50Info(value = "", { transform } = {}) {
+  const text = normalizeCoordinateEvidenceText(value);
+  if (!hasIndonesiaUtm50StructuralEvidence(text)) {
+    return Object.freeze({ isIndonesiaUtm50: false, rows: Object.freeze([]), rowCount: 0, duplicateSequenceCollapsed: false });
+  }
+  const parsed = [];
+  for (const line of text.split("\n").map(item => item.trim()).filter(Boolean)) {
+    const parts = line.split("|").map(item => item.trim()).filter(Boolean);
+    const numbers = line.match(/[-+]?\d+(?:[.,]\d+)?/g) || [];
+    if (parts.length < 3 || numbers.length < 3) continue;
+    const label = String(parts[0].match(/[A-Za-z0-9-]+/)?.[0] || numbers[0]);
+    const xMatch = line.match(/(?:^|[|\s])X\s*[:=]?\s*([-+]?\d+(?:[.,]\d+)?)/i);
+    const yMatch = line.match(/(?:^|[|\s])Y\s*[:=]?\s*([-+]?\d+(?:[.,]\d+)?)/i);
+    const eastingText = normalizeDecimalToken(xMatch?.[1] || numbers[1]);
+    const northingText = normalizeDecimalToken(yMatch?.[1] || numbers[2]);
+    const easting = Number(eastingText);
+    const northing = Number(northingText);
+    if (!Number.isFinite(easting) || easting < 100000 || easting > 900000
+      || !Number.isFinite(northing) || northing < 9000000 || northing > 10000000) continue;
+    const latitudePart = parts.find(part => /[°º].*[S]/i.test(part)) || "";
+    const longitudePart = parts.find(part => /[°º].*[E]/i.test(part)) || "";
+    const referenceLatitude = parseDmsCoordinate(latitudePart, "NS");
+    const referenceLongitude = parseDmsCoordinate(longitudePart, "EW");
+    const transformed = typeof transform === "function" ? transform(50, easting, northing, false) : null;
+    const lat = Number.isFinite(referenceLatitude) ? referenceLatitude : transformed?.lat;
+    const lon = Number.isFinite(referenceLongitude) ? referenceLongitude : transformed?.lon;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    parsed.push(Object.freeze({
+      label,
+      eastingText,
+      northingText,
+      latitudeDms: latitudePart,
+      longitudeDms: longitudePart,
+      lat,
+      lon
+    }));
+  }
+  const collapsed = collapseExactRepeatedCoordinateSequence(parsed, row => [
+    row.label, row.eastingText, row.northingText, row.latitudeDms, row.longitudeDms
+  ].join("|"));
+  return Object.freeze({
+    isIndonesiaUtm50: collapsed.length >= 3,
+    crs: "EPSG:32750",
+    axisOrder: "easting_northing",
+    rows: Object.freeze(collapsed),
+    rowCount: collapsed.length,
+    duplicateSequenceCollapsed: collapsed.length !== parsed.length
+  });
+}
+
+export function formatIndonesiaUtm50Rows(info = {}) {
+  return (Array.isArray(info.rows) ? info.rows : []).map(row => {
+    const sourceReference = row.latitudeDms && row.longitudeDms
+      ? ` | ${row.latitudeDms} | ${row.longitudeDms}`
+      : "";
+    return `${row.label} | ${row.eastingText} | ${row.northingText}${sourceReference} | ${row.lon.toFixed(12)},${row.lat.toFixed(12)},0`;
+  }).join("\n");
+}
+
+export function hasMadagascarCadastralStructuralSignature(value = "") {
+  const text = normalizeCoordinateEvidenceText(value);
+  return /liste[_\s-]*carr[eé]s?/i.test(text)
+    && /\bX\s*V\b|\bXV\b/i.test(text)
+    && /\bY\s*V\b|\bYV\b/i.test(text)
+    && /\bNC\b|\bnum\b|n[°o]\b|CM[_\s-]*NOMFIR|cadastral|cadastre|grille|carreau/i.test(text);
+}
+
+export function hasMadagascarMapGridTickTakeover(value = "") {
+  const text = normalizeCoordinateEvidenceText(value);
+  const hits = [...MADAGASCAR_MAP_TICK_VALUES].filter(tick => new RegExp(`\\b${tick}\\b`).test(text));
+  return hits.length >= 2 && !hasMadagascarCadastralStructuralSignature(text);
+}
+
+export function extractMadagascarCadastralRows(value = "") {
+  const text = normalizeCoordinateEvidenceText(value);
+  const hasContext = hasMadagascarCadastralStructuralSignature(text)
+    || (/\bXV\b/i.test(text) && /\bYV\b/i.test(text) && /\bnum\b|cadastral|cadastre|grid|grille|carreau/i.test(text));
+  if (!hasContext || hasMadagascarMapGridTickTakeover(text)) return [];
+  const rows = [];
+  const seen = new Set();
+  for (const line of text.split("\n").map(item => item.trim()).filter(Boolean)) {
+    if (/^(?:NC\s*)?(?:num|n[°o]?|#)?\s*[\|,;\s-]*x\s*v[\|,;\s-]*y\s*v(?:[\|,;\s-]*(?:CM[_\s-]*NOMFIR|num))?$/i.test(line)
+      || /^(?:NC|#)\s*[\|,;\s-]*X\s*V\s*[\|,;\s-]*Y\s*V/i.test(line)) continue;
+    const parts = line.split("|").map(item => item.trim()).filter(Boolean);
+    let row = null;
+    if (parts.length >= 3 && !/^NC$/i.test(parts[0]) && !/^num$/i.test(parts[0])) {
+      if (parts.length >= 5 && /^[-+]?\d+$/.test(parts[0])
+        && isMadagascarGridCoordinate(parts[1]) && isMadagascarGridCoordinate(parts[2])) {
+        row = { num: normalizeMadagascarCellId(parts.at(-1)), xv: normalizeDecimalToken(parts[1]), yv: normalizeDecimalToken(parts[2]) };
+      } else {
+        row = { num: normalizeMadagascarCellId(parts[0]), xv: normalizeDecimalToken(parts[1]), yv: normalizeDecimalToken(parts[2]) };
+      }
+    }
+    const labeled = line.match(/(?:^|\b)(?:num|n[°o]?|#)?\s*([A-Za-z0-9-]{1,16})\D+XV\D*([-+]?\d+(?:[.,]\d+)?)\D+YV\D*([-+]?\d+(?:[.,]\d+)?)/i);
+    if (!row && labeled) {
+      row = { num: normalizeMadagascarCellId(labeled[1]), xv: normalizeDecimalToken(labeled[2]), yv: normalizeDecimalToken(labeled[3]) };
+    }
+    if (!row) {
+      const numericTokens = line.match(/[-+]?\d+(?:[.,]\d+)?/g) || [];
+      if (numericTokens.length >= 4) {
+        const nc = Number(normalizeDecimalToken(numericTokens[0]));
+        if (Number.isInteger(nc) && nc >= 1 && nc <= 999
+          && isMadagascarGridCoordinate(numericTokens[1])
+          && isMadagascarGridCoordinate(numericTokens[2])
+          && isValidMadagascarCellId(numericTokens.at(-1))) {
+          row = { num: normalizeMadagascarCellId(numericTokens.at(-1)), xv: normalizeDecimalToken(numericTokens[1]), yv: normalizeDecimalToken(numericTokens[2]) };
+        }
+      }
+    }
+    if (!row) {
+      const cleaned = line.replace(/\b(?:num|n[°o]?|xv|yv)\b/gi, " ").replace(/[|:;，,]/g, " ");
+      const tokens = cleaned.match(/[-+]?\d+(?:[.,]\d+)?|[A-Za-z]?\d[A-Za-z0-9-]*/g) || [];
+      if (tokens.length >= 3) {
+        row = { num: normalizeMadagascarCellId(tokens[0]), xv: normalizeDecimalToken(tokens[1]), yv: normalizeDecimalToken(tokens[2]) };
+      }
+    }
+    const num = normalizeMadagascarCellId(row?.num);
+    const xv = Number(row?.xv);
+    const yv = Number(row?.yv);
+    if (!isValidMadagascarCellId(num)
+      || !Number.isFinite(xv) || xv <= 0 || xv >= 1000000
+      || !Number.isFinite(yv) || yv <= 0 || yv >= 1000000
+      || MADAGASCAR_MAP_TICK_VALUES.has(num)) continue;
+    const normalized = Object.freeze({ num, xv: row.xv, yv: row.yv });
+    const key = `${normalized.num}|${normalized.xv}|${normalized.yv}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      rows.push(normalized);
+    }
+  }
+  return rows;
+}
+
+function inferMadagascarGridSpacing(values = []) {
+  const sorted = Array.from(new Set(values.map(Number).filter(Number.isFinite))).sort((left, right) => left - right);
+  const differences = sorted.slice(1).map((value, index) => value - sorted[index]).filter(value => value > 0);
+  return differences.length > 0 ? Math.min(...differences) : MADAGASCAR_DEFAULT_CELL_SIZE_METERS;
+}
+
+export function convertMadagascarCadastralToWgs84(x, y) {
+  const easting = Number(x);
+  const northing = Number(y);
+  if (!Number.isFinite(easting) || !Number.isFinite(northing)) return null;
+  const lon = MADAGASCAR_LOCAL_ANCHOR.longitude
+    + ((easting - MADAGASCAR_LOCAL_ANCHOR.projectedX) / MADAGASCAR_METERS_PER_DEGREE_LONGITUDE);
+  const lat = MADAGASCAR_LOCAL_ANCHOR.latitude
+    + ((northing - MADAGASCAR_LOCAL_ANCHOR.projectedY) / MADAGASCAR_METERS_PER_DEGREE_LATITUDE);
+  return lon >= 42 && lon <= 52 && lat >= -27 && lat <= -10
+    ? Object.freeze({ lon, lat })
+    : null;
+}
+
+export function buildMadagascarCadastralCellPolygons(rows = []) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  const halfWidth = inferMadagascarGridSpacing(sourceRows.map(row => row.xv)) / 2;
+  const halfHeight = inferMadagascarGridSpacing(sourceRows.map(row => row.yv)) / 2;
+  return sourceRows.map(row => {
+    const centerX = Number(row.xv);
+    const centerY = Number(row.yv);
+    const corners = [
+      [centerX - halfWidth, centerY - halfHeight],
+      [centerX + halfWidth, centerY - halfHeight],
+      [centerX + halfWidth, centerY + halfHeight],
+      [centerX - halfWidth, centerY + halfHeight]
+    ].map(([x, y]) => convertMadagascarCadastralToWgs84(x, y));
+    if (!corners.every(Boolean)) return null;
+    return Object.freeze({
+      label: String(row.num || ""),
+      sourceProjectedCenter: Object.freeze({ x: centerX, y: centerY }),
+      points: Object.freeze(corners)
+    });
+  }).filter(Boolean);
 }
 
 function buildUploadEvidenceText({ fileName = "", decodedFileName = "", rawHint = "" } = {}) {

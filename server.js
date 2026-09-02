@@ -13,8 +13,13 @@ import {
   KYRGYZ_PRIMARY_STAGE_CAP_MS,
   MADAGASCAR_PRIMARY_STAGE_CAP_MS,
   WGS84_PRIMARY_STAGE_CAP_MS,
+  buildMadagascarCadastralCellPolygons,
   buildPrimaryRouteDecision,
   detectUploadTableStructure,
+  extractMadagascarCadastralRows,
+  formatIndonesiaUtm50Rows,
+  getIndonesiaUtm50Info,
+  hasStrongPrintedProjectedTableEvidence,
   getMadagascarCadastralStrongRouteEvidence,
   getWgs84StrongRouteEvidence,
   shouldRunWgs84TimeoutRescue
@@ -60,6 +65,7 @@ import {
   getRecognitionBudget,
   getRecognitionDeadlineSignal,
   getRecognitionHardDeadlineMs,
+  buildFamilyAvailabilityBlockedEngine,
   evaluateFamilyAvailability,
   enforceSpatialApiEnabled,
   isSpatialResultEnabled,
@@ -3602,6 +3608,7 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
   const rawDmsRows = getLikelyHandwrittenDmsRawRowCount(sourceText);
   const isOcrImage = Boolean(options.isOcrImage);
   const hasStrongHandwrittenDmsRows = rawDmsRows >= 8;
+  const hasStrongPrintedProjectedTable = hasStrongPrintedProjectedTableEvidence(sourceText);
   const hasExplicitHandwrittenDmsContext = Boolean(options.hasExplicitHandwrittenDmsContext);
 
   const isHandwrittenDms = isOcrImage
@@ -3609,6 +3616,7 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
     && (pointRows >= 4 || rawDmsRows >= 4)
     && (looksLikeHandwrittenDmsBlock(sourceText) || hasStrongHandwrittenDmsRows)
     && (!getDmsGroupedCoordinateInfo(sourceText).output || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
+    && !hasStrongPrintedProjectedTable
     && (!looksLikeCoordinateTable(sourceText) || hasStrongHandwrittenDmsRows)
     && (!hasDmsGroupedContext(sourceText) || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
     && !getFrenchPerimeterDmsInfo(sourceText).isFrenchPerimeterDms
@@ -3620,6 +3628,7 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
 
   return {
     isHandwrittenDms,
+    hasStrongPrintedProjectedTable,
     dmsRows,
     rawDmsRows,
     pointRows
@@ -4009,6 +4018,10 @@ function normalizeGridValue(value) {
 function extractCadastralGridRows(text) {
   // Stable path: Madagascar cadastral grid extraction returns only num | XV | YV.
   // Do not include NC/CM_NOMFIR here and do not convert XV/YV in the backend recognition response.
+  const stableRows = extractMadagascarCadastralRows(text);
+  if (stableRows.length > 0 || hasCadastralGridContext(text)) {
+    return stableRows;
+  }
   if (!hasCadastralGridContext(text)) {
     return [];
   }
@@ -4835,32 +4848,10 @@ function buildFamilyAvailabilityBlockedPayload({ availability, coordinateType, p
     parserTrace: [`${family.toUpperCase()}:availability_blocked`]
   };
 
-  payload.coordinateEngineV2 = normalizeCoordinateEngineV2Result({
-    schema_version: "coordinate_engine_v2",
-    coordinate_type: coordinateType || family,
-    precision_mode: precisionMode || "",
-    confidence: 0,
-    requires_review: false,
-    kml_ready: false,
-    source: {
-      image_count: 1,
-      ocr_engine: "availability_policy",
-      fallback_used: false
-    },
-    groups: [],
-    warnings: [payload.warning],
-    debug: {
-      matched_detectors: [family, "family_availability_policy"],
-      blocked_fallbacks: [
-        "provider_call",
-        "generic_provider",
-        "unrelated_family_retry",
-        "legacy_multi_call_chain",
-        "kml_generator"
-      ],
-      supplemental_fallbacks: []
-    }
-  }, { forceRequiresReview: false });
+  const unavailableEngine = normalizeCoordinateEngineV2Result(
+    buildFamilyAvailabilityBlockedEngine({ availability, coordinateType, precisionMode }),
+    { forceRequiresReview: false }
+  );
   payload.coordinateEngineV2 = {
     ...unavailableEngine,
     requires_review: false,
@@ -8223,6 +8214,9 @@ function inferCoordinateEngineV2Type(payload = {}) {
   if (precisionMode === "cadastral-grid-num-xv-yv" || payload.cadastralGrid?.isCadastralGrid) {
     return "madagascar_cadastral_grid";
   }
+  if (precisionMode === "indonesia-utm50s-projected" || payload.indonesiaUtm50?.isIndonesiaUtm50) {
+    return "indonesia_utm50_projected";
+  }
   if (precisionMode === "mgrs-utm-grid-reference" || payload.mgrs?.isMgrs) {
     return "mgrs_utm_grid_reference";
   }
@@ -8300,7 +8294,7 @@ function parseCoordinateEngineV2PointLine(line, coordinateType, index, explicitL
     return point;
   }
 
-  if ((coordinateType === "mgrs_utm_grid_reference" || coordinateType === "decimal_latlon") && pipeParts.length >= 3) {
+  if ((coordinateType === "mgrs_utm_grid_reference" || coordinateType === "decimal_latlon" || coordinateType === "indonesia_utm50_projected") && pipeParts.length >= 3) {
     const kmlPart = pipeParts.find(part => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(part));
     const latLonPart = pipeParts.find(part => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(part));
     if (kmlPart) {
@@ -8564,6 +8558,12 @@ const coordinateEngineV2CountryProfiles = {
     expectedAreaHa: { min: 0.0001, max: 1000000 },
     expectedEdgeMeters: { min: 0.1, max: 200000 }
   },
+  indonesia_utm50_projected: {
+    country: "Indonesia",
+    bbox: { minLon: 95, maxLon: 141, minLat: -11, maxLat: 6 },
+    expectedAreaHa: { min: 0.0001, max: 10000000 },
+    expectedEdgeMeters: { min: 0.1, max: 1000000 }
+  },
   standard_dms_table: {
     country: "Unknown",
     bbox: { minLon: -180, maxLon: 180, minLat: -90, maxLat: 90 },
@@ -8655,6 +8655,7 @@ function getCoordinateEngineV2AxisEvidence(coordinateType = "", result = {}, opt
     "mozambique_geographic_table",
     "cote_divoire_geographic_dms_table",
     "mgrs_utm_grid_reference",
+    "indonesia_utm50_projected",
     "projected_xy",
     "standard_dms_table",
     "handwritten_dms_experimental"
@@ -9340,6 +9341,41 @@ function buildCoordinateEngineV2ValidationReport(group = {}, coordinateType = ""
 }
 
 function buildCoordinateEngineV2Groups(payload = {}, coordinateType = "") {
+  if (coordinateType === "madagascar_cadastral_grid") {
+    const rows = Array.isArray(payload.cadastralGrid?.rows) ? payload.cadastralGrid.rows : [];
+    const cells = buildMadagascarCadastralCellPolygons(rows);
+    if (cells.length > 0) {
+      return cells.map((cell, groupIndex) => ({
+        group_id: `group_${groupIndex + 1}`,
+        group_name: cell.label || `矿地${groupIndex + 1}`,
+        geometry: "polygon",
+        confidence: 0.85,
+        requires_review: false,
+        kml_ready: false,
+        declared_area_ha: null,
+        calculated_area_ha: null,
+        warnings: [],
+        points: cell.points.map((point, pointIndex) => ({
+          label: `${cell.label || groupIndex + 1}-${pointIndex + 1}`,
+          raw: `${point.lon},${point.lat}`,
+          lat: point.lat,
+          lon: point.lon,
+          x: null,
+          y: null,
+          projection: null,
+          source_crs: "EPSG:4326",
+          grid_cell: {
+            num: cell.label,
+            xv: cell.sourceProjectedCenter.x,
+            yv: cell.sourceProjectedCenter.y
+          },
+          confidence: 0.85,
+          requires_review: false,
+          warnings: []
+        }))
+      }));
+    }
+  }
   const blocks = getStructuredCoordinateBlocks(payload, coordinateType)
     .filter(block => block.length > 0);
 
@@ -9524,7 +9560,11 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
     precision_mode: precisionMode,
     source_crs: coordinateType === "projected_xy"
       ? { id: "EPSG:32630", projection: "utm", zone: 30, hemisphere: "N", axisOrder: "easting_northing" }
-      : null,
+      : coordinateType === "indonesia_utm50_projected"
+        ? { id: "EPSG:32750", projection: "utm", zone: 50, hemisphere: "S", axisOrder: "easting_northing" }
+        : coordinateType === "madagascar_cadastral_grid"
+          ? { id: "EPSG:29702", projection: "laborde", axisOrder: "easting_northing" }
+        : null,
     confidence: groups.length > 0
       ? Number((groups.reduce((sum, group) => sum + Number(group.confidence || 0), 0) / groups.length).toFixed(2))
       : 0,
@@ -12590,8 +12630,7 @@ app.post("/api/map-preview", enforceSpatialApiEnabled, (req, res) => {
     spatialFacts,
     spatialFactsStatus,
     kmlEligibility: {
-      allowed: current.result.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
-        && current.result.kmlReady === true,
+      allowed: current.result.kmlReady === true,
       decisionState: current.result.decisionState,
       kmlReady: current.result.kmlReady === true
     },
@@ -13966,6 +14005,44 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     if (initialBftmCoordinateRepair.changed && initialBftmCoordinateRepair.rowCount >= 4) {
       coordinates = initialBftmCoordinateRepair.text;
       console.log("BFTM projected coordinate OCR digit repair applied rows=", initialBftmCoordinateRepair.rowCount);
+    }
+    const indonesiaUtm50 = getIndonesiaUtm50Info(rawText, { transform: utmToWgs84 });
+    if (indonesiaUtm50.isIndonesiaUtm50) {
+      const indonesiaCoordinates = formatIndonesiaUtm50Rows(indonesiaUtm50);
+      const consumeResult = await consumeCoordinateUsage({
+        note: "Coordinate recognition consumed after Indonesia UTM50 stable parser"
+      });
+      if (!consumeResult.success) {
+        return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+          success: false,
+          reason: consumeResult.reason || "db_error",
+          code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+          error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+          rawText: "",
+          coordinates: ""
+        });
+      }
+      const indonesiaPayload = {
+        model: `${aliyunVisionModel}+indonesia-utm50-stable-parser`,
+        rawText,
+        coordinates: indonesiaCoordinates,
+        precisionMode: "indonesia-utm50s-projected",
+        warning: "识别到 UTM WGS 1984 ZONA 50S 平面坐标表；已按 EPSG:32750 的 X=Easting、Y=Northing 转换，请结合原图核对。",
+        indonesiaUtm50,
+        parserTrace: [
+          "INDONESIA_UTM50:explicit_document_evidence",
+          indonesiaUtm50.duplicateSequenceCollapsed ? "INDONESIA_UTM50:exact_repeated_sequence_collapsed" : "INDONESIA_UTM50:unique_sequence",
+          "INDONESIA_UTM50:accepted"
+        ],
+        quota: consumeResult.quota
+      };
+      return res.json(buildCoordinateVerificationResponse(
+        indonesiaPayload,
+        buildCoordinateEngineV2ShadowResult(indonesiaPayload, {
+          fileName: uploadedFileName,
+          rawHint: coordinateEngineV2ContextHint
+        })
+      ));
     }
     let warning = extractRecognitionWarning(rawText);
     let usedModel = aliyunVisionModel;

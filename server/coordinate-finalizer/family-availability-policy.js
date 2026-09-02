@@ -21,8 +21,6 @@ const KYRGYZ_REMOVAL_CONDITIONS = Object.freeze([
   "RELEASE_AUTHORITY_APPROVED"
 ]);
 
-const MADAGASCAR_REMOVAL_CONDITIONS = Object.freeze([...KYRGYZ_REMOVAL_CONDITIONS]);
-
 const HANDWRITTEN_REMOVAL_CONDITIONS = Object.freeze([
   "USABLE_RECOGNITION_RESTORED",
   "PROVIDER_VARIANCE_ACCEPTABLE_OR_REPLACEMENT_PROVEN",
@@ -39,14 +37,6 @@ const POLICY_ENTRIES = Object.freeze({
     effectiveFrom: POLICY_EFFECTIVE_FROM,
     evidenceReference: "SR-08G_KYRGYZ_0_OF_5_TIMEOUT_DOMINANT",
     removalConditions: KYRGYZ_REMOVAL_CONDITIONS
-  }),
-  madagascar_cadastral_grid: Object.freeze({
-    family: "madagascar_cadastral_grid",
-    status: FAMILY_AVAILABILITY_STATUS.BLOCKED_BY_PROVIDER,
-    reasonCode: COORDINATE_GATE_REASON.FAMILY_BLOCKED_BY_PROVIDER,
-    effectiveFrom: POLICY_EFFECTIVE_FROM,
-    evidenceReference: "SR-08G_MADAGASCAR_0_OF_5_TIMEOUT_DOMINANT",
-    removalConditions: MADAGASCAR_REMOVAL_CONDITIONS
   }),
   handwritten_dms_experimental: Object.freeze({
     family: "handwritten_dms_experimental",
@@ -125,4 +115,38 @@ export function evaluateFamilyAvailability({ family = "", authoritativeEvidence 
 export function isFamilyAvailabilityBlocked(value = {}) {
   return value?.status === FAMILY_AVAILABILITY_STATUS.BLOCKED_BY_PROVIDER
     || value?.status === FAMILY_AVAILABILITY_STATUS.TEMPORARILY_UNAVAILABLE;
+}
+
+export function buildFamilyAvailabilityBlockedEngine({
+  availability = {},
+  coordinateType = "",
+  precisionMode = ""
+} = {}) {
+  const family = String(availability.family || coordinateType || "");
+  const warning = "This coordinate family is currently unavailable for authoritative recognition.";
+  return {
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: coordinateType || family,
+    precision_mode: precisionMode,
+    confidence: 0,
+    requires_review: false,
+    source: {
+      image_count: 1,
+      ocr_engine: "availability_policy",
+      fallback_used: false
+    },
+    groups: [],
+    warnings: [warning],
+    debug: {
+      matched_detectors: [family, "family_availability_policy"],
+      blocked_fallbacks: [
+        "provider_call",
+        "generic_provider",
+        "unrelated_family_retry",
+        "legacy_multi_call_chain",
+        "kml_generator"
+      ],
+      supplemental_fallbacks: []
+    }
+  };
 }

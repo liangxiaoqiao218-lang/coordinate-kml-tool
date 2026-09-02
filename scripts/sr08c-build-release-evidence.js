@@ -21,7 +21,7 @@ const coordinateFileNames = {
   utm30_burkina_003: "布基纳法索03.png",
   mgrs_myanmar_001: "缅甸坐标.jpg",
   kyrgyz_gk_001: "吉尔吉斯斯坦矿地坐标.png",
-  madagascar_cadastral_candidate_001: "马达加斯加坐标.png",
+  "madagascar-cadastral-real-001": "马达加斯加坐标.png",
   mozambique_tete_001: "莫桑比克矿地.jpg",
   cote_divoire_single_01: "科特迪瓦01.png",
   cote_divoire_single_02: "科特迪瓦02.png",

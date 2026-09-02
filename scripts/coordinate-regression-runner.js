@@ -10,6 +10,14 @@ import {
   validateGoldenGovernance,
 } from '../release-governance/runner-semantics.js';
 import { validateReleaseEvidenceBinding } from '../release-governance/evidence-binding.js';
+import { validateLocalPatchCandidateIdentity } from './local-patch-candidate-identity.js';
+import {
+  assertP0ReplayRuntimeSafety,
+  isLoopbackUrl,
+  loadP0ReleaseGateGovernance,
+  loadP0ReplayManifest,
+  validateP0ReplayFixture,
+} from './p0-deterministic-replay.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,7 +34,21 @@ const apiOrigin = new URL(apiUrl).origin;
 const versionApiUrl = `${apiOrigin}/api/version`;
 const traceApiBaseUrl = `${apiOrigin}/api/regression/recognition-trace`;
 const coordinateTolerance = Number(process.env.COORDINATE_REGRESSION_TOLERANCE || '1e-6');
+const p0MetricsUrl = process.env.P0_REPLAY_METRICS_URL || 'http://127.0.0.1:32122';
 const allowedLayers = new Set(['Vision', 'Parser', 'Engine', 'Resolver', 'KML', 'UI', 'Gate']);
+export const RUNNER_TERMINAL_STATUSES = Object.freeze([
+  'PASS',
+  'PRODUCT_FAIL',
+  'BLOCKED_NO_REPLAY',
+  'BLOCKED_FIXTURE',
+  'BASELINE_REVIEW_REQUIRED',
+  'SKIP_OUT_OF_SCOPE',
+]);
+export const P0_REQUIRED_FIXTURE_SET = Object.freeze([
+  'indonesia-dms-real-001',
+  'indonesia-projected-real-002',
+  'madagascar-cadastral-real-001',
+]);
 
 const fieldLayerMap = {
   api: 'Vision',
@@ -77,7 +99,9 @@ const knownLocalFixtureNames = {
   utm30_burkina_003: '布基纳法索03.png',
   mgrs_myanmar_001: '缅甸坐标.jpg',
   kyrgyz_gk_001: '吉尔吉斯斯坦矿地坐标.png',
-  madagascar_cadastral_candidate_001: '马达加斯加坐标.png',
+  'madagascar-cadastral-real-001': '马达加斯加坐标.png',
+  'indonesia-dms-real-001': 'indonesia-utm50s-real-001.jpg',
+  'indonesia-projected-real-002': 'indonesia-utm50s-real-002.jpg',
   mozambique_tete_001: '莫桑比克矿地.jpg',
   cote_divoire_single_01: '科特迪瓦01.png',
   cote_divoire_single_02: '科特迪瓦02.png',
@@ -314,8 +338,9 @@ function normalizeEnum(value) {
 }
 
 function normalizeGeometry(value) {
-  const normalized = normalizeEnum(value);
+  const normalized = normalizeEnum(value && typeof value === 'object' ? value.type : value);
   if (normalized === 'linestring') return 'line';
+  if (normalized === 'multipolygon') return 'multipolygon';
   if (normalized === 'polygon') return 'polygon';
   if (normalized === 'point') return 'point';
   if (normalized === 'line') return 'line';
@@ -642,14 +667,17 @@ function summarizeApiResponse(data, responseMeta = {}) {
   const lastPoint = gridRows.length ? formatGridRow(gridRows[gridRows.length - 1]) : coordinateRows[coordinateRows.length - 1] || '';
   const groupGeometries = groups.map((group) => normalizeGeometry(group?.geometry)).filter(Boolean);
   const uniqueGeometries = [...new Set(groupGeometries)];
-  const geometry = uniqueGeometries.length === 1
-    ? uniqueGeometries[0]
-    : normalizeGeometry(data?.geometry || engine.geometry || inferGeometry(pointCount));
+  const geometry = normalizeGeometry(finalized?.geometry)
+    || (uniqueGeometries.length === 1
+      ? uniqueGeometries[0]
+      : normalizeGeometry(data?.geometry || engine.geometry || inferGeometry(pointCount)));
   const topRequiresReview = typeof engine.requires_review === 'boolean' ? engine.requires_review : null;
   const groupRequiresReview = groups.some((group) => group?.requires_review === true);
-  const requiresReview = typeof finalized.requiresReview === 'boolean'
+  const authorityBlockingRequiresReview = typeof finalized.requiresReview === 'boolean'
     ? finalized.requiresReview
     : topRequiresReview ?? groupRequiresReview;
+  const requiresReview = authorityBlockingRequiresReview === true
+    || normalizeEnum(finalized.qualityGateStatus) === 'review_required';
   const allGroupsKmlReady = getAllGroupsKmlReady(groups);
   const effectiveReviewGroupIndexes = finalizedGroups.length
     ? finalizedGroups.map((group, index) => (group?.requiresReview === true ? index + 1 : null)).filter(value => value !== null)
@@ -666,6 +694,7 @@ function summarizeApiResponse(data, responseMeta = {}) {
     pointCount,
     geometry,
     requiresReview,
+    authorityBlockingRequiresReview,
     kmlReady: typeof finalized.kmlReady === 'boolean'
       ? finalized.kmlReady
       : typeof engine.kml_ready === 'boolean' ? engine.kml_ready : allGroupsKmlReady,
@@ -1076,6 +1105,7 @@ function compareGolden(sample, actual) {
     addFinding(diffs, 'BLOCKER', 'decision_state', sample.expected_decision_states, actual.decisionState || null, 'Gate');
   }
   compareField(diffs, 'confirmation_status', sample.expected_confirmation_status, actual.confirmationStatus, { normalize: 'enum', layer: 'Gate' });
+  compareField(diffs, 'quality_gate_status', sample.expected_quality_gate_status, actual.qualityGateStatus, { normalize: 'enum', layer: 'Gate' });
   compareField(diffs, 'family_policy_id', sample.expected_family_policy_id, actual.familyPolicyId, { layer: 'Gate' });
   compareField(diffs, 'family_policy_version', sample.expected_family_policy_version, actual.familyPolicyVersion, { layer: 'Gate' });
   compareField(diffs, 'country', sample.expected_country, actual.country, { severity: 'WARNING' });
@@ -1176,6 +1206,37 @@ function getWorstSampleStatus(diffs, warnings) {
     return 'PASS WITH WARNING';
   }
   return 'PASS';
+}
+
+export function classifyAcquisitionTerminal(actualResult, { p0Critical = false, deterministicReplay = false } = {}) {
+  const envelope = actualResult?.actual || actualResult || {};
+  if (envelope.skipped) {
+    return envelope.skipReason === 'fixture_not_found' || envelope.skipReason === 'text_fixture_unavailable'
+      ? 'BLOCKED_FIXTURE'
+      : 'SKIP_OUT_OF_SCOPE';
+  }
+  const httpFailure = Number.isInteger(envelope.httpStatus) && envelope.httpStatus >= 400;
+  const invalidEnvelope = envelope.error
+    || envelope.finalizerEvaluated !== true
+    || envelope.normalizedEvidenceAvailable !== true;
+  if (httpFailure || invalidEnvelope) {
+    return p0Critical || deterministicReplay ? 'PRODUCT_FAIL' : 'BLOCKED_NO_REPLAY';
+  }
+  return null;
+}
+
+function buildBlockedResult(sample, status, reason, errorLibrary, options) {
+  const sampleErrors = getErrorsForSample(errorLibrary, sample, options);
+  return {
+    sample,
+    status,
+    historicalStatus: sampleErrors.length ? 'NOT CHECKED' : 'NOT APPLICABLE',
+    historicalFindings: [],
+    runs: [{ skipped: true, skipReason: reason, error: reason }],
+    diffs: [],
+    warnings: [],
+    semanticSummary: summarizeSemanticRuns([]),
+  };
 }
 
 function validateBaseline(baseline) {
@@ -1463,7 +1524,7 @@ async function runSample(sample, options, errorLibrary) {
   if (options.pathId !== 'original') {
     return {
       sample,
-      status: 'SKIP',
+      status: 'SKIP_OUT_OF_SCOPE',
       historicalStatus: sampleErrors.length ? 'NOT CHECKED' : 'NOT APPLICABLE',
       historicalFindings: [],
       runs: [{
@@ -1479,7 +1540,7 @@ async function runSample(sample, options, errorLibrary) {
   if (sample.input_type === 'text' && !options.includeText) {
     return {
       sample,
-      status: 'SKIP',
+      status: 'SKIP_OUT_OF_SCOPE',
       historicalStatus: sampleErrors.length ? 'NOT CHECKED' : 'NOT APPLICABLE',
       historicalFindings: [],
       runs: [{
@@ -1492,6 +1553,20 @@ async function runSample(sample, options, errorLibrary) {
     };
   }
 
+  let replayValidation = null;
+  if (options.p0ReplayManifest && sample.input_type === 'image') {
+    replayValidation = await validateP0ReplayFixture(repoRoot, sample, options.p0ReplayManifest);
+    if (replayValidation.status !== 'READY') {
+      return buildBlockedResult(
+        sample,
+        replayValidation.status,
+        replayValidation.reason || 'no_approved_deterministic_replay',
+        errorLibrary,
+        options,
+      );
+    }
+  }
+
   const allDiffs = [];
   const allWarnings = [];
   const historicalFindings = [];
@@ -1500,6 +1575,23 @@ async function runSample(sample, options, errorLibrary) {
     const actual = sample.input_type === 'text'
       ? await callTextApi(sample)
       : await callImageApi(sample);
+    const acquisitionTerminal = classifyAcquisitionTerminal(actual, {
+      p0Critical: sample.p0_release_critical === true,
+      deterministicReplay: replayValidation?.status === 'READY',
+    });
+    if (acquisitionTerminal) {
+      runs.push({ actual, diffs: [], warnings: [], semantics: {} });
+      return {
+        sample,
+        status: acquisitionTerminal,
+        historicalStatus: sampleErrors.length ? 'NOT CHECKED' : 'NOT APPLICABLE',
+        historicalFindings: [],
+        runs,
+        diffs: [],
+        warnings: [],
+        semanticSummary: summarizeSemanticRuns(runs),
+      };
+    }
     const { diffs, warnings } = compareGolden(sample, actual.actual || actual);
     const semantics = classifyGoldenRun({ sample, actual: actual.actual || actual, diffs });
     runs.push({ actual, diffs, warnings, semantics });
@@ -1525,10 +1617,10 @@ async function runSample(sample, options, errorLibrary) {
     : historicalFindings.some((finding) => finding.severity === 'WARNING')
       ? 'PASS WITH WARNING'
       : 'PASS';
-  const status = statusFromBaseline === 'FAIL' || historicalWorst === 'FAIL'
-    ? 'FAIL'
-    : statusFromBaseline === 'PASS WITH WARNING' || historicalWorst === 'PASS WITH WARNING'
-      ? 'PASS WITH WARNING'
+  const status = sample.baseline_review_required === true
+    ? 'BASELINE_REVIEW_REQUIRED'
+    : statusFromBaseline === 'FAIL' || historicalWorst === 'FAIL'
+      ? 'PRODUCT_FAIL'
       : 'PASS';
   const historicalStatus = historicalFindings.length
     ? historicalFindings.some((finding) => finding.code === 'HISTORICAL_ERROR_REGRESSION')
@@ -1588,7 +1680,7 @@ function printResult(result) {
   const { sample } = result;
   console.log(`\n[${result.status}] ${sample.sample_id} (${sample.type})`);
 
-  if (result.status === 'SKIP') {
+  if (['SKIP_OUT_OF_SCOPE', 'BLOCKED_NO_REPLAY', 'BLOCKED_FIXTURE'].includes(result.status)) {
     console.log(`  ${result.runs[0]?.error || result.runs[0]?.skipReason}`);
     return;
   }
@@ -1650,12 +1742,20 @@ function printResult(result) {
   }
 }
 
-function summarizeResults(results) {
+export function summarizeResults(results) {
   const summary = {
     pass: results.filter((result) => result.status === 'PASS').length,
-    passWithWarning: results.filter((result) => result.status === 'PASS WITH WARNING').length,
-    fail: results.filter((result) => result.status === 'FAIL').length,
-    skipped: results.filter((result) => result.status === 'SKIP').length,
+    productFail: results.filter((result) => result.status === 'PRODUCT_FAIL').length,
+    blockedNoReplay: results.filter((result) => result.status === 'BLOCKED_NO_REPLAY').length,
+    blockedFixture: results.filter((result) => result.status === 'BLOCKED_FIXTURE').length,
+    baselineReviewRequired: results.filter((result) => result.status === 'BASELINE_REVIEW_REQUIRED').length,
+    skipOutOfScope: results.filter((result) => result.status === 'SKIP_OUT_OF_SCOPE').length,
+    passWithWarning: 0,
+    fail: results.filter((result) => result.status === 'PRODUCT_FAIL').length,
+    skipped: results.filter((result) => result.status === 'SKIP_OUT_OF_SCOPE').length,
+    fixtureIds: Object.fromEntries(RUNNER_TERMINAL_STATUSES.map(status => [status, results
+      .filter(result => result.status === status)
+      .map(result => result.sample.sample_id)])),
     regression: 0,
     historicalRegressions: 0,
     knownOpenErrors: 0,
@@ -1690,7 +1790,7 @@ function summarizeResults(results) {
 
   for (const result of results) {
     const baselineStatus = String(result.sample.baseline_status || '').toLowerCase();
-    if (result.status === 'FAIL' && ['locked', 'locked_experimental', 'unstable'].includes(baselineStatus)) {
+    if (result.status === 'PRODUCT_FAIL' && ['locked', 'locked_experimental', 'unstable'].includes(baselineStatus)) {
       summary.regression += 1;
     }
     for (const finding of result.historicalFindings || []) {
@@ -1743,14 +1843,103 @@ function summarizeResults(results) {
     : null;
   summary.maxMs = summary.durations.length ? Math.max(...summary.durations) : null;
   summary.minMs = summary.durations.length ? Math.min(...summary.durations) : null;
-  summary.gateResult = summary.fail > 0 || summary.regression > 0
+  summary.gateResult = summary.productFail > 0 || summary.regression > 0 || summary.blockedFixture > 0 || summary.baselineReviewRequired > 0
     ? 'FAIL'
-    : summary.passWithWarning > 0 || summary.warningCount > 0
+    : summary.warningCount > 0
       ? 'PASS WITH WARNING'
       : 'PASS';
   Object.assign(summary, summarizeReleaseSemantics(results));
 
   return summary;
+}
+
+export function evaluateP0ReleaseGate(results, evidenceBinding = {}, gateGovernance, providerMeasurement) {
+  const summary = summarizeResults(results);
+  const byId = new Map(results.map(result => [result.sample.sample_id, result]));
+  const requiredStatuses = Object.fromEntries(P0_REQUIRED_FIXTURE_SET.map(id => [id, byId.get(id)?.status || 'MISSING']));
+  const blockedNoReplayFixtures = summary.fixtureIds.BLOCKED_NO_REPLAY;
+  const identityBindingPass = evidenceBinding.status === 'LOCAL_PATCH_CANDIDATE_BOUND'
+    || evidenceBinding.status === 'PASS';
+  const governedBlocked = gateGovernance?.blockedNoReplayFixtures || [];
+  const governedById = new Map(governedBlocked.map(entry => [entry.fixtureId, entry]));
+  const actualBlockedSet = new Set(blockedNoReplayFixtures);
+  const unexpectedBlockedNoReplayFixtures = blockedNoReplayFixtures.filter(id => !governedById.has(id));
+  const missingExpectedBlockedNoReplayFixtures = governedBlocked
+    .map(entry => entry.fixtureId)
+    .filter(id => !actualBlockedSet.has(id));
+  const blockedNoReplayDetailsValid = blockedNoReplayFixtures.every((id) => {
+    const result = byId.get(id);
+    const governed = governedById.get(id);
+    return Boolean(governed?.fixtureIdentity?.path)
+      && Boolean(governed?.fixtureIdentity?.sha256)
+      && result?.runs?.[0]?.skipReason === governed.reason;
+  });
+  const allNoReplayExplicitlyEnumerated = Boolean(gateGovernance)
+    && unexpectedBlockedNoReplayFixtures.length === 0
+    && missingExpectedBlockedNoReplayFixtures.length === 0
+    && blockedNoReplayDetailsValid;
+  const directlyAffectedBlockedWithoutSubstitute = governedBlocked.filter((entry) => (
+    actualBlockedSet.has(entry.fixtureId)
+    && entry.directlyAffectedAreas.some(area => !entry.approvedSubstituteCoverage.includes(area))
+  )).map(entry => entry.fixtureId);
+  const directlyAffectedIds = new Set([
+    ...P0_REQUIRED_FIXTURE_SET,
+    ...governedBlocked.filter(entry => entry.directlyAffectedAreas.length > 0).map(entry => entry.fixtureId),
+  ]);
+  const unresolvedDirectlyAffectedBaselineReviewRequiredCount = results.filter(result => (
+    result.status === 'BASELINE_REVIEW_REQUIRED' && directlyAffectedIds.has(result.sample.sample_id)
+  )).length;
+  const noP0FixtureBlocked = P0_REQUIRED_FIXTURE_SET.every(id => requiredStatuses[id] === 'PASS');
+  const providerCallsMeasured = providerMeasurement?.measurementActive === true
+    && Number.isInteger(providerMeasurement?.observedProviderAcquisitionAttempts)
+    && Number.isInteger(providerMeasurement?.authorizedReplayProviderCalls)
+    && Number.isInteger(providerMeasurement?.unauthorizedProviderCalls);
+  const unauthorizedProviderCalls = providerCallsMeasured ? providerMeasurement.unauthorizedProviderCalls : null;
+  const pass = identityBindingPass
+    && summary.productFail === 0
+    && noP0FixtureBlocked
+    && unresolvedDirectlyAffectedBaselineReviewRequiredCount === 0
+    && allNoReplayExplicitlyEnumerated
+    && directlyAffectedBlockedWithoutSubstitute.length === 0
+    && providerCallsMeasured
+    && unauthorizedProviderCalls === 0;
+  return Object.freeze({
+    status: pass ? 'PASS' : 'FAIL',
+    identityBindingPass,
+    requiredStatuses,
+    blockedNoReplayFixtures,
+    allNoReplayExplicitlyEnumerated,
+    blockedNoReplayDetailsValid,
+    unexpectedBlockedNoReplayFixtures,
+    missingExpectedBlockedNoReplayFixtures,
+    directlyAffectedBlockedWithoutSubstitute,
+    unresolvedDirectlyAffectedBaselineReviewRequiredCount,
+    noP0FixtureBlocked,
+    providerCallsMeasured,
+    providerMeasurement,
+    unauthorizedProviderCalls,
+  });
+}
+
+async function resetP0ProviderMeasurement() {
+  if (!isLoopbackUrl(p0MetricsUrl)) throw new Error('P0_REPLAY_METRICS_LOOPBACK_REQUIRED');
+  const response = await fetch(`${p0MetricsUrl}/reset`, { method: 'POST' });
+  if (!response.ok) throw new Error(`P0_PROVIDER_MEASUREMENT_RESET_FAILED:${response.status}`);
+}
+
+async function readP0ProviderMeasurement() {
+  if (!isLoopbackUrl(p0MetricsUrl)) throw new Error('P0_REPLAY_METRICS_LOOPBACK_REQUIRED');
+  const response = await fetch(`${p0MetricsUrl}/metrics`, { headers: { 'cache-control': 'no-store' } });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.measurementActive !== true) throw new Error('P0_PROVIDER_MEASUREMENT_UNAVAILABLE');
+  for (const field of ['observedProviderAcquisitionAttempts', 'authorizedReplayProviderCalls', 'unauthorizedProviderCalls']) {
+    if (!Number.isInteger(payload[field]) || payload[field] < 0) throw new Error(`P0_PROVIDER_MEASUREMENT_INVALID:${field}`);
+  }
+  if (payload.observedProviderAcquisitionAttempts
+    !== payload.authorizedReplayProviderCalls + payload.unauthorizedProviderCalls) {
+    throw new Error('P0_PROVIDER_MEASUREMENT_ACCOUNTING_MISMATCH');
+  }
+  return Object.freeze({ ...payload });
 }
 
 function unwrapActual(run = {}) {
@@ -1843,6 +2032,15 @@ export async function writeEvidenceArtifact(results, summary, governance, eviden
       policyNotEvaluatedCount: summary.policyNotEvaluatedCount,
       timeoutCount: summary.timeoutCount
     },
+    terminalClassification: {
+      passCount: summary.pass,
+      productFailCount: summary.productFail,
+      blockedNoReplayCount: summary.blockedNoReplay,
+      blockedFixtureCount: summary.blockedFixture,
+      baselineReviewRequiredCount: summary.baselineReviewRequired,
+      skipOutOfScopeCount: summary.skipOutOfScope,
+      fixtureIds: summary.fixtureIds,
+    },
     cases: results.map(buildEvidenceCase)
   };
   await mkdir(path.dirname(artifactPath), { recursive: true });
@@ -1851,6 +2049,20 @@ export async function writeEvidenceArtifact(results, summary, governance, eviden
 }
 
 async function establishEvidenceBinding() {
+  const qualificationMode = String(process.env.QUALIFICATION_MODE || 'FROZEN_PRODUCTION').trim().toUpperCase();
+  if (qualificationMode === 'LOCAL_PATCH_CANDIDATE') {
+    return validateLocalPatchCandidateIdentity({
+      repoRoot,
+      baseCommit: process.env.BASE_COMMIT,
+      candidateManifestSha256: process.env.CANDIDATE_MANIFEST_SHA256,
+      trackedPatchSha256: process.env.TRACKED_PATCH_SHA256,
+    });
+  }
+  if (qualificationMode !== 'FROZEN_PRODUCTION') {
+    const error = new Error(`Unsupported QUALIFICATION_MODE: ${qualificationMode}`);
+    error.code = 'EVIDENCE_BINDING_MISMATCH';
+    throw error;
+  }
   const response = await fetch(versionApiUrl);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload?.runtimeIdentity) {
@@ -1872,6 +2084,17 @@ async function establishEvidenceBinding() {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const p0ReplayMode = process.env.P0_DETERMINISTIC_REPLAY === '1';
+  if (p0ReplayMode) {
+    assertP0ReplayRuntimeSafety({
+      apiUrl,
+      qualificationMode: process.env.QUALIFICATION_MODE,
+      replayEnabled: true,
+      nodeEnv: process.env.NODE_ENV,
+    });
+    options.includeText = true;
+    options.p0ReplayManifest = await loadP0ReplayManifest(repoRoot);
+  }
   let errorLibrary;
   try {
     errorLibrary = await readJson(options.errorLibraryPath);
@@ -1901,6 +2124,9 @@ async function main() {
     baselineErrors.forEach((error) => console.error(`- ${error}`));
     process.exitCode = 1;
     return;
+  }
+  if (p0ReplayMode) {
+    options.p0GateGovernance = await loadP0ReleaseGateGovernance(repoRoot, baseline);
   }
 
   if (options.errorIds.size) {
@@ -1968,14 +2194,23 @@ async function main() {
   console.log(`API: ${apiUrl}`);
   console.log(`Path: ${options.pathId}`);
   console.log(`Mode: ${options.gate ? 'gate' : options.full ? 'full' : 'smoke'}`);
+  console.log(`P0 Deterministic Replay: ${p0ReplayMode ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`Qualification Mode: ${evidenceBinding.qualificationMode || 'FROZEN_PRODUCTION'}`);
+  if (evidenceBinding.qualificationMode === 'LOCAL_PATCH_CANDIDATE') {
+    console.log(`Base Commit Match: ${evidenceBinding.baseCommitMatch}`);
+    console.log(`Candidate Manifest SHA-256 Match: ${evidenceBinding.candidateManifestSha256Match}`);
+    console.log(`Tracked Patch SHA-256 Match: ${evidenceBinding.trackedPatchSha256Match}`);
+  }
   console.log(`Samples: ${samples.length}`);
+
+  if (p0ReplayMode) await resetP0ProviderMeasurement();
 
   const results = [];
   for (const sample of samples) {
     const result = await runSample(sample, options, errorLibrary);
 
-    if (result.status === 'SKIP' && isBlockingSample(sample, options)) {
-      result.status = 'FAIL';
+    if (result.status === 'SKIP_OUT_OF_SCOPE' && isBlockingSample(sample, options)) {
+      result.status = 'PRODUCT_FAIL';
       result.historicalStatus = result.historicalStatus || 'NOT CHECKED';
       result.diffs.push({
         severity: 'BLOCKER',
@@ -1992,12 +2227,38 @@ async function main() {
   }
 
   const summary = summarizeResults(results);
+  const providerMeasurement = p0ReplayMode ? await readP0ProviderMeasurement() : null;
+  const p0Gate = p0ReplayMode
+    ? evaluateP0ReleaseGate(results, evidenceBinding, options.p0GateGovernance, providerMeasurement)
+    : null;
   console.log('\nRegression Summary');
-  console.log(`Gate Result: ${summary.gateResult}`);
-  console.log(`PASS: ${summary.pass}`);
-  console.log(`PASS WITH WARNING: ${summary.passWithWarning}`);
-  console.log(`FAIL: ${summary.fail}`);
-  console.log(`SKIP: ${summary.skipped}`);
+  console.log(`Gate Result: ${p0Gate?.status || summary.gateResult}`);
+  console.log(`PASS_COUNT=${summary.pass}`);
+  console.log(`PRODUCT_FAIL_COUNT=${summary.productFail}`);
+  console.log(`BLOCKED_NO_REPLAY_COUNT=${summary.blockedNoReplay}`);
+  console.log(`BLOCKED_FIXTURE_COUNT=${summary.blockedFixture}`);
+  console.log(`BASELINE_REVIEW_REQUIRED_COUNT=${summary.baselineReviewRequired}`);
+  console.log(`SKIP_OUT_OF_SCOPE_COUNT=${summary.skipOutOfScope}`);
+  for (const status of RUNNER_TERMINAL_STATUSES) {
+    console.log(`${status}_FIXTURES=${summary.fixtureIds[status].join(',') || 'NONE'}`);
+  }
+  if (p0Gate) {
+    console.log(`P0_REQUIRED_FIXTURE_SET=${P0_REQUIRED_FIXTURE_SET.join(',')}`);
+    console.log(`P0_REQUIRED_FIXTURE_STATUSES=${JSON.stringify(p0Gate.requiredStatuses)}`);
+    console.log(`IDENTITY_BINDING_PASS=${p0Gate.identityBindingPass}`);
+    console.log(`ALL_BLOCKED_NO_REPLAY_EXPLICIT=${p0Gate.allNoReplayExplicitlyEnumerated}`);
+    console.log(`BLOCKED_NO_REPLAY_ENUMERATION_GATE=${p0Gate.allNoReplayExplicitlyEnumerated ? 'PASS' : 'FAIL'}`);
+    console.log(`UNEXPECTED_BLOCKED_NO_REPLAY_FIXTURES=${p0Gate.unexpectedBlockedNoReplayFixtures.join(',') || 'NONE'}`);
+    console.log(`MISSING_EXPECTED_BLOCKED_NO_REPLAY_FIXTURES=${p0Gate.missingExpectedBlockedNoReplayFixtures.join(',') || 'NONE'}`);
+    console.log(`DIRECTLY_AFFECTED_BLOCKED_NO_REPLAY_FIXTURES=${p0Gate.directlyAffectedBlockedWithoutSubstitute.join(',') || 'NONE_WITHOUT_SUBSTITUTE_DETERMINISTIC_COVERAGE'}`);
+    console.log(`DIRECTLY_AFFECTED_BLOCKED_FIXTURE_GATE=${p0Gate.directlyAffectedBlockedWithoutSubstitute.length === 0 ? 'PASS' : 'FAIL'}`);
+    console.log(`UNRESOLVED_DIRECTLY_AFFECTED_BASELINE_REVIEW_REQUIRED_COUNT=${p0Gate.unresolvedDirectlyAffectedBaselineReviewRequiredCount}`);
+    console.log(`UNAUTHORIZED_PROVIDER_CALLS_MEASURED=${p0Gate.providerCallsMeasured}`);
+    console.log(`OBSERVED_PROVIDER_ACQUISITION_ATTEMPTS=${p0Gate.providerMeasurement?.observedProviderAcquisitionAttempts ?? 'UNAVAILABLE'}`);
+    console.log(`AUTHORIZED_REPLAY_PROVIDER_CALLS=${p0Gate.providerMeasurement?.authorizedReplayProviderCalls ?? 'UNAVAILABLE'}`);
+    console.log(`UNAUTHORIZED_PROVIDER_CALLS=${p0Gate.unauthorizedProviderCalls}`);
+    console.log(`P0_RELEASE_GATE=${p0Gate.status}`);
+  }
   console.log(`Regression: ${summary.regression}`);
   console.log(`Historical error regressions: ${summary.historicalRegressions}`);
   console.log(`Known open errors: ${summary.knownOpenErrors}`);
@@ -2031,7 +2292,7 @@ async function main() {
   const evidenceArtifactPath = await writeEvidenceArtifact(results, summary, governance, evidenceBinding);
   console.log(`Evidence Artifact: ${path.relative(repoRoot, evidenceArtifactPath)}`);
 
-  if (summary.gateResult === 'FAIL') {
+  if ((p0Gate?.status || summary.gateResult) === 'FAIL') {
     process.exitCode = 1;
   }
 }

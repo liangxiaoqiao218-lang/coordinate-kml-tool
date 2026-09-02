@@ -6,12 +6,12 @@
   "expectedPrecisionMode": "cadastral-grid-num-xv-yv",
   "expectedParserTrace": ["OCR", "MADAGASCAR_CADASTRAL:accepted"],
   "expectedPointCount": 32,
-  "expectedFirstKml": "NOT_EVALUATED:FAMILY_BLOCKED_BY_PROVIDER",
-  "expectedLastKml": "NOT_EVALUATED:FAMILY_BLOCKED_BY_PROVIDER",
-  "status": "active_confirmed_truth_provider_blocked",
+  "expectedFirstKml": "AVAILABLE_AFTER_VALID_EPSG_29702_TO_EPSG_4326_CONVERSION",
+  "expectedLastKml": "AVAILABLE_AFTER_VALID_EPSG_29702_TO_EPSG_4326_CONVERSION",
+  "status": "active_confirmed_truth_stable_parser_restored",
   "truthMaturity": "CONFIRMED_TRUTH",
   "humanReviewed": true,
   "reviewedAt": "2026-08-26",
   "approvalSource": "SR-08H.3B_HUMAN_APPROVAL",
-  "notes": "Human approval confirmed the complete 32-row num/XV/YV truth. KML remains not evaluated while the Madagascar family is BLOCKED_BY_PROVIDER."
+  "notes": "Human approval confirmed the complete 32-row num/XV/YV truth. P0 recovery restores the stable cadastral parser and permits KML only when the current EPSG:29702 cell geometry converts to finite EPSG:4326 coordinates. Review warnings remain visible."
 }

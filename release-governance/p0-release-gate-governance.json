@@ -1,0 +1,142 @@
+{
+  "schemaVersion": "production_recognition_p0_release_gate_governance_v1",
+  "blockedNoReplayReason": "no_approved_deterministic_replay",
+  "changedBehaviorAreas": [
+    "INDONESIA_DMS_ACQUISITION_AND_NORMALIZATION",
+    "INDONESIA_PROJECTED_ACQUISITION_AND_NORMALIZATION",
+    "MADAGASCAR_CADASTRAL_ACQUISITION_CRS_GEOMETRY_AND_KML_POLICY"
+  ],
+  "p0CriticalRelations": [
+    { "fixtureId": "indonesia-dms-real-001", "behaviorAreas": ["INDONESIA_DMS_ACQUISITION_AND_NORMALIZATION"] },
+    { "fixtureId": "indonesia-projected-real-002", "behaviorAreas": ["INDONESIA_PROJECTED_ACQUISITION_AND_NORMALIZATION"] },
+    { "fixtureId": "madagascar-cadastral-real-001", "behaviorAreas": ["MADAGASCAR_CADASTRAL_ACQUISITION_CRS_GEOMETRY_AND_KML_POLICY"] }
+  ],
+  "blockedNoReplayFixtures": [
+    {
+      "fixtureId": "wgs84_table_rc2_congo_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/刚果，两个坐标在同一张图.jpg", "sha256": "b3835c80e6ab4709542c91335cf363efc2b08b3d72bf5dfda37f60395fa6a41a" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "wgs84_table_timeout_rescue_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/微信图片_20260503091216_182_19.jpg", "sha256": "80896b830cf39b74def6a7c3735e0be59d2d160ab8aa27900db10fd04930ef61" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "bftm_burkina_002",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/布基纳法索02.jpg", "sha256": "4567ce9889c47d65414b19e543c06b5322b86c53b76bb53e87da761bc0988e1d" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "utm30_burkina_003",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/布基纳法索03.png", "sha256": "d2952399ac7a5222ec60f9a8f5ba0a4776b6508199dbe6e72e2474659313440e" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "mgrs_myanmar_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/缅甸坐标.jpg", "sha256": "af999328e3232af304e03901c5e8d58cad794ea588ee31709aef6668974f4004" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "kyrgyz_gk_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/吉尔吉斯斯坦矿地坐标.png", "sha256": "94522774b1311a48f44b8c52370639add50cb8eb7734bbd812cad2fb6f954235" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "mozambique_tete_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/莫桑比克矿地.jpg", "sha256": "d4076225da220cdbb3acd7605ceb9e0ee12ac805c76ee715776afa04c439b8bc" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "cote_divoire_single_01",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/科特迪瓦01.png", "sha256": "b8df937273124964a50ec5f69a8526cd5565a28487344b9e32a16bff76622d08" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "cote_divoire_single_02",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/科特迪瓦02.png", "sha256": "c7e9870a5fce74ca854f1ef1924fb2c50546f711dc40362ae4205229d0102862" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "cote_divoire_single_03",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/科特迪瓦03.png", "sha256": "dfb3dd70592da74d96dc55db20b52d4b4e3fb7ae54cd633cd6ccbae1d408f030" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "cote_divoire_single_04",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/科特迪瓦04.png", "sha256": "512078aa5f93bb1ed269df83a6b08097fcc727155ba193eee4b8e2e3ca8398e1" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "cote_divoire_multi_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/科特迪瓦4个矿区坐标.jpg", "sha256": "71f7ad08d2bc588cf18b0c64ec1b1042aab4f212e773e72db312283a6f13decf" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "handwritten_dms_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/手写坐标.jpg", "sha256": "b0124b9065175d3dacaea2da37f4e58b7b65787eacce7ed15d9d4c1275a7d46d" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "dms_grouped_two_areas_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/两块矿地.jpg", "sha256": "e2c26b48534a6239681386c994147b487d5207bab4ba4275aff7eb9beb108286" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "point_az_dms_table_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/微信图片_20260427122118_114_19.jpg", "sha256": "9a6db0f05f16c212e16461766b220fbe42b5b626ba01ca118941933e81cfb9c6" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "low_clarity_blurry_dms_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/模糊坐标.jpg", "sha256": "281ea16ac7c4e27e8b5dbb991ebe015b88c0de5acc1232f3aa0f8a115c1e4a56" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "oblique_dms_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/斜拍坐标.jpg", "sha256": "6de486a297f433894c4c3b315abdd2e1756356fb1c2e1f8535f7e6ce5232b0d3" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    },
+    {
+      "fixtureId": "long_coordinate_table_001",
+      "reason": "no_approved_deterministic_replay",
+      "fixtureIdentity": { "path": "regression-samples/fixtures/长坐标.png", "sha256": "c581989f570c437ac3d2bacdc64d3663e7b904a7e00044f3a322636e05df068f" },
+      "directlyAffectedAreas": [],
+      "approvedSubstituteCoverage": []
+    }
+  ]
+}

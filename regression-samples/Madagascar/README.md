@@ -20,7 +20,7 @@ After modifying the corresponding parser or Vision Retry path, all samples in th
 
 ## Current Sample Status
 
-Status: confirmed coordinate truth / Provider-blocked recognition family.
+Status: confirmed coordinate truth / stable specialized parser restored by the P0 recovery.
 
 The confirmed local source image is:
 
@@ -30,7 +30,8 @@ Current qualification:
 
 - SR-08H.3B human approval confirmed all 32 `num | XV | YV` rows, row order, column binding, and decimal-comma literal semantics on 2026-08-26.
 - Truth maturity is `CONFIRMED_TRUTH`; approval source is `SR-08H.3B_HUMAN_APPROVAL`.
-- Recognition availability remains `BLOCKED_BY_PROVIDER`; confirmed truth does not authorize Provider calls, candidate screening, AUTO_EXPORT, or KML.
+- The stable `Liste_Carrés + XV/YV` parser path is available again. This does not authorize a Provider call in regression and does not change Production recognition authority.
+- KML remains geometry-dependent: export is available only after the current EPSG:29702 grid-cell geometry converts to finite EPSG:4326 coordinates; review warnings remain visible.
 
 Regression policy note:
 

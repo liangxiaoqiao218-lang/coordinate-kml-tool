@@ -101,21 +101,21 @@ check("A03", "Kyrgyz KML is denied", () => {
   assert.equal(consumeFinalizedGeometry(result, () => "kml").consumed, false);
 });
 
-check("A04", "Madagascar is BLOCKED_BY_PROVIDER", () => {
+check("A04", "Madagascar stable parser family is AVAILABLE", () => {
   const value = getFamilyAvailability("madagascar_cadastral_grid");
-  assert.equal(value.status, FAMILY_AVAILABILITY_STATUS.BLOCKED_BY_PROVIDER);
-  assert.equal(value.reasonCode, COORDINATE_GATE_REASON.FAMILY_BLOCKED_BY_PROVIDER);
-  assert.equal(policyEntry("madagascar_cadastral_grid").status, value.status);
+  assert.equal(value.status, FAMILY_AVAILABILITY_STATUS.AVAILABLE);
+  assert.equal(value.reasonCode, null);
+  assert.equal(policyEntry("madagascar_cadastral_grid"), undefined);
 });
 
-check("A05", "Madagascar provider calls are prevented", () => {
-  assert.equal(simulateServerEnforcement("madagascar_cadastral_grid").providerCallCount, 0);
+check("A05", "Madagascar stable specialized recognition is no longer policy-blocked", () => {
+  assert.equal(simulateServerEnforcement("madagascar_cadastral_grid").providerCallCount, 1);
 });
 
-check("A06", "Madagascar KML is denied", () => {
+check("A06", "Madagascar valid finalized geometry is eligible", () => {
   const result = finalizedForAvailability("madagascar_cadastral_grid");
-  assert.equal(result.kmlReady, false);
-  assert.equal(consumeFinalizedGeometry(result, () => "kml").consumed, false);
+  assert.equal(result.kmlReady, true);
+  assert.equal(consumeFinalizedGeometry(result, () => "kml").consumed, true);
 });
 
 check("A07", "Handwritten is TEMPORARILY_UNAVAILABLE", () => {
@@ -155,14 +155,14 @@ check("A10", "Confirmation cannot override availability", () => {
   assert.ok(confirmed.finalizedCoordinateResult.reasonCodes.includes(COORDINATE_GATE_REASON.FAMILY_BLOCKED_BY_PROVIDER));
 });
 
-check("A11", "Finalizer cannot override availability", () => {
+check("A11", "Madagascar restored availability reaches the ordinary finalizer", () => {
   const result = finalizedForAvailability("madagascar_cadastral_grid");
-  assert.equal(result.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
-  assert.ok(result.reasonCodes.includes(COORDINATE_GATE_REASON.FAMILY_BLOCKED_BY_PROVIDER));
+  assert.equal(result.decisionState, COORDINATE_DECISION_STATE.AUTO_EXPORT);
+  assert.equal(result.reasonCodes.includes(COORDINATE_GATE_REASON.FAMILY_BLOCKED_BY_PROVIDER), false);
 });
 
 check("A12", "Unavailable families do not enter unrelated fallback", () => {
-  for (const family of ["kyrgyz_gk", "madagascar_cadastral_grid", "handwritten_dms_experimental"]) {
+  for (const family of ["kyrgyz_gk", "handwritten_dms_experimental"]) {
     assert.equal(simulateServerEnforcement(family).unrelatedFallbackCount, 0);
   }
 });

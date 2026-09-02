@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "madagascar_golden_migration_v1",
+  "status": "APPROVED_REGRESSION_ONLY_RECONCILIATION",
+  "approvalReference": "PRODUCTION_RECOGNITION_P0_REPOSITORY_GOVERNANCE_AUDIT",
+  "fixtureSha256": "ef023b37d07676437cc24804c70a8681d851974828f1bb232538aa222e36ec5e",
+  "oldExpectation": {
+    "precision": "utm30n-projected-x-y",
+    "geometry": "single polygon",
+    "requiresReview": false,
+    "kmlReady": false,
+    "availability": "BLOCKED_BY_PROVIDER"
+  },
+  "newExpectation": {
+    "canonicalBaseline": "CURRENT_CADASTRAL_BASELINE",
+    "precision": "cadastral-grid-num-xv-yv",
+    "sourceCrs": "EPSG:29702",
+    "axisOrder": "easting_northing",
+    "sourceRowCount": 32,
+    "cellCount": 32,
+    "cellSizeMeters": 625,
+    "geometry": "MultiPolygon",
+    "requiresReview": true,
+    "qualityGateStatus": "review_required",
+    "confirmationStatus": "pending",
+    "kmlPolicy": "AVAILABLE_WITH_WARNING_WHEN_CURRENT_AUTHORIZED_GEOMETRY_IS_VALID"
+  },
+  "reason": "The prior baseline preserved the confirmed 32-row source truth but used superseded CRS, geometry, provider-availability, and release semantics.",
+  "evidence": [
+    "unchanged fixture SHA-256",
+    "original Liste_Carres document structure",
+    "32-row human-confirmed source truth",
+    "historical Madagascar specialized parser",
+    "EPSG:29702 transformation",
+    "map-tick rejection",
+    "Coordinate Engine V3 Madagascar isolated regression 36/36 PASS",
+    "Production Recognition Recovery P0 real-runtime qualification",
+    "Production Recognition Recovery P0 browser KML qualification"
+  ]
+}
