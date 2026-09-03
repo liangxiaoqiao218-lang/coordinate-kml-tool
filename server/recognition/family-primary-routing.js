@@ -1,6 +1,8 @@
 export const WGS84_PRIMARY_STAGE_CAP_MS = 25_000;
 export const KYRGYZ_PRIMARY_STAGE_CAP_MS = 25_000;
 export const MADAGASCAR_PRIMARY_STAGE_CAP_MS = 25_000;
+// Same angular tolerance as the approved isolated Indonesia UTM verifier.
+export const INDONESIA_PROJECTED_DMS_TOLERANCE = 1e-6;
 
 const MADAGASCAR_MAP_TICK_VALUES = new Set([
   "290625", "295625", "300625", "535625", "540625", "545625", "550625"
@@ -58,7 +60,9 @@ function parseDmsCoordinate(value, expectedDirections) {
   const degrees = Number(match[1]);
   const minutes = Number(match[2]);
   const seconds = Number(match[3].replace(",", "."));
-  if (!Number.isFinite(degrees) || minutes >= 60 || seconds >= 60) return null;
+  const limit = expectedDirections === "NS" ? 90 : 180;
+  if (!Number.isFinite(degrees) || minutes >= 60 || seconds >= 60
+    || degrees > limit || (degrees === limit && (minutes > 0 || seconds > 0))) return null;
   const sign = /[SW]/i.test(match[4]) ? -1 : 1;
   return sign * (degrees + minutes / 60 + seconds / 3600);
 }
@@ -83,8 +87,8 @@ export function collapseExactRepeatedCoordinateSequence(rows = [], key = row => 
 export function hasIndonesiaUtm50StructuralEvidence(value = "") {
   const text = normalizeCoordinateEvidenceText(value);
   return /UTM\s*WGS\s*1984\s*ZONA\s*50S/i.test(text)
-    && /(?:^|[|\s])X(?:[|\s]|$)/im.test(text)
-    && /(?:^|[|\s])Y(?:[|\s]|$)/im.test(text);
+    && /(?:^|[|\s])(?:X|Easting)(?:[|\s]|$)/im.test(text)
+    && /(?:^|[|\s])(?:Y|Northing)(?:[|\s]|$)/im.test(text);
 }
 
 export function hasStrongPrintedProjectedTableEvidence(value = "") {
@@ -105,6 +109,23 @@ export function hasStrongPrintedProjectedTableEvidence(value = "") {
   return hasProjectedHeader && projectedRows >= 3;
 }
 
+// Shared evidence for retry eligibility and final classification. File names,
+// country, fixture IDs, Golden values, and row counts are not positive evidence.
+export function getDmsDocumentEvidence(value = "") {
+  const text = normalizeCoordinateEvidenceText(value);
+  const projectedTableSignal = hasStrongPrintedProjectedTableEvidence(text);
+  const printedTableSignal = projectedTableSignal
+    || /(?:latitude|longitude|easting|northing|coordonn[eé]es|\bPoint\b|\bOrdem\b|\bX\s*\|\s*Y\b)/i.test(text);
+  const explicitHandwrittenSignal = /(?:识别提示[^\n]*手写|手写坐标|手寫坐標|\bhandwritten\s+(?:DMS|coordinates?)\b|涂改|覆盖|需核对字符|overwrit(?:ten|e))/i.test(text)
+    && !/not\s+handwritten|非手写|非手寫/i.test(text);
+  const damagedDmsSignal = /\d{1,3}\s*[°º]\s*\d{1,2}\.\d{3,5}\s*['′]?\s*[NSEWO]\b/i.test(text)
+    || /\d{1,3}[.°º]\d{1,2}\.\d{1,2}\.\d+\s*[NSEWO]\b/i.test(text)
+    || /\d[OIl?]\d[^\n]{0,15}[NSEW]\b/.test(text);
+  return Object.freeze({ printedTableSignal, projectedTableSignal,
+    handwrittenPositiveSignal: explicitHandwrittenSignal || damagedDmsSignal,
+    explicitHandwrittenSignal, damagedDmsSignal });
+}
+
 export function getIndonesiaUtm50Info(value = "", { transform } = {}) {
   const text = normalizeCoordinateEvidenceText(value);
   if (!hasIndonesiaUtm50StructuralEvidence(text)) {
@@ -118,37 +139,97 @@ export function getIndonesiaUtm50Info(value = "", { transform } = {}) {
     const label = String(parts[0].match(/[A-Za-z0-9-]+/)?.[0] || numbers[0]);
     const xMatch = line.match(/(?:^|[|\s])X\s*[:=]?\s*([-+]?\d+(?:[.,]\d+)?)/i);
     const yMatch = line.match(/(?:^|[|\s])Y\s*[:=]?\s*([-+]?\d+(?:[.,]\d+)?)/i);
-    const eastingText = normalizeDecimalToken(xMatch?.[1] || numbers[1]);
-    const northingText = normalizeDecimalToken(yMatch?.[1] || numbers[2]);
+    const eastingText = normalizeDecimalToken(xMatch?.[1] || parts[1]);
+    const northingText = normalizeDecimalToken(yMatch?.[1] || parts[2]);
     const easting = Number(eastingText);
     const northing = Number(northingText);
     if (!Number.isFinite(easting) || easting < 100000 || easting > 900000
       || !Number.isFinite(northing) || northing < 9000000 || northing > 10000000) continue;
-    const latitudePart = parts.find(part => /[°º].*[S]/i.test(part)) || "";
-    const longitudePart = parts.find(part => /[°º].*[E]/i.test(part)) || "";
+    const latitudePart = parts.find(part => /[°º].*[NS]/i.test(part)) || "";
+    const longitudePart = parts.find(part => /[°º].*[EW]/i.test(part)) || "";
     const referenceLatitude = parseDmsCoordinate(latitudePart, "NS");
     const referenceLongitude = parseDmsCoordinate(longitudePart, "EW");
-    const transformed = typeof transform === "function" ? transform(50, easting, northing, false) : null;
-    const lat = Number.isFinite(referenceLatitude) ? referenceLatitude : transformed?.lat;
-    const lon = Number.isFinite(referenceLongitude) ? referenceLongitude : transformed?.lon;
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const referenceParsed = Number.isFinite(referenceLatitude) && Number.isFinite(referenceLongitude);
     parsed.push(Object.freeze({
       label,
       eastingText,
       northingText,
       latitudeDms: latitudePart,
       longitudeDms: longitudePart,
-      lat,
-      lon
+      projectedSourceCoordinates: Object.freeze({ easting, northing }),
+      dmsReferenceCoordinates: referenceParsed ? Object.freeze({ lat: referenceLatitude, lon: referenceLongitude }) : null,
+      dmsReferenceParsed: referenceParsed
     }));
   }
-  const collapsed = collapseExactRepeatedCoordinateSequence(parsed, row => [
+  const sourceRows = collapseExactRepeatedCoordinateSequence(parsed, row => [
     row.label, row.eastingText, row.northingText, row.latitudeDms, row.longitudeDms
   ].join("|"));
+  if (sourceRows.length < 3) {
+    return Object.freeze({ isIndonesiaUtm50: false, structureConfirmed: false,
+      rows: Object.freeze([]), rowCount: 0, transformStatus: "NOT_ATTEMPTED" });
+  }
+  // Ownership is established from acquisition evidence, never from transform success.
+  const failed = reason => Object.freeze({
+    isIndonesiaUtm50: true, structureConfirmed: true, ownerIntent: "indonesia_utm50_projected",
+    crs: "EPSG:32750", axisOrder: "easting_northing", transformStatus: "FAILED",
+    failureCode: "INDONESIA_UTM50_TRANSFORM_FAILED", transformFailureReason: reason,
+    projectedTransformExecuted: false, projectedDmsCrosscheck: "NOT_EXECUTED",
+    genericDmsFallbackAllowed: false, finalGeometrySource: "NONE", requiresReview: true,
+    sourceRows: Object.freeze(sourceRows), rows: Object.freeze([]), rowCount: 0
+  });
+  const collapsed = [];
+  for (const row of sourceRows) {
+    let point;
+    try { point = typeof transform === "function"
+      ? transform(50, row.projectedSourceCoordinates.easting, row.projectedSourceCoordinates.northing, false) : null;
+    } catch { return failed("TRANSFORM_EXCEPTION"); }
+    if (point == null) return failed("TRANSFORM_NO_RESULT");
+    const { lat, lon } = point;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return failed("TRANSFORM_NONFINITE_OR_INCOMPLETE");
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return failed("TRANSFORM_OUT_OF_RANGE");
+    const maximumDifference = row.dmsReferenceParsed
+      ? Math.max(Math.abs(lat - row.dmsReferenceCoordinates.lat), Math.abs(lon - row.dmsReferenceCoordinates.lon)) : null;
+    collapsed.push(Object.freeze({ ...row, lat, lon, projectedTransformExecuted: true,
+      projectedDmsCrosscheckExecuted: row.dmsReferenceParsed, maximumDifference,
+      projectedDmsCrosscheck: row.dmsReferenceParsed
+        ? maximumDifference <= INDONESIA_PROJECTED_DMS_TOLERANCE ? "PASS" : "FAIL" : "NOT_AVAILABLE" }));
+  }
+  // A projected polygon must be constructible; references cannot repair its topology.
+  const ring = collapsed.slice();
+  if (ring.length > 3 && ring[0].lat === ring.at(-1).lat && ring[0].lon === ring.at(-1).lon) ring.pop();
+  const cross = (a, b, c) => (b.lon - a.lon) * (c.lat - a.lat) - (b.lat - a.lat) * (c.lon - a.lon);
+  const area = ring.reduce((sum, point, i) => sum + cross(ring[0], point, ring[(i + 1) % ring.length]), 0);
+  if (new Set(ring.map(point => `${point.lon.toFixed(12)}|${point.lat.toFixed(12)}`)).size !== ring.length
+    || ring.length < 3 || !Number.isFinite(area) || area === 0) return failed("TRANSFORM_INVALID_GEOMETRY");
+  for (let i = 0; i < ring.length; i += 1) {
+    for (let j = i + 2; j < ring.length; j += 1) {
+      if (i === 0 && j === ring.length - 1) continue;
+      const a = ring[i], b = ring[(i + 1) % ring.length], c = ring[j], d = ring[(j + 1) % ring.length];
+      if (Math.max(a.lon, b.lon) >= Math.min(c.lon, d.lon) && Math.max(c.lon, d.lon) >= Math.min(a.lon, b.lon)
+        && Math.max(a.lat, b.lat) >= Math.min(c.lat, d.lat) && Math.max(c.lat, d.lat) >= Math.min(a.lat, b.lat)
+        && cross(a, b, c) * cross(a, b, d) <= 0 && cross(c, d, a) * cross(c, d, b) <= 0) return failed("TRANSFORM_INVALID_GEOMETRY");
+    }
+  }
+  const referenceExpected = /Latitude[\s|]+Longitude/i.test(text)
+    || collapsed.some(row => row.latitudeDms || row.longitudeDms);
+  const comparedRows = collapsed.filter(row => row.projectedDmsCrosscheckExecuted).length;
+  const crosscheck = collapsed.some(row => row.projectedDmsCrosscheck === "FAIL") ? "FAIL"
+    : comparedRows === collapsed.length && comparedRows > 0 ? "PASS"
+      : referenceExpected ? "INCOMPLETE" : "NOT_AVAILABLE";
   return Object.freeze({
     isIndonesiaUtm50: collapsed.length >= 3,
+    structureConfirmed: true,
+    ownerIntent: "indonesia_utm50_projected",
+    transformStatus: "SUCCESS",
     crs: "EPSG:32750",
     axisOrder: "easting_northing",
+    projectedTransformExecuted: collapsed.length >= 3,
+    dmsReferenceParsed: comparedRows > 0,
+    projectedDmsCrosscheckExecuted: comparedRows > 0,
+    projectedDmsCrosscheck: crosscheck,
+    crosscheckTolerance: INDONESIA_PROJECTED_DMS_TOLERANCE,
+    comparedRows,
+    requiresReview: crosscheck === "FAIL" || crosscheck === "INCOMPLETE",
     rows: Object.freeze(collapsed),
     rowCount: collapsed.length,
     duplicateSequenceCollapsed: collapsed.length !== parsed.length
@@ -156,6 +237,7 @@ export function getIndonesiaUtm50Info(value = "", { transform } = {}) {
 }
 
 export function formatIndonesiaUtm50Rows(info = {}) {
+  if (info.transformStatus === "FAILED") return "";
   return (Array.isArray(info.rows) ? info.rows : []).map(row => {
     const sourceReference = row.latitudeDms && row.longitudeDms
       ? ` | ${row.latitudeDms} | ${row.longitudeDms}`

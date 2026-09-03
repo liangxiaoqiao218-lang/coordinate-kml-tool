@@ -1,5 +1,40 @@
 {
   "schemaVersion": "production_recognition_p0_release_gate_governance_v1",
+  "indonesiaFailureSemantics": {
+    "TRANSFORM_FAIL": { "OWNER": "indonesia_utm50_projected", "TRANSFORM": "FAIL", "CROSSCHECK": "NOT_EXECUTED", "FINAL_COORDINATES": "UNAVAILABLE", "KML": "BLOCKED", "requiresReview": true, "dmsSubstitutionAllowed": false, "overallPassAllowed": false },
+    "CROSSCHECK_FAIL": { "OWNER": "indonesia_utm50_projected", "TRANSFORM": "PASS", "CROSSCHECK": "FAIL", "FINAL_COORDINATES": "PASS_FROM_PROJECTED", "KML": "EXISTING_FINALIZER_POLICY", "requiresReview": true },
+    "httpFailureEvidenceScope": "SYNTHETIC_UPLOAD_MOCK_ACQUISITION_TRANSFORM_FAULT_INJECTION_NOT_REAL_PROVIDER_QUALIFICATION"
+  },
+  "deterministicReplayGateScope": {
+    "P0_RELEASE_GATE": "DOWNSTREAM_ONLY_GIVEN_APPROVED_ACQUISITION_EVIDENCE",
+    "proves": ["PARSER", "OWNER_ROUTING", "TRANSFORM", "CROSSCHECK_WHEN_REFERENCE_PRESENT", "FINALIZER", "KML"],
+    "provesRealProviderPromptOutput": false,
+    "mayAuthorizeEndToEndQualification": false
+  },
+  "realAcquisitionQualification": {
+    "allowedStates": ["REAL_ACQUISITION_NOT_QUALIFIED", "REAL_ACQUISITION_PASS", "REAL_ACQUISITION_FAIL"],
+    "currentRemediationState": "REAL_ACQUISITION_NOT_QUALIFIED",
+    "realRunAuthorized": false,
+    "qualificationEvidenceRetention": {
+      "enabledByDefault": false,
+      "enableEnvironmentVariable": "P0_QUALIFICATION_ACQUISITION_ENABLED",
+      "scope": "NON_PRODUCTION_LOOPBACK_REGRESSION_REQUEST_ONLY",
+      "caseId": "indonesia-dms-real-001",
+      "fixtureSha256": "2f508653305fee7c08470218f9bf94f75b56d26d7b28edcd7d8d68cd8f88eaf6",
+      "maximumRequestsPerProcess": 1,
+      "memoryTtlSeconds": 300,
+      "maximumInputBytes": 16384,
+      "fullProviderJsonRetained": false,
+      "productionCaptureEnabled": false
+    },
+    "fullEndToEndGate": "REQUIRES_SEPARATELY_AUTHORIZED_REAL_ACQUISITION_AND_ALL_REQUIRED_PATH_COMPONENTS_PASS",
+    "requiredComponents": ["ACQUISITION", "OWNER", "TRANSFORM", "CROSSCHECK", "FINAL_COORDINATES", "KML"],
+    "fixtures": [
+      { "fixtureId": "indonesia-dms-real-001", "state": "REAL_ACQUISITION_NOT_QUALIFIED", "historicalObservation": { "productionCommit": "a33ba5c7397b4f583061ea4fe6a6008121cd7553", "state": "REAL_ACQUISITION_FAIL", "ACQUISITION": "FAIL_FOR_REQUIRED_PROJECTED_EVIDENCE", "OWNER": "NOT_PROVEN", "TRANSFORM": "NOT_PROVEN", "CROSSCHECK": "DMS_OUTPUT_ONLY_PASS", "FINAL_COORDINATES": "PASS", "KML": "PASS", "provider1FullResponseJsonRetained": false } },
+      { "fixtureId": "indonesia-projected-real-002", "state": "REAL_ACQUISITION_NOT_QUALIFIED" },
+      { "fixtureId": "madagascar-cadastral-real-001", "state": "REAL_ACQUISITION_NOT_QUALIFIED" }
+    ]
+  },
   "blockedNoReplayReason": "no_approved_deterministic_replay",
   "changedBehaviorAreas": [
     "INDONESIA_DMS_ACQUISITION_AND_NORMALIZATION",

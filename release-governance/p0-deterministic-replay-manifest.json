@@ -1,6 +1,36 @@
 {
   "schemaVersion": "production_recognition_p0_replay_manifest_v1",
   "networkFallbackAllowed": false,
+  "evidenceScope": "APPROVED_DETERMINISTIC_REPLAY_EVIDENCE",
+  "transformFailureMayUseDmsSubstitute": false,
+  "provesRealProviderAcquisition": false,
+  "realAcquisitionObservations": [
+    {
+      "caseId": "indonesia-dms-real-001",
+      "productionCommit": "a33ba5c7397b4f583061ea4fe6a6008121cd7553",
+      "requestId": "recognition_1788439147588_1s4ijxyl",
+      "evidenceClass": "OBSERVED_REAL_PROVIDER_ACQUISITION_EVIDENCE",
+      "source": "TRACK_G_RUNTIME_LOG_AND_BROWSER_FINAL_RAW_TEXT_CONTROL_FLOW_AUDIT",
+      "provider1FullResponseJsonRetained": false,
+      "provider1ContentAttribution": "INFERRED_FROM_RUNTIME_LOG_AND_CONTROL_FLOW_NOT_DIRECT_RESPONSE_CAPTURE",
+      "observedFinalRawTextSha256": "d303a8909c2f9b60eea8ba0591c9f5680d9e7c67e345a2ae7145f6d37316859c",
+      "observedFinalRawTextLines": [
+        "119°30'40.863\"E,2°31'21.134\"S",
+        "119°30'50.018\"E,2°31'21.116\"S",
+        "119°30'50.029\"E,2°31'26.910\"S",
+        "119°30'40.874\"E,2°31'26.928\"S"
+      ],
+      "providerCallCount": 2,
+      "requiredProjectedAcquisition": "FAIL",
+      "utmOwner": "NOT_PROVEN",
+      "transform": "NOT_PROVEN",
+      "crosscheck": "DMS_OUTPUT_ONLY_PASS",
+      "finalCoordinates": "PASS",
+      "kml": "PASS",
+      "kmlSha256": "c20a403045883707d6528cb34de5de52197763204ac3925437bff5d6581df245",
+      "supersedesApprovedReplay": false
+    }
+  ],
   "records": [
     {
       "caseId": "indonesia-dms-real-001",

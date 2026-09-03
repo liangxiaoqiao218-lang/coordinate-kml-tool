@@ -19,6 +19,7 @@ import {
   extractMadagascarCadastralRows,
   formatIndonesiaUtm50Rows,
   getIndonesiaUtm50Info,
+  getDmsDocumentEvidence,
   hasStrongPrintedProjectedTableEvidence,
   getMadagascarCadastralStrongRouteEvidence,
   getWgs84StrongRouteEvidence,
@@ -97,6 +98,50 @@ const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
 const regressionRecognitionTraces = new Map();
 const MAX_REGRESSION_RECOGNITION_TRACES = 200;
+let p0QualificationAcquisition = null;
+let p0QualificationAcquisitionUsed = false;
+
+function sanitizeP0AcquisitionText(content) {
+  if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > 16384) return null;
+  if (/sk-|Bearer\s|authorization\s*[:=]|api[_ -]?key|password|secret|credential|data:|https?:\/\//i.test(content)) return null;
+  const sourceLines = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (sourceLines.length > 64) return null;
+  const lines = sourceLines.filter(line =>
+    // Strict coordinate/header alphabet: no arbitrary prose or response objects.
+    (/^[\d\s.,|;:+\-°º'"′″NSEWO]+$/i.test(line)
+      && ((/[°º]/.test(line) && (line.match(/[NSEWO]/gi) || []).length >= 2 && (line.match(/\d+/g) || []).length >= 6)
+        || /^\d+\s*\|\s*\d+(?:[.,]\d+)?\s*\|\s*\d+(?:[.,]\d+)?(?:\s*\||$)/.test(line)))
+    || /^(?:No\.?\s*\|\s*)?(?:X|Easting)\s*\|\s*(?:Y|Northing)(?:\s*\|\s*Latitude\s*\|\s*Longitude)?$/i.test(line)
+    || /^(?:SISTEM KOORDINAT\s*:?\s*)?(?:UTM WGS 1984 ZONA \d{1,2}[NS]|EPSG\s*:\s*\d{4,6})$/i.test(line));
+  return lines.length ? Object.freeze({ text: lines.join("\n"), omittedLineCount: sourceLines.length - lines.length }) : null;
+}
+
+function retainP0QualificationAcquisition(req, response, budget) {
+  // One explicitly enabled, image-hash-bound request per process. Never Production,
+  // never persistent logging, never raw JSON/image/headers/credentials.
+  if (process.env.P0_QUALIFICATION_ACQUISITION_ENABLED !== "true"
+    || !getRegressionTestMode(req).active || p0QualificationAcquisitionUsed
+    || budget?.caseId !== "indonesia-dms-real-001"
+    || !/^recognition_[a-z0-9_-]{1,160}$/i.test(budget?.requestId || "")
+    || !Buffer.isBuffer(req.file?.buffer)
+    || crypto.createHash("sha256").update(req.file.buffer).digest("hex") !== "2f508653305fee7c08470218f9bf94f75b56d26d7b28edcd7d8d68cd8f88eaf6") return false;
+  p0QualificationAcquisitionUsed = true;
+  const sanitized = sanitizeP0AcquisitionText(response?.choices?.[0]?.message?.content);
+  if (!sanitized) return false;
+  const localReplay = /^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(aliyunBaseURL);
+  p0QualificationAcquisition = Object.freeze({
+    evidenceClass: localReplay ? "LOCAL_REPLAY_ACQUISITION_EVIDENCE" : "OBSERVED_REAL_PROVIDER_ACQUISITION_EVIDENCE",
+    // Endpoint may be a local replay provider; do not mislabel it as real evidence.
+    acquisitionKind: localReplay ? "LOCAL_REPLAY" : "PROVIDER_RESPONSE",
+    caseId: budget.caseId, requestId: budget.requestId, stage: "generic_provider",
+    fullResponseJsonRetained: false, ...sanitized,
+    textSha256: crypto.createHash("sha256").update(sanitized.text).digest("hex"),
+    expiresAt: Date.now() + 5 * 60 * 1000
+  });
+  const timer = setTimeout(() => { p0QualificationAcquisition = null; }, 5 * 60 * 1000);
+  timer.unref();
+  return true;
+}
 const spatialShareReviewReasonRegistry = new Map();
 const MAX_SPATIAL_SHARE_REVIEW_REASONS = 500;
 
@@ -3609,6 +3654,7 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
   const isOcrImage = Boolean(options.isOcrImage);
   const hasStrongHandwrittenDmsRows = rawDmsRows >= 8;
   const hasStrongPrintedProjectedTable = hasStrongPrintedProjectedTableEvidence(sourceText);
+  const documentEvidence = getDmsDocumentEvidence(sourceText);
   const hasExplicitHandwrittenDmsContext = Boolean(options.hasExplicitHandwrittenDmsContext);
 
   const isHandwrittenDms = isOcrImage
@@ -3617,6 +3663,7 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
     && (looksLikeHandwrittenDmsBlock(sourceText) || hasStrongHandwrittenDmsRows)
     && (!getDmsGroupedCoordinateInfo(sourceText).output || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
     && !hasStrongPrintedProjectedTable
+    && (!documentEvidence.printedTableSignal || documentEvidence.handwrittenPositiveSignal)
     && (!looksLikeCoordinateTable(sourceText) || hasStrongHandwrittenDmsRows)
     && (!hasDmsGroupedContext(sourceText) || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
     && !getFrenchPerimeterDmsInfo(sourceText).isFrenchPerimeterDms
@@ -3629,6 +3676,7 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
   return {
     isHandwrittenDms,
     hasStrongPrintedProjectedTable,
+    documentEvidence,
     dmsRows,
     rawDmsRows,
     pointRows
@@ -3639,14 +3687,16 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   const value = `${file?.originalname || ""} ${hint || ""}`;
   const folded = foldSearchText(value);
   const ocrText = String(options.ocrText || "");
+  const documentEvidence = getDmsDocumentEvidence(ocrText);
   const mimeType = String(file?.mimetype || "").toLowerCase();
   const fileSize = Number(file?.size || file?.buffer?.length || 0);
   const highConfidenceNameOrHint = /手写|手寫|鎵嬪啓|HANDWRITTEN_DMS|handwritten|hand-written|hand\s*written|manual\s*dms|manuscript|handwritten_dms|handwritten-dms/i.test(value)
     || /handwritten[_\s-]*dms|hand\s*written[_\s-]*dms|manuscript/.test(folded);
 
   const evidence = {
-    shouldRetry: highConfidenceNameOrHint,
-    reason: highConfidenceNameOrHint ? "filename_or_hint" : "",
+    shouldRetry: false,
+    reason: "insufficient_positive_evidence",
+    documentEvidence,
     highConfidenceNameOrHint,
     hasImageMime: /^image\/(?:jpe?g|png|webp|bmp|tiff?)$/.test(mimeType),
     fileSize,
@@ -3662,7 +3712,8 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
     stableDetectorReasons: []
   };
 
-  if (evidence.shouldRetry || !evidence.ocrTextAvailable) {
+  if (!evidence.ocrTextAvailable || documentEvidence.projectedTableSignal
+    || !documentEvidence.handwrittenPositiveSignal) {
     return evidence;
   }
 
@@ -3677,10 +3728,10 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   addStableReason(getWgs84TableCoordinatesInfo(ocrText).isWgs84TableCoordinates, "wgs84_table");
   addStableReason(getKyrgyzGkInfo(ocrText).isKyrgyzGk, "kyrgyz_gk");
   addStableReason(hasBftmContext(ocrText) || getBftmLongTableInfo(ocrText, extractCoordinateLines(ocrText)).isBftmLongTable, "bftm");
-  addStableReason(getDmsGroupedCoordinateInfo(ocrText).output, "standard_dms_grouped");
+  addStableReason(getDmsGroupedCoordinateInfo(ocrText).output && !documentEvidence.explicitHandwrittenSignal, "standard_dms_grouped");
   addStableReason(getFrenchPerimeterDmsInfo(ocrText).isFrenchPerimeterDms, "french_perimeter_dms");
   addStableReason(looksLikePointAzDmsTable(ocrText), "point_az_dms_table");
-  addStableReason(looksLikeCoordinateTable(ocrText), "printed_coordinate_table");
+  addStableReason(looksLikeCoordinateTable(ocrText) && !documentEvidence.handwrittenPositiveSignal, "printed_coordinate_table");
 
   evidence.stableDetectorMatched = evidence.stableDetectorReasons.length > 0;
   if (evidence.stableDetectorMatched) {
@@ -3723,7 +3774,7 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   if (looksLikeCorrectionContext(ocrText)) evidence.score += 1;
 
   const hasEnoughDmsStructure = evidence.dmsPairLineCount >= 3 || evidence.damagedDmsLineCount >= 3;
-  evidence.shouldRetry = evidence.score >= 5 && hasEnoughDmsStructure;
+  evidence.shouldRetry = documentEvidence.handwrittenPositiveSignal && evidence.score >= 5 && hasEnoughDmsStructure;
   evidence.reason = evidence.shouldRetry ? "ocr_dms_structure" : "insufficient_evidence";
   return evidence;
 }
@@ -3731,13 +3782,13 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
 function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", options = {}) {
   const text = String(rawText || "");
   const coordinateText = String(coordinates || "");
-  const hint = String(options.hint || "");
-  const file = options.file;
-  const explicitHandwrittenContext = hasExplicitHandwrittenDmsUploadContext(file, hint);
+  const documentEvidence = getDmsDocumentEvidence(text);
+  const explicitHandwrittenContext = documentEvidence.explicitHandwrittenSignal;
   const evidence = {
     shouldRetry: false,
     reason: "",
     explicitHandwrittenContext,
+    documentEvidence,
     score: 0,
     coordinateRowCount: countCoordinateRows(coordinateText),
     dmsPairLineCount: 0,
@@ -3751,6 +3802,13 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
 
   if (!text.trim()) {
     evidence.reason = "empty_raw_text";
+    return evidence;
+  }
+
+  if (documentEvidence.projectedTableSignal
+    || (documentEvidence.printedTableSignal && !documentEvidence.handwrittenPositiveSignal)
+    || !documentEvidence.handwrittenPositiveSignal) {
+    evidence.reason = documentEvidence.projectedTableSignal ? "projected_table_blocked" : "no_positive_handwritten_evidence";
     return evidence;
   }
 
@@ -3794,7 +3852,7 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
     }
   }
 
-  if (explicitHandwrittenContext) evidence.score += 3;
+  if (documentEvidence.explicitHandwrittenSignal) evidence.score += 3;
   if (evidence.coordinateRowCount >= 4) evidence.score += 1;
   if (evidence.dmsLikeTokenCount >= 8) evidence.score += 2;
   if (evidence.dmsPairLineCount >= 4) evidence.score += 2;
@@ -3809,7 +3867,8 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
     && evidence.dmsLikeTokenCount >= 8
     && evidence.dmsPairLineCount >= 3;
 
-  evidence.shouldRetry = evidence.score >= 5 && (hasDamagedHandwrittenShape || hasMultiLineDmsShape);
+  evidence.shouldRetry = documentEvidence.handwrittenPositiveSignal
+    && evidence.score >= 5 && (hasDamagedHandwrittenShape || hasMultiLineDmsShape);
   evidence.reason = evidence.shouldRetry ? "handwritten_dms_evidence" : "insufficient_evidence";
   return evidence;
 }
@@ -12497,6 +12556,10 @@ app.get("/api/regression/recognition-trace/:requestId", (req, res) => {
   }
   const trace = regressionRecognitionTraces.get(requestId);
   if (!trace) return res.status(404).json({ success: false, reason: "trace_not_found" });
+  if (p0QualificationAcquisition?.requestId === requestId && p0QualificationAcquisition.expiresAt > Date.now()) {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ success: true, trace, acquisitionEvidence: p0QualificationAcquisition });
+  }
   return res.json({ success: true, trace });
 });
 
@@ -12981,7 +13044,11 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     const coordinateEngineV2ContextHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || req.body?.country || req.body?.projectCountry || "");
     const coordinateRawHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || "");
     const handwrittenDmsUploadContext = hasExplicitHandwrittenDmsUploadContext(req.file, coordinateRawHint);
-    const prompt = `你是矿业坐标识别助手。请只识别图片中的真实坐标表区域，并只返回坐标行。图片可能是完整文件、手机截图、扫描件、带水印图片、长表、局部表格、同一页多块矿区坐标或带菜单按钮的截图。
+    const prompt = `你是矿业坐标识别助手。请只识别图片中的真实坐标表区域，返回紧凑的坐标行及可见的坐标结构证据。图片可能是完整文件、手机截图、扫描件、带水印图片、长表、局部表格、同一页多块矿区坐标或带菜单按钮的截图。
+
+投影坐标结构保留规则（优先于下述省略表头/点号的一般规则）：
+仅当原图实际可见时，逐字保留与坐标相关的 projection / CRS 标题、UTM zone 文字、X/Y 或 Easting/Northing 表头，以及有结构意义的点号/行号。按原顺序输出紧凑管道分隔表：点号 | X | Y；如同时可见 DMS Latitude/Longitude 列，保留为：点号 | X | Y | Latitude DMS | Longitude DMS。不要只取 DMS 而丢弃同一表内 X/Y；不得在 acquisition 中把投影坐标换算为经纬度。
+只保留可见的坐标结构，不转写无关正文，不解释。缺失的 CRS、UTM zone、表头或数值必须保持缺失；不得从国家、文件名、已知样本或坐标数值推断补造。
 
 必须忽略：
 水印、背景字、页眉页脚、表格线、手机状态栏、底部菜单、Annoter、Tourner、Rechercher、Partager、Hectares、签名、正文段落、图片像素位置、文字框坐标、识别框坐标和碎数字。
@@ -13008,13 +13075,13 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
 3. 如果表格是葡语 COORDENADAS GEOGRÁFICAS / Datum:Tete，且列为 Order/Ordem + Latitude(deg min sec) + Longitude(deg min sec)，每行必须按 7 列读取：Order LatDeg LatMin LatSec LonDeg LonMin LonSec。Latitude 的负号代表南纬；Longitude 在 Mozambique/Tete 默认为东经正数；小数逗号如 20,00 按 20.00 处理。输出时转为十进制度，格式固定为：经度,纬度。例如 -14 | 36 | 0,00 和 32 | 57 | 20,00 必须输出 32.955556,-14.600000。不要把 -14 当 West，不要把 32 当 North。
 4. 识别出什么格式，就保留什么格式。不要把普通度分秒自动转换成十进制度，除非是上述葡语 geographic table。
 5. 每一行只输出一组坐标，格式固定为：经度,纬度。
-6. 如果表格是 X/Y 平面坐标，每一行输出：X,Y，保留原数字。
+6. 如果表格是 X/Y 平面坐标，优先按上述投影坐标结构保留规则输出；无表头/点号可见时输出 X,Y，保留原数字，不补造结构。
 7. 如果原图没有 N/W/O 字母，但表头写了 Latitude nord / Longitude ouest，需要在输出中补上 N 和 W，或用负号表达西经。
 8. 必须按 Point 编号逐行读取。看到 4 个点就输出 4 行；看到 A-Z 就输出 A-Z 对应的全部行；看到 1-99 长表就按原编号顺序逐行输出。
 9. 不能漏掉第一行、中间行或最后一行。
 10. 如果 X 列连续两行相同，或 Y 列连续两行相同，也必须按同一行的 X 和 Y 配对，不要把下一行的 Y 拿来配上一行。
 11. 表格右侧的斜线、手写勾、批注线不是数字，不要因为这些标记跳行或漏行。
-12. 不要输出点号、表头、解释文字、Markdown、编号。
+12. 除上述可见投影坐标结构及专用表格规则要求的点号/表头外，不要输出无关编号、解释文字或 Markdown。
 13. 不要压缩小数位，不要改写原始精度。
 14. 如果同一张图片里有多块不同矿区/多组坐标，必须在不同组之间保留一个空行。每组内部仍然按原顺序逐行输出。
 15. 手写坐标如果出现多段明显分开的 1、2、3、4 编号，每一段就是一组坐标，段与段之间必须输出一个空行。
@@ -14000,6 +14067,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     });
 
     let rawText = response.choices?.[0]?.message?.content || "";
+    retainP0QualificationAcquisition(req, response, recognitionBudget);
     let coordinates = extractCoordinateLines(rawText);
     const initialBftmCoordinateRepair = normalizeBftmProjectedCoordinateText(coordinates);
     if (initialBftmCoordinateRepair.changed && initialBftmCoordinateRepair.rowCount >= 4) {
@@ -14007,6 +14075,23 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       console.log("BFTM projected coordinate OCR digit repair applied rows=", initialBftmCoordinateRepair.rowCount);
     }
     const indonesiaUtm50 = getIndonesiaUtm50Info(rawText, { transform: utmToWgs84 });
+    if (indonesiaUtm50.structureConfirmed && indonesiaUtm50.transformStatus === "FAILED") {
+      const failurePayload = {
+        model: `${aliyunVisionModel}+indonesia-utm50-stable-parser`,
+        rawText,
+        coordinates: "",
+        precisionMode: "indonesia-utm50s-projected",
+        indonesiaUtm50,
+        requiresReview: true,
+        warning: "已识别 UTM 50S 平面坐标表，但坐标转换未完成，暂时无法生成有效地图或 KML。请核对原图的投影信息和 X/Y 坐标后重试。",
+        parserTrace: ["INDONESIA_UTM50:explicit_document_evidence", "INDONESIA_UTM50_TRANSFORM_FAILED"]
+      };
+      // Keep raw acquisition only as evidence; do not feed its DMS references to any parser.
+      const failedEngine = buildCoordinateEngineV2ShadowResult({ ...failurePayload, rawText: "" }, {
+        lockedCoordinateType: "indonesia_utm50_projected", forceRequiresReview: true
+      });
+      return res.json(buildCoordinateVerificationResponse(failurePayload, failedEngine));
+    }
     if (indonesiaUtm50.isIndonesiaUtm50) {
       const indonesiaCoordinates = formatIndonesiaUtm50Rows(indonesiaUtm50);
       const consumeResult = await consumeCoordinateUsage({
@@ -14027,10 +14112,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         rawText,
         coordinates: indonesiaCoordinates,
         precisionMode: "indonesia-utm50s-projected",
-        warning: "识别到 UTM WGS 1984 ZONA 50S 平面坐标表；已按 EPSG:32750 的 X=Easting、Y=Northing 转换，请结合原图核对。",
+        warning: indonesiaUtm50.requiresReview
+          ? "投影转换结果与 DMS 参考不一致或参考不完整；保留 X/Y 转换几何，请结合原图核对。"
+          : "识别到 UTM WGS 1984 ZONA 50S 平面坐标表；已按 EPSG:32750 的 X=Easting、Y=Northing 转换，请结合原图核对。",
         indonesiaUtm50,
+        requiresReview: indonesiaUtm50.requiresReview,
         parserTrace: [
           "INDONESIA_UTM50:explicit_document_evidence",
+          "INDONESIA_UTM50:projected_transform_executed",
+          `INDONESIA_UTM50:dms_crosscheck_${indonesiaUtm50.projectedDmsCrosscheck}`,
           indonesiaUtm50.duplicateSequenceCollapsed ? "INDONESIA_UTM50:exact_repeated_sequence_collapsed" : "INDONESIA_UTM50:unique_sequence",
           "INDONESIA_UTM50:accepted"
         ],
@@ -14040,6 +14130,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         indonesiaPayload,
         buildCoordinateEngineV2ShadowResult(indonesiaPayload, {
           fileName: uploadedFileName,
+          forceRequiresReview: indonesiaUtm50.requiresReview,
           rawHint: coordinateEngineV2ContextHint
         })
       ));
