@@ -48,6 +48,7 @@ function candidate(overrides = {}) {
     confirmationStatus: COORDINATE_CONFIRMATION_STATUS.PENDING,
     qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
     technicalKmlReady: true,
+    currentAuthorizedGeometryExportable: true,
     requiresReview: true,
     kmlReady: false,
     groups: [{ groupId: "group_1", requiresReview: true, kmlReady: false }],
@@ -61,7 +62,7 @@ const runtime = new CoordinateConfirmationRuntime({ ttlMs: 60_000, maxResults: 2
 const pending = finalizeCoordinateResult(candidate(), { clock });
 runtime.register(pending);
 assert.equal(pending.decisionState, COORDINATE_DECISION_STATE.REVIEW_REQUIRED, "review pending stays blocked");
-assert.equal(pending.kmlReady, false, "review pending KML blocked");
+assert.equal(pending.kmlReady, true, "current authorized review-pending geometry is KML-ready with warning");
 assert.equal(pending.technicalKmlReady, true, "review pending still has technical KML geometry");
 assert.ok(pending.reasonCodes.includes(COORDINATE_GATE_REASON.QUALITY_GATE_REVIEW_REQUIRED));
 assert.ok(pending.reasonCodes.includes(COORDINATE_GATE_REASON.CONFIRMATION_REQUIRED));
@@ -107,7 +108,7 @@ const edited = finalizeCoordinateResult(candidate({
 }), { clock });
 runtime.register(edited);
 assert.equal(edited.decisionState, COORDINATE_DECISION_STATE.REVIEW_REQUIRED, "edited result returns to pending review");
-assert.equal(edited.kmlReady, false, "edited result blocks KML until reconfirmed");
+assert.equal(edited.kmlReady, true, "complete new revision remains KML-ready with warning");
 
 const reconfirmed = runtime.confirm({
   resultId: edited.resultId,
@@ -218,11 +219,11 @@ console.log(JSON.stringify({
   suite: "p08f-review-confirm-kml-regression",
   passed: 16,
   cases: [
-    "REVIEW_PENDING_BLOCKED",
+    "REVIEW_PENDING_READY_WITH_WARNING",
     "REVIEW_PENDING_MAP_PREVIEW_ALLOWED",
     "REVIEW_ACCEPTED_KML_ALLOWED",
     "QUALITY_REVIEW_FACT_PRESERVED",
-    "EDIT_PENDING_BLOCKED",
+    "EDIT_COMPLETE_IDENTITY_READY_WITH_WARNING",
     "RECONFIRM_ALLOWED",
     "REVIEW_REJECTED_BLOCKED",
     "QUALITY_FAILED_BLOCKED",

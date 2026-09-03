@@ -146,7 +146,7 @@ assert.equal(reviewOnlyFinalized.confirmationStatus, COORDINATE_CONFIRMATION_STA
 assert.equal(reviewOnlyFinalized.qualityGateStatus, COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED, "review quality fact remains preserved");
 assert.equal(reviewOnlyFinalized.decisionState, COORDINATE_DECISION_STATE.REVIEW_REQUIRED, "review-only result waits for user confirmation");
 assert.equal(reviewOnlyFinalized.technicalKmlReady, true, "review-only result remains technically KML-ready");
-assert.equal(reviewOnlyFinalized.kmlReady, false, "review-only result blocks KML before confirmation");
+assert.equal(reviewOnlyFinalized.kmlReady, true, "valid current review-only geometry remains KML-ready with warning");
 
 const hardFailureInput = createLegacyFinalizerInput({
   recognitionResult: { coordinates: "invalid", precisionMode: "dms-coordinates" },

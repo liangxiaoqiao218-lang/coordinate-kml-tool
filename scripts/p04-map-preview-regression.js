@@ -3,6 +3,7 @@ import {
   FINALIZED_COORDINATE_CRS,
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
+import { registerFinalizedCoordinateResult } from "../server/coordinate-finalizer/index.js";
 import { FinalizedResultSpatialGeometryAdapter } from "../server/spatial/adapters/finalized-result-adapter.js";
 import {
   MAP_PREVIEW_BLOCK_REASON,
@@ -72,11 +73,14 @@ test("P04-03", "Point produces one point and no fabricated measurements", () => 
   assert.equal(facts.lengthMeters, null);
 });
 
-test("P04-04", "Review-required drawable result can preview while export remains blocked", () => {
-  const result = finalized({ requiresReview: true });
+test("P04-04", "Review-required current authorized result preserves warning and permits both consumers", () => {
+  const result = registerFinalizedCoordinateResult(finalized({ requiresReview: true, currentAuthorizedGeometryExportable: true }));
   assert.equal(result.decisionState, "REVIEW_REQUIRED");
   assert.equal(adapter.adapt(result, { clock }).previewEligibility.allowed, true);
-  assert.equal(new FinalizedResultSpatialGeometryAdapter().adapt(result).ok, false);
+  const adapted = new FinalizedResultSpatialGeometryAdapter().adapt(result);
+  assert.equal(adapted.ok, true);
+  assert.equal(adapted.geometry.gate.decisionState, "REVIEW_REQUIRED");
+  assert.ok(adapted.geometry.warnings.includes("REVIEW_REQUIRED"));
 });
 
 test("P04-05", "Pending confirmation can preview and carries a warning", () => {

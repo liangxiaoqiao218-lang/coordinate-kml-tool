@@ -79,15 +79,15 @@ function finalizedForAvailability(family, overrides = {}) {
   return result;
 }
 
-check("A01", "Kyrgyz is BLOCKED_BY_PROVIDER", () => {
+check("A01", "Kyrgyz stable specialized path is AVAILABLE", () => {
   const value = getFamilyAvailability("kyrgyz_gk");
-  assert.equal(value.status, FAMILY_AVAILABILITY_STATUS.BLOCKED_BY_PROVIDER);
-  assert.equal(value.reasonCode, COORDINATE_GATE_REASON.FAMILY_BLOCKED_BY_PROVIDER);
+  assert.equal(value.status, FAMILY_AVAILABILITY_STATUS.AVAILABLE);
+  assert.equal(value.reasonCode, null);
   assert.equal(policyEntry("kyrgyz_gk").status, value.status);
 });
 
-check("A02", "Kyrgyz provider calls are prevented", () => {
-  assert.equal(simulateServerEnforcement("kyrgyz_gk").providerCallCount, 0);
+check("A02", "Kyrgyz acquisition is permitted without claiming Provider reliability", () => {
+  assert.equal(simulateServerEnforcement("kyrgyz_gk").providerCallCount, 1);
   const enforcementIndex = serverSource.indexOf("const enforcedAvailability =");
   const firstProviderCallAfterEnforcement = serverSource.indexOf("callAliyunVision({", enforcementIndex);
   assert.ok(enforcementIndex > 0 && firstProviderCallAfterEnforcement > enforcementIndex);
@@ -95,10 +95,10 @@ check("A02", "Kyrgyz provider calls are prevented", () => {
   assert.ok(!serverSource.slice(enforcementIndex, firstProviderCallAfterEnforcement).includes("regressionSampleId"));
 });
 
-check("A03", "Kyrgyz KML is denied", () => {
+check("A03", "Kyrgyz valid authorized geometry can export", () => {
   const result = finalizedForAvailability("kyrgyz_gk");
-  assert.equal(result.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
-  assert.equal(consumeFinalizedGeometry(result, () => "kml").consumed, false);
+  assert.equal(result.decisionState, COORDINATE_DECISION_STATE.AUTO_EXPORT);
+  assert.equal(consumeFinalizedGeometry(result, () => "kml").consumed, true);
 });
 
 check("A04", "Madagascar stable parser family is AVAILABLE", () => {
@@ -136,10 +136,11 @@ check("A09", "Handwritten unavailable is not a fake review result", () => {
   assert.notEqual(result.decisionState, COORDINATE_DECISION_STATE.REVIEW_REQUIRED);
 });
 
-check("A10", "Confirmation cannot override availability", () => {
+check("A10", "Restored availability and confirmation cannot override invalid geometry", () => {
   const runtime = new CoordinateConfirmationRuntime();
   const initial = finalizedForAvailability("kyrgyz_gk", {
     confirmationStatus: COORDINATE_CONFIRMATION_STATUS.PENDING,
+    geometry: { type: "Point", coordinates: [200, 10] },
     requiresReview: true
   });
   runtime.register(initial);
@@ -152,7 +153,7 @@ check("A10", "Confirmation cannot override availability", () => {
   assert.equal(confirmed.ok, true);
   assert.equal(confirmed.finalizedCoordinateResult.confirmationStatus, COORDINATE_CONFIRMATION_STATUS.ACCEPTED);
   assert.equal(confirmed.finalizedCoordinateResult.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
-  assert.ok(confirmed.finalizedCoordinateResult.reasonCodes.includes(COORDINATE_GATE_REASON.FAMILY_BLOCKED_BY_PROVIDER));
+  assert.ok(confirmed.finalizedCoordinateResult.reasonCodes.includes(COORDINATE_GATE_REASON.GEOMETRY_INVALID));
 });
 
 check("A11", "Madagascar restored availability reaches the ordinary finalizer", () => {
@@ -162,7 +163,7 @@ check("A11", "Madagascar restored availability reaches the ordinary finalizer", 
 });
 
 check("A12", "Unavailable families do not enter unrelated fallback", () => {
-  for (const family of ["kyrgyz_gk", "handwritten_dms_experimental"]) {
+  for (const family of ["handwritten_dms_experimental"]) {
     assert.equal(simulateServerEnforcement(family).unrelatedFallbackCount, 0);
   }
 });

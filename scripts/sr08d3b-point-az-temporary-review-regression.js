@@ -6,6 +6,7 @@ import {
   createLegacyFinalizerInput,
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
+import { registerFinalizedCoordinateResult } from "../server/coordinate-finalizer/index.js";
 import { evaluatePointAzEvidenceCoverage, POINT_AZ_EVIDENCE_COVERAGE_CONTRACT } from "../server/evidence/point-az-evidence-coverage.js";
 import { FinalizedResultSpatialGeometryAdapter } from "../server/spatial/adapters/finalized-result-adapter.js";
 
@@ -45,8 +46,17 @@ test("PAZ-P01", () => {
   assert.ok(["REVIEW_REQUIRED", "BLOCKED"].includes(result.decisionState));
 });
 test("PAZ-P02", () => assert.equal(pointAzResult().familySafetyPolicy.reasonCode, COORDINATE_GATE_REASON.PROVIDER_EVIDENCE_COVERAGE_INSUFFICIENT));
-test("PAZ-P03", () => assert.equal(pointAzResult().kmlReady, false));
-test("PAZ-P04", () => assert.equal(new FinalizedResultSpatialGeometryAdapter().adapt(pointAzResult()).ok, false));
+test("PAZ-P03", () => {
+  assert.equal(pointAzResult().kmlReady, true);
+  assert.equal(pointAzResult().decisionState, "REVIEW_REQUIRED");
+});
+test("PAZ-P04", () => {
+  const result = registerFinalizedCoordinateResult(pointAzResult());
+  const adapted = new FinalizedResultSpatialGeometryAdapter().adapt(result);
+  assert.equal(adapted.ok, true);
+  assert.equal(adapted.geometry.gate.decisionState, "REVIEW_REQUIRED");
+  assert.ok(adapted.geometry.warnings.length > 0);
+});
 test("PAZ-P05", () => {
   const runtime = new CoordinateConfirmationRuntime();
   const pending = pointAzResult();

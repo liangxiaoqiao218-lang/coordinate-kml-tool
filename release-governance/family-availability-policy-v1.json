@@ -3,13 +3,16 @@
   "policyVersion": "1",
   "effectiveFrom": "2026-08-26",
   "approvalSource": "SR-08G.1_PROVIDER_RELIABILITY_ADJUDICATION",
-  "scope": "family_scoped_recognition_authority",
+  "scope": "acquisition_availability_not_valid_canonical_result_authority",
+  "p0Contract": "PROVIDER_UNAVAILABLE_DOES_NOT_INVALIDATE_VALID_DETERMINISTIC_RESULT",
+  "hardBlockersPreserved": ["TRANSFORM_FAILURE", "INVALID_CRS", "GEOMETRY_MISSING_OR_INVALID", "IDENTITY_INCOMPLETE_OR_STALE", "INVALID_AUTHORITY"],
   "wholeProductUnsafe": false,
   "entries": [
     {
       "family": "kyrgyz_gk",
-      "status": "BLOCKED_BY_PROVIDER",
-      "reasonCode": "FAMILY_BLOCKED_BY_PROVIDER",
+      "status": "AVAILABLE",
+      "reasonCode": null,
+      "scope": "STABLE_SPECIALIZED_PATH_RESTORED_PROVIDER_RELIABILITY_NOT_REQUALIFIED",
       "evidenceReference": "SR-08G_KYRGYZ_0_OF_5_TIMEOUT_DOMINANT",
       "removalConditions": [
         "REPLACEMENT_OR_PROVIDER_CANDIDATE_IDENTIFIED",

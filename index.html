@@ -6759,7 +6759,8 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function getFinalizedCoordinateIdentity(result = activeFinalizedCoordinateResult) {
-      if (!result?.resultId || !Number.isSafeInteger(result?.resultRevision) || !result?.geometryHash) return null;
+      if (!result?.resultId || !Number.isSafeInteger(result?.resultRevision) || result.resultRevision < 1
+        || !result?.geometryHash || !result?.geometry?.type || !Array.isArray(result.geometry.coordinates)) return null;
       return {
         resultId: result.resultId,
         resultRevision: result.resultRevision,
@@ -7151,23 +7152,29 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function ensureManualInputFinalized() {
-      if (activeFinalizedCoordinateResult) {
+      if (getFinalizedCoordinateIdentity()) {
         if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) {
           await requestEditedCoordinateRevision();
         }
         return activeFinalizedCoordinateResult;
       }
       const normalizedCoordinateText = normalizeManualCoordinateTextForFinalizer(input.value);
+      const recoveryIdentity = activeFinalizedCoordinateResult ? {
+        resultId: activeFinalizedCoordinateResult.resultId,
+        resultRevision: activeFinalizedCoordinateResult.resultRevision,
+        geometryHash: activeFinalizedCoordinateResult.geometryHash
+      } : null;
       const response = await fetch("/api/coordinate-manual-finalize", {
         method: "POST",
         headers: getSourceHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           coordinateText: normalizedCoordinateText,
+          ...(recoveryIdentity ? { recoveryIdentity } : {}),
           requireConfirmation: shouldRequireManualFinalizerConfirmation()
         })
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.finalizedCoordinateResult) {
+      if (!response.ok || !getFinalizedCoordinateIdentity(payload.finalizedCoordinateResult)) {
         throw new Error(getCoordinateFlowUserMessage(payload.code, "无法处理当前坐标，请检查后重试。"));
       }
       activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;
@@ -11919,6 +11926,19 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return getCoordinateGroups();
     }
 
+    function getCanonicalCoordinateDisplayText(result) {
+      if (!getFinalizedCoordinateIdentity(result)) return "";
+      const geometry = result.geometry;
+      const line = points => points.map(point => `${point[0]},${point[1]}`).join("\n");
+      const ring = points => line(points.length > 1 && points[0][0] === points.at(-1)[0]
+        && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points);
+      if (geometry.type === "Point") return line([geometry.coordinates]);
+      if (geometry.type === "LineString") return line(geometry.coordinates);
+      if (geometry.type === "Polygon") return geometry.coordinates.map(ring).join("\n\n");
+      if (geometry.type === "MultiPolygon") return geometry.coordinates.flatMap(polygon => polygon.map(ring)).join("\n\n");
+      return "";
+    }
+
     function getAuthorizedFinalizedGeometryKmlSource() {
       if (!activeFinalizedCoordinateResult
         || finalizedCoordinateDirty
@@ -13658,7 +13678,8 @@ ${placemarks}
 
         const summaryEngine = data.coordinateEngineV2 || data.coordinate_engine_v2 || {};
         const summaryGroups = Array.isArray(summaryEngine.groups) ? summaryEngine.groups : [];
-        const displayCoordinates = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
+        const displayCoordinates = getCanonicalCoordinateDisplayText(data.finalizedCoordinateResult)
+          || buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
         activeCoordinateEngineV2 = summaryEngine || null;
         activeFinalizedCoordinateResult = data.finalizedCoordinateResult || null;
         invalidateSpatialPreview();

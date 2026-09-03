@@ -23,16 +23,6 @@ function confirmationRequired(engine) {
   return type.includes("handwritten") || precision.includes("handwritten");
 }
 
-function isP0CurrentAuthorizedGeometryFamily(structuredResult = {}, sourceAuthority = "") {
-  if (sourceAuthority !== "legacy") return false;
-  const type = String(structuredResult.coordinate_type || "").toLowerCase();
-  const precision = String(structuredResult.precision_mode || "").toLowerCase();
-  return type === "indonesia_utm50_projected"
-    || type === "madagascar_cadastral_grid"
-    || precision === "indonesia-utm50s-projected"
-    || precision === "cadastral-grid-num-xv-yv";
-}
-
 function commonInput({
   sourceAuthority,
   recognitionResult = {},
@@ -68,10 +58,18 @@ function commonInput({
       ? underlyingGroups.map(group => ({ ...group, requiresReview: false, kmlReady: true }))
       : underlyingGroups
   });
-  const availabilityStatus = familyAvailability?.status || FAMILY_AVAILABILITY_STATUS.AVAILABLE;
+  const technicalFailure = recognitionResult.transformStatus === "FAILED"
+    || recognitionResult.indonesiaUtm50?.transformStatus === "FAILED"
+    || groups.some(group => group.points?.some(point => point.transformStatus === "FAILED"));
+  const authorityRejected = recognitionResult.explicitAuthorityRejected === true || revision.explicitAuthorityRejected === true;
+  const invalidCrs = recognitionResult.invalidCrsConfirmation === true || revision.invalidCrsConfirmation === true;
+  const productionSource = ["legacy", "manual_input", "coordinate_engine_v2"].includes(sourceAuthority);
+  const currentAuthorizedGeometryExportable = geometryResult.ok && productionSource
+    && !technicalFailure && !authorityRejected && !invalidCrs;
+  // Provider availability governs acquisition, not an already valid deterministic result.
+  const availabilityStatus = currentAuthorizedGeometryExportable ? FAMILY_AVAILABILITY_STATUS.AVAILABLE
+    : familyAvailability?.status || FAMILY_AVAILABILITY_STATUS.AVAILABLE;
   const availabilityBlocked = isFamilyAvailabilityBlocked({ status: availabilityStatus });
-  const currentAuthorizedGeometryExportable = geometryResult.ok
-    && isP0CurrentAuthorizedGeometryFamily(structuredResult, sourceAuthority);
   return {
     resultId: revision.resultId,
     resultRevision: revision.resultRevision ?? 1,
@@ -84,7 +82,9 @@ function commonInput({
     availabilityStatus,
     availabilityReasonCode: familyAvailability?.reasonCode || null,
     familyAvailabilityPolicy: familyAvailability || null,
-    crs: FINALIZED_COORDINATE_CRS,
+    crs: invalidCrs ? null : FINALIZED_COORDINATE_CRS,
+    explicitAuthorityRejected: authorityRejected,
+    kmlAuthorityBlocked: technicalFailure || invalidCrs || authorityRejected,
     geometry: geometryResult.ok ? geometryResult.geometry : null,
     geometryFailureReason: geometryResult.ok ? null : geometryResult.reasonCode,
     confirmationStatus,
@@ -102,11 +102,13 @@ function commonInput({
       : null,
     crsUncertaintyConfidenceOnly: currentAuthorizedGeometryExportable
       && verification?.crsUncertaintyConfidenceOnly === true,
-    requiresReview: availabilityBlocked ? false : familySafety.requiresReview,
+    requiresReview: availabilityBlocked ? false : underlyingRequiresReview || familySafety.requiresReview,
     kmlReady: availabilityBlocked ? false : familySafety.kmlReady,
     groups: familySafety.groups,
     familySafetyPolicy: familySafety.policy,
     warnings: [
+      ...(currentAuthorizedGeometryExportable && (underlyingRequiresReview || confirmationStatus === "pending")
+        ? ["当前坐标仍需核对；地图及 KML 使用服务端当前有效几何。"] : []),
       ...(Array.isArray(structuredResult.warnings) ? structuredResult.warnings : []),
       ...(Array.isArray(verification.warnings) ? verification.warnings : [])
     ]

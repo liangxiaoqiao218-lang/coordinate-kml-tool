@@ -236,6 +236,25 @@ export function getIndonesiaUtm50Info(value = "", { transform } = {}) {
   });
 }
 
+// Missing projected CRS never licenses a transform. Explicit document DMS is a separate source.
+export function getPrintedProjectedDmsReference(value = "") {
+  if (!hasStrongPrintedProjectedTableEvidence(value) || hasIndonesiaUtm50StructuralEvidence(value)) return null;
+  const sourceRows = [];
+  for (const line of normalizeCoordinateEvidenceText(value).split("\n")) {
+    const parts = line.split("|").map(part => part.trim());
+    if (parts.length < 3 || !/^[-+]?\d+(?:[.,]\d+)?$/.test(parts[1]) || !/^[-+]?\d+(?:[.,]\d+)?$/.test(parts[2])) continue;
+    const latitudeDms = parts.find(part => /[°º].*[NS]/i.test(part)) || "";
+    const longitudeDms = parts.find(part => /[°º].*[EW]/i.test(part)) || "";
+    const lat = parseDmsCoordinate(latitudeDms, "NS"), lon = parseDmsCoordinate(longitudeDms, "EW");
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    sourceRows.push(Object.freeze({ label: parts[0], x: parts[1], y: parts[2], latitudeDms, longitudeDms, lat, lon }));
+  }
+  if (sourceRows.length < 3) return null;
+  return Object.freeze({ geometrySource: "DMS_DOCUMENT_REFERENCE", projectedSourceStatus: "UNRESOLVED",
+    projectedTransformExecuted: false, sourceCrs: null, sourceRows: Object.freeze(sourceRows),
+    coordinates: sourceRows.map(row => `${row.latitudeDms},${row.longitudeDms}`).join("\n") });
+}
+
 export function formatIndonesiaUtm50Rows(info = {}) {
   if (info.transformStatus === "FAILED") return "";
   return (Array.isArray(info.rows) ? info.rows : []).map(row => {

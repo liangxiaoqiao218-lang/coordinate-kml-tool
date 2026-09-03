@@ -1,6 +1,7 @@
 import { finiteNumberOrNull } from "./coordinate-values.js";
 import { UTM30N_CRS, utmToWgs84 } from "./projection/utm.js";
 import { getDmsPointCoordinates, parseDmsRows } from "./verification/dms-utils.js";
+import { convertKyrgyzGkToWgs84, KYRGYZ_GK_CRS } from "./projection/kyrgyz-gk.js";
 
 function pointLabel(text, fallback) {
   return String(text || "").match(/^\s*(?:point\s*)?([A-Z]|\d{1,3})\s*(?:[.|):\-]|\||\s)/i)?.[1]?.toUpperCase() || fallback;
@@ -59,15 +60,27 @@ export function getStructuredCoordinateBlocks(payload = {}, coordinateType = "")
 
 export function parseStructuredBoundaryPoint(raw, coordinateType, index = 0, explicitLabel = "") {
   const fallbackLabel = String(index + 1);
-  if (coordinateType === "standard_dms_table") {
+  if (coordinateType === "standard_dms_table" || coordinateType === "handwritten_dms_experimental") {
     const coordinate = getDmsPointCoordinates(raw);
-    if (!coordinate) return null;
+    if (!coordinate || !Number.isFinite(coordinate.lat) || !Number.isFinite(coordinate.lon)
+      || Math.abs(coordinate.lat) > 90 || Math.abs(coordinate.lon) > 180) return null;
     return {
       label: explicitLabel || pointLabel(raw, fallbackLabel),
       lat: coordinate.lat,
       lon: coordinate.lon,
       confidence: 0.85
     };
+  }
+
+  if (coordinateType === "kyrgyzstan_gk") {
+    const parts = String(raw || "").split("|").map(part => part.trim());
+    const x = finiteNumberOrNull(parts[1]);
+    const y = finiteNumberOrNull(parts[2]);
+    const converted = x !== null && y !== null ? convertKyrgyzGkToWgs84(x, y) : null;
+    return { label: explicitLabel || parts[0] || fallbackLabel, x, y,
+      lat: converted?.latitude ?? null, lon: converted?.longitude ?? null,
+      projection: "kyrgyzstan_gk", source_crs: { ...KYRGYZ_GK_CRS },
+      transformStatus: converted ? "SUCCESS" : "FAILED", confidence: converted ? 0.85 : 0 };
   }
 
   if (coordinateType !== "projected_xy") return null;

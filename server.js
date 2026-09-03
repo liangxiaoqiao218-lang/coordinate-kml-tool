@@ -20,6 +20,7 @@ import {
   formatIndonesiaUtm50Rows,
   getIndonesiaUtm50Info,
   getDmsDocumentEvidence,
+  getPrintedProjectedDmsReference,
   hasStrongPrintedProjectedTableEvidence,
   getMadagascarCadastralStrongRouteEvidence,
   getWgs84StrongRouteEvidence,
@@ -72,7 +73,8 @@ import {
   isSpatialResultEnabled,
   isRecognitionStopError,
   recognitionDeadlineMiddleware,
-  validateFinalizedCoordinateIdentity
+  validateFinalizedCoordinateIdentity,
+  coordinateConfirmationRuntime
 } from "./server/coordinate-finalizer/index.js";
 
 const app = express();
@@ -3658,6 +3660,7 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
   const hasExplicitHandwrittenDmsContext = Boolean(options.hasExplicitHandwrittenDmsContext);
 
   const isHandwrittenDms = isOcrImage
+    && documentEvidence.handwrittenPositiveSignal
     && (dmsRows >= 4 || rawDmsRows >= 4)
     && (pointRows >= 4 || rawDmsRows >= 4)
     && (looksLikeHandwrittenDmsBlock(sourceText) || hasStrongHandwrittenDmsRows)
@@ -12629,6 +12632,26 @@ app.post("/api/coordinate-revision", (req, res) => {
 });
 
 app.post("/api/coordinate-manual-finalize", (req, res) => {
+  let recoveryRevision = null;
+  if (req.body?.recoveryIdentity) {
+    const identity = req.body.recoveryIdentity;
+    coordinateConfirmationRuntime.cleanup();
+    const prior = coordinateConfirmationRuntime.records.get(String(identity.resultId || ""))?.result;
+    if (!prior || prior.resultRevision !== identity.resultRevision
+      || (identity.geometryHash && identity.geometryHash !== prior.geometryHash)) {
+      return res.status(409).json({ success: false, code: "STALE_CONFIRMATION_REVISION" });
+    }
+    if (prior.geometry && prior.geometryHash) return res.json({ success: true, finalizedCoordinateResult: prior });
+    const recoverableReasons = ["STRUCTURED_GEOMETRY_MISSING", "REVIEW_REQUIRED", "QUALITY_GATE_REVIEW_REQUIRED", "CONFIRMATION_REQUIRED"];
+    if (!["standard_dms_table", "handwritten_dms_experimental"].includes(prior.coordinateType)
+      || !["legacy", "manual_input", "coordinate_engine_v2"].includes(prior.sourceAuthority)
+      || !prior.reasonCodes?.includes("STRUCTURED_GEOMETRY_MISSING")
+      || prior.reasonCodes.some(code => !recoverableReasons.includes(code))) {
+      return res.status(422).json({ success: false, code: "COORDINATE_EDIT_INVALID" });
+    }
+    recoveryRevision = { resultId: prior.resultId, resultRevision: prior.resultRevision + 1,
+      currentRevision: prior.resultRevision + 1, confirmedRevision: null, confirmationStatus: "pending" };
+  }
   const coordinateText = String(req.body?.coordinateText || "").trim();
   if (!coordinateText) {
     return res.status(400).json({ success: false, code: "COORDINATE_EDIT_TEXT_REQUIRED" });
@@ -12642,6 +12665,7 @@ app.post("/api/coordinate-manual-finalize", (req, res) => {
     success: true,
     model: "manual-coordinate-input",
     rawText: coordinateText,
+    ...(recoveryRevision ? { finalizerRevision: recoveryRevision } : {}),
     ...parsed
   };
   const coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(manualPayload, {
@@ -14134,6 +14158,16 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           rawHint: coordinateEngineV2ContextHint
         })
       ));
+    }
+    const documentReference = getPrintedProjectedDmsReference(rawText);
+    if (documentReference) {
+      const usage = await consumeCoordinateUsage({ note: "Coordinate recognition consumed after document DMS reference parser" });
+      if (!usage.success) return res.status(usage.reason === "limit_exceeded" ? 403 : 500).json({ success: false, reason: usage.reason, coordinates: "", rawText: "" });
+      const referencePayload = { model: aliyunVisionModel, rawText, coordinates: documentReference.coordinates,
+        precisionMode: "dms-coordinates", geometrySource: "DMS_DOCUMENT_REFERENCE",
+        projectedSourceStatus: "UNRESOLVED", documentReference, requiresReview: true, quota: usage.quota };
+      return res.json(buildCoordinateVerificationResponse(referencePayload,
+        buildCoordinateEngineV2ShadowResult(referencePayload, { lockedCoordinateType: "standard_dms_table", forceRequiresReview: true })));
     }
     let warning = extractRecognitionWarning(rawText);
     let usedModel = aliyunVisionModel;

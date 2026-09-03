@@ -16,6 +16,7 @@ import {
   createSpatialResponseIdentity,
   createV3FinalizerInput,
   finalizeCoordinateResult,
+  registerFinalizedCoordinateResult,
   getRecognitionDeadlineContext,
   getRecognitionHardDeadlineMs,
   incrementCoordinateRevision,
@@ -201,6 +202,7 @@ test("S01", "fake consumer only receives AUTO_EXPORT geometry", () => {
 
 test("S02", "Spatial adapter consumes finalized result without reparsing", () => {
   const finalized = finalizeCoordinateResult(candidate(), { clock });
+  registerFinalizedCoordinateResult(finalized);
   const adapted = new FinalizedResultSpatialGeometryAdapter().adapt(finalized);
   assert.equal(adapted.ok, true);
   assert.equal(adapted.geometry.schemaVersion, "normalized_geometry_v1");
@@ -208,11 +210,13 @@ test("S02", "Spatial adapter consumes finalized result without reparsing", () =>
   assert.equal(adapted.geometry.source.geometryHash, finalized.geometryHash);
 });
 
-test("S03", "Spatial adapter never upgrades blocked result", () => {
-  const finalized = finalizeCoordinateResult(candidate({ confirmationStatus: "pending" }), { clock });
+test("S03", "Spatial adapter preserves review while allowing current authorized geometry", () => {
+  const finalized = finalizeCoordinateResult(candidate({ confirmationStatus: "pending", currentAuthorizedGeometryExportable: true }), { clock });
+  registerFinalizedCoordinateResult(finalized);
   const adapted = new FinalizedResultSpatialGeometryAdapter().adapt(finalized);
-  assert.equal(adapted.ok, false);
-  assert.equal(adapted.reasonCode, "CONFIRMATION_REQUIRED");
+  assert.equal(adapted.ok, true);
+  assert.equal(adapted.geometry.gate.decisionState, "REVIEW_REQUIRED");
+  assert.ok(adapted.geometry.warnings.includes("CONFIRMATION_REQUIRED"));
 });
 
 test("A01", "async response identity rejects stale revision and hash", () => {

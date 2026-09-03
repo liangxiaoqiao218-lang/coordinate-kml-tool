@@ -93,7 +93,7 @@ const pendingRevision1 = reviewPending.payload.finalizedCoordinateResult;
 assert.equal(pendingRevision1.confirmationStatus, "pending");
 assert.equal(pendingRevision1.decisionState, "REVIEW_REQUIRED");
 assert.equal(pendingRevision1.technicalKmlReady, true);
-assert.equal(pendingRevision1.kmlReady, false);
+assert.equal(pendingRevision1.kmlReady, true);
 assert.ok(pendingRevision1.resultId);
 assert.ok(pendingRevision1.geometryHash);
 
@@ -111,7 +111,7 @@ assert.equal(pendingRevision2.resultRevision, pendingRevision1.resultRevision + 
 assert.notEqual(pendingRevision2.geometryHash, pendingRevision1.geometryHash);
 assert.equal(pendingRevision2.confirmationStatus, "pending");
 assert.equal(pendingRevision2.decisionState, "REVIEW_REQUIRED");
-assert.equal(pendingRevision2.kmlReady, false);
+assert.equal(pendingRevision2.kmlReady, true);
 
 const reviewConfirmed = await post("/api/coordinate-confirmation", {
   resultId: pendingRevision2.resultId,

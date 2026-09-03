@@ -32,8 +32,9 @@ const HANDWRITTEN_REMOVAL_CONDITIONS = Object.freeze([
 const POLICY_ENTRIES = Object.freeze({
   kyrgyz_gk: Object.freeze({
     family: "kyrgyz_gk",
-    status: FAMILY_AVAILABILITY_STATUS.BLOCKED_BY_PROVIDER,
-    reasonCode: COORDINATE_GATE_REASON.FAMILY_BLOCKED_BY_PROVIDER,
+    status: FAMILY_AVAILABILITY_STATUS.AVAILABLE,
+    reasonCode: null,
+    scope: "ACQUISITION_RELIABILITY_DIAGNOSTIC_NOT_RESULT_AUTHORITY",
     effectiveFrom: POLICY_EFFECTIVE_FROM,
     evidenceReference: "SR-08G_KYRGYZ_0_OF_5_TIMEOUT_DOMINANT",
     removalConditions: KYRGYZ_REMOVAL_CONDITIONS
@@ -91,8 +92,8 @@ export function getFamilyAvailability(family = "") {
     policyId: FAMILY_AVAILABILITY_POLICY_ID,
     policyVersion: FAMILY_AVAILABILITY_POLICY_VERSION,
     ...entry,
-    providerCallAllowed: false,
-    recognitionAvailable: false
+    providerCallAllowed: entry.status === FAMILY_AVAILABILITY_STATUS.AVAILABLE,
+    recognitionAvailable: entry.status === FAMILY_AVAILABILITY_STATUS.AVAILABLE
   });
 }
 

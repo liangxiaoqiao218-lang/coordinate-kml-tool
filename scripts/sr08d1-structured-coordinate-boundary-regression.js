@@ -85,7 +85,8 @@ test("A7", "Point A-Z structured polygon reaches AUTO_EXPORT only after exact co
   assert.equal(finalized.geometry.coordinates[0].length, 27);
   assert.equal(finalized.confirmationStatus, "pending");
   assert.equal(finalized.requiresReview, true);
-  assert.equal(finalized.kmlReady, false);
+  assert.equal(finalized.kmlReady, true);
+  assert.equal(finalized.decisionState, "REVIEW_REQUIRED");
   const runtime = new CoordinateConfirmationRuntime();
   runtime.register(finalized);
   const confirmed = runtime.confirm({
