@@ -1,8 +1,15 @@
-import { createHash } from 'node:crypto';
-import http from 'node:http';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { loadP0ReplayManifest } from './p0-deterministic-replay.js';
+// Independent guard; never rely on the candidate wrapper to protect this entrypoint.
+if (String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production') {
+  throw new Error('P0_REPLAY_PRODUCTION_MODE_FORBIDDEN');
+}
+const bindHost = process.env.P0_REPLAY_BIND_HOST || '127.0.0.1';
+if (bindHost !== '127.0.0.1') throw new Error('P0_REPLAY_LOOPBACK_BIND_REQUIRED');
+
+const { createHash } = await import('node:crypto');
+const { default: http } = await import('node:http');
+const { default: path } = await import('node:path');
+const { fileURLToPath } = await import('node:url');
+const { loadP0ReplayManifest } = await import('./p0-deterministic-replay.js');
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = await loadP0ReplayManifest(repoRoot);
@@ -36,4 +43,4 @@ http.createServer((req, res) => {
       choices: [{ message: { content: record.approvedAcquisitionLines.join('\n') } }],
     }));
   });
-}).listen(port, '127.0.0.1', () => console.log(`P0 deterministic acquisition replay provider: ${port}`));
+}).listen(port, bindHost, () => console.log(`P0 deterministic acquisition replay provider: ${port}`));

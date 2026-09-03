@@ -1,5 +1,26 @@
-import http from 'node:http';
-import { assertP0ReplayRuntimeSafety, isLoopbackUrl } from './p0-deterministic-replay.js';
+// Evaluate inherited environment before imports, mutation, or startup side effects.
+if (String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production') {
+  throw new Error('P0_REPLAY_PRODUCTION_MODE_FORBIDDEN');
+}
+const bindHost = process.env.P0_REPLAY_BIND_HOST || '127.0.0.1';
+if (bindHost !== '127.0.0.1') throw new Error('P0_REPLAY_LOOPBACK_BIND_REQUIRED');
+
+const { default: http } = await import('node:http');
+const { assertP0ReplayRuntimeSafety, isLoopbackUrl } = await import('./p0-deterministic-replay.js');
+
+// Harness-process-only adapter: Express delegates app.listen to this method.
+// Never let the unmodified application's omitted host bind all interfaces.
+const nativeListen = http.Server.prototype.listen;
+http.Server.prototype.listen = function (...args) {
+  const [port, hostOrCallback, callback] = args;
+  if (!/^\d+$/.test(String(port)) || Number(port) > 65535 || args.length > 3
+      || (hostOrCallback !== undefined && typeof hostOrCallback !== 'function' && hostOrCallback !== bindHost)
+      || (callback !== undefined && typeof callback !== 'function')) {
+    throw new Error('P0_REPLAY_LOOPBACK_BIND_REQUIRED');
+  }
+  return nativeListen.call(this, Number(port), bindHost,
+    typeof hostOrCallback === 'function' ? hostOrCallback : callback);
+};
 
 process.env.PORT = process.env.P0_REPLAY_CANDIDATE_PORT || '32121';
 process.env.ENABLE_REGRESSION_TEST_MODE = 'true';
