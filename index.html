@@ -996,6 +996,7 @@
     }
 
     .coordinate-upload-card {
+      position: relative;
       display: block;
       border: 0;
       border-radius: 0;
@@ -1056,10 +1057,19 @@
       min-height: 34px;
     }
 
-    .coordinate-file-input {
+    .coordinate-upload-card .coordinate-file-input {
       position: absolute;
+      top: 0;
+      left: 0;
       width: 1px;
       height: 1px;
+      min-width: 0;
+      min-height: 0;
+      max-width: 1px;
+      max-height: 1px;
+      margin: 0;
+      padding: 0;
+      border: 0;
       overflow: hidden;
       opacity: 0;
       pointer-events: none;
