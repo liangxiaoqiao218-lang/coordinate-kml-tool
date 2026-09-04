@@ -208,16 +208,27 @@ function extractFunctionSource(source, functionName) {
   throw new Error(`${functionName} body is not closed`);
 }
 const finalizedKmlGateSource = extractFunctionSource(html, "shouldBlockFinalizedCoordinateKml");
+const downloadKmlSource = extractFunctionSource(html, "downloadKml");
+const downloadKmlInternalSource = extractFunctionSource(html, "downloadKmlInternal");
+const clearKmlGenerationProgressSource = extractFunctionSource(html, "clearKmlGenerationProgress");
+const showKmlCompletionSource = extractFunctionSource(html, "showKmlCompletion");
 assert.match(html, /function shouldBlockFinalizedCoordinateKml\(\)/);
 assert.match(finalizedKmlGateSource, /activeFinalizedCoordinateResult\.kmlReady !== true/);
 assert.doesNotMatch(finalizedKmlGateSource, /activeFinalizedCoordinateResult\.decisionState !== "AUTO_EXPORT"/);
 assert.match(html, /fetch\("\/api\/coordinate-confirmation"/);
 assert.match(html, /fetch\("\/api\/coordinate-revision"/);
 assert.match(html, /if \(activeFinalizedCoordinateResult\) finalizedCoordinateDirty = true/);
+assert.match(downloadKmlInternalSource, /showRecognitionProgress\("正在生成 KML 文件\.\.\."\s*,\s*"loading"\)/, "KML download enters explicit generating state");
+assert.match(downloadKmlSource, /catch \(error\) \{\s*clearKmlGenerationProgress\(\)/, "exception clears generating state before error UI");
+assert.match(downloadKmlSource, /finally \{\s*clearKmlGenerationProgress\(\)/, "all success and blocked returns pass through final cleanup");
+assert.match(clearKmlGenerationProgressSource, /classList\.contains\("loading"\)/, "cleanup does not erase a visible success or error state");
+assert.match(showKmlCompletionSource, /clearKmlGenerationProgress\(\);\s*showRecognitionProgress\(text, warning \? "warning" : "success"/, "success cleanup is explicit and independent of message wording");
+assert.doesNotMatch(downloadKmlInternalSource, /showMessage\(`已[^`]*KML/, "KML success no longer relies on Chinese message classification");
+assert.match(downloadKmlInternalSource, /consumeUsage\("convert"\)/, "quota consumption remains at the authorized KML operation boundary");
 
 console.log(JSON.stringify({
   suite: "p08f-review-confirm-kml-regression",
-  passed: 16,
+  passed: 23,
   cases: [
     "REVIEW_PENDING_READY_WITH_WARNING",
     "REVIEW_PENDING_MAP_PREVIEW_ALLOWED",
@@ -234,6 +245,13 @@ console.log(JSON.stringify({
     "FRONTEND_CONSUMES_SERVER_KML_READY",
     "CONFIRMATION_UI_BOUND",
     "REVISION_UI_BOUND",
-    "EDIT_INVALIDATES_CONFIRMATION"
+    "EDIT_INVALIDATES_CONFIRMATION",
+    "KML_GENERATING_STATE_EXPLICIT",
+    "KML_EXCEPTION_CLEANUP",
+    "KML_FINALLY_CLEANUP",
+    "KML_BLOCKED_RETURN_CLEANUP",
+    "KML_SUCCESS_STATE_PRESERVED",
+    "KML_SUCCESS_MESSAGE_INDEPENDENT",
+    "KML_QUOTA_BOUNDARY_PRESERVED"
   ]
 }, null, 2));

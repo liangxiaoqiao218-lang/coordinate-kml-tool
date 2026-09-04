@@ -7456,6 +7456,18 @@ Au值 = 纯度 × 10 后取整数</div>
       }
     }
 
+    function clearKmlGenerationProgress() {
+      const isKmlLoading = recognitionProgress.classList.contains("loading")
+        && /KML/i.test(recognitionProgress.textContent || "");
+      if (isKmlLoading) setRecognitionStatus("", "");
+    }
+
+    function showKmlCompletion(text, options) {
+      const warning = options?.warning === true;
+      clearKmlGenerationProgress();
+      showRecognitionProgress(text, warning ? "warning" : "success", warning ? 7000 : 4200);
+    }
+
     function showUploadSupportMessage(text) {
       uploadMessage.style.display = "block";
       uploadMessage.innerHTML = `${text}<button type="button" class="inline-link" onclick="openManualSupport()">人工协助识别</button>`;
@@ -12843,6 +12855,7 @@ ${placemarks}
       try {
         return await downloadKmlInternal();
       } catch (error) {
+        clearKmlGenerationProgress();
         console.error("KML generation or download failed:", error);
         showKmlFailure({
           code: "KML_DOWNLOAD_FAILED",
@@ -12851,6 +12864,8 @@ ${placemarks}
           suggestion: "请重试；如果仍然失败，请复制识别详情联系管理员。"
         });
         return null;
+      } finally {
+        clearKmlGenerationProgress();
       }
     }
 
@@ -12925,7 +12940,7 @@ ${placemarks}
           count: pairs.length,
           source: "finalized_coordinate_result_v1"
         });
-        showMessage(`已从当前安全结果生成 ${finalizedGeometrySource.type} KML。`);
+        showKmlCompletion(`已从当前安全结果生成 ${finalizedGeometrySource.type} KML。`);
         return;
       }
 
@@ -12996,7 +13011,7 @@ ${placemarks}
           projection: MADAGASCAR_CADASTRAL_CRS_CODE,
           convertedToWgs84: true
         });
-        showMessage(`已生成 ${gridResult.polygons.length} 个矿权网格 KML。已按马达加斯加矿权格网尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, true, 7000);
+        showKmlCompletion(`已生成 ${gridResult.polygons.length} 个矿权网格 KML。已按马达加斯加矿权格网尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, { warning: true });
         return;
       }
 
@@ -13054,7 +13069,7 @@ ${placemarks}
           count: pairs.length,
           convertedToWgs84: true
         });
-        showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 MGRS / UTM Grid Reference 点。`);
+        showKmlCompletion(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 MGRS / UTM Grid Reference 点。`);
         return;
       }
 
@@ -13095,7 +13110,7 @@ ${placemarks}
             count: pairs.length,
             convertedToWgs84: false
           });
-          showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 French perimeter DMS 点；KML 已按 longitude,latitude,0 写入。`);
+          showKmlCompletion(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 French perimeter DMS 点；KML 已按 longitude,latitude,0 写入。`);
           return;
         }
       }
@@ -13174,7 +13189,7 @@ ${placemarks}
           coordinateOrder: "lonlat",
           convertedToWgs84: false
         });
-        showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 表格坐标点；已按经度/纬度顺序写入 longitude,latitude,0。`);
+        showKmlCompletion(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 表格坐标点；已按经度/纬度顺序写入 longitude,latitude,0。`);
         return;
       }
 
@@ -13216,7 +13231,7 @@ ${placemarks}
           groups: dmsGroupedGroupsForExport.length,
           count: pairs.length
         });
-        showMessage(`已生成 ${dmsGroupedGroupsForExport.length} 个 Polygon KML，共 ${pairs.length} 个 DMS 分组坐标点。`);
+        showKmlCompletion(`已生成 ${dmsGroupedGroupsForExport.length} 个 Polygon KML，共 ${pairs.length} 个 DMS 分组坐标点。`);
         return;
       }
 
@@ -13257,10 +13272,10 @@ ${placemarks}
         const warnings = getChatCoordinateWarnings(pairs);
         if (warnings.includes("possible swapped lat/lon")) {
           setCoordinateOrderReviewVisible(true);
-          showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 聊天坐标点；存在 possible swapped lat/lon 风险，请核对经纬度顺序。`, true, 7000);
+          showKmlCompletion(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 聊天坐标点；存在 possible swapped lat/lon 风险，请核对经纬度顺序。`, { warning: true });
         } else {
           setCoordinateOrderReviewVisible(false);
-          showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 聊天坐标点。`);
+          showKmlCompletion(`已生成 ${selectedType} KML，包含 ${pairs.length} 个 WGS84 聊天坐标点。`);
         }
         return;
       }
@@ -13328,7 +13343,7 @@ ${placemarks}
           projection: KYRGYZ_GK_CRS_CODE,
           convertedToWgs84: true
         });
-        showMessage(`已生成 ${rows.length} 点 Kyrgyzstan GK polygon KML。已尝试转换为 WGS84 经纬度，结果需结合原图人工核对。`, true, 7000);
+        showKmlCompletion(`已生成 ${rows.length} 点 Kyrgyzstan GK polygon KML。已尝试转换为 WGS84 经纬度，结果需结合原图人工核对。`, { warning: true });
         return;
       }
 
@@ -13417,9 +13432,9 @@ ${placemarks}
       });
 
       if (selectedType === "Polygon") {
-        showMessage(`已生成 ${validGroups.length} 个闭合 Polygon 面 KML，包含 ${pairs.length} 组输入坐标。`);
+        showKmlCompletion(`已生成 ${validGroups.length} 个闭合 Polygon 面 KML，包含 ${pairs.length} 组输入坐标。`);
       } else {
-        showMessage(`已生成 ${selectedType} KML，包含 ${pairs.length} 组坐标。`);
+        showKmlCompletion(`已生成 ${selectedType} KML，包含 ${pairs.length} 组坐标。`);
       }
     }
 

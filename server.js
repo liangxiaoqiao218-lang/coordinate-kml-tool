@@ -8,7 +8,16 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import Tesseract from "tesseract.js";
 import { runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
-import { isFamilyRetryAllowed } from "./server/recognition/family-retry-policy.js";
+import {
+  authorizeFamilyRetryDispatch,
+  canAuthorizePointAzRetry,
+  hasPointAzHeadingEvidence,
+  hasPointAzSourceOrderContinuity,
+  isFamilyRetryAllowed,
+  RETRY_OWNER_FAMILY
+} from "./server/recognition/family-retry-policy.js";
+import { CANDIDATE_SELECTION_DECISION, compareCandidateEvidence } from "./server/recognition/candidate-selection.js";
+import { buildHandwrittenCandidateEvidence, materializeHandwrittenDmsRows } from "./server/recognition/handwritten-candidate-evidence.js";
 import {
   KYRGYZ_PRIMARY_STAGE_CAP_MS,
   MADAGASCAR_PRIMARY_STAGE_CAP_MS,
@@ -98,6 +107,7 @@ const spatialShareStore = new SupabaseSpatialShareStore({ supabase });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
+const handwrittenCandidateOwnerContext = Object.freeze({ ownerFamily: RETRY_OWNER_FAMILY.HANDWRITTEN_DMS });
 const regressionRecognitionTraces = new Map();
 const MAX_REGRESSION_RECOGNITION_TRACES = 200;
 let p0QualificationAcquisition = null;
@@ -7181,6 +7191,22 @@ function looksLikePointAzDmsTable(text) {
   return hasAbcSequence && uniqueLabels.length >= 8 && longestRun >= 6;
 }
 
+function getPointAzTypedEvidence(text) {
+  const labels = String(text || "")
+    .split(/\r?\n/)
+    .map(line => extractPointTableLabel(line))
+    .filter(label => /^[A-Z]$/.test(label));
+  const headingSemantics = hasPointAzHeadingEvidence(text);
+  const orderedLabelContinuity = hasPointAzSourceOrderContinuity(labels);
+  return Object.freeze({
+    established: headingSemantics && orderedLabelContinuity,
+    type: "POINT_AZ_LABELED_TABLE_EVIDENCE",
+    headingSemantics,
+    orderedLabelContinuity,
+    labels: Object.freeze(labels)
+  });
+}
+
 function shouldAcceptPointAzDmsRetry(currentCoordinates, retryCoordinates) {
   const currentRows = countCoordinateRows(currentCoordinates);
   const retryRows = countCoordinateRows(retryCoordinates);
@@ -7694,6 +7720,7 @@ async function readHandwrittenDmsWithPrompt({
     familyEvidence: true
   });
   const rawText = response.choices?.[0]?.message?.content || "";
+  const candidateEvidenceRows = formatHandwrittenDmsRawRows(rawText);
   let coordinates = extractCoordinateLines(rawText);
   const handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, {
     isOcrImage: true,
@@ -7706,6 +7733,7 @@ async function readHandwrittenDmsWithPrompt({
   return {
     response,
     rawText,
+    candidateEvidenceRows,
     coordinates,
     handwrittenDms
   };
@@ -14091,6 +14119,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     });
 
     let rawText = response.choices?.[0]?.message?.content || "";
+    const stage1HandwrittenCandidateInput = formatHandwrittenDmsRawRows(rawText);
     retainP0QualificationAcquisition(req, response, recognitionBudget);
     let coordinates = extractCoordinateLines(rawText);
     const initialBftmCoordinateRepair = normalizeBftmProjectedCoordinateText(coordinates);
@@ -14174,12 +14203,22 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const parserTrace = ["OCR"];
     const generalVisionRawText = rawText;
     let handwrittenVisionRawText = "";
+    let selectedHandwrittenDmsRows = null;
+    let activeFamilyOwner = null;
     let handwrittenVisionRouting = getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates, {
       file: req.file,
       hint: coordinateRawHint
     });
     if (handwrittenVisionRouting.shouldRetry) {
       try {
+        const currentHandwrittenCandidate = buildHandwrittenCandidateEvidence(stage1HandwrittenCandidateInput, {
+          ...handwrittenCandidateOwnerContext,
+          candidateId: "handwritten-stage-1",
+          sourceStage: "STAGE_1"
+        });
+        if (currentHandwrittenCandidate.fieldEvidence.length > 0) {
+          activeFamilyOwner = RETRY_OWNER_FAMILY.HANDWRITTEN_DMS;
+        }
         parserTrace.push("HANDWRITTEN_DMS:evidence_retry");
         console.log("Handwritten DMS evidence detected; retrying with literal transcription prompt.", {
           fileName: uploadedFileName || req.file?.originalname || "",
@@ -14195,27 +14234,46 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           timeoutMs: 80000
         });
         handwrittenVisionRawText = handwrittenRead.rawText;
-
-        if (handwrittenRead.handwrittenDms.isHandwrittenDms) {
-          rawText = handwrittenRead.rawText;
-          coordinates = handwrittenRead.coordinates;
-          warning = extractRecognitionWarning(rawText) || "识别到手写 DMS 坐标，请结合原图逐行核对。";
-          usedModel = `${aliyunVisionModel}+handwritten-dms-evidence-retry`;
-          handwrittenVisionRouting = {
-            ...handwrittenVisionRouting,
-            retrySuccess: true,
-            retryRows: handwrittenRead.handwrittenDms.pointRows || countCoordinateRows(handwrittenRead.coordinates)
-          };
-          console.log("Handwritten DMS evidence retry success rows=", handwrittenVisionRouting.retryRows);
-        } else {
-          handwrittenVisionRouting = {
-            ...handwrittenVisionRouting,
-            retrySuccess: false,
-            retryRows: countCoordinateRows(handwrittenRead.coordinates)
-          };
-          parserTrace.push("HANDWRITTEN_DMS:evidence_retry_unstable");
-          console.log("Handwritten DMS evidence retry did not return stable rows:", handwrittenRead.rawText.slice(0, 500));
+        const retryHandwrittenCandidate = buildHandwrittenCandidateEvidence(handwrittenRead.candidateEvidenceRows, {
+          ...handwrittenCandidateOwnerContext,
+          candidateId: "handwritten-stage-2",
+          sourceStage: "STAGE_2"
+        });
+        if (retryHandwrittenCandidate.fieldEvidence.length > 0) {
+          activeFamilyOwner = RETRY_OWNER_FAMILY.HANDWRITTEN_DMS;
         }
+        const selection = compareCandidateEvidence(currentHandwrittenCandidate, retryHandwrittenCandidate);
+        const selectedRows = selection.decision === CANDIDATE_SELECTION_DECISION.REJECT_CANDIDATE
+          ? null
+          : materializeHandwrittenDmsRows(selection.selectedFieldEvidence, selection.pointLabels);
+
+        if (selectedRows?.length) {
+          selectedHandwrittenDmsRows = selectedRows;
+          coordinates = selectedRows.join("\n");
+          if (selection.retrySelectionCount > 0) {
+            usedModel = `${aliyunVisionModel}+handwritten-dms-evidence-selection`;
+          }
+        }
+        if (selection.reviewRequired) parserTrace.push("HANDWRITTEN_DMS:candidate_conflict_review");
+        if (retryHandwrittenCandidate.fieldEvidence.length === 0) parserTrace.push("HANDWRITTEN_DMS:evidence_retry_unstable");
+        warning = extractRecognitionWarning(rawText) || "识别到手写 DMS 坐标，请结合原图逐行核对。";
+        handwrittenVisionRouting = {
+          ...handwrittenVisionRouting,
+          retrySuccess: retryHandwrittenCandidate.fieldEvidence.length > 0,
+          retryRows: retryHandwrittenCandidate.coordinateCount,
+          candidateSelectionDecision: selection.decision,
+          selectedSource: selection.selectedSource,
+          reviewRequired: selection.reviewRequired,
+          fieldConflicts: selection.conflicts,
+          selectedFieldEvidenceCount: selection.selectedFieldEvidence.length,
+          unresolvedIssues: selection.unresolvedIssues
+        };
+        console.log("Handwritten DMS evidence selection", {
+          decision: selection.decision,
+          selectedSource: selection.selectedSource,
+          conflictCount: selection.conflicts.length,
+          retryRows: retryHandwrittenCandidate.coordinateCount
+        });
       } catch (handwrittenEvidenceRetryError) {
         if (isRecognitionStopError(handwrittenEvidenceRetryError)) throw handwrittenEvidenceRetryError;
         handwrittenVisionRouting = {
@@ -14243,7 +14301,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
     let handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, {
       isOcrImage: Boolean(req.file),
-      hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
+      hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext || activeFamilyOwner === RETRY_OWNER_FAMILY.HANDWRITTEN_DMS
     });
     let pointAzDmsTableAccepted = false;
     if (dmsGroupedAccepted && shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo)) {
@@ -14751,7 +14809,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    const pointAzTypedEvidence = getPointAzTypedEvidence(rawText);
+    const pointAzOwnerFamily = activeFamilyOwner || RETRY_OWNER_FAMILY.POINT_AZ_DMS_TABLE;
+    const pointAzRetryAuthorized = authorizeFamilyRetryDispatch({
+      activeFamilyOwner,
+      targetOwner: RETRY_OWNER_FAMILY.POINT_AZ_DMS_TABLE
+    }).allowed && canAuthorizePointAzRetry({ ownerFamily: pointAzOwnerFamily, typedPointAzEvidence: pointAzTypedEvidence });
+    if (!dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && pointAzRetryAuthorized && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -14893,7 +14957,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
     handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, {
       isOcrImage: Boolean(req.file),
-      hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext
+      hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext || activeFamilyOwner === RETRY_OWNER_FAMILY.HANDWRITTEN_DMS
     });
     const finalBftmCoordinateRepair = normalizeBftmProjectedCoordinateText(coordinates);
     if (finalBftmCoordinateRepair.changed && finalBftmCoordinateRepair.rowCount >= 4) {
@@ -14915,7 +14979,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push("HANDWRITTEN_DMS:accepted");
     }
     if (handwrittenDms.isHandwrittenDms) {
-      coordinates = formatHandwrittenDmsRawRows(rawText) || applyHandwrittenDmsCoordinateGrouping(coordinates, handwrittenDms);
+      coordinates = selectedHandwrittenDmsRows?.length
+        ? selectedHandwrittenDmsRows.join("\n")
+        : (formatHandwrittenDmsRawRows(rawText) || applyHandwrittenDmsCoordinateGrouping(coordinates, handwrittenDms));
     } else {
       coordinates = applyHandwrittenDmsCoordinateGrouping(coordinates, handwrittenDms);
     }
