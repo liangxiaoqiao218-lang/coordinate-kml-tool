@@ -24,6 +24,7 @@ let runtimeConfig = Object.freeze({
   providerTimeoutMs: 8000
 });
 let controller = null;
+let fallbackRenderer = null;
 let initializationPromise = null;
 const mobileResultQuery = globalThis.matchMedia?.("(max-width: 640px)");
 
@@ -83,7 +84,7 @@ async function initialize() {
   initializationPromise = (async () => {
     await loadRuntimeConfig();
     const provider = new AMapProviderAdapter({ loader: new AMapLoader() });
-    const fallbackRenderer = new LocalSvgRenderer({
+    fallbackRenderer = new LocalSvgRenderer({
       container: elements.local,
       attributionElement: elements.attribution
     });
@@ -124,6 +125,7 @@ async function open(payload) {
     sourceRevision: preview.sourceRevision,
     sourceGeometryHash: preview.sourceGeometryHash
   };
+  await fallbackRenderer.render(preview.geometry);
   const result = await activeController.open(preview, {
     authority: authorityFromPayload(payload),
     expectedIdentity,
@@ -144,6 +146,8 @@ async function open(payload) {
 
 async function retry() {
   if (!controller) return null;
+  elements.providerCanvas.hidden = true;
+  elements.local.hidden = false;
   const result = await controller.retry();
   const ready = result?.state === "READY";
   elements.providerCanvas.hidden = !ready;
@@ -155,13 +159,12 @@ async function fitGeometry() {
   if (!controller) return false;
   const providerFit = await controller.fitGeometry({ reason: "user-fit" });
   if (providerFit) return true;
-  if (!controller.preview) return false;
-  await controller.fallbackRenderer.render(controller.preview.geometry);
-  return true;
+  return fallbackRenderer?.fitBounds() === true;
 }
 
 function destroy() {
   controller?.destroy();
+  fallbackRenderer?.destroy();
   if (elements.providerCanvas) elements.providerCanvas.hidden = true;
   if (elements.local) elements.local.hidden = false;
 }

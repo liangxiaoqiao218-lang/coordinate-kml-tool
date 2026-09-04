@@ -2048,15 +2048,27 @@ export async function writeEvidenceArtifact(results, summary, governance, eviden
   return artifactPath;
 }
 
-async function establishEvidenceBinding() {
-  const qualificationMode = String(process.env.QUALIFICATION_MODE || 'FROZEN_PRODUCTION').trim().toUpperCase();
+export function buildLocalPatchCandidateBindingInput(environment = process.env) {
+  return {
+    repoRoot,
+    candidateSpecId: environment.LOCAL_PATCH_CANDIDATE_SPEC_ID,
+    qualificationMode: String(environment.QUALIFICATION_MODE || '').trim().toUpperCase(),
+    baseCommit: environment.BASE_COMMIT,
+    candidateManifestSha256: environment.CANDIDATE_MANIFEST_SHA256,
+    trackedPatchSha256: environment.TRACKED_PATCH_SHA256,
+    candidateSourceHash: environment.CANDIDATE_SOURCE_HASH,
+    frozenReleaseGovernanceHash: environment.FROZEN_RELEASE_GOVERNANCE_HASH,
+    frozenFixtureSetHash: environment.FROZEN_FIXTURE_SET_HASH,
+    nodeEnv: environment.NODE_ENV,
+    apiUrl: environment.COORDINATE_REGRESSION_API_URL || defaultApiUrl,
+    p0DeterministicReplay: environment.P0_DETERMINISTIC_REPLAY,
+  };
+}
+
+export async function establishEvidenceBinding(environment = process.env) {
+  const qualificationMode = String(environment.QUALIFICATION_MODE || 'FROZEN_PRODUCTION').trim().toUpperCase();
   if (qualificationMode === 'LOCAL_PATCH_CANDIDATE') {
-    return validateLocalPatchCandidateIdentity({
-      repoRoot,
-      baseCommit: process.env.BASE_COMMIT,
-      candidateManifestSha256: process.env.CANDIDATE_MANIFEST_SHA256,
-      trackedPatchSha256: process.env.TRACKED_PATCH_SHA256,
-    });
+    return validateLocalPatchCandidateIdentity(buildLocalPatchCandidateBindingInput(environment));
   }
   if (qualificationMode !== 'FROZEN_PRODUCTION') {
     const error = new Error(`Unsupported QUALIFICATION_MODE: ${qualificationMode}`);
@@ -2072,12 +2084,12 @@ async function establishEvidenceBinding() {
   }
   return validateReleaseEvidenceBinding({
     repoRoot,
-    canonicalCommit: process.env.CANONICAL_RELEASE_COMMIT,
+    canonicalCommit: environment.CANONICAL_RELEASE_COMMIT,
     runtimeIdentity: payload.runtimeIdentity,
     frozenIdentity: {
-      productionSourceHash: process.env.FROZEN_PRODUCTION_SOURCE_HASH,
-      releaseGovernanceHash: process.env.FROZEN_RELEASE_GOVERNANCE_HASH,
-      fixtureSetHash: process.env.FROZEN_FIXTURE_SET_HASH,
+      productionSourceHash: environment.FROZEN_PRODUCTION_SOURCE_HASH,
+      releaseGovernanceHash: environment.FROZEN_RELEASE_GOVERNANCE_HASH,
+      fixtureSetHash: environment.FROZEN_FIXTURE_SET_HASH,
     },
   });
 }
@@ -2197,9 +2209,13 @@ async function main() {
   console.log(`P0 Deterministic Replay: ${p0ReplayMode ? 'ENABLED' : 'DISABLED'}`);
   console.log(`Qualification Mode: ${evidenceBinding.qualificationMode || 'FROZEN_PRODUCTION'}`);
   if (evidenceBinding.qualificationMode === 'LOCAL_PATCH_CANDIDATE') {
+    console.log(`Candidate Spec ID: ${evidenceBinding.candidateSpecId}`);
     console.log(`Base Commit Match: ${evidenceBinding.baseCommitMatch}`);
     console.log(`Candidate Manifest SHA-256 Match: ${evidenceBinding.candidateManifestSha256Match}`);
     console.log(`Tracked Patch SHA-256 Match: ${evidenceBinding.trackedPatchSha256Match}`);
+    if (evidenceBinding.candidateSourceHashMatch !== null) {
+      console.log(`Candidate Source SHA-256 Match: ${evidenceBinding.candidateSourceHashMatch}`);
+    }
   }
   console.log(`Samples: ${samples.length}`);
 

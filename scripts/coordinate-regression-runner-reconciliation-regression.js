@@ -4,10 +4,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   P0_REQUIRED_FIXTURE_SET,
+  buildLocalPatchCandidateBindingInput,
   classifyAcquisitionTerminal,
+  establishEvidenceBinding,
   evaluateP0ReleaseGate,
   summarizeResults,
 } from './coordinate-regression-runner.js';
+import {
+  HISTORICAL_LOCAL_PATCH_CANDIDATE_SPEC_ID,
+  P1_LOCAL_PATCH_CANDIDATE_SPEC_ID,
+  resolveLocalPatchCandidateSpec,
+} from './local-patch-candidate-identity.js';
 import {
   assertP0ReplayRuntimeSafety,
   computeAcquisitionEvidenceSha256,
@@ -178,6 +185,64 @@ await check('summary emits all six terminal counts and IDs', () => {
   assert.equal(summary.skipOutOfScope, 1);
 });
 
+const p1Spec = await resolveLocalPatchCandidateSpec({ repoRoot, candidateSpecId: P1_LOCAL_PATCH_CANDIDATE_SPEC_ID });
+const p1Environment = Object.freeze({
+  QUALIFICATION_MODE: 'LOCAL_PATCH_CANDIDATE',
+  LOCAL_PATCH_CANDIDATE_SPEC_ID: P1_LOCAL_PATCH_CANDIDATE_SPEC_ID,
+  BASE_COMMIT: p1Spec.baseCommit,
+  CANDIDATE_MANIFEST_SHA256: p1Spec.candidateManifestSha256,
+  TRACKED_PATCH_SHA256: p1Spec.trackedPatchSha256,
+  CANDIDATE_SOURCE_HASH: p1Spec.candidateSourceHash,
+  FROZEN_RELEASE_GOVERNANCE_HASH: p1Spec.frozenReleaseGovernanceHash,
+  FROZEN_FIXTURE_SET_HASH: p1Spec.frozenFixtureSetHash,
+  P0_DETERMINISTIC_REPLAY: '1',
+  NODE_ENV: 'test',
+  COORDINATE_REGRESSION_API_URL: 'http://127.0.0.1:3000/api/recognize-coordinates',
+});
+
+await check('runner forwards explicit historical spec selection without implicit replacement', () => {
+  const input = buildLocalPatchCandidateBindingInput({
+    ...p1Environment,
+    LOCAL_PATCH_CANDIDATE_SPEC_ID: HISTORICAL_LOCAL_PATCH_CANDIDATE_SPEC_ID,
+  });
+  assert.equal(input.candidateSpecId, HISTORICAL_LOCAL_PATCH_CANDIDATE_SPEC_ID);
+});
+await check('runner forwards every explicit P1 binding input', () => {
+  const input = buildLocalPatchCandidateBindingInput(p1Environment);
+  assert.equal(input.candidateSpecId, P1_LOCAL_PATCH_CANDIDATE_SPEC_ID);
+  assert.equal(input.qualificationMode, 'LOCAL_PATCH_CANDIDATE');
+  assert.equal(input.baseCommit, p1Spec.baseCommit);
+  assert.equal(input.candidateManifestSha256, p1Spec.candidateManifestSha256);
+  assert.equal(input.trackedPatchSha256, p1Spec.trackedPatchSha256);
+  assert.equal(input.candidateSourceHash, p1Spec.candidateSourceHash);
+  assert.equal(input.frozenReleaseGovernanceHash, p1Spec.frozenReleaseGovernanceHash);
+  assert.equal(input.frozenFixtureSetHash, p1Spec.frozenFixtureSetHash);
+  assert.equal(input.p0DeterministicReplay, '1');
+});
+await check('P1 replay identity gate passes before acquisition', async () => {
+  const binding = await establishEvidenceBinding(p1Environment);
+  assert.equal(binding.status, 'LOCAL_PATCH_CANDIDATE_BOUND');
+  assert.equal(binding.candidateSpecId, P1_LOCAL_PATCH_CANDIDATE_SPEC_ID);
+});
+await check('missing spec selection stops without implicit fallback or acquisition', async () => {
+  let acquisitionCalls = 0;
+  await assert.rejects(
+    establishEvidenceBinding({ ...p1Environment, LOCAL_PATCH_CANDIDATE_SPEC_ID: '' }).then(() => { acquisitionCalls += 1; }),
+    error => error?.code === 'EVIDENCE_BINDING_MISMATCH' && error?.field === 'LOCAL_PATCH_CANDIDATE_SPEC_ID',
+  );
+  assert.equal(acquisitionCalls, 0);
+});
+await check('identity mismatch stops before acquisition with zero Provider fallback', async () => {
+  let acquisitionCalls = 0;
+  await assert.rejects(
+    establishEvidenceBinding({ ...p1Environment, TRACKED_PATCH_SHA256: '0'.repeat(64) }).then(() => { acquisitionCalls += 1; }),
+    error => error?.code === 'EVIDENCE_BINDING_MISMATCH' && error?.field === 'TRACKED_PATCH_SHA256',
+  );
+  assert.equal(acquisitionCalls, 0);
+});
+
 console.log(`COORDINATE_REGRESSION_RUNNER_RECONCILIATION=PASS (${passed}/${passed})`);
 console.log('HTTP_400_CAN_NEVER_PASS=true');
 console.log('NETWORK_FALLBACK_ALLOWED=false');
+console.log('EXPLICIT_CANDIDATE_SPEC_SELECTION=true');
+console.log('REAL_PROVIDER_CALLS=0');

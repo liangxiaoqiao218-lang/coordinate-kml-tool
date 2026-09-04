@@ -1178,6 +1178,27 @@
       font-weight: 800;
     }
 
+    .coordinate-result-actions .coordinate-kml-action[data-state="enabled"] {
+      border-color: #0f9488;
+      background: #f0fdfa;
+      color: #0f766e;
+    }
+
+    .coordinate-result-actions .coordinate-kml-action[data-state="blocked"] {
+      border-color: #e2e8f0;
+      background: #f1f5f9;
+      color: #94a3b8;
+      cursor: not-allowed;
+    }
+
+    .coordinate-result-actions .coordinate-kml-action[data-state="loading"],
+    .spatial-kml-action[data-state="loading"] {
+      border-color: #99f6e4;
+      background: #ccfbf1;
+      color: #115e59;
+      cursor: progress;
+    }
+
     .coordinate-secondary-actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4429,6 +4450,8 @@
 
     .spatial-regional-view { margin-top: 12px; color: #64748b; font-size: 12px; }
     .spatial-kml-action { width: 100%; min-height: 40px; margin-top: 10px; border-color: #cbd5e1; background: #fff; color: #334155; box-shadow: none; font-weight: 800; }
+    .spatial-kml-action[data-state="enabled"] { border-color: #0f9488; background: #f0fdfa; color: #0f766e; }
+    .spatial-kml-action[data-state="blocked"] { background: #f1f5f9; border-color: #e2e8f0; color: #94a3b8; cursor: not-allowed; }
     .spatial-kml-action:disabled { background: #f1f5f9; border-color: #e2e8f0; color: #94a3b8; box-shadow: none; cursor: not-allowed; }
     .spatial-result-diagnostic { color: #64748b; font-size: 11px; }
   </style>
@@ -4544,7 +4567,7 @@
     <div class="coordinate-result-actions" aria-label="坐标结果操作">
       <button id="mapPreviewAction" type="button" class="primary-action map-preview-action" onclick="openSpatialResult()" hidden disabled>查看地图</button>
       <div class="coordinate-secondary-actions">
-        <button type="button" class="secondary kml-download-action coordinate-kml-action" onclick="downloadKml()">下载 KML</button>
+        <button id="coordinateKmlAction" type="button" class="secondary kml-download-action coordinate-kml-action" data-state="blocked" aria-disabled="true" onclick="downloadKml()" disabled>下载 KML</button>
         <button id="shareResultAction" type="button" class="spatial-share-action" onclick="openSpatialShareDialog()" hidden disabled>分享结果</button>
       </div>
     </div>
@@ -4658,12 +4681,7 @@
       <section id="spatialMapShell" class="spatial-map-shell" aria-label="当前坐标地图预览">
         <div class="spatial-map-stage">
           <div id="spatialProviderCanvas" class="spatial-map-canvas" hidden></div>
-          <div id="spatialLocalMapCanvas" class="spatial-local-map-canvas">
-            <div class="spatial-map-grid" aria-hidden="true"></div>
-            <svg id="spatialGeometrySvg" viewBox="0 0 360 280" role="img" aria-label="当前地块地图">
-              <g id="spatialGeometryLayer"></g>
-            </svg>
-          </div>
+          <div id="spatialLocalMapCanvas" class="spatial-local-map-canvas"></div>
           <button type="button" class="spatial-map-control spatial-map-back" onclick="returnToCoordinate()" aria-label="返回坐标" title="返回坐标"><span aria-hidden="true">←</span></button>
           <button id="spatialFitGeometryAction" type="button" class="spatial-map-control spatial-fit-control" aria-label="适配图形" title="适配图形">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4M8 8h8v8H8z" /></svg>
@@ -5115,6 +5133,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const goldCalculatorPanel = document.getElementById("goldCalculatorPanel");
     const goldUnavailableNotice = document.getElementById("goldUnavailableNotice");
     const mapPreviewAction = document.getElementById("mapPreviewAction");
+    const coordinateKmlAction = document.getElementById("coordinateKmlAction");
     const shareResultAction = document.getElementById("shareResultAction");
     const spatialShareCardAction = document.getElementById("spatialShareCardAction");
     const spatialShareDialog = document.getElementById("spatialShareDialog");
@@ -5127,7 +5146,6 @@ Au值 = 纯度 × 10 后取整数</div>
     const spatialCollapsedSummary = document.getElementById("spatialCollapsedSummary");
     const spatialReviewCompact = document.getElementById("spatialReviewCompact");
     const spatialResultWarning = document.getElementById("spatialResultWarning");
-    const spatialGeometryLayer = document.getElementById("spatialGeometryLayer");
     const spatialMapFailure = document.getElementById("spatialMapFailure");
     const spatialAreaFact = document.getElementById("spatialAreaFact");
     const spatialAreaValue = document.getElementById("spatialAreaValue");
@@ -5206,6 +5224,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeFinalizedCoordinateResult = null;
     let finalizedCoordinateTextSnapshot = "";
     let finalizedCoordinateDirty = false;
+    let kmlGenerationInProgress = false;
     let spatialResultEnabled = false;
     let spatialRegressionTestMode = false;
     let activeMapPreviewResponse = null;
@@ -6833,6 +6852,33 @@ Au值 = 纯度 × 10 后取整数</div>
       mapPreviewAction.hidden = !spatialResultEnabled;
       mapPreviewAction.disabled = !spatialResultEnabled || !String(input?.value || "").trim();
       refreshSpatialShareActions();
+      syncKmlActionVisualState();
+    }
+
+    function coordinateKmlVisuallyEligible() {
+      if (!String(input?.value || "").trim()) return false;
+      if (!activeFinalizedCoordinateResult) return true;
+      if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) return true;
+      return activeFinalizedCoordinateResult.kmlReady === true;
+    }
+
+    function syncKmlActionVisualState() {
+      const syncButton = (button, eligible) => {
+        if (!button) return;
+        const state = kmlGenerationInProgress ? "loading" : (eligible ? "enabled" : "blocked");
+        button.dataset.state = state;
+        button.disabled = kmlGenerationInProgress || !eligible;
+        button.setAttribute("aria-disabled", String(button.disabled));
+        button.setAttribute("aria-busy", String(kmlGenerationInProgress));
+        button.textContent = kmlGenerationInProgress ? "正在生成…" : "下载 KML";
+      };
+      syncButton(coordinateKmlAction, coordinateKmlVisuallyEligible());
+      syncButton(spatialKmlAction, spatialKmlAction?.dataset.eligible === "true");
+    }
+
+    function setKmlGenerationInProgress(value) {
+      kmlGenerationInProgress = value === true;
+      syncKmlActionVisualState();
     }
 
     function refreshSpatialShareActions() {
@@ -6984,59 +7030,6 @@ Au值 = 纯度 × 10 后取整数</div>
       return [];
     }
 
-    function projectSpatialPosition(position, bounds) {
-      const width = Math.max(bounds.maxX - bounds.minX, 0.000001);
-      const height = Math.max(bounds.maxY - bounds.minY, 0.000001);
-      const drawableWidth = 244;
-      const drawableHeight = 190;
-      const scale = Math.min(drawableWidth / width, drawableHeight / height);
-      const drawnWidth = width * scale;
-      const drawnHeight = height * scale;
-      return [
-        58 + (drawableWidth - drawnWidth) / 2 + (position[0] - bounds.minX) * scale,
-        45 + (drawableHeight - drawnHeight) / 2 + (bounds.maxY - position[1]) * scale
-      ];
-    }
-
-    function renderSpatialGeometry(geometry) {
-      spatialGeometryLayer.replaceChildren();
-      const positions = getSpatialPositions(geometry);
-      if (!positions.length) throw new Error("NO_DRAWABLE_GEOMETRY");
-      const bounds = {
-        minX: Math.min(...positions.map(position => position[0])),
-        minY: Math.min(...positions.map(position => position[1])),
-        maxX: Math.max(...positions.map(position => position[0])),
-        maxY: Math.max(...positions.map(position => position[1]))
-      };
-      const svgNamespace = "http://www.w3.org/2000/svg";
-      const pathForLine = line => line.map((position, index) => {
-        const [x, y] = projectSpatialPosition(position, bounds);
-        return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-      }).join(" ");
-      const appendPath = (pathData, className) => {
-        const path = document.createElementNS(svgNamespace, "path");
-        path.setAttribute("d", pathData);
-        path.setAttribute("class", className);
-        spatialGeometryLayer.appendChild(path);
-      };
-
-      if (geometry.type === "Point") {
-        const [x, y] = projectSpatialPosition(geometry.coordinates, bounds);
-        const circle = document.createElementNS(svgNamespace, "circle");
-        circle.setAttribute("cx", x);
-        circle.setAttribute("cy", y);
-        circle.setAttribute("r", "8");
-        circle.setAttribute("class", "spatial-geometry-point");
-        spatialGeometryLayer.appendChild(circle);
-      } else if (geometry.type === "LineString") {
-        appendPath(pathForLine(geometry.coordinates), "spatial-geometry-shape spatial-geometry-line");
-      } else if (geometry.type === "Polygon") {
-        geometry.coordinates.forEach(ring => appendPath(`${pathForLine(ring)} Z`, "spatial-geometry-shape"));
-      } else if (geometry.type === "MultiPolygon") {
-        geometry.coordinates.flat().forEach(ring => appendPath(`${pathForLine(ring)} Z`, "spatial-geometry-shape"));
-      }
-    }
-
     function spatialWarningText(warnings = []) {
       if (warnings.some(value => /self[-_ ]?intersection|自交/i.test(String(value)))) {
         return "当前边界可能存在自相交，请返回坐标核对；地图仅用于预览，KML 仍保持阻止。";
@@ -7059,13 +7052,6 @@ Au值 = 纯度 × 10 后取整数</div>
       spatialResultWarning.textContent = warning;
       spatialReviewCompact.hidden = !warning;
       spatialMapFailure.hidden = true;
-      try {
-        if (e2eFailureMode === "map") throw new Error("REGRESSION_MAP_FAILURE");
-        renderSpatialGeometry(preview.geometry);
-      } catch (error) {
-        spatialGeometryLayer.replaceChildren();
-        spatialMapFailure.hidden = false;
-      }
 
       spatialAreaFact.hidden = !Number.isFinite(facts?.areaMeters2);
       spatialAreaValue.textContent = formatSpatialArea(facts?.areaMeters2);
@@ -7079,7 +7065,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const regionalCount = Number(payload.regionalViewCount);
       spatialRegionalView.hidden = !Number.isFinite(regionalCount) || regionalCount <= 0;
       spatialRegionalView.textContent = spatialRegionalView.hidden ? "" : `区域内已有 ${regionalCount} 条真实记录`;
-      spatialKmlAction.disabled = payload?.kmlEligibility?.allowed !== true;
+      spatialKmlAction.dataset.eligible = String(payload?.kmlEligibility?.allowed === true);
+      syncKmlActionVisualState();
       spatialCollapsedSummary.textContent = spatialCollapsedSummaryText(preview, facts);
       const factsAvailable = payload.spatialFactsStatus === "available" && e2eFailureMode !== "facts";
       spatialResultDiagnostic.hidden = factsAvailable;
@@ -7170,6 +7157,16 @@ Au值 = 纯度 × 10 后取整数</div>
       return messages[String(code || "")] || fallback || "无法处理当前坐标，请检查后重试。";
     }
 
+    function getCoordinateGateUserMessage(reasonCodes, fallback) {
+      const codes = Array.isArray(reasonCodes) ? reasonCodes.map(value => String(value || "")) : [];
+      if (codes.some(code => /CRS|AXIS_ORDER/.test(code))) return "当前坐标系尚未确认，请核对坐标系后重试。";
+      if (codes.some(code => /GEOMETRY|FINITE/.test(code))) return "当前坐标几何无效，请检查坐标内容后重试。";
+      if (codes.some(code => /STALE|REVISION|RESULT_ID|HASH/.test(code))) return "坐标已更新，请重新核对当前结果后重试。";
+      if (codes.some(code => /AUTHORITY|SOURCE/.test(code))) return "当前坐标来源尚未通过安全验证，请重新识别或核对。";
+      if (codes.some(code => /REVIEW|CONFIRMATION|QUALITY|CONFIDENCE/.test(code))) return "当前结果仍需核对，请完成确认后重试。";
+      return fallback || "当前结果暂不能完成此操作，请核对后重试。";
+    }
+
     async function requestEditedCoordinateRevision() {
       const identity = getFinalizedCoordinateIdentity();
       if (!identity) throw new Error("当前坐标结果缺少服务端确认身份，请重新识别。");
@@ -7256,7 +7253,8 @@ Au值 = 纯度 × 10 后取整数</div>
         activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;
         invalidateSpatialPreview();
         if (activeFinalizedCoordinateResult.decisionState !== "AUTO_EXPORT") {
-          throw new Error((activeFinalizedCoordinateResult.reasonCodes || []).join(", ") || "当前结果仍未通过统一安全 Gate。");
+          appendDebug(`坐标确认 Gate codes：${(activeFinalizedCoordinateResult.reasonCodes || []).join(", ") || "无"}`);
+          throw new Error(getCoordinateGateUserMessage(activeFinalizedCoordinateResult.reasonCodes, "当前结果仍需核对。"));
         }
         handwrittenDmsReviewState = createHandwrittenDmsReviewState({
           ...handwrittenDmsReviewState,
@@ -12897,6 +12895,7 @@ ${placemarks}
     }
 
     async function downloadKml() {
+      setKmlGenerationInProgress(true);
       try {
         return await downloadKmlInternal();
       } catch (error) {
@@ -12911,6 +12910,7 @@ ${placemarks}
         return null;
       } finally {
         clearKmlGenerationProgress();
+        setKmlGenerationInProgress(false);
       }
     }
 
@@ -12935,10 +12935,12 @@ ${placemarks}
       }
 
       if (shouldBlockFinalizedCoordinateKml()) {
+        const reasonCodes = activeFinalizedCoordinateResult?.reasonCodes || [];
+        appendDebug(`KML Gate codes：${reasonCodes.join("、") || "无"}`);
         showKmlFailure({
           code: "KML_FINALIZED_GATE_BLOCKED",
           title: "坐标尚未通过安全确认",
-          reason: (activeFinalizedCoordinateResult?.reasonCodes || []).join("、") || "当前坐标已修改或尚未通过统一安全 Gate。",
+          reason: getCoordinateGateUserMessage(reasonCodes, "当前坐标已修改或尚未通过安全确认。"),
           suggestion: "请完成当前坐标核对与服务端确认后再生成 KML。"
         });
         return;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { buildRecognitionEvidence } from "../server/evidence/recognition-evidence-adapter.js";
 import { buildCoordinateVerification, buildCoordinateVerificationResponse } from "../server/verification/index.js";
+import { buildSourceCoordinateRepresentation } from "../server/source-coordinate-representation.js";
 
 function makePoint(label, raw) {
   return {
@@ -131,13 +132,18 @@ assert.ok(degradedResponse.evidenceAcquisition.rowBindings.every(binding => (
   binding.location_status === "LOGICAL_ROW_ONLY" && binding.bbox === null
 )));
 
-const legacyPayload = {
+const legacyEngine = makeEngine(standardDms);
+const phase2Baseline = {
   success: true,
   rawText: standardDms,
   coordinates: standardDms,
   precisionMode: "dms-coordinates",
   warnings: ["legacy warning"],
-  coordinateEngineV2: makeEngine(standardDms)
+  coordinateEngineV2: legacyEngine
+};
+const legacyPayload = {
+  ...phase2Baseline,
+  sourceCoordinateRepresentation: buildSourceCoordinateRepresentation(phase2Baseline, legacyEngine)
 };
 const legacySnapshot = structuredClone(legacyPayload);
 const phase2Evidence = buildRecognitionEvidence({

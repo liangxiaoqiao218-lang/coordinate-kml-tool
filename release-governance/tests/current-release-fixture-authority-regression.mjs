@@ -5,14 +5,14 @@ import { computeCanonicalGitCommitFingerprints } from "../evidence-binding.js";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, "..", "..");
-const expectedFixtureHash = "dfa774517eabb18bfc47981c1511be0cca4c01dd92e2592803820f0fab435697";
+const expectedFixtureHash = "746e567633ffd5af66ad5cdb53e0547618f23973212c262ef586269961061cca";
 
 const first = await computeCanonicalGitCommitFingerprints({ repoRoot, commit: "HEAD" });
 const second = await computeCanonicalGitCommitFingerprints({ repoRoot, commit: "HEAD" });
 
 assert.equal(first.fixture.hash, expectedFixtureHash);
 assert.equal(second.fixture.hash, expectedFixtureHash);
-assert.equal(first.fixture.fileCount, 52);
+assert.equal(first.fixture.fileCount, 54);
 assert.equal(second.fixture.fileCount, first.fixture.fileCount);
 assert.deepEqual(second.fixture.files, first.fixture.files);
 assert.equal(first.authority, "GIT_CANONICAL_RELEASE_TREE");

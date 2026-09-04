@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "local_patch_candidate_spec_v1",
+  "candidateSpecId": "p1-spatial-ui-v1",
+  "qualificationMode": "LOCAL_PATCH_CANDIDATE",
+  "baseCommit": "9d321734b9c235bd9559bb3efd1028bfd2a9e9fd",
+  "fileCount": 5,
+  "trackedPatchSha256": "47f02587c44a27cd43765720c7f1ae630fc4ba8280449db85f8b9f82b96a34e7",
+  "candidateSourceHash": "86ef8055c19d4338b84db02f19e7424f6573e33f276c52d7b7ce417b87cd6ad7",
+  "frozenReleaseGovernanceHash": "33af31eb502dfffb15f1c41353829879fb051688f17cd42e1f6ee6b4147aa767",
+  "frozenFixtureSetHash": "746e567633ffd5af66ad5cdb53e0547618f23973212c262ef586269961061cca",
+  "files": [
+    {
+      "path": "assets/spatial-map/maplibre-renderer.js",
+      "sha256": "fc0aec8ce83de3e1f7cd94694e89fb39a1fd9925cfa102e5d27c3cf9b1d98a39"
+    },
+    {
+      "path": "assets/spatial-map/spatial-map-product.js",
+      "sha256": "6e8c052332455d35524ffcc299531ae2bdb7804695538d52a818d7c2676feb21"
+    },
+    {
+      "path": "index.html",
+      "sha256": "0acd95fa43ee81cd55f4408f0ba53d57a99ba24b8a561d6f3b0a970de3f302cc"
+    },
+    {
+      "path": "scripts/p09e-global-map-integration-regression.js",
+      "sha256": "84507e59a94c65945ae20ad551da4e7f93fedfcf79b65cb87486ce4c4b31112b"
+    },
+    {
+      "path": "scripts/spatial-provider-neutral-regression.js",
+      "sha256": "adddcdad8c2670a4099caa3721f35ea5e950e9aeb48a882dd8475ac4053fd00a"
+    }
+  ]
+}

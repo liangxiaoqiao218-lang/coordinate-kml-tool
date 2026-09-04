@@ -179,11 +179,12 @@ test("P09E-18", "390 mobile direct fullscreen task closure is encoded", () => {
   assert.match(html, /class="spatial-result-card"[\s\S]*id="spatialMapFailure"[\s\S]*id="spatialMapRetryAction"/);
   assert.doesNotMatch(css, /spatial-retry-control/);
 });
-test("P09E-19", "legacy local SVG renderer remains available", () => {
+test("P09E-19", "Web Mercator local SVG renderer remains available", () => {
   const source = fs.readFileSync(path.join(root, "assets/spatial-map/maplibre-renderer.js"), "utf8");
   assert.match(source, /export class LocalSvgRenderer/);
   assert.match(source, /"aria-label": "当前地块地图"/);
-  assert.match(source, /x: width \* 0\.16[\s\S]*y: height \* 0\.16/);
+  assert.match(source, /projectWgs84GeometryForDisplay/);
+  assert.match(source, /Math\.min\(scaleX, scaleY\)/);
   assert.doesNotMatch(source, /本地 SVG 预览|本地 Geometry 预览/);
 });
 test("P09E-20", "direct task back and fit flow preserve result ownership", () => {
@@ -240,7 +241,8 @@ test("P09E-26", "mobile bottom sheet and desktop result card share one bounded r
 test("P09E-27", "KML remains inside details and bound only to server eligibility", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(html, /id="spatialResultDetails"[\s\S]*id="spatialKmlAction"/);
-  assert.match(html, /spatialKmlAction\.disabled = payload\?\.kmlEligibility\?\.allowed !== true/);
+  assert.match(html, /spatialKmlAction\.dataset\.eligible = String\(payload\?\.kmlEligibility\?\.allowed === true\)/);
+  assert.match(html, /syncKmlActionVisualState\(\)/);
 });
 
 test("P09E-28", "route fail-closed cached reopen and provider teardown are encoded", () => {
@@ -308,7 +310,64 @@ test("P09E-35", "mobile collapsed and expanded states reuse one tappable provide
   assert.match(css, /\.spatial-result-card > \.spatial-map-failure[\s\S]*font-size: 12px/);
 });
 
-assert.equal(tests.length, 35);
+test("KML-UI-01", "coordinate page eligible state is visibly enabled", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /function coordinateKmlVisuallyEligible\([\s\S]*activeFinalizedCoordinateResult\.kmlReady === true/);
+  assert.match(html, /coordinate-kml-action\[data-state="enabled"\]/);
+});
+test("KML-UI-02", "coordinate page blocked state is disabled", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /id="coordinateKmlAction"[^>]*data-state="blocked"[^>]*aria-disabled="true"[^>]*disabled/);
+  assert.match(html, /button\.disabled = kmlGenerationInProgress \|\| !eligible/);
+});
+test("KML-UI-03", "coordinate KML loading always cleans up and restores eligibility", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const flow = html.match(/async function downloadKml\(\)[\s\S]*?async function downloadKmlInternal/)?.[0] || "";
+  assert.match(flow, /setKmlGenerationInProgress\(true\)/);
+  assert.match(flow, /finally[\s\S]*setKmlGenerationInProgress\(false\)/);
+});
+test("KML-UI-04", "spatial eligible KML lifecycle uses the shared visual state", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /spatialKmlAction\?\.dataset\.eligible === "true"/);
+  assert.match(html, /spatial-kml-action\[data-state="enabled"\]/);
+});
+test("KML-UI-05", "spatial blocked KML lifecycle remains disabled", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /const state = kmlGenerationInProgress \? "loading" : \(eligible \? "enabled" : "blocked"\)/);
+  assert.match(html, /spatial-kml-action\[data-state="blocked"\]/);
+});
+test("MESSAGE-01", "ordinary UI maps internal gate enums to natural language", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /function getCoordinateGateUserMessage/);
+  assert.doesNotMatch(html, /reason:\s*\([^\n]*reasonCodes[^\n]*join/);
+  assert.doesNotMatch(html, /throw new Error\([^\n]*reasonCodes[^\n]*join/);
+});
+test("MESSAGE-02", "diagnostic detail retains raw gate codes", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /appendDebug\(`KML Gate codes：\$\{reasonCodes\.join/);
+  assert.match(html, /appendDebug\(`坐标确认 Gate codes：/);
+});
+test("MOBILE-01", "390px product surface guards against horizontal overflow", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*#coordinatePage[\s\S]*overflow-x: clip/);
+  assert.match(css, /@media \(width: 390px\)/);
+  assert.match(css, /touch-action: none/);
+});
+test("FALLBACK-01", "the local renderer is the provider-failure display implementation", () => {
+  const source = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
+  assert.match(source, /fallbackRenderer = new LocalSvgRenderer/);
+  assert.match(source, /await fallbackRenderer\.render\(preview\.geometry\)/);
+  assert.match(source, /return fallbackRenderer\?\.fitBounds\(\) === true/);
+});
+test("DUPLICATE-01", "the old inline SVG geometry renderer is no longer a display authority", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.doesNotMatch(html, /function projectSpatialPosition|function renderSpatialGeometry/);
+  assert.doesNotMatch(html, /id="spatialGeometryLayer"/);
+  assert.match(html, /<div id="spatialLocalMapCanvas"[^>]*><\/div>/);
+});
+
+assert.equal(tests.length, 45);
 let passed = 0;
 for (const entry of tests) {
   try {

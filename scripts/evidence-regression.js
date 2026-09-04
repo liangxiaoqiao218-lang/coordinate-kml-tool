@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { buildCoordinateVerificationResponse } from "../server/verification/index.js";
+import { buildSourceCoordinateRepresentation } from "../server/source-coordinate-representation.js";
 
 function makePoint(label, raw) {
   return {
@@ -97,21 +98,33 @@ assert.ok(normalPoint.evidence.evidence_id, "normal DMS point evidence must have
 assert.ok(normalPoint.evidence_ids.length > 0, "normal DMS point must expose evidence references");
 assert.equal(normalPoint.evidence.location_status, "LOGICAL_ROW_ONLY");
 
-const legacyResponse = {
+const legacyEngine = makeEngine(normalDms);
+const legacyBaseline = {
   success: true,
   rawText: normalDms,
   coordinates: normalDms,
   precisionMode: "dms-coordinates",
   warnings: ["legacy warning"],
-  coordinateEngineV2: makeEngine(normalDms)
+  coordinateEngineV2: legacyEngine
+};
+const legacyResponse = {
+  ...legacyBaseline,
+  sourceCoordinateRepresentation: buildSourceCoordinateRepresentation(legacyBaseline, legacyEngine)
 };
 const legacySnapshot = structuredClone(legacyResponse);
 const evidenceResponse = buildCoordinateVerificationResponse(legacyResponse, legacyResponse.coordinateEngineV2);
-const { evidenceAcquisition, evidence, verification, finalizedCoordinateResult, ...responseWithoutShadowLayers } = evidenceResponse;
+const {
+  evidenceAcquisition,
+  evidence,
+  verification,
+  finalizedCoordinateResult,
+  ...responseWithoutShadowLayers
+} = evidenceResponse;
 assert.ok(evidenceAcquisition, "response must append evidence acquisition shadow data");
 assert.ok(evidence, "response must append evidence shadow data");
 assert.ok(verification, "response must preserve verification shadow data");
 assert.ok(finalizedCoordinateResult, "response must append the authoritative finalized result");
+assert.ok(responseWithoutShadowLayers.sourceCoordinateRepresentation, "Production baseline must retain sourceCoordinateRepresentation");
 assert.deepEqual(responseWithoutShadowLayers, legacySnapshot, "removing shadow layers must restore the legacy response");
 assert.deepEqual(legacyResponse, legacySnapshot, "evidence adapter must not mutate the legacy response");
 

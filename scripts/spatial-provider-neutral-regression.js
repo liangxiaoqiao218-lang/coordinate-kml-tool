@@ -10,6 +10,16 @@ import { AMapLoader } from "../assets/spatial-map/amap-loader.js";
 import { AMapProviderAdapter } from "../assets/spatial-map/amap-provider-adapter.js";
 import { MapProductController } from "../assets/spatial-map/map-product-controller.js";
 import { isSpatialMapProvider, PROVIDER_STATE } from "../assets/spatial-map/providers.js";
+import {
+  LocalSvgRenderer,
+  LOCAL_MAP_MAX_RELATIVE_ZOOM,
+  LOCAL_MAP_MIN_RELATIVE_ZOOM,
+  LOCAL_MAP_PADDING_RATIO,
+  applyLocalViewTransform,
+  createLocalFitTransform,
+  projectWgs84GeometryForDisplay,
+  projectedGeometryBounds
+} from "../assets/spatial-map/maplibre-renderer.js";
 import { createAmapSecurityProxy } from "../server/spatial/amap-security-proxy.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -81,6 +91,35 @@ function fakeFallback() {
 
 function controller(provider = fakeProvider(), fallback = fakeFallback()) {
   return { value: new MapProductController({ provider, fallbackRenderer: fallback, timeoutMs: 100 }), provider, fallback };
+}
+
+function positions(geometry) {
+  if (geometry.type === "Point") return [geometry.coordinates];
+  if (geometry.type === "LineString") return geometry.coordinates;
+  if (geometry.type === "Polygon") return geometry.coordinates.flat(1);
+  return geometry.coordinates.flat(2);
+}
+
+function makeLocalRenderer(width = 390, height = 600) {
+  const listeners = new Map();
+  const createNode = name => ({
+    name, style: {}, attributes: {}, children: [],
+    setAttribute(key, value) { this.attributes[key] = String(value); },
+    append(child) { this.children.push(child); },
+    addEventListener(type, handler) { listeners.set(type, handler); },
+    removeEventListener(type) { listeners.delete(type); },
+    getBoundingClientRect() { return { left: 0, top: 0, width, height }; },
+    setPointerCapture() {}, releasePointerCapture() {}
+  });
+  const container = {
+    hidden: true, children: [], clientWidth: width, clientHeight: height,
+    getBoundingClientRect: () => ({ width, height }),
+    replaceChildren(...children) { this.children = children; }
+  };
+  const previousDocument = globalThis.document;
+  globalThis.document = { createElementNS: (_namespace, name) => createNode(name) };
+  const renderer = new LocalSvgRenderer({ container, attributionElement: { hidden: false, textContent: "old" } });
+  return { renderer, container, listeners, restore: () => { globalThis.document = previousDocument; } };
 }
 
 function fakeAmapRuntime() {
@@ -360,9 +399,9 @@ test("SPN-UX-01", "provider failure is a compact non-blocking status with approv
 
 test("SPN-UX-02", "Point fallback auto-fit centers single-axis geometry", () => {
   const source = fs.readFileSync(path.join(root, "assets/spatial-map/maplibre-renderer.js"), "utf8");
-  assert.match(source, /west === east \? width \/ 2/);
-  assert.match(source, /south === north \? height \/ 2/);
-  assert.match(source, /r:\s*9,\s*fill:\s*"#1976D2",\s*stroke:\s*"#E53935"/);
+  assert.match(source, /const centerX = \(bounds\.minX \+ bounds\.maxX\) \/ 2/);
+  assert.match(source, /const centerY = \(bounds\.minY \+ bounds\.maxY\) \/ 2/);
+  assert.match(source, /\.\.\.\(geometry\.type === "Point" \? \{ r: 9 \} : \{\}\)/);
 });
 
 test("SPN-UX-03", "Point LineString and Polygon fallback keep high-contrast SVG styles", () => {
@@ -444,7 +483,8 @@ test("SPN-FS-07", "review state is compact when collapsed and detailed only in t
 test("SPN-FS-08", "KML action lives inside expandable result details", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(html, /id="spatialResultDetails"[\s\S]*id="spatialKmlAction"/);
-  assert.match(html, /spatialKmlAction\.disabled = payload\?\.kmlEligibility\?\.allowed !== true/);
+  assert.match(html, /spatialKmlAction\.dataset\.eligible = String\(payload\?\.kmlEligibility\?\.allowed === true\)/);
+  assert.match(html, /syncButton\(spatialKmlAction, spatialKmlAction\?\.dataset\.eligible === "true"\)/);
 });
 
 test("SPN-FS-09", "sheet expansion is presentation-only", () => {
@@ -553,8 +593,94 @@ test("SPN-R1-04", "mobile provider failure stays single-instance and retryable o
   assert.match(source, /if \(elements\.retry\) elements\.retry\.hidden = !unavailable/);
 });
 
+function assertProjectedAspectPreserved(geometry, width = 900, height = 560) {
+  const projected = projectWgs84GeometryForDisplay(geometry);
+  const bounds = projectedGeometryBounds(projected);
+  const transform = createLocalFitTransform(projected, width, height);
+  const topLeft = applyLocalViewTransform([bounds.minX, bounds.maxY], transform);
+  const bottomRight = applyLocalViewTransform([bounds.maxX, bounds.minY], transform);
+  const projectedRatio = (bounds.maxX - bounds.minX) / (bounds.maxY - bounds.minY);
+  const renderedRatio = Math.abs(bottomRight[0] - topLeft[0]) / Math.abs(bottomRight[1] - topLeft[1]);
+  assert.ok(Math.abs(projectedRatio - renderedRatio) < 1e-9);
+}
+
+test("ASPECT-01", "vertical narrow Polygon preserves projected aspect", () => {
+  assertProjectedAspectPreserved({ type: "Polygon", coordinates: [[[30, 10], [30.001, 10], [30.001, 10.01], [30, 10.01], [30, 10]]] });
+});
+test("ASPECT-02", "horizontal narrow Polygon preserves projected aspect", () => {
+  assertProjectedAspectPreserved({ type: "Polygon", coordinates: [[[30, 10], [30.01, 10], [30.01, 10.001], [30, 10.001], [30, 10]]] });
+});
+test("ASPECT-03", "MultiPolygon relative position is preserved by one global transform", () => {
+  const projected = projectWgs84GeometryForDisplay(multiPolygon);
+  const transform = createLocalFitTransform(projected, 900, 560);
+  const source = [projected.coordinates[0][0][0], projected.coordinates[1][0][0]];
+  const screen = source.map(value => applyLocalViewTransform(value, transform));
+  assert.ok(screen[1][0] > screen[0][0]);
+  assert.ok(Math.abs((screen[1][0] - screen[0][0]) / (source[1][0] - source[0][0]) - transform.scale) < 1e-12);
+});
+test("FIT-01", "all projected geometry remains inside viewport", () => {
+  const projected = projectWgs84GeometryForDisplay(multiPolygon);
+  const transform = createLocalFitTransform(projected, 390, 600);
+  positions(projected).map(value => applyLocalViewTransform(value, transform)).forEach(([x, y]) => {
+    assert.ok(x >= 0 && x <= 390 && y >= 0 && y <= 600);
+  });
+});
+test("FIT-02", "deterministic fit padding is preserved", () => {
+  const projected = projectWgs84GeometryForDisplay(polygon);
+  const transform = createLocalFitTransform(projected, 900, 560);
+  const screen = positions(projected).map(value => applyLocalViewTransform(value, transform));
+  const margins = [Math.min(...screen.map(p => p[0])), 900 - Math.max(...screen.map(p => p[0])), Math.min(...screen.map(p => p[1])), 560 - Math.max(...screen.map(p => p[1]))];
+  assert.ok(margins.every(value => value >= -1e-7));
+  assert.ok(margins.some((value, index) => Math.abs(value - (index < 2 ? 900 : 560) * LOCAL_MAP_PADDING_RATIO) < 1e-6));
+});
+test("FIT-03", "north-up orientation is preserved", () => {
+  const projected = projectWgs84GeometryForDisplay(line);
+  const transform = createLocalFitTransform(projected, 390, 600);
+  const south = applyLocalViewTransform(projected.coordinates[0], transform);
+  const north = applyLocalViewTransform(projected.coordinates[1], transform);
+  assert.ok(north[1] < south[1]);
+});
+test("PAN-01", "pan changes only view translation", async () => {
+  const local = makeLocalRenderer();
+  try { await local.renderer.render(polygon); const before = local.renderer.getViewState(); local.renderer.panBy(17, -9); const after = local.renderer.getViewState(); assert.equal(after.scale, before.scale); assert.equal(after.translateX, before.translateX + 17); assert.equal(after.translateY, before.translateY - 9); } finally { local.restore(); }
+});
+test("PAN-02", "pan does not change canonical geometry", async () => {
+  const canonical = structuredClone(polygon); const before = JSON.stringify(canonical); const local = makeLocalRenderer();
+  try { await local.renderer.render(canonical); local.renderer.panBy(10, 20); assert.equal(JSON.stringify(canonical), before); } finally { local.restore(); }
+});
+test("ZOOM-01", "zoom changes view scale", async () => {
+  const local = makeLocalRenderer(); try { await local.renderer.render(polygon); const before = local.renderer.getViewState(); local.renderer.zoomAt(2, 195, 300); assert.equal(local.renderer.getViewState().scale, before.scale * 2); } finally { local.restore(); }
+});
+test("ZOOM-02", "zoom does not change canonical geometry", async () => {
+  const canonical = structuredClone(polygon); const before = JSON.stringify(canonical); const local = makeLocalRenderer(); try { await local.renderer.render(canonical); local.renderer.zoomAt(3, 100, 100); assert.equal(JSON.stringify(canonical), before); } finally { local.restore(); }
+});
+test("ZOOM-03", "relative zoom limits are enforced", async () => {
+  const local = makeLocalRenderer(); try { await local.renderer.render(polygon); const fit = local.renderer.fitTransform.scale; local.renderer.zoomAt(1e9, 0, 0); assert.equal(local.renderer.getViewState().scale, fit * LOCAL_MAP_MAX_RELATIVE_ZOOM); local.renderer.zoomAt(1e-12, 0, 0); assert.equal(local.renderer.getViewState().scale, fit * LOCAL_MAP_MIN_RELATIVE_ZOOM); } finally { local.restore(); }
+});
+test("RESET-01", "reset restores the original fit transform", async () => {
+  const local = makeLocalRenderer(); try { await local.renderer.render(polygon); const fit = local.renderer.getViewState(); local.renderer.panBy(20, 20); local.renderer.zoomAt(2, 100, 100); local.renderer.fitBounds(); assert.deepEqual(local.renderer.getViewState(), fit); } finally { local.restore(); }
+});
+test("LIFECYCLE-01", "new geometry resets previous view transform", async () => {
+  const local = makeLocalRenderer(); try { await local.renderer.render(polygon); local.renderer.panBy(70, 40); await local.renderer.render(line); assert.deepEqual(local.renderer.getViewState(), { ...local.renderer.fitTransform }); } finally { local.restore(); }
+});
+test("LIFECYCLE-02", "destroy removes listeners and active pointer/view state", async () => {
+  const local = makeLocalRenderer(); try { await local.renderer.render(polygon); local.renderer.pointerPositions.set(7, [1, 2]); local.renderer.destroy(); assert.equal(local.listeners.size, 0); assert.equal(local.renderer.getViewState(), null); assert.equal(local.renderer.pointerPositions.size, 0); assert.equal(local.container.children.length, 0); } finally { local.restore(); }
+});
+for (const [id, geometry] of [["POINT-01", point], ["LINE-01", line]]) {
+  test(id, `${geometry.type} renders safely`, async () => { const local = makeLocalRenderer(); try { await local.renderer.render(geometry); assert.ok(local.renderer.getViewState()); assert.ok(Object.values(local.renderer.getViewState()).filter(Number.isFinite).length >= 3); } finally { local.restore(); } });
+}
+test("DEGENERATE-01", "zero-width and zero-height bounds fail safely", () => {
+  for (const geometry of [point, { type: "LineString", coordinates: [[1, 1], [1, 2]] }, { type: "LineString", coordinates: [[1, 1], [2, 1]] }]) assert.ok(Object.values(createLocalFitTransform(projectWgs84GeometryForDisplay(geometry), 390, 600)).filter(value => typeof value === "number").every(Number.isFinite));
+});
+test("BASEMAP-01", "basemap unavailable still renders local geometry", async () => {
+  const item = controller(fakeProvider({ initState: PROVIDER_STATE.CONFIGURATION_BLOCKED })); const result = await item.value.open(preview()); assert.equal(result.state, PROVIDER_STATE.FALLBACK_LOCAL_SVG); assert.equal(item.fallback.calls, 1);
+});
+test("HASH-01", "canonical geometry hash remains unchanged after all local interactions", async () => {
+  const canonical = structuredClone(multiPolygon); const before = JSON.stringify(canonical); const local = makeLocalRenderer(); try { await local.renderer.render(canonical); local.renderer.panBy(3, 4); local.renderer.zoomAt(2, 30, 40); local.renderer.fitBounds(); local.renderer.destroy(); assert.equal(JSON.stringify(canonical), before); } finally { local.restore(); }
+});
+
 assert.equal(isSpatialMapProvider(fakeProvider()), true);
-assert.equal(tests.length, 51);
+assert.equal(tests.length, 70);
 
 let passed = 0;
 for (const entry of tests) {
