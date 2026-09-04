@@ -13,6 +13,7 @@ import {
   registerFinalizedCoordinateResult
 } from "../coordinate-finalizer/index.js";
 import { getRecognitionBudget } from "../coordinate-finalizer/recognition-deadline.js";
+import { buildSourceCoordinateRepresentation } from "../source-coordinate-representation.js";
 
 function uniqueWarnings(values) {
   return Array.from(new Set(values.map(value => String(value || "").trim()).filter(Boolean)));
@@ -183,6 +184,7 @@ export function buildCoordinateVerificationResponse(payload = {}, coordinateEngi
   return {
     ...payload,
     coordinateEngineV2: engine,
+    sourceCoordinateRepresentation: buildSourceCoordinateRepresentation(payload, engine),
     evidenceAcquisition,
     evidence,
     verification,

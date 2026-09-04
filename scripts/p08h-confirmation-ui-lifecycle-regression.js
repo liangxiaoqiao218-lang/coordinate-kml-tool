@@ -58,7 +58,10 @@ assert.doesNotMatch(
 );
 
 const renderSource = extractFunctionSource(html, "renderHandwrittenDmsReviewState");
-assert.match(renderSource, /我已对照原图核对当前坐标/, "confirmation control remains visible and actionable");
+assert.match(renderSource, /ordinaryReviewOnly/, "ordinary review is distinguished from authority-changing confirmation");
+assert.match(renderSource, /!isConfirmed && !ordinaryReviewOnly/, "ordinary review omits the redundant confirmation control");
+assert.match(renderSource, /我已对照原图核对当前坐标/, "authority-changing confirmation control remains available");
+assert.match(renderSource, /建议对照原图核对坐标，部分字符可能存在识别误差。/, "ordinary review warning remains visible");
 assert.match(renderSource, /当前坐标需要对照原图人工核对/, "pending copy is generic authority-state copy");
 assert.match(renderSource, /当前坐标已修改，请对照原图重新核对/, "edit lifecycle copy requires reconfirmation");
 assert.match(renderSource, /已确认当前坐标；再次修改后需要重新核对/, "accepted lifecycle copy resolves the panel");
@@ -185,7 +188,7 @@ console.log(JSON.stringify({
   cases: [
     "PENDING_FINALIZED_RESULT_SHOWS_CONFIRMATION_UI",
     "CONFIRMATION_RENDER_SOURCE_CANONICAL_FINALIZED_RESULT",
-    "CONFIRMATION_CONTROL_ACTIONABLE",
+    "ORDINARY_REVIEW_CONFIRMATION_CONTROL_REMOVED",
     "ACCEPTED_STATE_RESOLVES_PANEL",
     "EDIT_REOPENS_PENDING_CONFIRMATION",
     "RECONFIRM_USES_SERVER_CONFIRMATION",

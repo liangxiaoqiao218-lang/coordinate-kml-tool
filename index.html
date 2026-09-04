@@ -5202,6 +5202,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let internalKmlSourceDirty = false;
     let activeCoordinatePrecisionMode = "";
     let activeCoordinateEngineV2 = null;
+    let activeCoordinateFieldConflictCount = 0;
     let activeFinalizedCoordinateResult = null;
     let finalizedCoordinateTextSnapshot = "";
     let finalizedCoordinateDirty = false;
@@ -6719,14 +6720,22 @@ Au值 = 纯度 × 10 后取整数</div>
 
       const statusText = document.createElement("span");
       statusText.className = "handwritten-dms-review-text";
-      statusText.textContent = isConfirmed
+      const ordinaryReviewOnly = activeFinalizedCoordinateResult?.currentAuthorizedGeometryExportable === true
+        && activeFinalizedCoordinateResult?.technicalKmlReady === true
+        && activeFinalizedCoordinateResult?.kmlReady === true
+        && activeFinalizedCoordinateResult?.kmlAuthorityBlocked !== true;
+      statusText.textContent = ordinaryReviewOnly && activeCoordinateFieldConflictCount > 0
+        ? `发现 ${activeCoordinateFieldConflictCount} 处坐标可能存在识别差异，请重点核对标记位置。`
+        : ordinaryReviewOnly
+          ? "建议对照原图核对坐标，部分字符可能存在识别误差。"
+          : isConfirmed
         ? "已确认当前坐标；再次修改后需要重新核对。"
         : handwrittenDmsReviewState.status === HANDWRITTEN_DMS_REVIEW_STATUS.EDITED_PENDING
           ? "当前坐标已修改，请对照原图重新核对。"
           : "当前坐标需要对照原图人工核对。";
       handwrittenDmsReviewPanel.appendChild(statusText);
 
-      if (!isConfirmed) {
+      if (!isConfirmed && !ordinaryReviewOnly) {
         const confirmButton = document.createElement("button");
         confirmButton.type = "button";
         confirmButton.className = "handwritten-dms-review-button";
@@ -6738,6 +6747,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function resetHandwrittenDmsReviewState() {
       handwrittenDmsReviewState = createHandwrittenDmsReviewState();
+      activeCoordinateFieldConflictCount = 0;
       setHandwrittenDmsReviewGuardContext(false);
       renderHandwrittenDmsReviewState();
     }
@@ -7233,6 +7243,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function markCoordinateTextChanged() {
       activeCoordinatePrecisionMode = "";
       activeCoordinateEngineV2 = null;
+      activeCoordinateFieldConflictCount = 0;
       if (activeFinalizedCoordinateResult) finalizedCoordinateDirty = true;
       handwrittenDmsReviewState = getHandwrittenDmsReviewStateAfterTextChange(handwrittenDmsReviewState);
       renderHandwrittenDmsReviewState();
@@ -13693,9 +13704,20 @@ ${placemarks}
 
         const summaryEngine = data.coordinateEngineV2 || data.coordinate_engine_v2 || {};
         const summaryGroups = Array.isArray(summaryEngine.groups) ? summaryEngine.groups : [];
-        const displayCoordinates = getCanonicalCoordinateDisplayText(data.finalizedCoordinateResult)
-          || buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
+        const sourceCoordinateRepresentation = data.sourceCoordinateRepresentation || {};
+        const sourceDisplayText = sourceCoordinateRepresentation.schema_version === "source_coordinate_representation_v1"
+          && sourceCoordinateRepresentation.editable === true
+          ? String(sourceCoordinateRepresentation.displayText || "")
+          : "";
+        const existingFamilySourceText = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
+        const displayCoordinates = sourceDisplayText
+          || existingFamilySourceText
+          || finalCoordinates
+          || getCanonicalCoordinateDisplayText(data.finalizedCoordinateResult);
         activeCoordinateEngineV2 = summaryEngine || null;
+        activeCoordinateFieldConflictCount = Array.isArray(data.handwrittenVisionRouting?.fieldConflicts)
+          ? data.handwrittenVisionRouting.fieldConflicts.length
+          : 0;
         activeFinalizedCoordinateResult = data.finalizedCoordinateResult || null;
         invalidateSpatialPreview();
 

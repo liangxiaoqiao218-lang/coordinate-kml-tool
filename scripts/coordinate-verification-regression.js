@@ -224,12 +224,24 @@ const responseAfterVerification = buildCoordinateVerificationResponse(
   responseBeforeVerification,
   responseBeforeVerification.coordinateEngineV2
 );
-const { verification, evidence, evidenceAcquisition, finalizedCoordinateResult, ...responseWithoutVerification } = responseAfterVerification;
+const {
+  verification,
+  evidence,
+  evidenceAcquisition,
+  finalizedCoordinateResult,
+  sourceCoordinateRepresentation,
+  ...responseWithoutAdditiveContracts
+} = responseAfterVerification;
 assert.ok(verification, "response wrapper should append verification");
 assert.ok(evidence, "response wrapper should append evidence shadow data");
 assert.ok(evidenceAcquisition, "response wrapper should append evidence acquisition shadow data");
 assert.ok(finalizedCoordinateResult, "response wrapper should append the authoritative finalized result");
-assert.deepEqual(responseWithoutVerification, responseSnapshot, "removing verification must restore the exact legacy response");
+assert.equal(sourceCoordinateRepresentation?.schema_version, "source_coordinate_representation_v1", "response wrapper should append the source-coordinate representation contract");
+assert.equal(sourceCoordinateRepresentation?.displayText, normalDmsText, "source-coordinate representation must preserve the original DMS text");
+for (const authorityKey of ["geometry", "resultId", "resultRevision", "geometryHash", "kmlReady"]) {
+  assert.equal(Object.hasOwn(sourceCoordinateRepresentation, authorityKey), false, `source-coordinate representation must not carry ${authorityKey} authority`);
+}
+assert.deepEqual(responseWithoutAdditiveContracts, responseSnapshot, "removing additive contracts must restore the exact legacy response");
 assert.deepEqual(responseBeforeVerification, responseSnapshot, "response wrapper must not mutate the legacy response");
 
 let reviewReasonPassed = 0;
