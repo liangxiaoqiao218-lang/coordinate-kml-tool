@@ -4431,6 +4431,24 @@
     .spatial-kml-action { width: 100%; min-height: 40px; margin-top: 10px; border-color: #cbd5e1; background: #fff; color: #334155; box-shadow: none; font-weight: 800; }
     .spatial-kml-action:disabled { background: #f1f5f9; border-color: #e2e8f0; color: #94a3b8; box-shadow: none; cursor: not-allowed; }
     .spatial-result-diagnostic { color: #64748b; font-size: 11px; }
+    .payment-auth-card { margin: 0 0 16px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .payment-auth-copy { display: grid; gap: 2px; }
+    .payment-auth-copy strong { color: #0f172a; font-size: 14px; }
+    .payment-auth-copy span { color: #64748b; font-size: 12px; }
+    .payment-auth-actions { display: flex; gap: 8px; }
+    .payment-auth-actions button, .payment-auth-dialog button { min-height: 36px; padding: 7px 13px; border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; color: #334155; font-weight: 700; }
+    .payment-auth-actions button:first-child, .payment-auth-dialog button[type="submit"] { border-color: #2563eb; background: #2563eb; color: #fff; }
+    .payment-auth-dialog { width: min(420px, calc(100% - 32px)); padding: 0; border: 0; border-radius: 16px; box-shadow: 0 24px 60px rgba(15, 23, 42, .22); }
+    .payment-auth-dialog::backdrop { background: rgba(15, 23, 42, .45); }
+    .payment-auth-dialog-inner { padding: 22px; }
+    .payment-auth-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .payment-auth-dialog h2 { margin: 0; color: #0f172a; font-size: 20px; }
+    .payment-auth-dialog p { color: #64748b; font-size: 13px; }
+    .payment-auth-dialog form { display: grid; gap: 10px; margin-top: 16px; }
+    .payment-auth-dialog label { color: #334155; font-size: 13px; font-weight: 700; }
+    .payment-auth-dialog input { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 9px; box-sizing: border-box; font: inherit; }
+    .payment-auth-message[data-error="true"] { color: #b91c1c; }
+    [hidden] { display: none !important; }
   </style>
   <script src="pricing-config.js"></script>
   <link rel="stylesheet" href="/assets/spatial-map/spatial-map.css" />
@@ -4445,6 +4463,38 @@
           <h1>简单工具 · 高效处理</h1>
         </div>
       </div>
+
+      <section class="payment-auth-card" data-payment-auth-root data-auth-state="signed_out" aria-label="账户">
+        <div class="payment-auth-copy">
+          <strong>账户</strong>
+          <span data-auth-status>正在检查登录状态…</span>
+        </div>
+        <div class="payment-auth-actions">
+          <button type="button" data-auth-open>邮箱登录</button>
+          <button type="button" data-auth-logout hidden>退出</button>
+        </div>
+      </section>
+
+      <dialog class="payment-auth-dialog" data-auth-dialog>
+        <div class="payment-auth-dialog-inner">
+          <div class="payment-auth-dialog-head">
+            <h2>邮箱登录</h2>
+            <button type="button" data-auth-close aria-label="关闭">关闭</button>
+          </div>
+          <p>购买需要登录。验证码仅用于确认你的邮箱账户。</p>
+          <form data-auth-email-form>
+            <label for="paymentAuthEmail">邮箱</label>
+            <input id="paymentAuthEmail" data-auth-email type="email" autocomplete="email" required maxlength="254" />
+            <button type="submit">发送验证码</button>
+          </form>
+          <form data-auth-otp-form hidden>
+            <label for="paymentAuthOtp">验证码</label>
+            <input id="paymentAuthOtp" data-auth-otp type="text" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6,8}" maxlength="8" />
+            <button type="submit">确认登录</button>
+          </form>
+          <p class="payment-auth-message" data-auth-message aria-live="polite"></p>
+        </div>
+      </dialog>
 
       <div class="module-grid">
         <button type="button" class="module-card primary-module" onclick="showPage('coordinate')">
@@ -13864,6 +13914,7 @@ ${placemarks}
       }
     }
   </script>
+  <script type="module" src="/assets/payment-auth.js"></script>
   <script type="module" src="/assets/spatial-map/spatial-map-product.js"></script>
 </body>
 </html>

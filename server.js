@@ -2,6 +2,11 @@
 import express from "express";
 import multer from "multer";
 import { createClient } from "@supabase/supabase-js";
+import {
+  createPaymentAuthHandlers,
+  createPaymentIdentityServiceFromEnv,
+  isAllowedPaymentAuthMutationOrigin
+} from "./server/payment-identity.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
@@ -587,7 +592,7 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   const noCachePaths = new Set(["/", "/coordinate", "/coordinate-tool", "/tool", "/convert", "/ocr", "/mining", "/mining-judge", "/mining-analysis", "/judge", "/gold", "/gold-calculator", "/admin", "/index.html", "/admin.html"]);
 
-  if (noCachePaths.has(req.path) || req.path.endsWith(".html")) {
+  if (noCachePaths.has(req.path) || req.path.endsWith(".html") || req.path.startsWith("/api/auth/")) {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
@@ -604,7 +609,10 @@ const rateLimitRules = {
   admin: { windowMs: 60 * 1000, max: 240 },
   usage: { windowMs: 60 * 1000, max: 120 },
   recognize: { windowMs: 5 * 60 * 1000, max: 20 },
-  judge: { windowMs: 5 * 60 * 1000, max: 20 }
+  judge: { windowMs: 5 * 60 * 1000, max: 20 },
+  authOtpRequest: { windowMs: 10 * 60 * 1000, max: 5 },
+  authOtpVerify: { windowMs: 10 * 60 * 1000, max: 10 },
+  authSession: { windowMs: 60 * 1000, max: 60 }
 };
 
 function getRequestIpForSecurity(req) {
@@ -646,6 +654,9 @@ function getProtectedEndpointType(pathname = "") {
   if (pathname === "/api/usage/quota" || pathname === "/api/usage/consume") return "usage";
   if (pathname === "/api/recognize-coordinates") return "recognize";
   if (pathname === "/api/analyze-mining-image") return "judge";
+  if (pathname === "/api/auth/otp/request") return "authOtpRequest";
+  if (pathname === "/api/auth/otp/verify") return "authOtpVerify";
+  if (pathname === "/api/auth/refresh" || pathname === "/api/auth/logout" || pathname === "/api/auth/me") return "authSession";
   return "";
 }
 
@@ -679,6 +690,7 @@ const allowedRequestOrigins = new Set([
   "https://coordinate-kml-tool.onrender.com"
 ]);
 const rcAllowedOrigin = parseOptionalHttpsOrigin(process.env.RC_ALLOWED_ORIGIN);
+const authAllowedOrigin = parseOptionalHttpsOrigin(process.env.AUTH_ALLOWED_ORIGIN);
 
 if (rcAllowedOrigin) {
   allowedRequestOrigins.add(rcAllowedOrigin);
@@ -883,6 +895,14 @@ function spatialShareMutationGuard(req, res, next) {
   return res.status(403).json({ success: false, code: "SHARE_ORIGIN_FORBIDDEN" });
 }
 
+function authMutationGuard(req, res, next) {
+  const origin = req.get("origin") || "";
+  const referer = req.get("referer") || "";
+  if (isAllowedPaymentAuthMutationOrigin({ origin, referer, allowedOrigin: authAllowedOrigin })) return next();
+  recordSecurityEvent(req, "auth_origin_forbidden", { endpoint: getProtectedEndpointType(req.path) });
+  return res.status(403).json({ success: false, code: "AUTH_ORIGIN_FORBIDDEN" });
+}
+
 function spatialShareCreateRateLimit(req, res, next) {
   let managerCapability = getSpatialShareManagerCapability(req);
   if (!managerCapability) {
@@ -1007,6 +1027,14 @@ app.get("/sitemap.xml", (req, res) => {
   const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map(pathname => `  <url><loc>${shareMetaOrigin}${pathname}</loc></url>`).join("\n")}\n</urlset>\n`;
   res.type("application/xml").send(body);
 });
+
+const paymentIdentityService = createPaymentIdentityServiceFromEnv();
+const paymentAuthHandlers = createPaymentAuthHandlers(paymentIdentityService);
+app.post("/api/auth/otp/request", authMutationGuard, paymentAuthHandlers.requestOtp);
+app.post("/api/auth/otp/verify", authMutationGuard, paymentAuthHandlers.verifyOtp);
+app.post("/api/auth/refresh", authMutationGuard, paymentAuthHandlers.refresh);
+app.post("/api/auth/logout", authMutationGuard, paymentAuthHandlers.logout);
+app.get("/api/auth/me", paymentAuthHandlers.me);
 
 app.use(express.static(__dirname, {
   index: false,
