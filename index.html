@@ -6702,6 +6702,43 @@ Au值 = 纯度 × 10 后取整数</div>
       });
     }
 
+    function hasFiniteFinalizedGeometry(geometry) {
+      if (!geometry || !Array.isArray(geometry.coordinates)) return false;
+      const finitePosition = position => Array.isArray(position)
+        && position.length >= 2
+        && Number.isFinite(position[0])
+        && Number.isFinite(position[1])
+        && position[0] >= -180 && position[0] <= 180
+        && position[1] >= -90 && position[1] <= 90;
+      const validLine = line => Array.isArray(line) && line.length >= 2 && line.every(finitePosition);
+      const validRing = ring => validLine(ring)
+        && ring.length >= 4
+        && ring[0][0] === ring[ring.length - 1][0]
+        && ring[0][1] === ring[ring.length - 1][1];
+      if (geometry.type === "Point") return finitePosition(geometry.coordinates);
+      if (geometry.type === "LineString") return validLine(geometry.coordinates);
+      if (geometry.type === "Polygon") return geometry.coordinates.length > 0 && geometry.coordinates.every(validRing);
+      if (geometry.type === "MultiPolygon") return geometry.coordinates.length > 0
+        && geometry.coordinates.every(polygon => Array.isArray(polygon) && polygon.length > 0 && polygon.every(validRing));
+      return false;
+    }
+
+    function isOrdinaryReviewOnlyFinalizedResult(result = activeFinalizedCoordinateResult) {
+      if (result?.schemaVersion !== "finalized_coordinate_result_v1") return false;
+      if (!getFinalizedCoordinateIdentity(result) || !hasFiniteFinalizedGeometry(result.geometry)) return false;
+      if (result.crs?.id !== "EPSG:4326" || result.crs?.axisOrder !== "longitude_latitude") return false;
+      if (!["legacy", "manual_input", "coordinate_engine_v2"].includes(result.sourceAuthority)) return false;
+      if (!Array.isArray(result.blockingReasons)) return false;
+      const blockingReasons = result.blockingReasons;
+      return result.decisionState === "REVIEW_REQUIRED"
+        && result.requiresReview === true
+        && result.confirmationStatus === "pending"
+        && result.qualityGateStatus !== "failed"
+        && result.technicalKmlReady === true
+        && result.kmlReady === true
+        && blockingReasons.length === 0;
+    }
+
     function renderHandwrittenDmsReviewState() {
       if (!handwrittenDmsReviewPanel) return;
 
@@ -6720,10 +6757,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
       const statusText = document.createElement("span");
       statusText.className = "handwritten-dms-review-text";
-      const ordinaryReviewOnly = activeFinalizedCoordinateResult?.currentAuthorizedGeometryExportable === true
-        && activeFinalizedCoordinateResult?.technicalKmlReady === true
-        && activeFinalizedCoordinateResult?.kmlReady === true
-        && activeFinalizedCoordinateResult?.kmlAuthorityBlocked !== true;
+      const ordinaryReviewOnly = isOrdinaryReviewOnlyFinalizedResult();
       statusText.textContent = ordinaryReviewOnly && activeCoordinateFieldConflictCount > 0
         ? `发现 ${activeCoordinateFieldConflictCount} 处坐标可能存在识别差异，请重点核对标记位置。`
         : ordinaryReviewOnly

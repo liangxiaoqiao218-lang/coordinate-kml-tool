@@ -12,6 +12,26 @@ import { MapPreviewAdapter } from "../server/spatial/adapters/map-preview-adapte
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const html = await readFile(path.join(repoRoot, "index.html"), "utf8");
 
+function extractFunctionSource(source, functionName) {
+  const marker = `function ${functionName}(`;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `${functionName} must exist`);
+  const openBrace = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = openBrace; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}" && --depth === 0) return source.slice(start, index + 1);
+  }
+  throw new Error(`${functionName} body is not closed`);
+}
+
+const ordinaryReviewPredicate = Function(`
+  ${extractFunctionSource(html, "getFinalizedCoordinateIdentity")}
+  ${extractFunctionSource(html, "hasFiniteFinalizedGeometry")}
+  ${extractFunctionSource(html, "isOrdinaryReviewOnlyFinalizedResult")}
+  return isOrdinaryReviewOnlyFinalizedResult;
+`)();
+
 const sourceDms = [
   `P01 11°28'31.26"N,08°40'42.13"W`,
   `P02 11°28'31.60"N,08°40'32.90"W`,
@@ -81,6 +101,26 @@ const initial = finalized(points, {
 });
 assert.equal(initial.geometry.type, "Polygon", "canonical WGS84 remains available internally");
 assert.notEqual(source.displayText, initial.geometry.coordinates[0].map(value => value.join(",")).join("\n"));
+const responseShapedInitial = JSON.parse(JSON.stringify(initial));
+assert.equal(Object.hasOwn(responseShapedInitial, "currentAuthorizedGeometryExportable"), false);
+assert.equal(Object.hasOwn(responseShapedInitial, "kmlAuthorityBlocked"), false);
+assert.equal(ordinaryReviewPredicate(responseShapedInitial), true, "serialized ordinary-review result omits confirmation dependency");
+assert.ok(responseShapedInitial.warnings.length > 0, "ordinary-review warning remains serialized");
+for (const blocked of [
+  { resultId: null },
+  { schemaVersion: null },
+  { resultRevision: null },
+  { geometryHash: null },
+  { geometry: null },
+  { geometry: { type: "Point", coordinates: [Infinity, 11] } },
+  { geometry: { type: "Point", coordinates: [181, 11] } },
+  { sourceAuthority: "coordinate_engine_v3" },
+  { crs: null },
+  { technicalKmlReady: false },
+  { kmlReady: false },
+  { blockingReasons: null },
+  { blockingReasons: [{ code: "TRANSFORM_FAILED" }] }
+]) assert.equal(ordinaryReviewPredicate({ ...responseShapedInitial, ...blocked }), false);
 const preview = new MapPreviewAdapter().adapt(initial, {
   expectedIdentity: {
     resultId: initial.resultId,
@@ -128,6 +168,8 @@ assert.equal(wgs84.displayText, preciseWgs84, "original WGS84 precision remains 
 const sourcePriority = html.indexOf("const sourceDisplayText =");
 const canonicalFallback = html.indexOf("|| getCanonicalCoordinateDisplayText(data.finalizedCoordinateResult)", sourcePriority);
 assert.ok(sourcePriority >= 0 && canonicalFallback > sourcePriority, "canonical display is only a fallback after source display");
+assert.match(html, /const ordinaryReviewOnly = isOrdinaryReviewOnlyFinalizedResult\(\)/, "render uses serialized finalized-result predicate");
+assert.doesNotMatch(extractFunctionSource(html, "isOrdinaryReviewOnlyFinalizedResult"), /currentAuthorizedGeometryExportable|kmlAuthorityBlocked/);
 assert.match(html, /if \(!isConfirmed && !ordinaryReviewOnly\)/, "ordinary review omits redundant confirmation button");
 assert.match(html, /建议对照原图核对坐标，部分字符可能存在识别误差。/, "ordinary review warning remains visible");
 assert.match(html, /发现 \$\{activeCoordinateFieldConflictCount\} 处坐标可能存在识别差异/, "field conflict count is user-visible");
@@ -139,7 +181,7 @@ for (const forbidden of ["geometry", "resultId", "resultRevision", "geometryHash
 
 console.log(JSON.stringify({
   suite: "source-coordinate-review-display-regression",
-  passed: 14,
+  passed: 16,
   cases: [
     "HANDWRITTEN_SOURCE_DMS_PRESERVED",
     "CANONICAL_WGS84_RETAINED_INTERNAL",
@@ -154,6 +196,8 @@ console.log(JSON.stringify({
     "ORDINARY_REVIEW_WARNING_PRESENT",
     "FIELD_CONFLICT_COUNT_SURFACED",
     "AUTHORITY_CONFIRMATION_PRESERVED",
-    "FRONTEND_NOT_PROMOTED_TO_AUTHORITY"
+    "FRONTEND_NOT_PROMOTED_TO_AUTHORITY",
+    "SERIALIZED_RESPONSE_SHAPE_ONLY",
+    "HARD_BLOCKERS_DO_NOT_BECOME_ORDINARY_REVIEW"
   ]
 }, null, 2));

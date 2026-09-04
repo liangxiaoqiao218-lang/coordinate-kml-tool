@@ -113,10 +113,44 @@ assert.equal(pendingRevision2.confirmationStatus, "pending");
 assert.equal(pendingRevision2.decisionState, "REVIEW_REQUIRED");
 assert.equal(pendingRevision2.kmlReady, true);
 
-const reviewConfirmed = await post("/api/coordinate-confirmation", {
+const secondEditedLines = [...editedLines];
+secondEditedLines[2] = `3. 11°00'30.00"N, 08°00'40.00"W`;
+const reviewPendingEdit2 = await post("/api/coordinate-revision", {
   resultId: pendingRevision2.resultId,
   resultRevision: pendingRevision2.resultRevision,
   geometryHash: pendingRevision2.geometryHash,
+  coordinateText: secondEditedLines.join("\n"),
+  requireConfirmation: true
+});
+assert.equal(reviewPendingEdit2.response.status, 200);
+const pendingRevision3 = reviewPendingEdit2.payload.finalizedCoordinateResult;
+assert.equal(pendingRevision3.resultId, pendingRevision2.resultId);
+assert.equal(pendingRevision3.resultRevision, pendingRevision2.resultRevision + 1);
+assert.notEqual(pendingRevision3.geometryHash, pendingRevision2.geometryHash);
+assert.equal(pendingRevision3.confirmationStatus, "pending");
+assert.equal(pendingRevision3.decisionState, "REVIEW_REQUIRED");
+assert.equal(pendingRevision3.kmlReady, true);
+
+const reverted = await post("/api/coordinate-revision", {
+  resultId: pendingRevision3.resultId,
+  resultRevision: pendingRevision3.resultRevision,
+  geometryHash: pendingRevision3.geometryHash,
+  coordinateText: originalLines.join("\n"),
+  requireConfirmation: true
+});
+assert.equal(reverted.response.status, 200);
+const pendingRevision4 = reverted.payload.finalizedCoordinateResult;
+assert.equal(pendingRevision4.resultId, pendingRevision3.resultId);
+assert.equal(pendingRevision4.resultRevision, pendingRevision3.resultRevision + 1);
+assert.equal(pendingRevision4.geometryHash, pendingRevision1.geometryHash, "reverted text re-derives geometry but keeps the current identity");
+assert.equal(pendingRevision4.confirmationStatus, "pending");
+assert.equal(pendingRevision4.decisionState, "REVIEW_REQUIRED");
+assert.equal(pendingRevision4.kmlReady, true);
+
+const reviewConfirmed = await post("/api/coordinate-confirmation", {
+  resultId: pendingRevision4.resultId,
+  resultRevision: pendingRevision4.resultRevision,
+  geometryHash: pendingRevision4.geometryHash,
   action: "accept"
 });
 assert.equal(reviewConfirmed.response.status, 200);
@@ -163,7 +197,7 @@ assert.match(html, /fetch\("\/api\/coordinate-manual-finalize"/);
 
 console.log(JSON.stringify({
   suite: "sr08c-manual-finalizer-regression",
-  passed: 14,
-  cases: ["MANUAL_FINALIZE", "MANUAL_REVISION", "STALE_REJECTED", "INVALID_BLOCKED", "REVIEW_PENDING_MANUAL_IDENTITY", "REVIEW_PENDING_EDIT_REOPENS_CONFIRMATION", "REVIEW_PENDING_CONFIRM_RELEASES_KML", "RAW_DECIMAL", "NUMBERED_DOT", "NUMBERED_PAREN", "NUMBERED_COLON", "NUMBERED_POLYGON", "SERVER_STRICT_BOUNDARY", "KML_AUTHORITY_ORDER"]
+  passed: 16,
+  cases: ["MANUAL_FINALIZE", "MANUAL_REVISION", "STALE_REJECTED", "INVALID_BLOCKED", "REVIEW_PENDING_MANUAL_IDENTITY", "REVIEW_PENDING_EDIT_REOPENS_CONFIRMATION", "REVIEW_PENDING_SECOND_EDIT", "REVIEW_PENDING_REVERT_CURRENT_IDENTITY", "REVIEW_PENDING_CONFIRM_RELEASES_KML", "RAW_DECIMAL", "NUMBERED_DOT", "NUMBERED_PAREN", "NUMBERED_COLON", "NUMBERED_POLYGON", "SERVER_STRICT_BOUNDARY", "KML_AUTHORITY_ORDER"]
 }, null, 2));
 

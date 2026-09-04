@@ -59,6 +59,7 @@ assert.doesNotMatch(
 
 const renderSource = extractFunctionSource(html, "renderHandwrittenDmsReviewState");
 assert.match(renderSource, /ordinaryReviewOnly/, "ordinary review is distinguished from authority-changing confirmation");
+assert.match(renderSource, /isOrdinaryReviewOnlyFinalizedResult\(\)/, "ordinary review is derived from serialized response fields");
 assert.match(renderSource, /!isConfirmed && !ordinaryReviewOnly/, "ordinary review omits the redundant confirmation control");
 assert.match(renderSource, /我已对照原图核对当前坐标/, "authority-changing confirmation control remains available");
 assert.match(renderSource, /建议对照原图核对坐标，部分字符可能存在识别误差。/, "ordinary review warning remains visible");
@@ -151,6 +152,63 @@ assert.equal(reviewOnlyFinalized.decisionState, COORDINATE_DECISION_STATE.REVIEW
 assert.equal(reviewOnlyFinalized.technicalKmlReady, true, "review-only result remains technically KML-ready");
 assert.equal(reviewOnlyFinalized.kmlReady, true, "valid current review-only geometry remains KML-ready with warning");
 
+const serializedReviewOnly = JSON.parse(JSON.stringify(reviewOnlyFinalized));
+assert.equal(Object.hasOwn(serializedReviewOnly, "currentAuthorizedGeometryExportable"), false);
+assert.equal(Object.hasOwn(serializedReviewOnly, "kmlAuthorityBlocked"), false);
+const reviewPredicate = Function(`
+  ${extractFunctionSource(html, "getFinalizedCoordinateIdentity")}
+  ${extractFunctionSource(html, "hasFiniteFinalizedGeometry")}
+  ${extractFunctionSource(html, "isOrdinaryReviewOnlyFinalizedResult")}
+  return isOrdinaryReviewOnlyFinalizedResult;
+`)();
+assert.equal(reviewPredicate(serializedReviewOnly), true);
+
+const makePanel = () => ({ style: {}, className: "", children: [], replaceChildren() { this.children = []; }, appendChild(node) { this.children.push(node); } });
+const panel = makePanel();
+const renderOrdinaryReview = Function("context", `
+  const document = context.document;
+  const handwrittenDmsReviewPanel = context.panel;
+  const handwrittenDmsReviewState = context.state;
+  const HANDWRITTEN_DMS_REVIEW_STATUS = context.statuses;
+  const activeFinalizedCoordinateResult = context.result;
+  const activeCoordinateFieldConflictCount = context.conflicts;
+  const confirmHandwrittenDmsReview = () => {};
+  ${extractFunctionSource(html, "getFinalizedCoordinateIdentity")}
+  ${extractFunctionSource(html, "hasFiniteFinalizedGeometry")}
+  ${extractFunctionSource(html, "isOrdinaryReviewOnlyFinalizedResult")}
+  ${renderSource}
+  renderHandwrittenDmsReviewState();
+`);
+const context = {
+  document: { createElement: tag => ({ tag, className: "", textContent: "", addEventListener() {} }) },
+  panel,
+  state: { required: true, status: "pending", revision: 1, confirmedRevision: null },
+  statuses: { CONFIRMED: "confirmed", EDITED_PENDING: "edited_pending" },
+  result: serializedReviewOnly,
+  conflicts: 0
+};
+renderOrdinaryReview(context);
+assert.equal(panel.children.length, 1, "ordinary review renders warning without a confirmation button");
+assert.match(panel.children[0].textContent, /建议对照原图核对坐标/);
+context.result = { ...serializedReviewOnly, kmlReady: false, blockingReasons: [{ code: "CRS_NOT_FINALIZED" }] };
+renderOrdinaryReview(context);
+assert.equal(panel.children.length, 2, "authority-changing blocked state retains confirmation UI");
+assert.equal(panel.children[1].textContent, "我已对照原图核对当前坐标");
+
+const stateAfterTextChange = Function(`
+  const HANDWRITTEN_DMS_REVIEW_STATUS = { CONFIRMED: "confirmed", EDITED_PENDING: "edited_pending" };
+  ${extractFunctionSource(html, "createHandwrittenDmsReviewState")}
+  ${extractFunctionSource(html, "getHandwrittenDmsReviewStateAfterTextChange")}
+  return getHandwrittenDmsReviewStateAfterTextChange;
+`)();
+let lifecycleState = { required: true, status: "pending", revision: 0, confirmedRevision: null, source: "finalized_coordinate_result_v1" };
+for (const revision of [2, 3, 4]) {
+  lifecycleState = stateAfterTextChange(lifecycleState);
+  const current = { ...serializedReviewOnly, resultRevision: revision, geometryHash: `sha256:current-${revision}` };
+  assert.equal(reviewPredicate(current), true, `edit revision ${revision} remains exportable with warning`);
+  assert.equal(current.resultRevision, revision, "current revision replaces stale identity");
+}
+
 const hardFailureInput = createLegacyFinalizerInput({
   recognitionResult: { coordinates: "invalid", precisionMode: "dms-coordinates" },
   coordinateEngineV2: {
@@ -184,7 +242,7 @@ assert.equal(hardFailureFinalized.decisionState, COORDINATE_DECISION_STATE.BLOCK
 
 console.log(JSON.stringify({
   suite: "p08h-confirmation-ui-lifecycle-regression",
-  passed: 14,
+  passed: 18,
   cases: [
     "PENDING_FINALIZED_RESULT_SHOWS_CONFIRMATION_UI",
     "CONFIRMATION_RENDER_SOURCE_CANONICAL_FINALIZED_RESULT",
@@ -199,6 +257,10 @@ console.log(JSON.stringify({
     "RECOGNITION_ADOPTION_SYNCS_UI",
     "KML_USES_SERVER_KML_READY",
     "REVIEW_ONLY_RECOGNITION_ENTERS_CONFIRMATION_WORKFLOW",
-    "HARD_FAILURE_REMAINS_BLOCKED"
+    "HARD_FAILURE_REMAINS_BLOCKED",
+    "SERIALIZED_RESPONSE_SHAPE_OMITS_INTERNAL_FIELDS",
+    "ORDINARY_REVIEW_DOM_BUTTON_ABSENT_WARNING_PRESENT",
+    "AUTHORITY_CHANGING_CONFIRMATION_DOM_PRESERVED",
+    "MULTIPLE_EDIT_AND_REVERT_LIFECYCLE_CURRENT_IDENTITY"
   ]
 }, null, 2));
