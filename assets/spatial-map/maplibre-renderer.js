@@ -3,7 +3,7 @@ import { createGeometryRenderPlan } from "./geometry-render-plan.js";
 const WEB_MERCATOR_RADIUS = 6378137;
 const WEB_MERCATOR_MAX_LATITUDE = 85.05112878;
 export const LOCAL_MAP_PADDING_RATIO = 0.1;
-export const LOCAL_MAP_MIN_RELATIVE_ZOOM = 1;
+export const LOCAL_MAP_MIN_RELATIVE_ZOOM = 0.015625;
 export const LOCAL_MAP_MAX_RELATIVE_ZOOM = 20;
 
 function svgElement(name, attributes = {}) {

@@ -136,6 +136,8 @@
   overscroll-behavior: contain;
 }
 
+.spatial-sheet-toggle[aria-expanded="false"] ~ .spatial-result-details { display: none; }
+
 .spatial-detail-heading {
   display: flex;
   align-items: center;
@@ -157,7 +159,6 @@
     border-radius: 16px;
   }
 
-  .spatial-sheet-toggle[aria-expanded="false"] ~ .spatial-result-details { display: none; }
   .spatial-result-card > .spatial-map-failure {
     margin: 0 12px 8px;
     padding: 5px 8px;

@@ -310,6 +310,32 @@ test("P09E-35", "mobile collapsed and expanded states reuse one tappable provide
   assert.match(css, /\.spatial-result-card > \.spatial-map-failure[\s\S]*font-size: 12px/);
 });
 
+test("P11-01", "desktop and mobile result cards visually follow the shared expanded state", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
+  const sharedCollapseRule = css.match(/\.spatial-sheet-toggle\[aria-expanded="false"\] ~ \.spatial-result-details\s*\{[^}]*display:\s*none[^}]*\}/)?.[0] || "";
+  const toggleFlow = html.match(/function setSpatialSheetExpanded[\s\S]*?function spatialCollapsedSummaryText/)?.[0] || "";
+  assert.ok(sharedCollapseRule);
+  assert.match(toggleFlow, /setAttribute\("aria-expanded", String\(next\)\)/);
+  assert.match(toggleFlow, /function toggleSpatialResultSheet\(\)[\s\S]*setSpatialSheetExpanded\(!expanded\)/);
+  assert.doesNotMatch(toggleFlow, /renderSpatialResult|\.open\(/);
+  assert.match(html, /setSpatialSheetExpanded\(!window\.matchMedia\("\(max-width: 640px\)"\)\.matches\)/);
+});
+
+test("P11-02", "Coordinate Result keeps Map and export actions before optional family controls", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const actions = html.indexOf('class="coordinate-result-actions"');
+  const map = html.indexOf('id="mapPreviewAction"');
+  const kml = html.indexOf('id="coordinateKmlAction"');
+  const share = html.indexOf('id="shareResultAction"');
+  const handwritten = html.indexOf('id="handwrittenDmsReviewPanel"');
+  const grid = html.indexOf('id="cadastralGridPanel"');
+  const details = html.indexOf('id="debugPanel"');
+  assert.ok(actions < map && map < kml && kml < share);
+  assert.ok(share < handwritten && handwritten < grid && grid < details);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*#coordinatePage[\s\S]*overflow-x: clip/);
+});
+
 test("KML-UI-01", "coordinate page eligible state is visibly enabled", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(html, /function coordinateKmlVisuallyEligible\([\s\S]*activeFinalizedCoordinateResult\.kmlReady === true/);
@@ -367,7 +393,7 @@ test("DUPLICATE-01", "the old inline SVG geometry renderer is no longer a displa
   assert.match(html, /<div id="spatialLocalMapCanvas"[^>]*><\/div>/);
 });
 
-assert.equal(tests.length, 45);
+assert.equal(tests.length, 47);
 let passed = 0;
 for (const entry of tests) {
   try {

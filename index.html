@@ -4556,13 +4556,6 @@
 
       <div id="recognitionSummary" class="recognition-status" aria-live="polite" hidden></div>
       <div id="recognitionProgress" class="recognition-status" aria-live="polite"></div>
-      <div id="handwrittenDmsReviewPanel" class="handwritten-dms-review-panel" aria-live="polite"></div>
-
-    <div id="cadastralGridPanel" class="panel cadastral-grid-panel">
-      <label for="cadastralGridSelection">矿权网格编号</label>
-      <input id="cadastralGridSelection" type="text" placeholder="输入要生成的网格编号，例如：280-290,306-316,333-342" />
-      <p class="cadastral-grid-hint">不填写时默认生成识别表格里的全部网格。已识别为马达加斯加矿权格网，当前默认按 XV/YV 为单格中心点生成网格。生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。</p>
-    </div>
 
     <div class="coordinate-result-actions" aria-label="坐标结果操作">
       <button id="mapPreviewAction" type="button" class="primary-action map-preview-action" onclick="openSpatialResult()" hidden disabled>查看地图</button>
@@ -4570,6 +4563,14 @@
         <button id="coordinateKmlAction" type="button" class="secondary kml-download-action coordinate-kml-action" data-state="blocked" aria-disabled="true" onclick="downloadKml()" disabled>下载 KML</button>
         <button id="shareResultAction" type="button" class="spatial-share-action" onclick="openSpatialShareDialog()" hidden disabled>分享结果</button>
       </div>
+    </div>
+
+      <div id="handwrittenDmsReviewPanel" class="handwritten-dms-review-panel" aria-live="polite"></div>
+
+    <div id="cadastralGridPanel" class="panel cadastral-grid-panel">
+      <label for="cadastralGridSelection">矿权网格编号</label>
+      <input id="cadastralGridSelection" type="text" placeholder="输入要生成的网格编号，例如：280-290,306-316,333-342" />
+      <p class="cadastral-grid-hint">不填写时默认生成识别表格里的全部网格。已识别为马达加斯加矿权格网，当前默认按 XV/YV 为单格中心点生成网格。生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。</p>
     </div>
 
     <details id="debugPanel" class="panel debug-panel">

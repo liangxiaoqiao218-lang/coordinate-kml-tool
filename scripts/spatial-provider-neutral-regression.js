@@ -657,8 +657,59 @@ test("ZOOM-02", "zoom does not change canonical geometry", async () => {
 test("ZOOM-03", "relative zoom limits are enforced", async () => {
   const local = makeLocalRenderer(); try { await local.renderer.render(polygon); const fit = local.renderer.fitTransform.scale; local.renderer.zoomAt(1e9, 0, 0); assert.equal(local.renderer.getViewState().scale, fit * LOCAL_MAP_MAX_RELATIVE_ZOOM); local.renderer.zoomAt(1e-12, 0, 0); assert.equal(local.renderer.getViewState().scale, fit * LOCAL_MAP_MIN_RELATIVE_ZOOM); } finally { local.restore(); }
 });
+test("ZOOM-04", "local view zooms below the former initial-fit floor to one sixty-fourth", async () => {
+  const local = makeLocalRenderer();
+  try {
+    await local.renderer.render(polygon);
+    const fitScale = local.renderer.fitTransform.scale;
+    local.renderer.zoomAt(1e-12, 195, 300);
+    assert.equal(LOCAL_MAP_MIN_RELATIVE_ZOOM, 1 / 64);
+    assert.ok(local.renderer.getViewState().scale < fitScale);
+    assert.equal(local.renderer.getViewState().scale, fitScale / 64);
+  } finally { local.restore(); }
+});
+test("ZOOM-05", "deep zoom-out stays finite and preserves uniform display scale", async () => {
+  const local = makeLocalRenderer();
+  try {
+    await local.renderer.render(polygon);
+    local.renderer.zoomAt(1e-12, 195, 300);
+    const state = local.renderer.getViewState();
+    assert.ok([state.scale, state.translateX, state.translateY].every(Number.isFinite));
+    const projected = projectWgs84GeometryForDisplay(polygon);
+    const first = projected.coordinates[0][0];
+    const second = projected.coordinates[0][1];
+    const screen = [first, second].map(position => applyLocalViewTransform(position, state));
+    assert.ok(Math.abs((screen[1][0] - screen[0][0]) / (second[0] - first[0]) - state.scale) < 1e-12);
+  } finally { local.restore(); }
+});
+test("ZOOM-06", "pan and zoom-in remain available after deep zoom-out", async () => {
+  const local = makeLocalRenderer();
+  try {
+    await local.renderer.render(polygon);
+    local.renderer.zoomAt(1e-12, 195, 300);
+    const deep = local.renderer.getViewState();
+    local.renderer.panBy(23, -11);
+    const panned = local.renderer.getViewState();
+    assert.equal(panned.translateX, deep.translateX + 23);
+    assert.equal(panned.translateY, deep.translateY - 11);
+    local.renderer.zoomAt(2, 195, 300);
+    assert.equal(local.renderer.getViewState().scale, deep.scale * 2);
+  } finally { local.restore(); }
+});
 test("RESET-01", "reset restores the original fit transform", async () => {
   const local = makeLocalRenderer(); try { await local.renderer.render(polygon); const fit = local.renderer.getViewState(); local.renderer.panBy(20, 20); local.renderer.zoomAt(2, 100, 100); local.renderer.fitBounds(); assert.deepEqual(local.renderer.getViewState(), fit); } finally { local.restore(); }
+});
+test("RESET-02", "deep zoom-out does not replace the stored initial fit transform", async () => {
+  const local = makeLocalRenderer();
+  try {
+    await local.renderer.render(polygon);
+    const fit = { ...local.renderer.fitTransform };
+    local.renderer.zoomAt(1e-12, 195, 300);
+    local.renderer.panBy(30, 20);
+    assert.deepEqual(local.renderer.fitTransform, fit);
+    local.renderer.fitBounds();
+    assert.deepEqual(local.renderer.getViewState(), fit);
+  } finally { local.restore(); }
 });
 test("LIFECYCLE-01", "new geometry resets previous view transform", async () => {
   const local = makeLocalRenderer(); try { await local.renderer.render(polygon); local.renderer.panBy(70, 40); await local.renderer.render(line); assert.deepEqual(local.renderer.getViewState(), { ...local.renderer.fitTransform }); } finally { local.restore(); }
@@ -680,7 +731,7 @@ test("HASH-01", "canonical geometry hash remains unchanged after all local inter
 });
 
 assert.equal(isSpatialMapProvider(fakeProvider()), true);
-assert.equal(tests.length, 70);
+assert.equal(tests.length, 74);
 
 let passed = 0;
 for (const entry of tests) {
