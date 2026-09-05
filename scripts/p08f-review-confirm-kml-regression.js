@@ -224,7 +224,7 @@ assert.match(downloadKmlSource, /finally \{\s*clearKmlGenerationProgress\(\)/, "
 assert.match(clearKmlGenerationProgressSource, /classList\.contains\("loading"\)/, "cleanup does not erase a visible success or error state");
 assert.match(showKmlCompletionSource, /clearKmlGenerationProgress\(\);\s*showRecognitionProgress\(text, warning \? "warning" : "success"/, "success cleanup is explicit and independent of message wording");
 assert.doesNotMatch(downloadKmlInternalSource, /showMessage\(`已[^`]*KML/, "KML success no longer relies on Chinese message classification");
-assert.match(downloadKmlInternalSource, /consumeUsage\("convert"\)/, "quota consumption remains at the authorized KML operation boundary");
+assert.doesNotMatch(downloadKmlInternalSource, /consumeUsage\(/, "KML consumes an already charged result without another usage debit");
 
 console.log(JSON.stringify({
   suite: "p08f-review-confirm-kml-regression",
@@ -252,6 +252,6 @@ console.log(JSON.stringify({
     "KML_BLOCKED_RETURN_CLEANUP",
     "KML_SUCCESS_STATE_PRESERVED",
     "KML_SUCCESS_MESSAGE_INDEPENDENT",
-    "KML_QUOTA_BOUNDARY_PRESERVED"
+    "KML_ZERO_ADDITIONAL_USAGE_PRESERVED"
   ]
 }, null, 2));

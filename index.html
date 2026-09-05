@@ -5181,6 +5181,8 @@ Au值 = 纯度 × 10 后取整数</div>
     let currentGoldPriceUpdatedAt = "";
     let goldUsageLoggedThisSession = false;
     let visitorId = "";
+    let usageSessionReadyPromise = null;
+    const pendingUsageOperations = new Map();
     try {
       visitorId = getOrCreateVisitorId();
     } catch (error) {
@@ -5555,6 +5557,55 @@ Au值 = 纯度 × 10 后取整数</div>
       return visitorId;
     }
 
+    async function ensureUsageSession() {
+      if (!usageSessionReadyPromise) {
+        usageSessionReadyPromise = fetch("/api/usage/session", {
+          method: "POST",
+          headers: getSourceHeaders()
+        }).then(async response => {
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.success === false) {
+            throw new Error(data.error || "无法建立使用会话。");
+          }
+          return true;
+        }).catch(error => {
+          usageSessionReadyPromise = null;
+          throw error;
+        });
+      }
+      return usageSessionReadyPromise;
+    }
+
+    async function sha256File(file) {
+      const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+      return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+    }
+
+    async function getUsageOperationToken(tool, file) {
+      await ensureUsageSession();
+      const requestFingerprint = await sha256File(file);
+      const key = `${tool}:${requestFingerprint}`;
+      const pending = pendingUsageOperations.get(key);
+      if (pending) return pending;
+
+      const response = await fetch("/api/usage/operation", {
+        method: "POST",
+        headers: getSourceHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ tool, requestFingerprint })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.operationToken) {
+        throw new Error(data.error || "无法建立服务操作标识。");
+      }
+      const operation = Object.freeze({ key, token: data.operationToken });
+      pendingUsageOperations.set(key, operation);
+      return operation;
+    }
+
+    function completeUsageOperation(key) {
+      pendingUsageOperations.delete(key);
+    }
+
     function normalizeUserCode(value) {
       const raw = String(value || "")
         .trim()
@@ -5754,23 +5805,8 @@ Au值 = 纯度 × 10 后取整数</div>
 
     async function loadUserQuota() {
       try {
-        const usageResponse = await fetch(`/api/user-usage?visitorId=${encodeURIComponent(visitorId)}`, {
-          headers: getSourceHeaders({
-            "x-visitor-id": visitorId
-          })
-        });
-        const usageData = await usageResponse.json().catch(() => ({}));
-
-        if (usageResponse.ok && typeof usageData.judge_remaining !== "undefined" && typeof usageData.convert_remaining !== "undefined") {
-          updateSimpleUsageDisplay(usageData);
-          return;
-        }
-
-        const response = await fetch(`/api/usage/quota?visitorId=${encodeURIComponent(visitorId)}`, {
-          headers: getSourceHeaders({
-            "x-visitor-id": visitorId
-          })
-        });
+        await ensureUsageSession();
+        const response = await fetch("/api/usage/quota", { headers: getSourceHeaders() });
         const data = await response.json().catch(() => ({}));
 
         if (response.ok && data.success !== false && data.quota) {
@@ -5917,32 +5953,42 @@ Au值 = 纯度 × 10 后取整数</div>
     function getAccountRemaining(type) {
       const quota = currentQuota || {};
       const isVip = isQuotaVip(quota);
+      const todayRemaining = Math.max(0, Number(quota?.freeTrial?.todayRemaining ?? quota.free_daily_remaining ?? 0));
+      const lifetimeRemaining = Math.max(0, Number(quota?.freeTrial?.lifetimeRemaining ?? quota.free_lifetime_remaining ?? 0));
+      const exhausted = Boolean(quota?.freeTrial?.exhausted ?? lifetimeRemaining === 0);
+      const sharedFree = Math.min(todayRemaining, lifetimeRemaining);
 
       if (type === "judge") {
-        const freeJudge = getQuotaNumber(quota, "free_judge_count", "freeJudgeCount");
-        const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
+        const paidJudge = Math.max(0, Number(quota?.paid?.judgeRemaining ?? getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount")));
         return {
           isVip,
-          free: Math.max(0, freeJudge),
+          free: Math.max(0, sharedFree),
+          todayRemaining,
+          lifetimeRemaining,
+          exhausted,
           paid: Math.max(0, paidJudge),
-          total: Math.max(0, freeJudge + paidJudge)
+          total: Math.max(0, sharedFree + paidJudge)
         };
       }
 
-      const freeConvert = getQuotaNumber(quota, "free_convert_count", "freeConvertCount");
-      const paidConvert = getQuotaNumber(quota, "paid_convert_count", "paidConvertCount");
+      const paidConvert = Math.max(0, Number(quota?.paid?.coordinateRemaining ?? getQuotaNumber(quota, "paid_convert_count", "paidConvertCount")));
       return {
         isVip,
-        free: Math.max(0, freeConvert),
+        free: Math.max(0, sharedFree),
+        todayRemaining,
+        lifetimeRemaining,
+        exhausted,
         paid: Math.max(0, paidConvert),
-        total: Math.max(0, freeConvert + paidConvert)
+        total: Math.max(0, sharedFree + paidConvert)
       };
     }
 
     function formatAccountRemainingText(info) {
-      const freeText = `\u4eca\u65e5\u514d\u8d39\u5269\u4f59 ${info.free ?? 0} \u6b21`;
+      const freeText = info.exhausted
+        ? "\u514d\u8d39\u4f53\u9a8c\u5df2\u7528\u5b8c\uff0c\u5f00\u901a\u670d\u52a1\u540e\u53ef\u7ee7\u7eed\u4f7f\u7528"
+        : `\u514d\u8d39\u4f53\u9a8c\uff1a\u4eca\u65e5\u5269\u4f59 ${info.todayRemaining ?? 0} \u6b21\uff0c\u7d2f\u8ba1\u5269\u4f59 ${info.lifetimeRemaining ?? 0} \u6b21`;
       const balanceLabel = info.isVip ? "\u672c\u6708\u5269\u4f59" : "\u4ed8\u8d39\u5269\u4f59";
-      return `${freeText}\uff0c${balanceLabel} ${info.paid ?? 0} \u6b21`;
+      return `${freeText}\uff1b${balanceLabel} ${info.paid ?? 0} \u6b21`;
     }
 
     function formatCompactQuotaLabel(type, info) {
@@ -5990,12 +6036,13 @@ Au值 = 纯度 × 10 后取整数</div>
       currentQuota = quota;
       const directConvert = Number(quota.convert_remaining);
       const directJudge = Number(quota.judge_remaining);
-      const freeConvert = getQuotaNumber(quota, "free_convert_count", "freeConvertCount");
-      const paidConvert = getQuotaNumber(quota, "paid_convert_count", "paidConvertCount");
-      const freeJudge = getQuotaNumber(quota, "free_judge_count", "freeJudgeCount");
-      const paidJudge = getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount");
-      const convertTotal = Number.isFinite(directConvert) ? Math.max(0, directConvert) : Math.max(0, freeConvert + paidConvert);
-      const judgeTotal = Number.isFinite(directJudge) ? Math.max(0, directJudge) : Math.max(0, freeJudge + paidJudge);
+      const paidConvert = Math.max(0, Number(quota?.paid?.coordinateRemaining ?? getQuotaNumber(quota, "paid_convert_count", "paidConvertCount")));
+      const paidJudge = Math.max(0, Number(quota?.paid?.judgeRemaining ?? getQuotaNumber(quota, "paid_judge_count", "paidJudgeCount")));
+      const todayRemaining = Math.max(0, Number(quota?.freeTrial?.todayRemaining ?? quota.free_daily_remaining ?? 0));
+      const lifetimeRemaining = Math.max(0, Number(quota?.freeTrial?.lifetimeRemaining ?? quota.free_lifetime_remaining ?? 0));
+      const sharedFree = Math.min(todayRemaining, lifetimeRemaining);
+      const convertTotal = Number.isFinite(directConvert) ? Math.max(0, directConvert) : Math.max(0, sharedFree + paidConvert);
+      const judgeTotal = Number.isFinite(directJudge) ? Math.max(0, directJudge) : Math.max(0, sharedFree + paidJudge);
       const convertPaidTotal = Math.max(0, paidConvert);
       const judgePaidTotal = Math.max(0, paidJudge);
       const quotaIsVip = isQuotaVip(quota);
@@ -9117,6 +9164,7 @@ Au值 = 纯度 × 10 后取整数</div>
           fileType: compressedFiles.map(file => file.type).join(","),
           judgeType: judgeType.value
         });
+        const usageOperation = await getUsageOperationToken("judge", compressedFiles[0]);
 
         const sendJudgeRequest = async () => {
           const formData = new FormData();
@@ -9128,10 +9176,12 @@ Au值 = 纯度 × 10 后取整数</div>
             const response = await fetch("/api/analyze-mining-image", {
               method: "POST",
               headers: getSourceHeaders({
-                "x-visitor-id": visitorId
+                "x-visitor-id": visitorId,
+                "x-usage-operation-token": usageOperation.token
               }),
               body: formData
             });
+            completeUsageOperation(usageOperation.key);
             let data;
             try {
               data = await response.clone().json();
@@ -12950,11 +13000,6 @@ ${placemarks}
 
       const finalizedGeometrySource = getAuthorizedFinalizedGeometryKmlSource();
       if (finalizedGeometrySource) {
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
         const groups = finalizedGeometrySource.groups;
         const pairs = groups.flat();
         let placemarks = "";
@@ -13031,12 +13076,6 @@ ${placemarks}
           return;
         }
 
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
-
         const kml = buildCadastralGridKml(wgs84Polygons, gridResult.dx, gridResult.dy);
         const blob = new Blob([kml], {
           type: "application/vnd.google-earth.kml+xml;charset=utf-8"
@@ -13070,12 +13109,6 @@ ${placemarks}
         }));
         const selectedType = inferGeometry(pairs);
         exportType.value = selectedType;
-
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
 
         let placemarks = "";
         let documentName = "MGRS / UTM Grid Reference";
@@ -13130,12 +13163,6 @@ ${placemarks}
           const selectedType = inferGeometry(pairs);
           exportType.value = selectedType;
 
-          const usageAllowed = await consumeUsage("convert");
-          if (!usageAllowed) {
-            showKmlPermissionFailure();
-            return;
-          }
-
           const kml = buildChatCoordinatesKml(pairs, selectedType, {
             documentName: "French Perimeter DMS",
             sourceDescription: "Source interpreted from French perimeter DMS prose. Ouest is negative longitude and Nord is positive latitude. KML coordinates are written as longitude,latitude,0."
@@ -13177,12 +13204,6 @@ ${placemarks}
         const pairs = pairGroups.flat();
         const selectedType = inferGeometry(pairs);
         exportType.value = selectedType;
-
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
 
         let kml = "";
         if (pairGroups.length > 1) {
@@ -13244,12 +13265,6 @@ ${placemarks}
       if (dmsGroupedGroupsForExport.length > 1) {
         const pairs = dmsGroupedGroupsForExport.flat();
 
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
-
         const placemarks = dmsGroupedGroupsForExport
           .map((group, index) => buildNamedPolygonKml(group, `Mining Area ${index + 1}`, index + 1))
           .join("\n");
@@ -13290,12 +13305,6 @@ ${placemarks}
         }));
         const selectedType = inferGeometry(pairs);
         exportType.value = selectedType;
-
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
 
         const kml = buildChatCoordinatesKml(pairs, selectedType);
         const blob = new Blob([kml], {
@@ -13365,12 +13374,6 @@ ${placemarks}
           return;
         }
 
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
-          return;
-        }
-
         const kml = buildKyrgyzGkKml(wgs84Pairs);
         const blob = new Blob([kml], {
           type: "application/vnd.google-earth.kml+xml;charset=utf-8"
@@ -13427,12 +13430,6 @@ ${placemarks}
       const validGroups = selectedType === "Point"
         ? coordinateGroups
         : (coordinateGroups.length > 1 ? coordinateGroups : [pairs]);
-
-      const usageAllowed = await consumeUsage("convert");
-      if (!usageAllowed) {
-        showKmlPermissionFailure();
-        return;
-      }
 
       let placemarks = "";
       let documentName = "";
@@ -13539,6 +13536,7 @@ ${placemarks}
         formData.append("image", file);
         formData.append("visitorId", currentVisitorId);
         formData.append("userCode", userCode);
+        const usageOperation = await getUsageOperationToken("coordinate", file);
 
         appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
         appendDebug("正在调用识别接口");
@@ -13548,10 +13546,12 @@ ${placemarks}
         const response = await fetch("/api/recognize-coordinates", {
           method: "POST",
           headers: getSourceHeaders({
-            "x-visitor-id": currentVisitorId
+            "x-visitor-id": currentVisitorId,
+            "x-usage-operation-token": usageOperation.token
           }),
           body: formData
         });
+        completeUsageOperation(usageOperation.key);
 
         let data;
         try {

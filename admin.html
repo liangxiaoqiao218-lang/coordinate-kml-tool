@@ -1695,12 +1695,12 @@
           <input id="pricingAddCount" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>免费矿地快判次数/天</span>
-          <input id="pricingFreeJudgeCount" type="number" min="0" step="1">
+          <span>共享免费体验次数/天（坐标 + 矿地快判）</span>
+          <input id="pricingFreeDailyMax" type="number" min="0" step="1">
         </label>
         <label class="config-field">
-          <span>免费坐标/KML次数/天</span>
-          <input id="pricingFreeConvertCount" type="number" min="0" step="1">
+          <span>共享免费体验终身上限</span>
+          <input id="pricingFreeLifetimeMax" type="number" min="0" step="1">
         </label>
       </div>
       <div class="config-actions">
@@ -1891,16 +1891,8 @@
 
         <div class="quota-grid">
           <div>
-            <label for="quotaFreeConvert">今日免费坐标/KML（系统维护）</label>
-            <input id="quotaFreeConvert" type="number" min="0" />
-          </div>
-          <div>
             <label for="quotaPaidConvert">可用坐标/KML次数（管理员加次）</label>
             <input id="quotaPaidConvert" type="number" min="0" />
-          </div>
-          <div>
-            <label for="quotaFreeJudge">今日免费矿地快判（系统维护）</label>
-            <input id="quotaFreeJudge" type="number" min="0" />
           </div>
           <div>
             <label for="quotaPaidJudge">可用矿地快判次数（管理员加次）</label>
@@ -2090,8 +2082,8 @@
       setPricingInputValue("pricingMonthlyConvertCount", pricingConfig.monthly?.convertCount);
       setPricingInputValue("pricingAddPrice", pricingConfig.addJudge?.price ?? pricingConfig.addConvert?.price);
       setPricingInputValue("pricingAddCount", pricingConfig.addJudge?.count ?? pricingConfig.addConvert?.count);
-      setPricingInputValue("pricingFreeJudgeCount", pricingConfig.free?.judgeCount);
-      setPricingInputValue("pricingFreeConvertCount", pricingConfig.free?.convertCount);
+      setPricingInputValue("pricingFreeDailyMax", pricingConfig.free?.dailyMax);
+      setPricingInputValue("pricingFreeLifetimeMax", pricingConfig.free?.lifetimeMax);
       setPricingConfigMessage("");
     }
 
@@ -2123,8 +2115,9 @@
           count: addCount
         },
         free: {
-          judgeCount: readPricingNumber("pricingFreeJudgeCount", pricingConfig.free?.judgeCount || 0),
-          convertCount: readPricingNumber("pricingFreeConvertCount", pricingConfig.free?.convertCount || 0)
+          dailyMax: readPricingNumber("pricingFreeDailyMax", pricingConfig.free?.dailyMax || 0),
+          lifetimeMax: readPricingNumber("pricingFreeLifetimeMax", pricingConfig.free?.lifetimeMax || 0),
+          timezone: "Asia/Shanghai"
         }
       };
     }
@@ -2180,7 +2173,7 @@
       });
       showAdminModule(activeAdminModule);
       renderGrowthDashboardExtras({});
-      ["quotaFreeConvert", "quotaPaidConvert", "quotaFreeJudge", "quotaPaidJudge", "quotaAdminNote", "quotaEditVipInput"].forEach(id => {
+      ["quotaPaidConvert", "quotaPaidJudge", "quotaAdminNote", "quotaEditVipInput"].forEach(id => {
         document.getElementById(id)?.addEventListener("input", () => {
           quotaEditorDirty = true;
         });
@@ -3847,9 +3840,7 @@
       document.getElementById("quotaEditUserId").textContent = selectedSupabaseUser.user_id || "-";
       document.getElementById("quotaEditVip").textContent = selectedSupabaseUser.is_vip ? "是" : "否";
       document.getElementById("quotaEditVipInput").checked = Boolean(selectedSupabaseUser.is_vip);
-      document.getElementById("quotaFreeConvert").value = toQuotaInputValue(selectedSupabaseUser.free_convert_count);
       document.getElementById("quotaPaidConvert").value = toQuotaInputValue(selectedSupabaseUser.paid_convert_count);
-      document.getElementById("quotaFreeJudge").value = toQuotaInputValue(selectedSupabaseUser.free_judge_count);
       document.getElementById("quotaPaidJudge").value = toQuotaInputValue(selectedSupabaseUser.paid_judge_count);
       document.getElementById("quotaAdminNote").value = selectedSupabaseUser.admin_note || "";
       renderUserDetailSummary(selectedSupabaseUser);
@@ -3903,20 +3894,6 @@
       }
 
       const changed = [];
-      const freeConvertInput = document.getElementById("quotaFreeConvert");
-      const freeJudgeInput = document.getElementById("quotaFreeJudge");
-      const currentFreeConvert = toQuotaInputValue(freeConvertInput?.value);
-      const currentFreeJudge = toQuotaInputValue(freeJudgeInput?.value);
-      const originalFreeConvert = toQuotaInputValue(selectedSupabaseUser.free_convert_count);
-      const originalFreeJudge = toQuotaInputValue(selectedSupabaseUser.free_judge_count);
-
-      if (currentFreeConvert !== originalFreeConvert) {
-        changed.push("今日免费坐标/KML");
-      }
-      if (currentFreeJudge !== originalFreeJudge) {
-        changed.push("今日免费矿地快判");
-      }
-
       return changed;
     }
 
@@ -3989,9 +3966,7 @@
         const result = await adminFetch(`/api/admin/supabase-users/${encodeURIComponent(selectedSupabaseUser.user_id)}/quota`, {
           method: "PATCH",
           body: JSON.stringify({
-            free_convert_count: document.getElementById("quotaFreeConvert").value,
             paid_convert_count: document.getElementById("quotaPaidConvert").value,
-            free_judge_count: document.getElementById("quotaFreeJudge").value,
             paid_judge_count: document.getElementById("quotaPaidJudge").value
           })
         });
@@ -4017,9 +3992,7 @@
           });
           selectedSupabaseUser = noteResult.user || selectedSupabaseUser;
         }
-        document.getElementById("quotaFreeConvert").value = toQuotaInputValue(selectedSupabaseUser.free_convert_count);
         document.getElementById("quotaPaidConvert").value = toQuotaInputValue(selectedSupabaseUser.paid_convert_count);
-        document.getElementById("quotaFreeJudge").value = toQuotaInputValue(selectedSupabaseUser.free_judge_count);
         document.getElementById("quotaPaidJudge").value = toQuotaInputValue(selectedSupabaseUser.paid_judge_count);
         document.getElementById("quotaAdminNote").value = selectedSupabaseUser.admin_note || "";
         renderUserDetailSummary(selectedSupabaseUser);

@@ -63,6 +63,20 @@ import {
 } from "./server/spatial/sharing/shared-spatial-result-v1.js";
 import { SupabaseSpatialShareStore } from "./server/spatial/sharing/supabase-share-store.js";
 import {
+  FREE_TRIAL_DAILY_MAX,
+  FREE_TRIAL_LIFETIME_MAX,
+  FREE_DAY_TIMEZONE,
+  USAGE_IDENTITY_COOKIE,
+  USAGE_OPERATION_HEADER,
+  USAGE_EVENT_TYPE,
+  UsageTokenError,
+  createUsageTokenAuthority,
+  isCoordinateResultChargeable,
+  isJudgeResultChargeable,
+  toSharedQuotaPayload
+} from "./server/usage/usage-policy.js";
+import { createSupabaseUsageLedger } from "./server/usage/supabase-usage-ledger.js";
+import {
   COORDINATE_DECISION_STATE,
   FINALIZED_COORDINATE_SCHEMA_VERSION,
   CONFIRMATION_RUNTIME_VERSION,
@@ -100,10 +114,84 @@ const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCO
 const aliyunOcrModel = process.env.ALIYUN_OCR_MODEL || process.env.DASHSCOPE_OCR_MODEL || "qwen-vl-ocr-latest";
 const supabaseUrl = String(process.env.SUPABASE_URL || "").trim();
 const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-const supabase = supabaseUrl && supabaseServiceRoleKey
-  ? createClient(supabaseUrl, supabaseServiceRoleKey)
+const uq01RuntimeRegressionEnabled = process.env.NODE_ENV === "test"
+  && process.env.UQ01_RUNTIME_REGRESSION_MODE === "true";
+const uq01RuntimeRegressionDependencies = uq01RuntimeRegressionEnabled
+  ? globalThis.__GEOKITLAB_UQ01_RUNTIME_REGRESSION_DEPENDENCIES__
   : null;
+if (uq01RuntimeRegressionEnabled && !uq01RuntimeRegressionDependencies?.supabase) {
+  throw new Error("UQ01 runtime regression dependencies are required in test mode");
+}
+const supabase = uq01RuntimeRegressionDependencies?.supabase || (supabaseUrl && supabaseServiceRoleKey
+  ? createClient(supabaseUrl, supabaseServiceRoleKey)
+  : null);
 const spatialShareStore = new SupabaseSpatialShareStore({ supabase });
+const usageLedger = createSupabaseUsageLedger({ supabase });
+const usageTokenAuthority = createUsageTokenAuthority({ secret: supabaseServiceRoleKey });
+
+function readCookie(req, name) {
+  const raw = String(req?.headers?.cookie || "");
+  for (const item of raw.split(";")) {
+    const separator = item.indexOf("=");
+    if (separator < 0) continue;
+    const key = item.slice(0, separator).trim();
+    if (key === name) return decodeURIComponent(item.slice(separator + 1).trim());
+  }
+  return "";
+}
+
+function usageIdentityTokenFromRequest(req) {
+  return readCookie(req, USAGE_IDENTITY_COOKIE);
+}
+
+function setUsageIdentityCookie(req, res, token) {
+  const forwardedProto = String(req.get?.("x-forwarded-proto") || "").split(",")[0].trim();
+  res.cookie(USAGE_IDENTITY_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: Boolean(req.secure || forwardedProto === "https"),
+    maxAge: 365 * 24 * 60 * 60 * 1000,
+    path: "/"
+  });
+}
+
+function resolveUsageIdentity(req) {
+  return usageTokenAuthority.resolveIdentity(usageIdentityTokenFromRequest(req));
+}
+
+function requestFileFingerprint(file) {
+  if (!file?.buffer) return "";
+  return crypto.createHash("sha256").update(file.buffer).digest("hex");
+}
+
+function resolveUsageOperation(req, usageEventType, file) {
+  return usageTokenAuthority.resolveOperation({
+    identityToken: usageIdentityTokenFromRequest(req),
+    operationToken: req.get?.(USAGE_OPERATION_HEADER),
+    usageEventType,
+    requestFingerprint: requestFileFingerprint(file)
+  });
+}
+
+function sendUsageTokenError(res, error) {
+  const status = error instanceof UsageTokenError ? error.status : 401;
+  return res.status(status).json({
+    success: false,
+    reason: error?.code || "USAGE_TOKEN_REQUIRED",
+    error: "需要有效的服务器签发使用会话，请刷新页面后重试。"
+  });
+}
+
+function dropCommittedUsageResponseForRegression(req, route, serviceOperationId) {
+  if (!uq01RuntimeRegressionEnabled) return false;
+  const shouldDrop = uq01RuntimeRegressionDependencies?.shouldDropCommittedResponse?.({
+    route,
+    serviceOperationId
+  }) === true;
+  if (!shouldDrop) return false;
+  req.socket?.destroy();
+  return true;
+}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰的坐标区域截图。";
@@ -206,8 +294,9 @@ const DEFAULT_PRICING_CONFIG = {
     count: 10
   },
   free: {
-    judgeCount: 3,
-    convertCount: 3
+    dailyMax: FREE_TRIAL_DAILY_MAX,
+    lifetimeMax: FREE_TRIAL_LIFETIME_MAX,
+    timezone: FREE_DAY_TIMEZONE
   }
 };
 
@@ -247,8 +336,9 @@ function mergePricingConfig(source = {}) {
       count: addCount
     },
     free: {
-      judgeCount: toPricingInteger(source.free?.judgeCount, DEFAULT_PRICING_CONFIG.free.judgeCount),
-      convertCount: toPricingInteger(source.free?.convertCount, DEFAULT_PRICING_CONFIG.free.convertCount)
+      dailyMax: toPricingInteger(source.free?.dailyMax, DEFAULT_PRICING_CONFIG.free.dailyMax),
+      lifetimeMax: toPricingInteger(source.free?.lifetimeMax, DEFAULT_PRICING_CONFIG.free.lifetimeMax),
+      timezone: FREE_DAY_TIMEZONE
     }
   };
 }
@@ -271,8 +361,8 @@ function pricingConfigFromSystemConfigRow(row = {}) {
       count: row.add_count
     },
     free: {
-      judgeCount: row.free_judge_count,
-      convertCount: row.free_convert_count
+      dailyMax: row.free_trial_daily_max,
+      lifetimeMax: row.free_trial_lifetime_max
     }
   });
 }
@@ -286,8 +376,8 @@ function pricingConfigToSystemConfigRow(config) {
     monthly_convert_count: merged.monthly.convertCount,
     add_price: merged.addJudge.price,
     add_count: merged.addJudge.count,
-    free_judge_count: merged.free.judgeCount,
-    free_convert_count: merged.free.convertCount,
+    free_trial_daily_max: merged.free.dailyMax,
+    free_trial_lifetime_max: merged.free.lifetimeMax,
     updated_at: new Date().toISOString()
   };
 }
@@ -303,7 +393,7 @@ async function loadPricingConfigFromSupabase() {
 
   const { data, error } = await supabase
     .from("system_config")
-    .select("monthly_price,monthly_judge_count,monthly_convert_count,add_price,add_count,free_judge_count,free_convert_count,updated_at")
+    .select("monthly_price,monthly_judge_count,monthly_convert_count,add_price,add_count,free_trial_daily_max,free_trial_lifetime_max,updated_at")
     .eq("id", SYSTEM_CONFIG_PRICING_ID)
     .maybeSingle();
 
@@ -341,7 +431,7 @@ async function savePricingConfigToSupabase(nextConfig) {
   const { data, error } = await supabase
     .from("system_config")
     .upsert(pricingConfigToSystemConfigRow(config), { onConflict: "id" })
-    .select("monthly_price,monthly_judge_count,monthly_convert_count,add_price,add_count,free_judge_count,free_convert_count,updated_at")
+    .select("monthly_price,monthly_judge_count,monthly_convert_count,add_price,add_count,free_trial_daily_max,free_trial_lifetime_max,updated_at")
     .single();
 
   if (error) {
@@ -357,8 +447,8 @@ async function savePricingConfigToSupabase(nextConfig) {
   };
 }
 
-const DAILY_FREE_CONVERT_LIMIT = DEFAULT_PRICING_CONFIG.free.convertCount;
-const DAILY_FREE_JUDGE_LIMIT = DEFAULT_PRICING_CONFIG.free.judgeCount;
+const DAILY_FREE_CONVERT_LIMIT = DEFAULT_PRICING_CONFIG.free.dailyMax;
+const DAILY_FREE_JUDGE_LIMIT = DEFAULT_PRICING_CONFIG.free.dailyMax;
 const USAGE_RULES = {
   convert: {
     freeDailyLimit: DAILY_FREE_CONVERT_LIMIT,
@@ -388,8 +478,8 @@ function getPricingConfig() {
 function getPricingUsageLimits() {
   const pricing = getPricingConfig();
   return {
-    freeConvertLimit: toNonNegativeInteger(pricing.free?.convertCount, DAILY_FREE_CONVERT_LIMIT),
-    freeJudgeLimit: toNonNegativeInteger(pricing.free?.judgeCount, DAILY_FREE_JUDGE_LIMIT),
+    freeConvertLimit: toNonNegativeInteger(pricing.free?.dailyMax, DAILY_FREE_CONVERT_LIMIT),
+    freeJudgeLimit: toNonNegativeInteger(pricing.free?.dailyMax, DAILY_FREE_JUDGE_LIMIT),
     vipConvertLimit: toNonNegativeInteger(pricing.monthly?.convertCount, USAGE_RULES.convert.vipMonthlyLimit),
     vipJudgeLimit: toNonNegativeInteger(pricing.monthly?.judgeCount, USAGE_RULES.judge.vipMonthlyLimit)
   };
@@ -643,7 +733,7 @@ function getSecurityEvents(limit = 20) {
 
 function getProtectedEndpointType(pathname = "") {
   if (pathname === "/api/admin" || pathname.startsWith("/api/admin/")) return "admin";
-  if (pathname === "/api/usage/quota" || pathname === "/api/usage/consume") return "usage";
+  if (["/api/usage/session", "/api/usage/operation", "/api/usage/quota", "/api/usage/consume"].includes(pathname)) return "usage";
   if (pathname === "/api/recognize-coordinates") return "recognize";
   if (pathname === "/api/analyze-mining-image") return "judge";
   return "";
@@ -2427,176 +2517,28 @@ async function checkUsage(userId, type) {
     };
   }
 
-  const user = await getOrCreateSupabaseUser(userId);
-
-  if (!user) {
-    return {
-      allowed: false,
-      success: false,
-      reason: "db_disabled",
-      quota: {}
-    };
-  }
-
-  const paidKey = rule.paidField;
-  const freeKey = rule.freeField;
-  const paidCount = Number(user[paidKey] || 0);
-  const freeCount = Number(user[freeKey] || 0);
-
-  if (freeCount > 0) {
-    return {
-      allowed: true,
-      success: true,
-      reason: "ok",
-      source: "free",
-      featureType,
-      user,
-      quota: buildUsageQuotaPayload(user)
-    };
-  }
-
-  if (paidCount > 0) {
-    return {
-      allowed: true,
-      success: true,
-      reason: "ok",
-      source: "paid",
-      featureType,
-      user,
-      quota: buildUsageQuotaPayload(user)
-    };
-  }
-
-  return {
-    allowed: false,
-    success: false,
-    reason: "limit_exceeded",
-    source: "none",
-    featureType,
-    user,
-    quota: buildUsageQuotaPayload(user)
-  };
+  await getOrCreateSupabaseUser(userId);
+  const product = featureType === "judge" ? "judge" : "coordinate";
+  return { ...(await usageLedger.read(userId, product)), featureType };
 }
 
 async function consumeUsage(userId, type, req = null, options = {}) {
   const featureType = normalizeUsageFeatureType(type);
   const rule = getUsageRule(featureType);
-  const status = await checkUsage(userId, featureType);
-  const user = status.user;
-  const beforeBalance = extractUsageBalanceFields(user);
-  const usageNote = options.note || "";
-  const usageMetadata = options.metadata || null;
 
   if (rule.unlimited) {
-    await writeUsageLog({
-      userId,
-      req,
-      featureType,
-      consumeType: "none",
-      beforeBalance,
-      afterBalance: beforeBalance,
-      success: true,
-      note: usageNote || "Unlimited feature, no quota consumed",
-      metadata: usageMetadata
-    });
-    return status;
+    return { allowed: true, success: true, reason: "ok", source: "unlimited", quota: {} };
   }
-
-  if (!status.allowed) {
-    const blockedReason = status.reason === "limit_exceeded" ? "quota_exhausted" : (status.reason || "not_allowed");
-    await writeUsageLog({
-      userId,
-      req,
-      featureType,
-      consumeType: status.source || "none",
-      beforeBalance,
-      afterBalance: beforeBalance,
-      success: false,
-      errorReason: blockedReason
-    });
-    return status;
+  const usageEventType = options.usageEventType;
+  const expectedEventType = featureType === "judge" ? USAGE_EVENT_TYPE.JUDGE : USAGE_EVENT_TYPE.COORDINATE;
+  if (usageEventType !== expectedEventType || !options.serviceOperationId) {
+    return { success: false, allowed: false, reason: "service_operation_id_required", quota: {} };
   }
-
-  const paidKey = rule.paidField;
-  const freeKey = rule.freeField;
-  const sourceKey = status.source === "free" ? freeKey : paidKey;
-  const currentCount = Number(user?.[sourceKey] || 0);
-
-  if (currentCount > 0) {
-    const { data, error } = await supabase
-      .from("users")
-      .update({
-        [sourceKey]: currentCount - 1,
-        updated_at: new Date().toISOString()
-      })
-      .eq("user_id", userId)
-      .gt(sourceKey, 0)
-      .select("*")
-      .maybeSingle();
-
-    if (error) {
-      await writeUsageLog({
-        userId,
-        req,
-        featureType,
-        consumeType: status.source,
-        beforeBalance,
-        afterBalance: beforeBalance,
-        success: false,
-        errorReason: "failed",
-        note: usageNote,
-        metadata: usageMetadata
-      });
-      throw error;
-    }
-
-    if (data) {
-      await writeUsageLog({
-        userId,
-        req,
-        featureType,
-        consumeType: status.source,
-        beforeBalance,
-        afterBalance: extractUsageBalanceFields(data),
-        success: true,
-        note: usageNote,
-        metadata: usageMetadata
-      });
-
-      return {
-        success: true,
-        reason: "ok",
-        source: status.source,
-        user: data,
-        quota: buildUsageQuotaPayload(data)
-      };
-    }
-  }
-
-  const freshStatus = await checkUsage(userId, featureType);
-
-  if (freshStatus.allowed && freshStatus.source !== status.source) {
-    return consumeUsage(userId, featureType, req, options);
-  }
-
-  const freshUser = freshStatus.user || await getOrCreateSupabaseUser(userId);
-  await writeUsageLog({
-    userId,
-    req,
-    featureType,
-    consumeType: status.source || "none",
-    beforeBalance,
-    afterBalance: extractUsageBalanceFields(freshUser || user),
-    success: false,
-    errorReason: "quota_exhausted"
+  return usageLedger.consume({
+    usageIdentity: userId,
+    serviceOperationId: options.serviceOperationId,
+    usageEventType
   });
-
-  return {
-    success: false,
-    reason: "limit_exceeded",
-    user: freshUser || user,
-    quota: freshStatus.quota || buildUsageQuotaPayload(freshUser || user)
-  };
 }
 
 function ensureUser(data, visitorId) {
@@ -10117,7 +10059,7 @@ function parseQuotaUpdateValue(body, field, fallback) {
 }
 
 function getQuotaRequestChangedFields(body = {}, beforeUser = {}, updates = {}) {
-  const fields = ["free_convert_count", "paid_convert_count", "free_judge_count", "paid_judge_count"];
+  const fields = ["paid_convert_count", "paid_judge_count"];
   return fields.filter(field => (
     Object.prototype.hasOwnProperty.call(body || {}, field)
     && parseQuotaUpdateValue(body, field, beforeUser?.[field]) !== toNonNegativeInteger(beforeUser?.[field], 0)
@@ -10334,9 +10276,7 @@ app.patch("/api/admin/supabase-users/:userId/quota", requireAdmin, async (req, r
     const beforeUser = await getOrCreateSupabaseUser(userId);
 
     const updates = {
-      free_convert_count: parseQuotaUpdateValue(req.body, "free_convert_count", beforeUser?.free_convert_count),
       paid_convert_count: parseQuotaUpdateValue(req.body, "paid_convert_count", beforeUser?.paid_convert_count),
-      free_judge_count: parseQuotaUpdateValue(req.body, "free_judge_count", beforeUser?.free_judge_count),
       paid_judge_count: parseQuotaUpdateValue(req.body, "paid_judge_count", beforeUser?.paid_judge_count),
       updated_at: new Date().toISOString()
     };
@@ -11790,31 +11730,70 @@ app.patch("/api/admin/feature-flags", requireAdmin, async (req, res) => {
   }
 });
 
+app.post("/api/usage/session", (req, res) => {
+  try {
+    const existingToken = usageIdentityTokenFromRequest(req);
+    if (existingToken) {
+      resolveUsageIdentity(req);
+      return res.json({ success: true, created: false });
+    }
+  } catch (error) {
+    if (!(error instanceof UsageTokenError)) throw error;
+  }
+
+  const issued = usageTokenAuthority.issueIdentity();
+  setUsageIdentityCookie(req, res, issued.token);
+  return res.json({ success: true, created: true });
+});
+
+app.post("/api/usage/operation", (req, res) => {
+  try {
+    const tool = String(req.body?.tool || "").trim();
+    const usageEventType = tool === "coordinate"
+      ? USAGE_EVENT_TYPE.COORDINATE
+      : tool === "judge"
+        ? USAGE_EVENT_TYPE.JUDGE
+        : "";
+    const requestFingerprint = String(req.body?.requestFingerprint || "").trim().toLowerCase();
+    if (!usageEventType || !/^[0-9a-f]{64}$/.test(requestFingerprint)) {
+      return res.status(400).json({ success: false, reason: "USAGE_OPERATION_REQUEST_INVALID" });
+    }
+    const issued = usageTokenAuthority.issueOperation({
+      identityToken: usageIdentityTokenFromRequest(req),
+      usageEventType,
+      requestFingerprint
+    });
+    return res.json({ success: true, operationToken: issued.token });
+  } catch (error) {
+    return sendUsageTokenError(res, error);
+  }
+});
+
 app.get("/api/usage/quota", async (req, res) => {
-  let visitorId = "";
+  let usageIdentity = "";
 
   try {
-    visitorId = String(req.query?.visitorId || req.get("x-visitor-id") || "").trim();
+    usageIdentity = resolveUsageIdentity(req);
 
-    if (!visitorId) {
-      return res.status(400).json({
-        success: false,
-        reason: "missing_user",
-        error: "缺少用户ID。"
-      });
-    }
-
-    const user = await getOrCreateSupabaseUser(visitorId);
+    const user = await getOrCreateSupabaseUser(usageIdentity);
 
     if (!user) {
       if (isLocalUsageFallbackRequest(req)) {
         const data = await readAdminData();
-        const localUser = ensureUser(data, visitorId);
+        const localUser = ensureUser(data, usageIdentity);
         await writeAdminData(data);
         return res.json({
           success: true,
           source: "local_development",
-          quota: buildQuotaPayload(localUser)
+          quota: toSharedQuotaPayload({
+            free_daily_remaining: Math.min(
+              Number(localUser?.freeConvertCount || 0),
+              Number(localUser?.freeJudgeCount || 0)
+            ),
+            free_lifetime_remaining: FREE_TRIAL_LIFETIME_MAX,
+            paid_convert_count: Number(localUser?.paidConvertCount || 0),
+            paid_judge_count: Number(localUser?.paidJudgeCount || 0)
+          })
         });
       }
       return res.status(500).json({
@@ -11824,16 +11803,15 @@ app.get("/api/usage/quota", async (req, res) => {
       });
     }
 
-    await updateSupabaseUserVisitMeta(visitorId, req);
-    await updateSupabaseUserSourceMeta(visitorId, req);
+    await updateSupabaseUserVisitMeta(usageIdentity, req);
+    await updateSupabaseUserSourceMeta(usageIdentity, req);
 
-    res.json({
-      success: true,
-      quota: buildUsageQuotaPayload(user)
-    });
+    const usage = await usageLedger.read(usageIdentity, "coordinate");
+    res.json({ success: true, quota: usage.quota });
   } catch (error) {
+    if (error instanceof UsageTokenError) return sendUsageTokenError(res, error);
     console.error("Supabase usage quota failed:", {
-      visitorId,
+      usageIdentity,
       hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
       hasSupabaseServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
       message: error?.message,
@@ -11851,107 +11829,19 @@ app.get("/api/usage/quota", async (req, res) => {
 });
 
 app.post("/api/usage/consume", async (req, res) => {
-  let visitorId = "";
-  let type = "convert";
-
-  try {
-    visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
-    type = String(req.body?.type || "convert").trim() === "judge" ? "judge" : "convert";
-
-    if (!visitorId) {
-      return res.status(400).json({
-        success: false,
-        reason: "missing_user",
-        error: "缺少用户ID。"
-      });
-    }
-
-    let result;
-    if (isLocalUsageFallbackRequest(req)) {
-      const data = await readAdminData();
-      const user = ensureUser(data, visitorId);
-      const permissions = getEffectivePermissions(user, data.featureFlags);
-      const requiredFeature = type === "judge" ? "aiJudgeEnabled" : "kmlExportEnabled";
-
-      await updateUserVisitMeta(user, req, data);
-      if (!permissions[requiredFeature]) {
-        await writeAdminData(data);
-        return res.status(403).json({
-          success: false,
-          reason: "permission_denied",
-          type,
-          quota: buildQuotaPayload(user),
-          error: type === "judge" ? "当前用户暂未开通 AI 判读功能。" : "当前用户暂未开通 KML 导出。"
-        });
-      }
-
-      const localResult = consumeLocalUsage(user, type);
-      result = {
-        ...localResult,
-        reason: localResult.success ? "ok" : "limit_exceeded"
-      };
-      user.eventCount = Number(user.eventCount || 0) + 1;
-      if (localResult.success) {
-        await appendUsageLog(data, user, req, type, localResult.source);
-      }
-      await writeAdminData(data);
-    } else {
-      result = await consumeUsage(visitorId, type, req);
-    }
-    await updateSupabaseUserVisitMeta(visitorId, req);
-    await updateSupabaseUserSourceMeta(visitorId, req);
-
-    if (result.reason === "limit_exceeded") {
-      const code = getQuotaExhaustedCode(type);
-      return res.status(403).json({
-        success: false,
-        reason: "limit_exceeded",
-        code,
-        error: code,
-        type,
-        quota: result.quota
-      });
-    }
-
-    if (!result.success) {
-      return res.status(500).json({
-        success: false,
-        reason: result.reason || "db_error",
-        error: "数据库扣减使用次数失败。"
-      });
-    }
-
-    res.json({
-      success: true,
-      reason: "ok",
-      type,
-      source: result.source,
-      quota: result.quota
-    });
-  } catch (error) {
-    console.error("Supabase usage consume failed:", {
-      visitorId,
-      type,
-      hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
-      hasSupabaseServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
-      message: error?.message,
-      code: error?.code,
-      details: error?.details,
-      hint: error?.hint,
-      stack: error?.stack
-    });
-    res.status(500).json({
-      success: false,
-      reason: "server_error",
-      error: "扣减使用次数失败，请稍后重试。"
-    });
-  }
+  return res.status(403).json({
+    success: false,
+    reason: "client_usage_consume_forbidden",
+    error: "Usage is recorded only by a successful server-owned service operation."
+  });
 });
 
 app.post("/api/analyze-mining-image", upload.fields([
   { name: "image", maxCount: 1 },
   { name: "images", maxCount: 5 }
 ]), async (req, res) => {
+  let judgeServiceOperationId = crypto.randomUUID();
+  let usageIdentity = "";
   console.log("---- 收到AI判读请求 ----");
   console.log("AI判读 multipart 入口：", {
     contentType: req.headers["content-type"] || "",
@@ -11985,8 +11875,20 @@ app.post("/api/analyze-mining-image", upload.fields([
   });
 
   try {
-    const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
+    let visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
     const judgeType = String(req.body?.judgeType || "mine-land").trim();
+    if (isLocalUsageFallbackRequest(req)) {
+      usageIdentity = `regression:${visitorId}`;
+    } else {
+      try {
+        const operation = resolveUsageOperation(req, USAGE_EVENT_TYPE.JUDGE, firstFile);
+        usageIdentity = operation.usageIdentity;
+        judgeServiceOperationId = operation.serviceOperationId;
+        visitorId = usageIdentity;
+      } catch (error) {
+        return sendUsageTokenError(res, error);
+      }
+    }
     const data = await readAdminData();
     const user = ensureUser(data, visitorId);
     const permissions = getEffectivePermissions(user, data.featureFlags);
@@ -12063,7 +11965,7 @@ app.post("/api/analyze-mining-image", upload.fields([
       });
     }
 
-    const usageStatus = await checkUsage(visitorId, "judge");
+    const usageStatus = await checkUsage(usageIdentity, "judge");
     if (!usageStatus.allowed && usageStatus.reason !== "limit_exceeded") {
       await writeAdminData(data);
       return res.status(500).json({
@@ -12138,12 +12040,28 @@ B 可以观察
       data.records.push(record);
       data.usage[visitorId] = data.usage[visitorId] || {};
       data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
-      const aiCostMetadata = buildAiCostMetadata(response?.usage || {}, {
-        model: response?.model || aliyunVisionModel
+      const aiCostMetadata = buildAiCostMetadata({}, {
+        model: "local-document-guidance"
       });
-      const usageResult = await consumeUsage(visitorId, "judge", req, {
+      const caseId = await writeJudgeCase({
+        req,
+        userId: visitorId,
+        file: firstFile,
+        resultText: normalizedOutput,
+        rawText: rawOutput
+      });
+      if (!isJudgeResultChargeable({ normalizedResult: normalizedOutput, persistedCaseId: caseId })) {
+        return res.status(500).json({
+          success: false,
+          reason: "judge_persistence_failed",
+          error: "JUDGE_RESULT_NOT_DURABLY_PERSISTED"
+        });
+      }
+      const usageResult = await consumeUsage(usageIdentity, "judge", req, {
         note: `AI judge cost estimate: ${aiCostMetadata.estimated_cost_cny} CNY`,
-        metadata: aiCostMetadata
+        metadata: aiCostMetadata,
+        serviceOperationId: judgeServiceOperationId,
+        usageEventType: USAGE_EVENT_TYPE.JUDGE
       });
       if (usageResult.reason === "limit_exceeded") {
         return res.status(403).json({
@@ -12163,14 +12081,6 @@ B 可以观察
         });
       }
       await appendUsageLog(data, user, req, "judge", usageResult.source);
-      const caseId = await writeJudgeCase({
-        req,
-        userId: visitorId,
-        file: firstFile,
-        resultText: normalizedOutput,
-        rawText: rawOutput
-      });
-
       if (user) {
         user.eventCount = Number(user.eventCount || 0) + 1;
       }
@@ -12401,9 +12311,25 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
     const aiCostMetadata = buildAiCostMetadata(response?.usage || {}, {
       model: response?.model || aliyunVisionModel
     });
-    const usageResult = await consumeUsage(visitorId, "judge", req, {
+    const caseId = await writeJudgeCase({
+      req,
+      userId: visitorId,
+      file: judgeImageFiles[0],
+      resultText: normalizedOutput,
+      rawText: rawOutput
+    });
+    if (!isJudgeResultChargeable({ normalizedResult: normalizedOutput, persistedCaseId: caseId })) {
+      return res.status(500).json({
+        success: false,
+        reason: "judge_persistence_failed",
+        error: "JUDGE_RESULT_NOT_DURABLY_PERSISTED"
+      });
+    }
+    const usageResult = await consumeUsage(usageIdentity, "judge", req, {
       note: `AI judge cost estimate: ${aiCostMetadata.estimated_cost_cny} CNY`,
-      metadata: aiCostMetadata
+      metadata: aiCostMetadata,
+      serviceOperationId: judgeServiceOperationId,
+      usageEventType: USAGE_EVENT_TYPE.JUDGE
     });
     if (usageResult.reason === "limit_exceeded") {
       return res.status(403).json({
@@ -12423,14 +12349,6 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       });
     }
     await appendUsageLog(data, user, req, "judge", usageResult.source);
-    const caseId = await writeJudgeCase({
-      req,
-      userId: visitorId,
-      file: judgeImageFiles[0],
-      resultText: normalizedOutput,
-      rawText: rawOutput
-    });
-
     if (user) {
       user.eventCount = Number(user.eventCount || 0) + 1;
     }
@@ -12469,6 +12387,9 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       reason: responsePayload.reason || null
     });
 
+    if (dropCommittedUsageResponseForRegression(req, "judge", judgeServiceOperationId)) {
+      return;
+    }
     res.json(responsePayload);
   } catch (error) {
     const errorMessage = getAliyunErrorMessage(error);
@@ -12960,11 +12881,69 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
 
   let visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || req.query?.visitorId || "").trim();
   const regressionTestMode = getRegressionTestMode(req);
-  const consumeCoordinateUsage = async (metadata = {}) => {
-    if (regressionTestMode.active) {
-      return { success: true, reason: "regression_test", skipped: true };
+  let usageIdentity = `regression:${visitorId}`;
+  let coordinateServiceOperationId = crypto.randomUUID();
+  if (!regressionTestMode.active) {
+    try {
+      const operation = resolveUsageOperation(req, USAGE_EVENT_TYPE.COORDINATE, req.file);
+      usageIdentity = operation.usageIdentity;
+      coordinateServiceOperationId = operation.serviceOperationId;
+      visitorId = usageIdentity;
+    } catch (error) {
+      return sendUsageTokenError(res, error);
     }
-    return consumeUsage(visitorId, "convert", req, metadata);
+  }
+  const sendJsonWithoutUsageInterception = res.json.bind(res);
+  let usageFinalizationStarted = false;
+  res.json = function sendUsageAwareCoordinateResponse(body) {
+    if (regressionTestMode.active || usageFinalizationStarted || !isCoordinateResultChargeable(body)) {
+      return sendJsonWithoutUsageInterception(body);
+    }
+    usageFinalizationStarted = true;
+    void consumeUsage(usageIdentity, "convert", req, {
+      serviceOperationId: coordinateServiceOperationId,
+      usageEventType: USAGE_EVENT_TYPE.COORDINATE
+    }).then(result => {
+      if (result.reason === "limit_exceeded") {
+        res.status(403);
+        sendJsonWithoutUsageInterception({
+          success: false,
+          reason: "limit_exceeded",
+          code: getQuotaExhaustedCode("convert"),
+          type: "convert",
+          quota: result.quota,
+          error: "CONVERT_QUOTA_EXHAUSTED",
+          rawText: "",
+          coordinates: ""
+        });
+        return;
+      }
+      if (!result.success) {
+        res.status(500);
+        sendJsonWithoutUsageInterception({
+          success: false,
+          reason: result.reason || "db_error",
+          error: "CONVERT_USAGE_EVENT_FAILED",
+          rawText: "",
+          coordinates: ""
+        });
+        return;
+      }
+      if (dropCommittedUsageResponseForRegression(req, "coordinate", coordinateServiceOperationId)) {
+        return;
+      }
+      sendJsonWithoutUsageInterception({ ...body, quota: result.quota, usageCharged: true });
+    }).catch(error => {
+      console.error("Atomic coordinate usage event failed:", error?.message || error);
+      if (!res.headersSent) {
+        res.status(500);
+        sendJsonWithoutUsageInterception({ success: false, reason: "usage_event_failed", error: "CONVERT_USAGE_EVENT_FAILED" });
+      }
+    });
+    return res;
+  };
+  const consumeCoordinateUsage = async (metadata = {}) => {
+    return { success: true, reason: "deferred_until_finalized_response", skipped: true, metadata };
   };
 
   try {
@@ -13050,7 +13029,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     if (!regressionTestMode.active) {
       await updateSupabaseUserVisitMeta(visitorId, req);
 
-      const usageStatus = await checkUsage(visitorId, "convert");
+      const usageStatus = await checkUsage(usageIdentity, "convert");
 
       if (!usageStatus.allowed && usageStatus.reason === "limit_exceeded") {
         return res.status(403).json({
@@ -15017,31 +14996,6 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       warning = warning ? `${warning} ${bftmIncompleteWarning}` : bftmIncompleteWarning;
     }
 
-    const consumeResult = await consumeCoordinateUsage({
-      note: "Coordinate recognition consumed"
-    });
-    if (consumeResult.reason === "limit_exceeded") {
-      return res.status(403).json({
-        success: false,
-        reason: "limit_exceeded",
-        code: getQuotaExhaustedCode("convert"),
-        type: "convert",
-        quota: consumeResult.quota,
-        error: "CONVERT_QUOTA_EXHAUSTED",
-        rawText: "",
-        coordinates: ""
-      });
-    }
-    if (!consumeResult.success) {
-      return res.status(500).json({
-        success: false,
-        reason: consumeResult.reason || "db_error",
-        error: "CONVERT_QUOTA_CONSUME_FAILED",
-        rawText: "",
-        coordinates: ""
-      });
-    }
-
     const finalPrecisionMode = dmsGroupedAccepted
       ? "dms-grouped-coordinates"
       : frenchPerimeterDms.isFrenchPerimeterDms
@@ -15092,7 +15046,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         finalRawText: rawText
       },
       parserTrace,
-      quota: consumeResult.quota
+      serviceOperationId: coordinateServiceOperationId
     };
 
     let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(recognitionPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });
@@ -15155,7 +15109,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    res.json(buildCoordinateVerificationResponse(recognitionPayload, coordinateEngineV2));
+    const finalizedResponse = buildCoordinateVerificationResponse(recognitionPayload, coordinateEngineV2);
+    res.json(finalizedResponse);
   } catch (error) {
     if (getRecognitionDeadlineSignal()?.aborted || res.headersSent || error?.code === RECOGNITION_DEADLINE_CODE) {
       return;

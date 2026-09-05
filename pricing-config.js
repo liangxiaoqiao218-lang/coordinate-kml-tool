@@ -17,8 +17,9 @@
       count: 10
     },
     free: {
-      judgeCount: 3,
-      convertCount: 3
+      dailyMax: 3,
+      lifetimeMax: 12,
+      timezone: "Asia/Shanghai"
     }
   };
 
@@ -58,8 +59,9 @@
         count: addCount
       },
       free: {
-        judgeCount: toInteger(source.free?.judgeCount, DEFAULT_PRICING_CONFIG.free.judgeCount),
-        convertCount: toInteger(source.free?.convertCount, DEFAULT_PRICING_CONFIG.free.convertCount)
+        dailyMax: toInteger(source.free?.dailyMax, DEFAULT_PRICING_CONFIG.free.dailyMax),
+        lifetimeMax: toInteger(source.free?.lifetimeMax, DEFAULT_PRICING_CONFIG.free.lifetimeMax),
+        timezone: "Asia/Shanghai"
       }
     };
   }

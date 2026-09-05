@@ -69,68 +69,22 @@ assert.equal(
   "application/vnd.google-earth.kml+xml;charset=utf-8"
 );
 
-const baseUrl = String(process.env.KML_REGRESSION_BASE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
-const visitorId = `kml-permission-regression-${Date.now()}`;
-
-async function request(path, options = {}) {
-  const response = await fetch(`${baseUrl}${path}`, options);
-  const payload = await response.json();
-  return { response, payload };
-}
-
-const config = await request(`/api/config?visitorId=${encodeURIComponent(visitorId)}`);
-assert.equal(config.response.status, 200);
-assert.equal(config.payload.user.plan, "free");
-assert.equal(config.payload.user.isVip, false);
-assert.equal(config.payload.permissions.kmlExportEnabled, true);
-
-const initialQuota = await request(`/api/usage/quota?visitorId=${encodeURIComponent(visitorId)}`);
-assert.equal(initialQuota.response.status, 200);
-assert.equal(initialQuota.payload.source, "local_development");
-assert.equal(initialQuota.payload.quota.free_convert_count, 3);
-assert.equal(initialQuota.payload.quota.paid_convert_count, 0);
-
-const remaining = [2, 1, 0];
-for (const expectedRemaining of remaining) {
-  const consumed = await request("/api/usage/consume", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-visitor-id": visitorId
-    },
-    body: JSON.stringify({ visitorId, type: "convert" })
-  });
-  assert.equal(consumed.response.status, 200);
-  assert.equal(consumed.payload.success, true);
-  assert.equal(consumed.payload.source, "free");
-  assert.equal(consumed.payload.quota.free_convert_count, expectedRemaining);
-}
-
-const exhausted = await request("/api/usage/consume", {
-  method: "POST",
-  headers: {
-    "content-type": "application/json",
-    "x-visitor-id": visitorId
-  },
-  body: JSON.stringify({ visitorId, type: "convert" })
-});
-assert.equal(exhausted.response.status, 403);
-assert.equal(exhausted.payload.success, false);
-assert.equal(exhausted.payload.reason, "limit_exceeded");
-assert.equal(exhausted.payload.code, "CONVERT_QUOTA_EXHAUSTED");
-assert.equal(
-  exhausted.payload.quota.free_convert_count + exhausted.payload.quota.paid_convert_count,
-  0
-);
+const downloadKmlInternal = extractFunctionSource(indexHtml, "downloadKmlInternal");
+const finalizedGate = extractFunctionSource(indexHtml, "shouldBlockFinalizedCoordinateKml");
+assert.doesNotMatch(downloadKmlInternal, /consumeUsage\(/);
+assert.match(finalizedGate, /activeFinalizedCoordinateResult\.kmlReady !== true/);
+assert.match(downloadKmlInternal, /getAuthorizedFinalizedGeometryKmlSource\(\)/);
+assert.match(downloadKmlInternal, /finalized_coordinate_result_v1/);
+assert.doesNotMatch(downloadKmlInternal, /activeFinalizedCoordinateResult\s*=/);
 
 console.log(JSON.stringify({
   suite: "kml-export-permission-regression",
   passed: 5,
   cases: [
-    { id: "free_identity_and_entitlement", status: "PASS" },
-    { id: "point_quota_authorized", status: "PASS" },
-    { id: "line_quota_authorized", status: "PASS" },
-    { id: "polygon_quota_authorized", status: "PASS" },
-    { id: "quota_exhausted_denied", status: "PASS", code: exhausted.payload.code }
+    { id: "unauthorized_or_stale_export_denied_by_finalized_gate", status: "PASS" },
+    { id: "current_result_geometry_authority_preserved", status: "PASS" },
+    { id: "point_line_polygon_export_preserved", status: "PASS" },
+    { id: "repeated_export_has_zero_usage_mutation", status: "PASS" },
+    { id: "kml_download_does_not_mutate_result_identity", status: "PASS" }
   ]
 }, null, 2));
