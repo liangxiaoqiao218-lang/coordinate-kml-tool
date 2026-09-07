@@ -5225,6 +5225,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeFinalizedCoordinateResult = null;
     let finalizedCoordinateTextSnapshot = "";
     let finalizedCoordinateDirty = false;
+    let lastValidIdentityBoundSnapshot = null;
     let kmlGenerationInProgress = false;
     let spatialResultEnabled = false;
     let spatialRegressionTestMode = false;
@@ -5273,6 +5274,7 @@ Au值 = 纯度 × 10 后取整数</div>
         && positions[0][1] === positions.at(-1)[1]) positions = positions.slice(0, -1);
       input.value = positions.map(position => `${position[0]},${position[1]}`).join("\n");
       activeFinalizedCoordinateResult = null;
+      lastValidIdentityBoundSnapshot = null;
       finalizedCoordinateTextSnapshot = "";
       finalizedCoordinateDirty = true;
       invalidateSpatialPreview();
@@ -6495,8 +6497,21 @@ Au值 = 纯度 × 10 后取整数</div>
       }
     }
 
-    function undoLastChange() {
+    async function undoLastChange() {
       if (historyStack.length === 0) {
+        try {
+          if (await revertToLastValidIdentityBoundSnapshot()) {
+            input.focus();
+            trackEvent("undo_restore_last_valid_identity");
+            showMessage("已通过服务端验证恢复上一份有效坐标结果。");
+            return;
+          }
+        } catch (error) {
+          input.focus();
+          trackEvent("undo_restore_last_valid_identity_blocked");
+          showMessage(error?.message || "上一份有效坐标暂时无法恢复，请检查当前内容。", true, 6000);
+          return;
+        }
         showMessage("没有可撤销的上一步。", true);
         return;
       }
@@ -6504,9 +6519,24 @@ Au值 = 纯度 × 10 后取整数</div>
       input.value = historyStack.pop();
       markCoordinateTextChanged();
       updateCadastralGridPanel();
+      let restoredIdentity = false;
+      try {
+        restoredIdentity = await revalidateLastValidIdentityBoundSnapshot(input.value);
+      } catch (error) {
+        input.focus();
+        trackEvent("undo_restore_last_valid_identity_blocked");
+        showMessage(error?.message || "上一份有效坐标暂时无法恢复，请检查当前内容。", true, 6000);
+        return;
+      }
+      if (restoredIdentity) {
+        input.focus();
+        trackEvent("undo_restore_last_valid_identity");
+        showMessage("已通过服务端验证恢复上一份有效坐标结果。");
+        return;
+      }
       input.focus();
       trackEvent("undo_click");
-      showMessage("已撤销上一步。");
+      showMessage("已撤销上一步，当前坐标需要重新验证。");
     }
 
     function clearUploadMessage() {
@@ -6832,6 +6862,159 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
+    function cloneIdentityBoundValue(value) {
+      if (value === undefined) return undefined;
+      try {
+        return JSON.parse(JSON.stringify(value));
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function deepFreezeIdentityBoundValue(value) {
+      if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+      Object.freeze(value);
+      for (const nestedValue of Object.values(value)) {
+        deepFreezeIdentityBoundValue(nestedValue);
+      }
+      return value;
+    }
+
+    function canonicalIdentityBoundSerialization(value) {
+      if (Array.isArray(value)) {
+        return `[${value.map(canonicalIdentityBoundSerialization).join(",")}]`;
+      }
+      if (value && typeof value === "object") {
+        return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalIdentityBoundSerialization(value[key])}`).join(",")}}`;
+      }
+      return JSON.stringify(value);
+    }
+
+    function identityBoundValuesEqual(left, right) {
+      return canonicalIdentityBoundSerialization(left) === canonicalIdentityBoundSerialization(right);
+    }
+
+    function finalizedResultMatchesIdentityBoundSnapshot(result, snapshot) {
+      const identity = getFinalizedCoordinateIdentity(result);
+      return Boolean(identity && snapshot?.resultIdentity)
+        && identity.resultId === snapshot.resultIdentity.resultId
+        && identity.resultRevision === snapshot.resultIdentity.resultRevision
+        && identity.geometryHash === snapshot.resultIdentity.geometryHash
+        && identityBoundValuesEqual(result.geometry, snapshot.geometry)
+        && String(result.crs?.id || "") === String(snapshot.crs?.id || "")
+        && String(result.crs?.axisOrder || "") === String(snapshot.axisOrder || "")
+        && String(result.coordinateType || "") === String(snapshot.coordinateType || "")
+        && String(result.sourceAuthority || "") === String(snapshot.sourceAuthority || "");
+    }
+
+    function createIdentityBoundSnapshot(result, sourceText) {
+      const identity = getFinalizedCoordinateIdentity(result);
+      if (!identity || !hasFiniteFinalizedGeometry(result.geometry)) return null;
+      const finalizedResult = cloneIdentityBoundValue(result);
+      if (!finalizedResult || finalizedResult.geometryHash !== identity.geometryHash) return null;
+      const text = String(sourceText || "");
+      const snapshot = {
+        snapshotRole: "RECOVERY_INPUT_AND_UI_CONTEXT",
+        snapshotAuthority: "NON_AUTHORITATIVE",
+        sourceText: text,
+        geometry: cloneIdentityBoundValue(result.geometry),
+        crs: cloneIdentityBoundValue(result.crs),
+        axisOrder: result.crs?.axisOrder || "",
+        coordinateType: result.coordinateType || "",
+        precisionMode: result.precisionMode || "",
+        sourceAuthority: result.sourceAuthority || "",
+        recognitionFamily: result.coordinateType || result.precisionMode || result.sourceAuthority || "",
+        resultIdentity: { ...identity },
+        confirmationState: {
+          confirmationStatus: result.confirmationStatus || "",
+          qualityGateStatus: result.qualityGateStatus || "",
+          decisionState: result.decisionState || "",
+          requiresReview: result.requiresReview === true
+        },
+        recognitionContext: cloneIdentityBoundValue({
+          coordinateType: result.coordinateType || "",
+          precisionMode: result.precisionMode || "",
+          sourceAuthority: result.sourceAuthority || ""
+        }),
+        engineContext: cloneIdentityBoundValue(activeCoordinateEngineV2),
+        fieldConflictContext: {
+          count: Number(activeCoordinateFieldConflictCount || 0)
+        },
+        mapEligibility: {
+          allowed: spatialResultEnabled === true && Boolean(identity) && hasFiniteFinalizedGeometry(result.geometry)
+        },
+        kmlEligibility: {
+          allowed: result.kmlReady === true,
+          technicalKmlReady: result.technicalKmlReady === true
+        },
+        finalizedResult
+      };
+      if (!finalizedResultMatchesIdentityBoundSnapshot(finalizedResult, snapshot)) return null;
+      return deepFreezeIdentityBoundValue(snapshot);
+    }
+
+    function rememberLastValidIdentityBoundSnapshot(result = activeFinalizedCoordinateResult, sourceText = input?.value) {
+      if (!result || !getFinalizedCoordinateIdentity(result) || !hasFiniteFinalizedGeometry(result.geometry)) return false;
+      const snapshot = createIdentityBoundSnapshot(result, sourceText);
+      if (!snapshot) return false;
+      lastValidIdentityBoundSnapshot = snapshot;
+      return true;
+    }
+
+    function snapshotMatchesCurrentDraft(snapshot = lastValidIdentityBoundSnapshot, sourceText = input?.value) {
+      return Boolean(snapshot)
+        && snapshot.snapshotAuthority === "NON_AUTHORITATIVE"
+        && String(sourceText || "") === snapshot.sourceText
+        && snapshot.finalizedResult?.geometryHash === snapshot.resultIdentity?.geometryHash
+        && Boolean(getFinalizedCoordinateIdentity(snapshot.finalizedResult))
+        && hasFiniteFinalizedGeometry(snapshot.finalizedResult.geometry)
+        && finalizedResultMatchesIdentityBoundSnapshot(snapshot.finalizedResult, snapshot);
+    }
+
+    async function revalidateLastValidIdentityBoundSnapshot(sourceText = input?.value) {
+      const snapshot = lastValidIdentityBoundSnapshot;
+      if (!snapshotMatchesCurrentDraft(snapshot, sourceText)) return false;
+      const response = await fetch("/api/coordinate-manual-finalize", {
+        method: "POST",
+        headers: getSourceHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          coordinateText: normalizeManualCoordinateTextForFinalizer(snapshot.sourceText),
+          recoveryIdentity: {
+            resultId: snapshot.resultIdentity.resultId,
+            resultRevision: snapshot.resultIdentity.resultRevision,
+            geometryHash: snapshot.resultIdentity.geometryHash
+          }
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      const serverResult = payload.finalizedCoordinateResult;
+      if (!response.ok || !getFinalizedCoordinateIdentity(serverResult)
+        || !hasFiniteFinalizedGeometry(serverResult.geometry)
+        || !finalizedResultMatchesIdentityBoundSnapshot(serverResult, snapshot)) {
+        throw new Error(getCoordinateFlowUserMessage(payload.code, "上一份有效坐标需要重新验证，请检查当前内容。"));
+      }
+      activeFinalizedCoordinateResult = serverResult;
+      activeCoordinateEngineV2 = cloneIdentityBoundValue(snapshot.engineContext);
+      activeCoordinateFieldConflictCount = Number(snapshot.fieldConflictContext?.count || 0);
+      activeCoordinatePrecisionMode = snapshot.precisionMode || "";
+      invalidateSpatialPreview();
+      syncCoordinateReviewConfirmationState(activeCoordinateEngineV2, activeFinalizedCoordinateResult);
+      finalizedCoordinateTextSnapshot = snapshot.sourceText;
+      finalizedCoordinateDirty = false;
+      internalKmlSourceDirty = false;
+      refreshMapPreviewAction();
+      rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
+      return true;
+    }
+
+    async function revertToLastValidIdentityBoundSnapshot() {
+      if (!lastValidIdentityBoundSnapshot) return false;
+      input.value = lastValidIdentityBoundSnapshot.sourceText;
+      markCoordinateTextChanged();
+      updateCadastralGridPanel();
+      return revalidateLastValidIdentityBoundSnapshot(lastValidIdentityBoundSnapshot.sourceText);
+    }
+
     function shouldRequireManualFinalizerConfirmation() {
       return handwrittenDmsReviewState.required
         && handwrittenDmsReviewState.status !== HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED;
@@ -6850,30 +7033,46 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function refreshMapPreviewAction() {
       if (!mapPreviewAction) return;
+      const hasText = Boolean(String(input?.value || "").trim());
+      const validationRequired = Boolean(activeFinalizedCoordinateResult)
+        && (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || ""));
+      const state = !spatialResultEnabled || !hasText
+        ? "blocked"
+        : validationRequired
+          ? "validation_required"
+          : "enabled";
       mapPreviewAction.hidden = !spatialResultEnabled;
-      mapPreviewAction.disabled = !spatialResultEnabled || !String(input?.value || "").trim();
+      mapPreviewAction.disabled = state === "blocked";
+      mapPreviewAction.dataset.state = state;
+      mapPreviewAction.setAttribute("aria-disabled", String(mapPreviewAction.disabled));
+      mapPreviewAction.textContent = state === "validation_required" ? "验证并查看地图" : "查看地图";
       refreshSpatialShareActions();
       syncKmlActionVisualState();
     }
 
-    function coordinateKmlVisuallyEligible() {
-      if (!String(input?.value || "").trim()) return false;
-      if (!activeFinalizedCoordinateResult) return true;
-      if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) return true;
-      return activeFinalizedCoordinateResult.kmlReady === true;
+    function coordinateKmlVisualState() {
+      if (!String(input?.value || "").trim()) return "blocked";
+      if (!activeFinalizedCoordinateResult) return "enabled";
+      if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) return "validation_required";
+      return activeFinalizedCoordinateResult.kmlReady === true ? "enabled" : "blocked";
     }
 
     function syncKmlActionVisualState() {
-      const syncButton = (button, eligible) => {
+      const syncButton = (button, visualState, labels = {}) => {
         if (!button) return;
-        const state = kmlGenerationInProgress ? "loading" : (eligible ? "enabled" : "blocked");
+        const normalizedState = typeof visualState === "boolean" ? (visualState ? "enabled" : "blocked") : visualState;
+        const state = kmlGenerationInProgress ? "loading" : normalizedState;
         button.dataset.state = state;
-        button.disabled = kmlGenerationInProgress || !eligible;
+        button.disabled = kmlGenerationInProgress || state === "blocked";
         button.setAttribute("aria-disabled", String(button.disabled));
         button.setAttribute("aria-busy", String(kmlGenerationInProgress));
-        button.textContent = kmlGenerationInProgress ? "正在生成…" : "下载 KML";
+        button.textContent = kmlGenerationInProgress
+          ? "正在生成…"
+          : state === "validation_required"
+            ? (labels.validationRequired || "验证并下载 KML")
+            : (labels.enabled || "下载 KML");
       };
-      syncButton(coordinateKmlAction, coordinateKmlVisuallyEligible());
+      syncButton(coordinateKmlAction, coordinateKmlVisualState());
       syncButton(spatialKmlAction, spatialKmlAction?.dataset.eligible === "true");
     }
 
@@ -7190,6 +7389,7 @@ Au值 = 纯度 × 10 后取整数</div>
       finalizedCoordinateTextSnapshot = String(input.value || "");
       finalizedCoordinateDirty = false;
       syncCoordinateReviewConfirmationState(activeCoordinateEngineV2, activeFinalizedCoordinateResult);
+      rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
       return activeFinalizedCoordinateResult;
     }
 
@@ -7224,6 +7424,7 @@ Au值 = 纯度 × 10 后取整数</div>
       finalizedCoordinateTextSnapshot = String(input.value || "");
       finalizedCoordinateDirty = false;
       syncCoordinateReviewConfirmationState(activeCoordinateEngineV2, activeFinalizedCoordinateResult);
+      rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
       return activeFinalizedCoordinateResult;
     }
 
@@ -7262,6 +7463,9 @@ Au值 = 纯度 × 10 后取整数</div>
           status: HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED,
           confirmedRevision: handwrittenDmsReviewState.revision
         });
+        finalizedCoordinateTextSnapshot = String(input.value || "");
+        finalizedCoordinateDirty = false;
+        rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
         renderHandwrittenDmsReviewState();
         trackEvent("handwritten_dms_review_confirm", {
           revision: activeFinalizedCoordinateResult.resultRevision
@@ -13521,6 +13725,7 @@ ${placemarks}
       clearUploadMessage();
       activeCoordinateEngineV2 = null;
       activeFinalizedCoordinateResult = null;
+      lastValidIdentityBoundSnapshot = null;
       invalidateSpatialPreview();
       finalizedCoordinateTextSnapshot = "";
       finalizedCoordinateDirty = false;
@@ -13764,6 +13969,7 @@ ${placemarks}
         finalizedCoordinateTextSnapshot = String(input.value || "");
         finalizedCoordinateDirty = false;
         syncCoordinateReviewConfirmationState(summaryEngine, activeFinalizedCoordinateResult);
+        rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
         coordinateOrder.value = "auto";
         setCoordinateOrderReviewVisible(hasOrderReview);
         updateCadastralGridPanel();
