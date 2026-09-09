@@ -4561,7 +4561,7 @@
       <button id="mapPreviewAction" type="button" class="primary-action map-preview-action" onclick="openSpatialResult()" hidden disabled>查看地图</button>
       <div class="coordinate-secondary-actions">
         <button id="coordinateKmlAction" type="button" class="secondary kml-download-action coordinate-kml-action" data-state="blocked" aria-disabled="true" onclick="downloadKml()" disabled>下载 KML</button>
-        <button id="shareResultAction" type="button" class="spatial-share-action" onclick="openSpatialShareDialog()" hidden disabled>分享结果</button>
+        <button id="coordinateCopyAction" type="button" class="secondary coordinate-copy-action" onclick="copyContent()" disabled>复制坐标</button>
       </div>
     </div>
 
@@ -5135,7 +5135,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const goldUnavailableNotice = document.getElementById("goldUnavailableNotice");
     const mapPreviewAction = document.getElementById("mapPreviewAction");
     const coordinateKmlAction = document.getElementById("coordinateKmlAction");
-    const shareResultAction = document.getElementById("shareResultAction");
+    const coordinateCopyAction = document.getElementById("coordinateCopyAction");
     const spatialShareCardAction = document.getElementById("spatialShareCardAction");
     const spatialShareDialog = document.getElementById("spatialShareDialog");
     const spatialShareCreateAction = document.getElementById("spatialShareCreateAction");
@@ -7083,9 +7083,9 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function refreshSpatialShareActions() {
       const shareReady = spatialResultEnabled && Boolean(getFinalizedCoordinateIdentity());
-      if (shareResultAction) {
-        shareResultAction.hidden = !spatialResultEnabled;
-        shareResultAction.disabled = !shareReady;
+      if (coordinateCopyAction) {
+        coordinateCopyAction.hidden = false;
+        coordinateCopyAction.disabled = !String(input?.value || "").trim();
       }
       if (spatialShareCardAction) {
         spatialShareCardAction.hidden = !shareReady;
