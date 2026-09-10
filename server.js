@@ -19,6 +19,18 @@ import {
 import { CANDIDATE_SELECTION_DECISION, compareCandidateEvidence } from "./server/recognition/candidate-selection.js";
 import { buildHandwrittenCandidateEvidence, materializeHandwrittenDmsRows } from "./server/recognition/handwritten-candidate-evidence.js";
 import {
+  createDmsGroupedRetryOrchestrator,
+  evaluateDmsGroupedAcquisitionExpansion,
+  evaluateDmsGroupedRoutePriority,
+  evaluateDmsGroupedRetryCoverage,
+  evaluateDmsGroupedRetryEligibility,
+  extractDmsSourceStructure,
+  hasDmsGroupBoundaryContext,
+  hasExplicitDmsMultiRegionEvidence,
+  reconstructDmsGroupsFromNormalizedCoordinates,
+  resolveDmsEngineGroupNames
+} from "./server/recognition/dms-source-structure.js";
+import {
   KYRGYZ_PRIMARY_STAGE_CAP_MS,
   MADAGASCAR_PRIMARY_STAGE_CAP_MS,
   WGS84_PRIMARY_STAGE_CAP_MS,
@@ -3578,7 +3590,8 @@ function hasDmsGroupedContext(text) {
   const value = String(text || "");
   const folded = foldSearchText(value);
 
-  return /\bmining\s+area\b|\barea\s+(?:one|two|three|\d+)\b|the\s+coordinates\s+are\s+as\s+follows|coordinates?\s+are\s+as\s+follows/i.test(folded)
+  return hasDmsGroupBoundaryContext(value)
+    || /\bsites?\s*\d+\b|\bmining\s+area\b|\barea\s+(?:one|two|three|\d+)\b|the\s+coordinates\s+are\s+as\s+follows|coordinates?\s+are\s+as\s+follows/i.test(folded)
     || (/[°º'′″"]/.test(value) && /\d\s*[NS]\b[\s\S]{0,120}\d\s*[EWO]\b|\d\s*[EWO]\b[\s\S]{0,120}\d\s*[NS]\b/i.test(value));
 }
 
@@ -3671,12 +3684,12 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
 
   const isHandwrittenDms = isOcrImage
     && documentEvidence.handwrittenPositiveSignal
+    && (!documentEvidence.printedTableSignal || documentEvidence.explicitHandwrittenSignal)
     && (dmsRows >= 4 || rawDmsRows >= 4)
     && (pointRows >= 4 || rawDmsRows >= 4)
     && (looksLikeHandwrittenDmsBlock(sourceText) || hasStrongHandwrittenDmsRows)
     && (!getDmsGroupedCoordinateInfo(sourceText).output || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
     && !hasStrongPrintedProjectedTable
-    && (!documentEvidence.printedTableSignal || documentEvidence.handwrittenPositiveSignal)
     && (!looksLikeCoordinateTable(sourceText) || hasStrongHandwrittenDmsRows)
     && (!hasDmsGroupedContext(sourceText) || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
     && !getFrenchPerimeterDmsInfo(sourceText).isFrenchPerimeterDms
@@ -3726,6 +3739,7 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   };
 
   if (!evidence.ocrTextAvailable || documentEvidence.projectedTableSignal
+    || (documentEvidence.printedTableSignal && !documentEvidence.explicitHandwrittenSignal)
     || !documentEvidence.handwrittenPositiveSignal) {
     return evidence;
   }
@@ -3819,7 +3833,7 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
   }
 
   if (documentEvidence.projectedTableSignal
-    || (documentEvidence.printedTableSignal && !documentEvidence.handwrittenPositiveSignal)
+    || (documentEvidence.printedTableSignal && !explicitHandwrittenContext)
     || !documentEvidence.handwrittenPositiveSignal) {
     evidence.reason = documentEvidence.projectedTableSignal ? "projected_table_blocked" : "no_positive_handwritten_evidence";
     return evidence;
@@ -6744,62 +6758,45 @@ function splitGroupsByTableBoundaries(lines, sourceText) {
 }
 
 function getDmsGroupedCoordinateInfo(text) {
-  const sourceLines = normalizeText(text)
-    .split(/\r?\n/)
-    .map(line => line.trim());
-  const groups = [];
-  let currentGroup = [];
-  let previousLabelNumber = null;
-  let reason = "";
-
-  const closeCurrentGroup = closeReason => {
-    if (currentGroup.length > 0) {
-      groups.push(currentGroup);
-      currentGroup = [];
-      previousLabelNumber = null;
-      reason = reason || closeReason;
+  const sourceStructure = extractDmsSourceStructure(text);
+  let reason = sourceStructure.reason;
+  let validGroups = sourceStructure.groups
+    .map(group => group.rows.map(line => parseDmsCoordinateLine(line) || decimalCoordinateFromLine(line)).filter(Boolean))
+    .filter(group => group.length > 0);
+  if (sourceStructure.rowCount === 0) {
+    const groups = [];
+    let currentGroup = [];
+    let previousLabelNumber = null;
+    const closeCurrentGroup = closeReason => {
+      if (currentGroup.length > 0) {
+        groups.push(currentGroup);
+        currentGroup = [];
+        previousLabelNumber = null;
+        reason = reason === "single_group" ? closeReason : reason;
+      }
+    };
+    for (const sourceLine of normalizeText(text).split(/\r?\n/)) {
+      const line = sourceLine.trim();
+      if (!line) {
+        closeCurrentGroup("blank_line");
+        continue;
+      }
+      const coordinate = decimalCoordinateFromLine(line);
+      if (!coordinate) continue;
+      const labelNumber = getLeadingCoordinateLabelNumber(line);
+      if (currentGroup.length > 0 && Number.isInteger(labelNumber)
+        && Number.isInteger(previousLabelNumber) && labelNumber <= previousLabelNumber) {
+        closeCurrentGroup("number_restart");
+      }
+      currentGroup.push(coordinate);
+      previousLabelNumber = Number.isInteger(labelNumber) ? labelNumber : previousLabelNumber;
     }
-  };
-
-  for (const line of sourceLines) {
-    if (!line) {
-      closeCurrentGroup("blank_line");
-      continue;
-    }
-
-    const isBoundary = /\bmining\s+area\b|\barea\s+(?:one|two|three|\d+)\b|the\s+coordinates\s+are\s+as\s+follows/i.test(foldSearchText(line));
-
-    if (isBoundary) {
-      closeCurrentGroup("title_context");
-      continue;
-    }
-
-    const coordinate = parseDmsCoordinateLine(line) || decimalCoordinateFromLine(line);
-
-    if (!coordinate) {
-      continue;
-    }
-
-    const labelNumber = getLeadingCoordinateLabelNumber(line);
-    if (
-      currentGroup.length > 0
-      && Number.isInteger(labelNumber)
-      && Number.isInteger(previousLabelNumber)
-      && labelNumber <= previousLabelNumber
-    ) {
-      closeCurrentGroup("number_restart");
-    }
-
-    currentGroup.push(coordinate);
-    previousLabelNumber = Number.isInteger(labelNumber) ? labelNumber : previousLabelNumber;
+    closeCurrentGroup(reason || "single_group");
+    validGroups = groups.filter(group => group.length > 0);
   }
-
-  closeCurrentGroup(reason || "single_group");
-
-  const validGroups = groups.filter(group => group.length > 0);
   const hasContext = hasDmsGroupedContext(text);
   const hasValidHeaderlessSplit = validGroups.length >= 2 && validGroups.every(group => group.length >= 3);
-  const canAccept = hasValidHeaderlessSplit && (hasContext || reason === "number_restart" || reason === "blank_line");
+  const canAccept = hasValidHeaderlessSplit && (hasContext || ["number_restart", "blank_line", "repeated_table_header", "section_title"].includes(reason));
 
   if (!canAccept) {
     return { output: "", reason: "" };
@@ -6829,22 +6826,6 @@ function countDmsGroupedLonLatOrderLines(text) {
       return ["E", "W", "O"].includes(first?.direction) && ["N", "S"].includes(second?.direction);
     })
     .length;
-}
-
-function shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo) {
-  if (!dmsGroupedInfo?.output) {
-    return false;
-  }
-
-  const groupedRows = countCoordinateRows(dmsGroupedInfo.output);
-
-  if (groupedRows < 4) {
-    return false;
-  }
-
-  const lonLatOrderLines = countDmsGroupedLonLatOrderLines(rawText);
-
-  return lonLatOrderLines >= Math.max(2, Math.ceil(groupedRows * 0.5));
 }
 
 function extractDmsGroupedCoordinateLines(text) {
@@ -7615,14 +7596,17 @@ async function callAliyunVision({
       throw timeoutError;
     }
     stageResult = "failed";
-    error.durationMs = endedAt - startedAt;
+    const durationMs = endedAt - startedAt;
     console.error("[Aliyun] 网络请求失败：", {
       model: modelName,
-      message: error.message,
-      code: error.code,
-      durationMs: error.durationMs
+      classification: "NETWORK_ERROR",
+      durationMs
     });
-    throw error;
+    const networkError = new Error("Aliyun provider network request failed");
+    networkError.code = "ALIYUN_NETWORK_ERROR";
+    networkError.reason = "network";
+    networkError.durationMs = durationMs;
+    throw networkError;
   } finally {
     clearTimeout(timer);
     combinedAbort.cleanup();
@@ -7635,27 +7619,28 @@ async function callAliyunVision({
     model: modelName,
     startedAt: new Date(startedAt).toISOString(),
     endedAt: new Date(endedAt).toISOString(),
-    durationMs: endedAt - startedAt,
-    requestId: data?.request_id || data?.requestId || data?.RequestId
+    durationMs: endedAt - startedAt
   });
 
   if (!response.ok) {
+    const classification = response.status === 401 || response.status === 403
+      ? "AUTH_ERROR"
+      : response.status === 429
+        ? "RATE_LIMIT_ERROR"
+        : response.status >= 500
+          ? "PROVIDER_SERVER_ERROR"
+          : "PROVIDER_HTTP_ERROR";
     console.error("[Aliyun] 请求失败：", {
       status: response.status,
-      statusText: response.statusText,
       model: modelName,
-      errorCode: data?.error?.code || data?.code,
-      errorMessage: data?.error?.message || data?.message,
-      requestId: data?.request_id || data?.requestId || data?.RequestId,
-      durationMs: endedAt - startedAt,
-      responseBody: JSON.stringify(data).slice(0, 1200)
+      classification,
+      durationMs: endedAt - startedAt
     });
-    const error = new Error(data?.error?.message || data?.message || `阿里云 API 请求失败：HTTP ${response.status}`);
+    const error = new Error("Aliyun provider HTTP request failed");
     error.status = response.status;
-    error.code = data?.error?.code || data?.code;
-    error.requestId = data?.request_id || data?.requestId || data?.RequestId;
+    error.code = "ALIYUN_HTTP_ERROR";
+    error.reason = classification;
     error.durationMs = endedAt - startedAt;
-    error.details = data;
     throw error;
   }
 
@@ -9473,6 +9458,11 @@ function buildCoordinateEngineV2Groups(payload = {}, coordinateType = "") {
     return [];
   }
 
+  const verifiedDmsGroupNames = resolveDmsEngineGroupNames({
+    structureText: payload.rawText || "",
+    groupSizes: blocks.map(block => block.length)
+  });
+
   return blocks.map((entries, groupIndex) => {
     const points = entries
       .map((entry, pointIndex) => parseCoordinateEngineV2PointLine(entry.line, coordinateType, pointIndex, entry.label))
@@ -9480,7 +9470,7 @@ function buildCoordinateEngineV2Groups(payload = {}, coordinateType = "") {
 
     return {
       group_id: `group_${groupIndex + 1}`,
-      group_name: `矿地${groupIndex + 1}`,
+      group_name: verifiedDmsGroupNames[groupIndex] || `矿地${groupIndex + 1}`,
       geometry: getCoordinateEngineV2Geometry(points),
       confidence: points.length > 0
         ? Number((points.reduce((sum, point) => sum + Number(point.confidence || 0), 0) / points.length).toFixed(2))
@@ -12966,6 +12956,14 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     }
     return consumeUsage(visitorId, "convert", req, metadata);
   };
+  const parserTrace = ["OCR"];
+  let activeFamilyOwner = null;
+  const requestRetryOrchestrator = createDmsGroupedRetryOrchestrator({ parserTrace });
+  const claimRequestRetry = targetOwner => {
+    const claimed = requestRetryOrchestrator.claim(targetOwner);
+    if (claimed) activeFamilyOwner = requestRetryOrchestrator.snapshot().activeFamilyOwner;
+    return claimed;
+  };
 
   try {
     if (regressionTestMode.rejectReason) {
@@ -13087,7 +13085,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     }
 
     const uploadedFileName = getUploadedFileDisplayName(req.file);
-    console.log("图片文件名：", uploadedFileName || req.file.originalname);
+    console.log("图片文件元数据：", { fileNamePresent: Boolean(uploadedFileName || req.file.originalname) });
     console.log("图片类型：", req.file.mimetype);
     console.log("图片大小：", `${req.file.size} bytes`);
     console.log("使用阿里云视觉模型：", aliyunVisionModel);
@@ -13139,6 +13137,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
 15. 手写坐标如果出现多段明显分开的 1、2、3、4 编号，每一段就是一组坐标，段与段之间必须输出一个空行。
 16. 如果手写 DMS 中存在涂改、覆盖或多个候选数字，不要替用户决定最终修正值。坐标行输出完成后，最后额外输出一行：识别提示：手写坐标存在需核对字符，请结合原图逐行核对。
 17. 如果原图是 Mining Area / The coordinates are as follows 等 DMS 坐标文本，必须保留原始 DMS 字符串，包括 ° ' " N S E W O。不要提前归一化为小数坐标。不同 Mining Area 之间必须保留一个空行。
+18. 如果原图存在 SITE/SITES/AREA/Mining Area 区域标题或重复的 POINT/LATITUDE/LONGITUDE 表头，必须逐字保留每个区域标题及编号、每次重复表头、每个可见行标签和组间空行；不得合并、改名、重排或省略。DMS 秒值的小数位必须保持原样。
 
 示例：
 09°01'13.67"W,11°43'16.45"N
@@ -13302,10 +13301,11 @@ Rules:
 只转写表格，不要整理成最终坐标。每一行必须保留 POINT 标签。
 禁止输出 08°16'00"W,10°52'15"N 这种逗号坐标行。
 如果看见 Point A-Z，必须按 A-Z 原顺序逐行读取，不要跳行、串行、用上一行或下一行的值。`;
-    const dmsGroupedDirectPrompt = `Read ONLY the Mining Area coordinate paragraphs in this image.
+    const dmsGroupedDirectPrompt = `Read ONLY the separate coordinate tables or coordinate sections in this image.
 This is a literal transcription task, NOT a coordinate formatting task.
 
 Target context may include:
+- SITES1 / SITE 1 / SITES2 / SITE 2
 - Mining Area 1
 - Mining Area Two
 - The coordinates are as follows
@@ -13318,7 +13318,8 @@ Critical rules:
 - Do NOT convert DMS to decimal degrees.
 - Do NOT borrow numbers from examples or other lines.
 - Do NOT change N to W, W to N, E to N, or N to E.
-- Keep every visible Mining Area as a separate group with one blank line between groups.
+- Keep every visible SITE, SITES, AREA, or Mining Area table as a separate group with one blank line between groups.
+- Preserve each visible section title and repeated POINT / LATITUDE / LONGITUDE table header as grouping evidence.
 - Keep row labels 1. 2. 3. 4. when visible.
 - Ignore body paragraphs, prices, certificate numbers, phone UI, page title, and background text.
 
@@ -13577,6 +13578,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     };
 
     const readMozambiqueRowsWithPrompt = async ({ promptText, promptName, timeoutMs = 60000, modelName = aliyunVisionModel }) => {
+      if (!claimRequestRetry("mozambique_geographic")) {
+        const ownerError = new Error("Mozambique geographic Provider call blocked by request-scoped retry owner");
+        ownerError.code = "RETRY_OWNER_BLOCKED";
+        throw ownerError;
+      }
       console.log(`Mozambique geographic table ${promptName} prompt started`, {
         model: modelName,
         timeoutMs
@@ -13604,7 +13610,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     if (useKyrgyzGkPromptFirst) {
       recognitionBudget?.recordSkippedStage("generic_provider", kyrgyzPrimaryRoute.genericSkippedReason, "skipped");
       console.log("Kyrgyz GK pre-route matched", {
-        fileName: req.file.originalname || "",
+        fileNamePresent: Boolean(req.file.originalname),
         mimetype: req.file.mimetype || "",
         size: req.file.size || 0
       });
@@ -13671,7 +13677,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
 
         console.log("Kyrgyz GK direct prompt failed reason=no_parsable_rows", {
-          preview: kyrgyzDirectRawText.slice(0, 500)
+          candidateRows: getKyrgyzGkInfo(kyrgyzDirectRawText).rows?.length || 0
         });
         return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
           family: "kyrgyzstan_gk",
@@ -13683,7 +13689,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }));
       } catch (kyrgyzDirectError) {
         if (isRecognitionStopError(kyrgyzDirectError)) throw kyrgyzDirectError;
-        console.error("Kyrgyz GK direct prompt failed reason=", kyrgyzDirectError.message || kyrgyzDirectError);
+        console.error("Kyrgyz GK direct prompt failed", { reason: "PROVIDER_RETRY_ERROR" });
         return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
           family: "kyrgyzstan_gk",
           coordinateType: "kyrgyzstan_gk",
@@ -13699,7 +13705,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
     if (useMozambiqueGeographicPromptFirst) {
       console.log("Mozambique geographic table pre-route matched", {
-        fileName: req.file.originalname || "",
+        fileNamePresent: Boolean(req.file.originalname),
         mimetype: req.file.mimetype || "",
         size: req.file.size || 0
       });
@@ -13718,7 +13724,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           console.log("Mozambique geographic table transcription prompt returned weak rows", {
             rows: mozambiqueRead.rows.length,
             quality: mozambiqueReadQuality,
-            preview: mozambiqueRead.rawText.slice(0, 500)
+            candidateRows: mozambiqueRead.rows?.length || 0
           });
         }
 
@@ -13808,7 +13814,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
 
         console.log("Mozambique geographic table direct prompt failed reason=no_parsable_rows", {
-          preview: mozambiqueRead.rawText.slice(0, 500)
+          candidateRows: mozambiqueRead.rows?.length || 0
         });
         if (mozambiqueTypeLock.level === "strict") {
           console.log("Mozambique type lock active after invalid rows; returning locked review result instead of generic WGS84 takeover.", {
@@ -13825,7 +13831,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       } catch (mozambiqueDirectError) {
         if (isRecognitionStopError(mozambiqueDirectError)) throw mozambiqueDirectError;
-        console.error("Mozambique geographic table direct prompt failed reason=", mozambiqueDirectError.message || mozambiqueDirectError);
+        console.error("Mozambique geographic table direct prompt failed", { reason: "PROVIDER_RETRY_ERROR" });
         const isMozambiqueDirectTimeout = mozambiqueDirectError?.reason === "timeout" || mozambiqueDirectError?.code === "ALIYUN_TIMEOUT";
         if (mozambiqueTypeLock.level === "strict") {
           try {
@@ -13924,7 +13930,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             }
           } catch (mozambiqueRetryError) {
             if (isRecognitionStopError(mozambiqueRetryError)) throw mozambiqueRetryError;
-            console.error("Mozambique type lock transcription retry failed reason=", mozambiqueRetryError.message || mozambiqueRetryError);
+            console.error("Mozambique type lock transcription retry failed", { reason: "PROVIDER_RETRY_ERROR" });
           }
 
           console.log("Mozambique type lock retry did not produce valid rows; returning locked review result instead of generic WGS84 takeover.", {
@@ -14200,28 +14206,45 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     }
     let warning = extractRecognitionWarning(rawText);
     let usedModel = aliyunVisionModel;
-    const parserTrace = ["OCR"];
     const generalVisionRawText = rawText;
     let handwrittenVisionRawText = "";
     let selectedHandwrittenDmsRows = null;
-    let activeFamilyOwner = null;
+    const dmsGroupedRetryOwner = "dms_grouped";
+    const initialDmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
+    const initialDmsDocumentEvidence = getDmsDocumentEvidence(rawText);
+    const structuredDmsRoutePriority = evaluateDmsGroupedRoutePriority({
+      isImageInput: Boolean(req.file),
+      printedTableSignal: initialDmsDocumentEvidence.printedDmsCandidateSignal,
+      explicitHandwrittenSignal: initialDmsDocumentEvidence.explicitHandwrittenSignal,
+      structureText: rawText
+    });
     let handwrittenVisionRouting = getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates, {
       file: req.file,
       hint: coordinateRawHint
     });
+    if (structuredDmsRoutePriority.suppressHandwrittenRetry) {
+      handwrittenVisionRouting = {
+        ...handwrittenVisionRouting,
+        shouldRetry: false,
+        reason: "structured_dms_priority"
+      };
+      parserTrace.push("DMS_GROUPED:typed_route_precedence");
+    }
     if (handwrittenVisionRouting.shouldRetry) {
       try {
+        if (!claimRequestRetry(RETRY_OWNER_FAMILY.HANDWRITTEN_DMS)) {
+          const ownerError = new Error("Handwritten DMS Provider retry blocked by request-scoped owner");
+          ownerError.code = "RETRY_OWNER_BLOCKED";
+          throw ownerError;
+        }
         const currentHandwrittenCandidate = buildHandwrittenCandidateEvidence(stage1HandwrittenCandidateInput, {
           ...handwrittenCandidateOwnerContext,
           candidateId: "handwritten-stage-1",
           sourceStage: "STAGE_1"
         });
-        if (currentHandwrittenCandidate.fieldEvidence.length > 0) {
-          activeFamilyOwner = RETRY_OWNER_FAMILY.HANDWRITTEN_DMS;
-        }
         parserTrace.push("HANDWRITTEN_DMS:evidence_retry");
         console.log("Handwritten DMS evidence detected; retrying with literal transcription prompt.", {
-          fileName: uploadedFileName || req.file?.originalname || "",
+          fileNamePresent: Boolean(uploadedFileName || req.file?.originalname),
           reason: handwrittenVisionRouting.reason,
           score: handwrittenVisionRouting.score,
           damagedMergedDmsLineCount: handwrittenVisionRouting.damagedMergedDmsLineCount,
@@ -14239,9 +14262,6 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           candidateId: "handwritten-stage-2",
           sourceStage: "STAGE_2"
         });
-        if (retryHandwrittenCandidate.fieldEvidence.length > 0) {
-          activeFamilyOwner = RETRY_OWNER_FAMILY.HANDWRITTEN_DMS;
-        }
         const selection = compareCandidateEvidence(currentHandwrittenCandidate, retryHandwrittenCandidate);
         const selectedRows = selection.decision === CANDIDATE_SELECTION_DECISION.REJECT_CANDIDATE
           ? null
@@ -14276,13 +14296,23 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         });
       } catch (handwrittenEvidenceRetryError) {
         if (isRecognitionStopError(handwrittenEvidenceRetryError)) throw handwrittenEvidenceRetryError;
-        handwrittenVisionRouting = {
-          ...handwrittenVisionRouting,
-          retrySuccess: false,
-          retryError: handwrittenEvidenceRetryError.message || String(handwrittenEvidenceRetryError || "")
-        };
-        parserTrace.push("HANDWRITTEN_DMS:evidence_retry_failed");
-        console.error("Handwritten DMS evidence visual retry failed:", handwrittenEvidenceRetryError.message || handwrittenEvidenceRetryError);
+        if (handwrittenEvidenceRetryError?.code === "RETRY_OWNER_BLOCKED") {
+          handwrittenVisionRouting = {
+            ...handwrittenVisionRouting,
+            retrySuccess: false,
+            retryError: "RETRY_OWNER_BLOCKED"
+          };
+          parserTrace.push("HANDWRITTEN_DMS:evidence_retry_owner_blocked");
+          console.log("Handwritten DMS evidence visual retry blocked by request-scoped owner.");
+        } else {
+          handwrittenVisionRouting = {
+            ...handwrittenVisionRouting,
+            retrySuccess: false,
+            retryError: "PROVIDER_RETRY_ERROR"
+          };
+          parserTrace.push("HANDWRITTEN_DMS:evidence_retry_failed");
+          console.error("Handwritten DMS evidence visual retry failed", { reason: "PROVIDER_RETRY_ERROR" });
+        }
       }
     }
     let cadastralGrid = getCadastralGridInfo(rawText);
@@ -14304,12 +14334,57 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       hasExplicitHandwrittenDmsContext: handwrittenDmsUploadContext || activeFamilyOwner === RETRY_OWNER_FAMILY.HANDWRITTEN_DMS
     });
     let pointAzDmsTableAccepted = false;
-    if (dmsGroupedAccepted && shouldRetryDmsGroupedVisualRead(rawText, dmsGroupedInfo)) {
+    let dmsGroupedRetryBoundaryFailure = null;
+    let dmsGroupedAcquisitionExpansion = null;
+    const canonicalDmsCoordinates = coordinates;
+    const canonicalDmsGrouping = reconstructDmsGroupsFromNormalizedCoordinates({
+      structureText: rawText,
+      normalizedCoordinates: canonicalDmsCoordinates
+    });
+    dmsGroupedInfo = { ...dmsGroupedInfo, output: canonicalDmsGrouping.accepted ? canonicalDmsGrouping.output : "" };
+    dmsGroupedAccepted = canonicalDmsGrouping.accepted === true;
+    const dmsGroupedRetryOrchestrator = requestRetryOrchestrator;
+    const applyDmsGroupedRetryFailClosed = reason => {
+      const patch = dmsGroupedRetryOrchestrator.failClose(reason);
+      dmsGroupedRetryBoundaryFailure = patch.reason;
+      coordinates = patch.coordinates;
+      dmsGroupedAccepted = patch.dmsGroupedAccepted;
+      dmsAccepted = patch.dmsAccepted;
+      if (patch.resetChatCoordinates) chatCoordinates = getChatCoordinatesInfo("");
+      if (patch.resetWgs84TableCoordinates) wgs84TableCoordinates = getWgs84TableCoordinatesInfo("");
+      parserTrace.splice(0, parserTrace.length, ...patch.parserTrace);
+    };
+    const claimDownstreamFamilyRetry = targetOwner => {
+      return claimRequestRetry(targetOwner);
+    };
+    const dmsGroupedRetryDispatch = authorizeFamilyRetryDispatch({
+      activeFamilyOwner,
+      targetOwner: dmsGroupedRetryOwner
+    });
+    const dmsGroupedRetryEligibility = evaluateDmsGroupedRetryEligibility({
+      rawText,
+      dmsGroupedInfo,
+      isImageInput: Boolean(req.file),
+      groupedRowCount: countCoordinateRows(dmsGroupedInfo.output),
+      lonLatOrderLines: countDmsGroupedLonLatOrderLines(rawText),
+      familyRetryAllowed: dmsGroupedRetryDispatch.allowed,
+      typedRouteEligible: structuredDmsRoutePriority.typedDmsGrouped
+    });
+    if (dmsGroupedRetryEligibility.failClosed) {
+      applyDmsGroupedRetryFailClosed(dmsGroupedRetryEligibility.reason);
+    }
+    if (dmsGroupedRetryEligibility.allowed) {
       try {
+        if (!claimDownstreamFamilyRetry(dmsGroupedRetryOwner)) {
+          applyDmsGroupedRetryFailClosed("DMS_GROUPED_RETRY_OWNER_BLOCKED");
+        }
+        if (dmsGroupedRetryBoundaryFailure) throw new Error("DMS_GROUPED_RETRY_OWNER_BLOCKED");
+        const dmsGroupedBaselineRows = countDmsCoordinateRows(rawText);
         parserTrace.push("DMS_GROUPED:retry_vision");
         console.log("DMS grouped direct prompt started because generic output appears reordered", {
           rows: countCoordinateRows(dmsGroupedInfo.output),
           lonLatOrderLines: countDmsGroupedLonLatOrderLines(rawText),
+          multiRegionEvidence: hasExplicitDmsMultiRegionEvidence(rawText, dmsGroupedInfo),
           timeoutMs: 60000
         });
         const dmsGroupedRetryResponse = await callAliyunVision({
@@ -14325,23 +14400,90 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         });
         const dmsGroupedRetryRawText = dmsGroupedRetryResponse.choices?.[0]?.message?.content || "";
         const dmsGroupedRetryInfo = getDmsGroupedCoordinateInfo(dmsGroupedRetryRawText);
+        const dmsGroupedRetryCoverage = evaluateDmsGroupedRetryCoverage({
+          baselineText: rawText,
+          retryText: dmsGroupedRetryRawText
+        });
+        const dmsGroupedExpansionCoverage = evaluateDmsGroupedAcquisitionExpansion({
+          baselineText: rawText,
+          retryText: dmsGroupedRetryRawText
+        });
 
-        if (dmsGroupedRetryInfo.output && countCoordinateRows(dmsGroupedRetryInfo.output) >= countCoordinateRows(dmsGroupedInfo.output)) {
+        const retryCanonicalGrouping = reconstructDmsGroupsFromNormalizedCoordinates({
+          structureText: dmsGroupedRetryRawText,
+          normalizedCoordinates: canonicalDmsCoordinates
+        });
+        if (dmsGroupedRetryCoverage.accepted === true && retryCanonicalGrouping.accepted === true) {
           rawText = dmsGroupedRetryRawText;
-          coordinates = dmsGroupedRetryInfo.output;
-          dmsGroupedInfo = dmsGroupedRetryInfo;
+          coordinates = retryCanonicalGrouping.output;
+          dmsGroupedInfo = { ...dmsGroupedRetryInfo, output: retryCanonicalGrouping.output };
           dmsGroupedAccepted = true;
           dmsAccepted = false;
           usedModel = `${aliyunVisionModel}+dms-grouped-direct`;
-          console.log("DMS grouped direct prompt success rows=", countCoordinateRows(dmsGroupedInfo.output));
+          console.log("DMS grouped direct prompt success", {
+            rows: dmsGroupedRetryCoverage.rowCount,
+            groups: dmsGroupedRetryCoverage.groupCount,
+            coverage: dmsGroupedRetryCoverage.reason
+          });
+        } else if (dmsGroupedExpansionCoverage.accepted === true) {
+          const stage1Candidate = Object.freeze({ rawText, coordinates });
+          dmsGroupedAcquisitionExpansion = Object.freeze({
+            stage1Candidate,
+            rawText: dmsGroupedRetryRawText,
+            normalizedCoordinates: dmsGroupedExpansionCoverage.normalizedCoordinates,
+            provenance: Object.freeze({
+              schemaVersion: "dms_grouped_acquisition_delta_v1",
+              ownerFamily: dmsGroupedRetryOwner,
+              candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+              baselineRowCount: dmsGroupedExpansionCoverage.baselineRowCount,
+              retryRowCount: dmsGroupedExpansionCoverage.retryRowCount,
+              addedRowCount: dmsGroupedExpansionCoverage.addedRowCount,
+              baselineRowsPreserved: true,
+              groupLocalBaselineRowsPreserved: true,
+              strongBoundariesProven: true,
+              labelsContinuous: true,
+              sourceCandidateSeparate: true,
+              directCanonicalPromotion: false,
+              baselineGroupCount: dmsGroupedExpansionCoverage.baselineGroupCount,
+              baselineGroupSizes: dmsGroupedExpansionCoverage.baselineGroupSizes,
+              baselineGroupIdentities: dmsGroupedExpansionCoverage.baselineGroupIdentities,
+              retryGroupCount: dmsGroupedExpansionCoverage.groupCount,
+              retryGroupSizes: dmsGroupedExpansionCoverage.groupSizes,
+              retryGroupIdentities: dmsGroupedExpansionCoverage.groupIdentities,
+              stage1CandidateSha256: crypto.createHash("sha256")
+                .update(JSON.stringify(stage1Candidate))
+                .digest("hex"),
+              retryCandidateSha256: crypto.createHash("sha256")
+                .update(JSON.stringify({
+                  rawText: dmsGroupedRetryRawText,
+                  coordinates: dmsGroupedExpansionCoverage.normalizedCoordinates
+                }))
+                .digest("hex")
+            })
+          });
+          parserTrace.push("DMS_GROUPED:acquisition_expansion_review_required");
+          usedModel = `${aliyunVisionModel}+dms-grouped-acquisition-candidate`;
+          console.log("DMS grouped acquisition expansion retained for review", {
+            baselineRows: dmsGroupedExpansionCoverage.baselineRowCount,
+            retryRows: dmsGroupedExpansionCoverage.retryRowCount,
+            addedRows: dmsGroupedExpansionCoverage.addedRowCount,
+            groups: dmsGroupedExpansionCoverage.groupCount,
+            reviewRequired: true
+          });
         } else {
-          console.log("DMS grouped direct prompt did not improve result", {
-            preview: dmsGroupedRetryRawText.slice(0, 500)
+          const rejectionReason = dmsGroupedExpansionCoverage.reason || dmsGroupedRetryCoverage.reason;
+          parserTrace.push(`DMS_GROUPED:retry_rejected:${rejectionReason}`);
+          applyDmsGroupedRetryFailClosed(rejectionReason);
+          console.log("DMS grouped direct prompt rejected", {
+            baselineRows: dmsGroupedBaselineRows,
+            retryRows: countDmsCoordinateRows(dmsGroupedRetryRawText),
+            reason: dmsGroupedRetryCoverage.reason
           });
         }
       } catch (dmsGroupedRetryError) {
         if (isRecognitionStopError(dmsGroupedRetryError)) throw dmsGroupedRetryError;
-        console.error("DMS grouped direct prompt failed:", dmsGroupedRetryError.message || dmsGroupedRetryError);
+        if (!dmsGroupedRetryBoundaryFailure) applyDmsGroupedRetryFailClosed("RETRY_ERROR");
+        console.error("DMS grouped direct prompt failed", { reason: "RETRY_ERROR" });
       }
     }
     if (
@@ -14353,6 +14495,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       && !wgs84TableCoordinates.isWgs84TableCoordinates
       && !kyrgyzGk.isKyrgyzGk
       && shouldRetryFrenchPerimeterDmsVisualRead(rawText, coordinates, req.file, warning)
+      && claimDownstreamFamilyRetry("french_perimeter_dms")
     ) {
       try {
         parserTrace.push("FRENCH_PERIMETER_DMS:retry_vision");
@@ -14387,18 +14530,18 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           console.log("French perimeter DMS direct prompt returned Point A-Z table; deferring to Point A-Z parser.");
         } else {
           console.log("French perimeter DMS direct prompt did not return parsable rows", {
-            preview: frenchPerimeterRawText.slice(0, 500)
+            candidateRows: getFrenchPerimeterDmsInfo(frenchPerimeterRawText).points?.length || 0
           });
         }
       } catch (frenchPerimeterError) {
         if (isRecognitionStopError(frenchPerimeterError)) throw frenchPerimeterError;
-        console.error("French perimeter DMS direct prompt failed:", frenchPerimeterError.message || frenchPerimeterError);
+        console.error("French perimeter DMS direct prompt failed", { reason: "PROVIDER_RETRY_ERROR" });
       }
     }
     if (!mozambiqueGeographicTable.isMozambiqueGeographicTable && (useMozambiqueGeographicPromptFirst || req.file)) {
       const mozambiqueCoordinateRows = extractMozambiqueLonLatCoordinateRows(rawText);
       if (mozambiqueCoordinateRows.length >= 4) {
-        if (!useMozambiqueGeographicPromptFirst && req.file) {
+        if (!useMozambiqueGeographicPromptFirst && req.file && claimDownstreamFamilyRetry("mozambique_geographic")) {
           try {
             console.log("Mozambique geographic table late pre-route from generic decimal rows", {
               rows: mozambiqueCoordinateRows.length,
@@ -14437,7 +14580,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             }
           } catch (mozambiqueLateError) {
             if (isRecognitionStopError(mozambiqueLateError)) throw mozambiqueLateError;
-            console.error("Mozambique geographic table late direct prompt failed reason=", mozambiqueLateError.message || mozambiqueLateError);
+            console.error("Mozambique geographic table late direct prompt failed", { reason: "PROVIDER_RETRY_ERROR" });
           }
         }
 
@@ -14481,6 +14624,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       && !mozambiqueGeographicTable.isMozambiqueGeographicTable
       && !wgs84TableCoordinates.isWgs84TableCoordinates
       && shouldRetryWgs84TableVisualRead(rawText, chatCoordinates, req.file)
+      && claimDownstreamFamilyRetry("wgs84_table")
     ) {
       try {
         parserTrace.push("WGS84_TABLE:retry_vision");
@@ -14516,12 +14660,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           console.log("WGS84 lon/lat table direct prompt success rows=", wgs84TableCoordinates.points.length);
         } else {
           console.log("WGS84 lon/lat table direct prompt did not return a parsable table", {
-            preview: wgs84TableRetryRawText.slice(0, 500)
+            candidateRows: getWgs84TableCoordinatesInfo(wgs84TableRetryRawText).points?.length || 0
           });
         }
       } catch (wgs84TableRetryError) {
         if (isRecognitionStopError(wgs84TableRetryError)) throw wgs84TableRetryError;
-        console.error("WGS84 lon/lat table direct prompt failed:", wgs84TableRetryError.message || wgs84TableRetryError);
+        console.error("WGS84 lon/lat table direct prompt failed", { reason: "PROVIDER_RETRY_ERROR" });
       }
     }
 
@@ -14536,11 +14680,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       && !wgs84TableCoordinates.isWgs84TableCoordinates
       && !chatCoordinates.isChatCoordinates
       && shouldRetryMgrsVisualRead(rawText, req.file, req.body?.rawHint || req.body?.hint || "")
+      && claimDownstreamFamilyRetry("mgrs")
     ) {
       try {
         parserTrace.push("MGRS:retry_vision");
         console.log("MGRS direct prompt started because generic output did not read the map reference table", {
-          fileName: req.file?.originalname || "",
+          fileNamePresent: Boolean(req.file?.originalname),
           model: aliyunOcrModel,
           timeoutMs: 60000
         });
@@ -14567,12 +14712,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           console.log("MGRS direct prompt success rows=", mgrs.rows.length);
         } else {
           console.log("MGRS direct prompt did not return parsable rows", {
-            preview: mgrsRetryRawText.slice(0, 500)
+            candidateRows: getMgrsInfo(mgrsRetryRawText).rows?.length || 0
           });
         }
       } catch (mgrsRetryError) {
         if (isRecognitionStopError(mgrsRetryError)) throw mgrsRetryError;
-        console.error("MGRS direct prompt failed:", mgrsRetryError.message || mgrsRetryError);
+        console.error("MGRS direct prompt failed", { reason: "PROVIDER_RETRY_ERROR" });
       }
     }
 
@@ -14646,7 +14791,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       parserTrace.push(chatCoordinates.rejected ? `WGS84_CHAT:rejected(${chatCoordinates.rejectionReason})` : "WGS84_CHAT:rejected");
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckKyrgyzGkTable(rawText, coordinates) && claimDownstreamFamilyRetry("kyrgyz_gk")) {
       try {
         console.log("Kyrgyzstan Gauss-Kruger table context detected, reading point/X/Y table.");
         const kyrgyzResponse = await callAliyunVision({
@@ -14670,15 +14815,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           usedModel = `${aliyunVisionModel}+kyrgyz-gk-priority`;
           warning = "识别到吉尔吉斯斯坦高斯克吕格平面坐标表，已保留 point / X / Y 并按点号排序；当前阶段需投影转换后才能生成 KML。";
         } else {
-          console.log("Kyrgyzstan GK priority read did not return parsable rows:", kyrgyzRawText.slice(0, 500));
+          console.log("Kyrgyzstan GK priority read did not return parsable rows", { candidateRows: 0 });
         }
       } catch (kyrgyzError) {
         if (isRecognitionStopError(kyrgyzError)) throw kyrgyzError;
-        console.error("Kyrgyzstan GK priority check failed:", kyrgyzError.message || kyrgyzError);
+        console.error("Kyrgyzstan GK priority check failed", { reason: "PROVIDER_RETRY_ERROR" });
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldCheckCadastralGridLayout(rawText, coordinates) && claimDownstreamFamilyRetry("cadastral_grid")) {
       try {
         console.log("Checking image for cadastral grid table layout before accepting ordinary coordinates.");
         const layoutResponse = await callAliyunVision({
@@ -14695,7 +14840,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         const layoutText = layoutResponse.choices?.[0]?.message?.content || "";
 
         if (isCadastralGridLayoutDetected(layoutText)) {
-          console.log("Cadastral grid layout detected, reading table area first:", layoutText.slice(0, 300));
+          console.log("Cadastral grid layout detected; reading table area", { layoutDetected: true });
           const gridResponse = await callAliyunVision({
             modelName: aliyunVisionModel,
             prompt: cadastralGridTablePrompt,
@@ -14718,16 +14863,16 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             usedModel = `${aliyunVisionModel}+cadastral-grid-priority`;
             warning = "识别到 Liste_Carrés / 矿权网格表，已优先读取 num / XV / YV；已忽略地图中央的大号 DMS 标注。";
           } else {
-            console.log("Cadastral grid table priority read did not return parsable rows:", gridRawText.slice(0, 500));
+            console.log("Cadastral grid table priority read did not return parsable rows", { candidateRows: 0 });
           }
         }
       } catch (gridPriorityError) {
         if (isRecognitionStopError(gridPriorityError)) throw gridPriorityError;
-        console.error("Cadastral grid layout/table priority check failed:", gridPriorityError.message || gridPriorityError);
+        console.error("Cadastral grid layout/table priority check failed", { reason: "PROVIDER_RETRY_ERROR" });
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates) && claimDownstreamFamilyRetry("bftm")) {
       try {
         console.log("BFTM/X-Y result looks like column-paired output, retrying row-wise extraction.");
         const bftmRetryResponse = await callAliyunVision({
@@ -14761,14 +14906,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       } catch (bftmRetryError) {
         if (isRecognitionStopError(bftmRetryError)) throw bftmRetryError;
-        console.error("BFTM/X-Y row-wise retry failed:", bftmRetryError.message || bftmRetryError);
+        console.error("BFTM/X-Y row-wise retry failed", { reason: "PROVIDER_RETRY_ERROR" });
         if (!warning) {
           warning = "BFTM / X-Y 坐标疑似列配对错误，请人工核对原表。";
         }
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryBftmRecognition(rawText, coordinates) && claimDownstreamFamilyRetry("bftm")) {
       try {
         console.log("BFTM/X-Y OCR retry still invalid, using vision layout retry.");
         const bftmVisionRetryResponse = await callAliyunVision({
@@ -14802,7 +14947,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       } catch (bftmVisionRetryError) {
         if (isRecognitionStopError(bftmVisionRetryError)) throw bftmVisionRetryError;
-        console.error("BFTM/X-Y vision layout retry failed:", bftmVisionRetryError.message || bftmVisionRetryError);
+        console.error("BFTM/X-Y vision layout retry failed", { reason: "PROVIDER_RETRY_ERROR" });
         if (!warning) {
           warning = "BFTM / X-Y 坐标未能稳定识别，请人工核对原表。";
         }
@@ -14810,12 +14955,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     }
 
     const pointAzTypedEvidence = getPointAzTypedEvidence(rawText);
-    const pointAzOwnerFamily = activeFamilyOwner || RETRY_OWNER_FAMILY.POINT_AZ_DMS_TABLE;
-    const pointAzRetryAuthorized = authorizeFamilyRetryDispatch({
-      activeFamilyOwner,
-      targetOwner: RETRY_OWNER_FAMILY.POINT_AZ_DMS_TABLE
-    }).allowed && canAuthorizePointAzRetry({ ownerFamily: pointAzOwnerFamily, typedPointAzEvidence: pointAzTypedEvidence });
-    if (!dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && pointAzRetryAuthorized && shouldRetryPointAzDmsLongTable(rawText, coordinates)) {
+    const pointAzRetryAuthorized = canAuthorizePointAzRetry({ ownerFamily: RETRY_OWNER_FAMILY.POINT_AZ_DMS_TABLE, typedPointAzEvidence: pointAzTypedEvidence });
+    if (!dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && pointAzRetryAuthorized && shouldRetryPointAzDmsLongTable(rawText, coordinates) && claimDownstreamFamilyRetry(RETRY_OWNER_FAMILY.POINT_AZ_DMS_TABLE)) {
       try {
         console.log("Point A-Z / long DMS table looks partial or duplicated, retrying visual row extraction.");
         const pointAzRetryResponse = await callAliyunVision({
@@ -14848,15 +14989,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           }
           warning = "识别到 Point / Nord / Est 长表，已用专用视觉重读按表格行保留 A-Z 点位。";
         } else if (pointAzTableRows.length < 12) {
-          console.log("Point A-Z / long DMS retry did not return enough labeled rows:", pointAzRetryRawText.slice(0, 1000));
+          console.log("Point A-Z / long DMS retry did not return enough labeled rows", { candidateRows: pointAzTableRows.length });
         }
       } catch (pointAzRetryError) {
         if (isRecognitionStopError(pointAzRetryError)) throw pointAzRetryError;
-        console.error("Point A-Z / long DMS visual retry failed:", pointAzRetryError.message || pointAzRetryError);
+        console.error("Point A-Z / long DMS visual retry failed", { reason: "PROVIDER_RETRY_ERROR" });
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
+    if (!dmsGroupedRetryBoundaryFailure && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && countCommaDmsLongTableRows(rawText) >= 20) {
       const smoothedRawText = smoothDmsMinuteIslandsForLongTable(rawText);
 
       if (smoothedRawText !== rawText) {
@@ -14867,7 +15008,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates) && claimDownstreamFamilyRetry("generic_ocr")) {
       try {
         console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
         const retryResponse = await callAliyunVision({
@@ -14890,11 +15031,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       } catch (retryError) {
         if (isRecognitionStopError(retryError)) throw retryError;
-        console.error("阿里云OCR重试失败：", retryError.message || retryError);
+        console.error("阿里云OCR重试失败", { reason: "PROVIDER_RETRY_ERROR" });
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedRetryBoundaryFailure && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
       try {
         console.log("阿里云识别结果较少，尝试备用OCR对比。");
         const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
@@ -14909,17 +15050,18 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       } catch (fallbackError) {
         if (isRecognitionStopError(fallbackError)) throw fallbackError;
-        console.error("备用OCR失败：", fallbackError.message || fallbackError);
+        console.error("备用OCR失败", { reason: "LOCAL_OCR_ERROR" });
         if (!warning) {
           warning = "阿里云识别结果较少，请人工核对。";
         }
       }
     }
 
-    console.log("阿里云返回的原始内容：");
-    console.log(rawText);
-    console.log("坐标提取结果：");
-    console.log(coordinates);
+    console.log("Coordinate recognition parsed result metadata", {
+      rawTextRows: String(rawText || "").split(/\r?\n/).filter(line => line.trim()).length,
+      coordinateRows: countCoordinateRows(coordinates),
+      parserTraceLength: parserTrace.length
+    });
     cadastralGrid = getCadastralGridInfo(rawText);
     mgrs = getMgrsInfo(rawText);
     mozambiqueGeographicTable = getMozambiqueGeographicInfo(rawText);
@@ -14953,7 +15095,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     }
     kyrgyzGk = getKyrgyzGkInfo(rawText);
     dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
-    dmsGroupedAccepted = Boolean(dmsGroupedInfo.output);
+    const finalCanonicalDmsGrouping = reconstructDmsGroupsFromNormalizedCoordinates({
+      structureText: rawText,
+      normalizedCoordinates: coordinates
+    });
+    dmsGroupedInfo = { ...dmsGroupedInfo, output: finalCanonicalDmsGrouping.accepted ? finalCanonicalDmsGrouping.output : "" };
+    dmsGroupedAccepted = finalCanonicalDmsGrouping.accepted === true;
     dmsAccepted = !dmsGroupedAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && countDmsCoordinateRows(rawText) > 0 && countCoordinateRows(coordinates) > 0;
     handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, {
       isOcrImage: Boolean(req.file),
@@ -14986,7 +15133,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       coordinates = applyHandwrittenDmsCoordinateGrouping(coordinates, handwrittenDms);
     }
     if (dmsGroupedAccepted) {
-      coordinates = dmsGroupedInfo.output;
+      coordinates = finalCanonicalDmsGrouping.output;
     } else if (frenchPerimeterDms.isFrenchPerimeterDms) {
       coordinates = formatFrenchPerimeterDmsRows(frenchPerimeterDms.points);
       warning = "识别到法语正文式边界 DMS 坐标，已按 Point / méridien / parallèle / Ouest / Nord 独立解析，不交给 WGS84 Chat parser。";
@@ -15008,6 +15155,19 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       coordinates = formatChatCoordinateRows(wgs84TableCoordinates.points);
     } else if (chatCoordinates.isChatCoordinates) {
       coordinates = formatChatCoordinateRows(chatCoordinates.points);
+    }
+
+    if (dmsGroupedRetryBoundaryFailure) {
+      const dmsGroupedBoundaryWarning = "识别到多区域 DMS 坐标结构，但未能安全重建完整分组边界；请人工核对后再生成地图或 KML。";
+      warning = warning ? `${warning} ${dmsGroupedBoundaryWarning}` : dmsGroupedBoundaryWarning;
+      coordinates = "";
+      dmsGroupedAccepted = false;
+      dmsAccepted = false;
+      chatCoordinates = getChatCoordinatesInfo("");
+      wgs84TableCoordinates = getWgs84TableCoordinatesInfo("");
+      if (!parserTrace.includes("DMS_GROUPED:boundary_unresolved_review_required")) {
+        parserTrace.push("DMS_GROUPED:boundary_unresolved_review_required");
+      }
     }
 
     bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
@@ -15070,8 +15230,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const finalWarning = wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning);
     const recognitionPayload = {
       model: usedModel,
-      rawText,
-      coordinates,
+      rawText: dmsGroupedAcquisitionExpansion?.stage1Candidate.rawText ?? rawText,
+      coordinates: dmsGroupedAcquisitionExpansion?.stage1Candidate.coordinates ?? coordinates,
       precisionMode: finalPrecisionMode,
       warning: finalWarning,
       projection: utm30Accepted ? "utm30n" : undefined,
@@ -15092,10 +15252,44 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         finalRawText: rawText
       },
       parserTrace,
+      acquisitionExpansionCandidate: dmsGroupedAcquisitionExpansion ? {
+        rawText: dmsGroupedAcquisitionExpansion.rawText,
+        coordinates: dmsGroupedAcquisitionExpansion.normalizedCoordinates,
+        precisionMode: "dms-coordinates",
+        provenance: dmsGroupedAcquisitionExpansion.provenance
+      } : null,
       quota: consumeResult.quota
     };
 
-    let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(recognitionPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });
+    const finalRecognitionCandidate = dmsGroupedAcquisitionExpansion
+      ? {
+          ...recognitionPayload,
+          stage1Candidate: Object.freeze({
+            rawText: dmsGroupedAcquisitionExpansion.stage1Candidate.rawText,
+            coordinates: dmsGroupedAcquisitionExpansion.stage1Candidate.coordinates,
+            precisionMode: recognitionPayload.precisionMode,
+            candidateRole: "STAGE1_ACQUISITION_CANDIDATE"
+          }),
+          rawText: dmsGroupedAcquisitionExpansion.rawText,
+          coordinates: dmsGroupedAcquisitionExpansion.normalizedCoordinates,
+          precisionMode: "dms-coordinates",
+          warning: "结构化复读补充了坐标行；必须对照原图确认后才能用于地图或 KML。",
+          acquisitionDeltaProvenance: dmsGroupedAcquisitionExpansion.provenance
+        }
+      : recognitionPayload;
+    let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(finalRecognitionCandidate, {
+      fileName: uploadedFileName,
+      rawHint: coordinateEngineV2ContextHint,
+      lockedCoordinateType: dmsGroupedAcquisitionExpansion ? "standard_dms_table" : undefined,
+      forceRequiresReview: Boolean(dmsGroupedAcquisitionExpansion)
+    });
+    if (dmsGroupedAcquisitionExpansion) {
+      coordinateEngineV2 = {
+        ...coordinateEngineV2,
+        requires_review: true,
+        acquisition_delta_provenance: dmsGroupedAcquisitionExpansion.provenance
+      };
+    }
     const shouldReadCoteDIvoireV2 = hasCoteDIvoireGeographicDmsCue([
       uploadedFileName,
       rawText,
@@ -15103,10 +15297,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       req.body?.hint || ""
     ].join("\n"));
 
-    if (shouldReadCoteDIvoireV2) {
+    if (shouldReadCoteDIvoireV2 && claimDownstreamFamilyRetry("cote_divoire")) {
       try {
-        console.log("Cote d'Ivoire V2 geographic DMS prompt started", {
-          fileName: uploadedFileName,
+      console.log("Cote d'Ivoire V2 geographic DMS prompt started", {
+          fileNamePresent: Boolean(uploadedFileName),
           timeoutMs: 70000
         });
         const coteDIvoireResponse = await callAliyunVision({
@@ -15136,12 +15330,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         } else {
           console.log("Cote d'Ivoire V2 geographic DMS prompt returned no parsable groups", {
-            preview: coteDIvoireRawText.slice(0, 500)
+            groups: 0,
+            points: 0
           });
         }
       } catch (coteDIvoireError) {
         if (isRecognitionStopError(coteDIvoireError)) throw coteDIvoireError;
-        console.error("Cote d'Ivoire V2 geographic DMS prompt failed:", coteDIvoireError.message || coteDIvoireError);
+        console.error("Cote d'Ivoire V2 geographic DMS prompt failed", { reason: "PROVIDER_RETRY_ERROR" });
         coordinateEngineV2 = {
           ...coordinateEngineV2,
           debug: {
@@ -15155,7 +15350,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    res.json(buildCoordinateVerificationResponse(recognitionPayload, coordinateEngineV2));
+    const verificationResponse = buildCoordinateVerificationResponse(finalRecognitionCandidate, coordinateEngineV2);
+    res.json(dmsGroupedAcquisitionExpansion ? {
+      ...verificationResponse,
+      rawText: recognitionPayload.rawText,
+      coordinates: recognitionPayload.coordinates,
+      precisionMode: recognitionPayload.precisionMode
+    } : verificationResponse);
   } catch (error) {
     if (getRecognitionDeadlineSignal()?.aborted || res.headersSent || error?.code === RECOGNITION_DEADLINE_CODE) {
       return;
@@ -15170,15 +15371,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         coordinates: ""
       });
     }
-    const errorMessage = getAliyunErrorMessage(error);
-    console.error("阿里云识别失败，尝试备用OCR。真实错误信息：", {
-      message: error.message,
-      code: error.code,
-      status: error.status,
-      details: error.details,
-      formatted: errorMessage,
+    console.error("阿里云识别失败，尝试备用OCR", {
+      reason: error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT" ? "PROVIDER_TIMEOUT" : "PROVIDER_ERROR",
+      statusPresent: Number.isInteger(Number(error?.status)),
       uploadedFileCount: req.file ? 1 : 0,
-      fileName: req.file?.originalname || ""
+      fileNamePresent: Boolean(req.file?.originalname)
     });
 
     try {
@@ -15224,28 +15421,30 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         if (!handwrittenTimeoutRoutingEvidence.shouldRetry) {
           try {
             timeoutRoutingOcrAttempted = true;
-            timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
+            timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, "provider_timeout");
             handwrittenTimeoutRoutingEvidence = getHandwrittenDmsTimeoutRoutingEvidence(req.file, timeoutRoutingHint, {
               ocrText: timeoutRoutingOcrFallback.rawText
             });
             console.log("Handwritten DMS timeout routing evidence:", {
-              fileName: req.file?.originalname || "",
+              fileNamePresent: Boolean(req.file?.originalname),
               ...handwrittenTimeoutRoutingEvidence,
-              ocrPreview: String(timeoutRoutingOcrFallback.rawText || "").slice(0, 300)
+              ocrTextPresent: Boolean(timeoutRoutingOcrFallback.rawText),
+              ocrCoordinateRowCount: countCoordinateRows(timeoutRoutingOcrFallback.coordinates)
             });
           } catch (routingOcrError) {
             if (isRecognitionStopError(routingOcrError)) throw routingOcrError;
-            console.error("Handwritten DMS timeout routing OCR failed:", routingOcrError.message || routingOcrError);
+            console.error("Handwritten DMS timeout routing OCR failed", { reason: "PROVIDER_RETRY_ERROR" });
           }
         } else {
           console.log("Handwritten DMS timeout routing evidence:", {
-            fileName: req.file?.originalname || "",
+            fileNamePresent: Boolean(req.file?.originalname),
             ...handwrittenTimeoutRoutingEvidence
           });
         }
       }
 
-      if (isAliyunTimeout && aliyunApiKey && req.file && handwrittenTimeoutRoutingEvidence?.shouldRetry) {
+      if (isAliyunTimeout && aliyunApiKey && req.file && handwrittenTimeoutRoutingEvidence?.shouldRetry
+        && claimRequestRetry(RETRY_OWNER_FAMILY.HANDWRITTEN_DMS)) {
         const handwrittenDmsDebug = {
           handwrittenDmsRetryStarted: true,
           handwrittenDmsRetrySuccess: false,
@@ -15258,7 +15457,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
         try {
           console.log("Aliyun timed out; retrying handwritten DMS visual recognition before local OCR fallback.", {
-            fileName: req.file?.originalname || "",
+            fileNamePresent: Boolean(req.file?.originalname),
             timeoutMs: handwrittenDmsDebug.handwrittenDmsRetryTimeoutMs
           });
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
@@ -15321,10 +15520,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             ));
           }
 
-          console.log("Handwritten DMS timeout retry did not return stable rows:", retryRawText.slice(0, 500));
+          console.log("Handwritten DMS timeout retry did not return stable rows", { candidateRows: retryHandwrittenDms.pointRows || 0 });
         } catch (handwrittenRetryError) {
           if (isRecognitionStopError(handwrittenRetryError)) throw handwrittenRetryError;
-          console.error("Handwritten DMS timeout visual retry failed:", handwrittenRetryError.message || handwrittenRetryError);
+          console.error("Handwritten DMS timeout visual retry failed", { reason: "PROVIDER_RETRY_ERROR" });
         }
 
         const handwrittenTimeoutPayload = {
@@ -15349,7 +15548,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         req.file,
         req.body?.rawHint || req.body?.hint || ""
       );
-      if (isAliyunTimeout && aliyunApiKey && req.file && hasKyrgyzTimeoutEvidence) {
+      if (isAliyunTimeout && aliyunApiKey && req.file && hasKyrgyzTimeoutEvidence
+        && claimRequestRetry("kyrgyz_gk")) {
         try {
           console.log("Aliyun timed out; retrying Kyrgyzstan GK visual table extraction before local OCR fallback.");
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
@@ -15433,10 +15633,10 @@ If the table is not readable, output only: ${noCoordinatesText}`;
             ));
           }
 
-          console.log("Kyrgyzstan GK timeout retry did not return parsable rows:", retryRawText.slice(0, 500));
+          console.log("Kyrgyzstan GK timeout retry did not return parsable rows", { candidateRows: retryKyrgyzGk.rows?.length || 0 });
         } catch (retryError) {
           if (isRecognitionStopError(retryError)) throw retryError;
-          console.error("Kyrgyzstan GK timeout visual retry failed:", retryError.message || retryError);
+          console.error("Kyrgyzstan GK timeout visual retry failed", { reason: "PROVIDER_RETRY_ERROR" });
         }
       }
 
@@ -15446,11 +15646,12 @@ If the table is not readable, output only: ${noCoordinatesText}`;
         && req.file
         && shouldRunWgs84TimeoutRescue({ localOcrAttempted: timeoutRoutingOcrAttempted })
         && shouldRetryWgs84TableOnTimeout(req.file, req.body?.rawHint || req.body?.hint || "")
+        && claimRequestRetry("wgs84_table")
       ) {
         wgs84TimeoutRetryAttempted = true;
         try {
           console.log("Aliyun timed out; retrying WGS84 longitude/latitude table visual extraction before local OCR fallback.", {
-            fileName: req.file?.originalname || "",
+            fileNamePresent: Boolean(req.file?.originalname),
             timeoutMs: 80000
           });
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
@@ -15547,10 +15748,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             ));
           }
 
-          console.log("WGS84 lon/lat table timeout retry did not return parsable rows:", retryRawText.slice(0, 500));
+          console.log("WGS84 lon/lat table timeout retry did not return parsable rows", { candidateRows: retryWgs84Table.points?.length || 0 });
         } catch (retryError) {
           if (isRecognitionStopError(retryError)) throw retryError;
-          console.error("WGS84 lon/lat table timeout visual retry failed:", retryError.message || retryError);
+          console.error("WGS84 lon/lat table timeout visual retry failed", { reason: "PROVIDER_RETRY_ERROR" });
         }
       }
 
@@ -15568,7 +15769,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
       if (!timeoutRoutingOcrFallback) {
         timeoutRoutingOcrAttempted = true;
-        timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, errorMessage);
+        timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, "provider_timeout");
       }
       const fallback = timeoutRoutingOcrFallback;
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
@@ -15702,7 +15903,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       let bftmLongTable = getBftmLongTableInfo(fallback.rawText, fallback.coordinates);
       let bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
 
-      if (!fallbackCadastralGrid.isCadastralGrid && !fallbackMgrs.isMgrs && !fallbackMozambiqueGeographicTable.isMozambiqueGeographicTable && !fallbackWgs84TableCoordinates.isWgs84TableCoordinates && !fallbackChatCoordinates.isChatCoordinates && !fallbackKyrgyzGk.isKyrgyzGk && bftmIncompleteWarning && aliyunApiKey && req.file) {
+      if (!fallbackCadastralGrid.isCadastralGrid && !fallbackMgrs.isMgrs && !fallbackMozambiqueGeographicTable.isMozambiqueGeographicTable && !fallbackWgs84TableCoordinates.isWgs84TableCoordinates && !fallbackChatCoordinates.isChatCoordinates && !fallbackKyrgyzGk.isKyrgyzGk && bftmIncompleteWarning && aliyunApiKey && req.file
+        && claimRequestRetry("bftm")) {
         try {
           console.log("BFTM long table fallback is incomplete, retrying Aliyun visual table extraction once.");
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
@@ -15737,7 +15939,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           }
         } catch (retryError) {
           if (isRecognitionStopError(retryError)) throw retryError;
-          console.error("BFTM long table Aliyun retry failed:", retryError.message || retryError);
+          console.error("BFTM long table Aliyun retry failed", { reason: "PROVIDER_RETRY_ERROR" });
         }
       }
 
@@ -15761,10 +15963,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         && req.file
         && !fallbackHasStableCoordinateResult
         && shouldRunWgs84TimeoutRescue({ localOcrAttempted: timeoutRoutingOcrAttempted })
+        && claimRequestRetry("wgs84_table")
       ) {
         try {
           console.log("Fallback OCR produced no stable coordinates after timeout; running WGS84 table timeout rescue.", {
-            fileName: req.file?.originalname || "",
+            fileNamePresent: Boolean(req.file?.originalname),
             timeoutMs: 80000
           });
           const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
@@ -15830,11 +16033,11 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
             delete fallback.bftmLongTable;
             bftmIncompleteWarning = "";
           } else {
-            console.log("WGS84 table timeout rescue did not return parsable rows:", rescueRawText.slice(0, 500));
+            console.log("WGS84 table timeout rescue did not return parsable rows", { candidateRows: rescueWgs84Table.points?.length || 0 });
           }
         } catch (rescueError) {
           if (isRecognitionStopError(rescueError)) throw rescueError;
-          console.error("WGS84 table timeout rescue failed:", rescueError.message || rescueError);
+          console.error("WGS84 table timeout rescue failed", { reason: "PROVIDER_RETRY_ERROR" });
         }
       }
 
@@ -15885,9 +16088,9 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
           coordinates: ""
         });
       }
-      console.error(fallbackError);
+      console.error("Coordinate recognition fallback failed", { reason: "FALLBACK_ERROR" });
       res.status(500).json({
-        error: `${errorMessage}；备用OCR也失败：${fallbackError.message || "未知错误"}`,
+        error: "坐标识别与备用识别均未完成，请稍后重试。",
         rawText: "",
         coordinates: ""
       });

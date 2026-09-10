@@ -5,6 +5,7 @@ import {
   COORDINATE_DECISION_STATE,
   COORDINATE_GATE_REASON,
   COORDINATE_QUALITY_GATE_STATUS,
+  CoordinateConfirmationRuntime,
   FINALIZED_COORDINATE_CRS,
   acceptCoordinateRevision,
   composeAbortSignals,
@@ -168,6 +169,107 @@ test("I01", "legacy structured input produces geometry without raw text", () => 
   const result = finalizeCoordinateResult(input, { clock });
   assert.deepEqual(result.geometry, pointGeometry);
   assert.equal(result.decisionState, "AUTO_EXPORT");
+});
+
+test("I01A", "13-to-16 dms_grouped acquisition delta requires exact confirmation before release", () => {
+  const groupSizes = [8, 4, 4];
+  const groupIdentities = ["SITE:1", "SITE:2", "SITE:3"];
+  const acquisitionGroups = groupSizes.map((size, groupIndex) => ({
+    group_id: `group_${groupIndex + 1}`,
+    group_name: `SITES${groupIndex + 1}`,
+    geometry: "polygon",
+    requires_review: true,
+    kml_ready: false,
+    points: Array.from({ length: size }, (_, pointIndex) => {
+      const angle = (Math.PI * 2 * pointIndex) / size;
+      return { label: String(pointIndex + 1), lon: 103 + groupIndex + Math.cos(angle) * 0.1, lat: 16 + groupIndex + Math.sin(angle) * 0.1 };
+    })
+  }));
+  const provenance = {
+    schemaVersion: "dms_grouped_acquisition_delta_v1",
+    ownerFamily: "dms_grouped",
+    candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+    baselineRowCount: 13,
+    retryRowCount: 16,
+    addedRowCount: 3,
+    baselineRowsPreserved: true,
+    groupLocalBaselineRowsPreserved: true,
+    baselineGroupCount: 3,
+    baselineGroupSizes: [6, 4, 3],
+    baselineGroupIdentities: groupIdentities,
+    retryGroupCount: 3,
+    retryGroupSizes: groupSizes,
+    retryGroupIdentities: groupIdentities,
+    strongBoundariesProven: true,
+    labelsContinuous: true,
+    sourceCandidateSeparate: true,
+    directCanonicalPromotion: false,
+    stage1CandidateSha256: "a".repeat(64),
+    retryCandidateSha256: "b".repeat(64)
+  };
+  const input = createLegacyFinalizerInput({
+    recognitionResult: { precisionMode: "dms-coordinates" },
+    coordinateEngineV2: {
+      coordinate_type: "standard_dms_table",
+      precision_mode: "dms-coordinates",
+      requires_review: true,
+      acquisition_delta_provenance: provenance,
+      groups: acquisitionGroups
+    },
+    verification: { status: "REVIEW", warnings: [] },
+    revision: { resultId: "delta-1", resultRevision: 1 }
+  });
+  const pending = finalizeCoordinateResult(input, { clock });
+  assert.equal(input.currentAuthorizedGeometryExportable, false);
+  assert.equal(pending.decisionState, COORDINATE_DECISION_STATE.REVIEW_REQUIRED);
+  assert.equal(pending.kmlReady, false);
+  assert.equal(pending.familySafetyPolicy.acquisitionDeltaProvenance.stage1CandidateSha256, "a".repeat(64));
+  assert.equal(consumeFinalizedGeometry(pending, geometry => geometry.type).consumed, false);
+
+  const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
+  runtime.register(pending);
+  const confirmed = runtime.confirm({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: pending.geometryHash,
+    action: "accept"
+  }).finalizedCoordinateResult;
+  assert.equal(confirmed.decisionState, COORDINATE_DECISION_STATE.AUTO_EXPORT);
+  assert.equal(confirmed.kmlReady, true);
+  assert.equal(consumeFinalizedGeometry(confirmed, geometry => geometry.type).consumed, true);
+
+  const invalidInput = createLegacyFinalizerInput({
+    recognitionResult: {},
+    coordinateEngineV2: {
+      coordinate_type: "standard_dms_table",
+      precision_mode: "dms-coordinates",
+      requires_review: true,
+      acquisition_delta_provenance: { ...provenance, retryCandidateSha256: provenance.stage1CandidateSha256 },
+      groups: acquisitionGroups
+    },
+    verification: { status: "REVIEW" },
+    revision: { resultId: "delta-invalid", resultRevision: 1 }
+  });
+  const invalid = finalizeCoordinateResult(invalidInput, { clock });
+  assert.equal(invalid.geometry, null);
+  assert.equal(invalid.qualityGateStatus, COORDINATE_QUALITY_GATE_STATUS.FAILED);
+  assert.equal(invalid.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+
+  const malformedTopology = finalizeCoordinateResult(createLegacyFinalizerInput({
+    recognitionResult: {},
+    coordinateEngineV2: {
+      coordinate_type: "standard_dms_table",
+      precision_mode: "dms-coordinates",
+      requires_review: true,
+      acquisition_delta_provenance: provenance,
+      groups: acquisitionGroups.slice(0, 2)
+    },
+    verification: { status: "REVIEW" },
+    revision: { resultId: "delta-malformed-topology", resultRevision: 1 }
+  }), { clock });
+  assert.equal(malformedTopology.geometry, null);
+  assert.equal(malformedTopology.qualityGateStatus, COORDINATE_QUALITY_GATE_STATUS.FAILED);
+  assert.equal(malformedTopology.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
 });
 
 test("I02", "V3 remains fail closed without authority decision", () => {

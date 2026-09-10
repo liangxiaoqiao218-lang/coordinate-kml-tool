@@ -121,9 +121,12 @@ export function getDmsDocumentEvidence(value = "") {
   const damagedDmsSignal = /\d{1,3}\s*[°º]\s*\d{1,2}\.\d{3,5}\s*['′]?\s*[NSEWO]\b/i.test(text)
     || /\d{1,3}[.°º]\d{1,2}\.\d{1,2}\.\d+\s*[NSEWO]\b/i.test(text)
     || /\d[OIl?]\d[^\n]{0,15}[NSEW]\b/.test(text);
+  const printedDmsCandidateSignal = printedTableSignal
+    && !projectedTableSignal
+    && !explicitHandwrittenSignal;
   return Object.freeze({ printedTableSignal, projectedTableSignal,
     handwrittenPositiveSignal: explicitHandwrittenSignal || damagedDmsSignal,
-    explicitHandwrittenSignal, damagedDmsSignal });
+    explicitHandwrittenSignal, damagedDmsSignal, printedDmsCandidateSignal });
 }
 
 export function getIndonesiaUtm50Info(value = "", { transform } = {}) {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  DMS_GROUPED_ACQUISITION_DELTA_POLICY,
   FINALIZED_COORDINATE_CRS,
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
@@ -133,6 +134,37 @@ test("P04-12", "Geometry hash mismatch and facts failure are isolated", () => {
   const preview = adapter.adapt({ ...result, geometryHash: "sha256:stale" }, { clock });
   assert.equal(preview.previewReasonCodes[0], MAP_PREVIEW_BLOCK_REASON.GEOMETRY_HASH_MISMATCH);
   assert.throws(() => calculateSpatialFacts({ type: "Unsupported", coordinates: [] }), /SPATIAL_FACTS_POSITIONS_REQUIRED/);
+});
+
+test("P04-13", "unconfirmed dms_grouped acquisition delta cannot reach Map", () => {
+  const result = finalized({
+    confirmationStatus: "pending",
+    requiresReview: true,
+    kmlReady: false,
+    familySafetyPolicy: {
+      ...DMS_GROUPED_ACQUISITION_DELTA_POLICY,
+      applied: true,
+      confirmationRequired: true,
+      exportEligible: false
+    }
+  });
+  const preview = adapter.adapt(result, { clock });
+  assert.equal(preview.previewEligibility.allowed, false);
+  assert.equal(preview.previewReasonCodes[0], MAP_PREVIEW_BLOCK_REASON.ACQUISITION_DELTA_CONFIRMATION_REQUIRED);
+});
+
+test("P04-14", "confirmed exact acquisition candidate can reach Map", () => {
+  const result = finalized({
+    confirmationStatus: "accepted",
+    familySafetyPolicy: {
+      ...DMS_GROUPED_ACQUISITION_DELTA_POLICY,
+      applied: true,
+      confirmationRequired: true,
+      effectiveState: "CONFIRMED_SUBJECT_TO_INDEPENDENT_GATES",
+      exportEligible: true
+    }
+  });
+  assert.equal(adapter.adapt(result, { clock }).previewEligibility.allowed, true);
 });
 
 let passed = 0;

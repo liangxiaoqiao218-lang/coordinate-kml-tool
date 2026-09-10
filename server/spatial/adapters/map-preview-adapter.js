@@ -1,7 +1,9 @@
 import {
+  DMS_GROUPED_ACQUISITION_DELTA_POLICY,
   FINALIZED_COORDINATE_CRS,
   FINALIZED_COORDINATE_SCHEMA_VERSION,
   createGeometryHash,
+  isPendingDmsGroupedAcquisitionDeltaPolicy,
   validateFinalizedGeometry,
   validateFinalizedCrs
 } from "../../coordinate-finalizer/index.js";
@@ -17,6 +19,7 @@ const BLOCK_REASON = Object.freeze({
   SOURCE_IDENTITY_INVALID: "SOURCE_IDENTITY_INVALID",
   STALE_SOURCE_REVISION: "STALE_SOURCE_REVISION",
   GEOMETRY_HASH_MISMATCH: "GEOMETRY_HASH_MISMATCH",
+  ACQUISITION_DELTA_CONFIRMATION_REQUIRED: "ACQUISITION_DELTA_CONFIRMATION_REQUIRED",
   CRS_NOT_DRAWABLE_AS_WGS84: "CRS_NOT_DRAWABLE_AS_WGS84"
 });
 
@@ -70,6 +73,11 @@ export class MapPreviewAdapter {
     if (!input || typeof input !== "object" || Array.isArray(input)
       || input.schemaVersion !== FINALIZED_COORDINATE_SCHEMA_VERSION) {
       return blocked(input || {}, BLOCK_REASON.NO_STRUCTURED_RESULT, clock);
+    }
+    const acquisitionDeltaPolicy = input.familySafetyPolicy?.policyId === DMS_GROUPED_ACQUISITION_DELTA_POLICY.policyId;
+    if (isPendingDmsGroupedAcquisitionDeltaPolicy(input.familySafetyPolicy)
+      || (acquisitionDeltaPolicy && input.confirmationStatus !== "accepted")) {
+      return blocked(input, BLOCK_REASON.ACQUISITION_DELTA_CONFIRMATION_REQUIRED, clock);
     }
     if (!input.geometry) {
       const unavailable = input.availabilityStatus && input.availabilityStatus !== "AVAILABLE";
