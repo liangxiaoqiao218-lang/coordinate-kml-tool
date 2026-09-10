@@ -9,6 +9,7 @@ import {
   COORDINATE_QUALITY_GATE_STATUS,
   CoordinateConfirmationRuntime,
   FINALIZED_COORDINATE_CRS,
+  createLegacyFinalizerInput,
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
 import { MapPreviewAdapter } from "../server/spatial/adapters/map-preview-adapter.js";
@@ -31,6 +32,22 @@ const dmsPolygon = Object.freeze({
     Object.freeze([-9.020463888888889, 11.72123611111111])
   ])])
 });
+
+const acquisitionGroupSizes = Object.freeze([8, 4, 4]);
+const acquisitionGroupIdentities = Object.freeze(["SITE:1", "SITE:2", "SITE:3"]);
+function acquisitionDeltaGroups() {
+  return acquisitionGroupSizes.map((size, groupIndex) => ({
+    group_id: `group_${groupIndex + 1}`,
+    group_name: `SITES${groupIndex + 1}`,
+    geometry: "polygon",
+    requires_review: true,
+    kml_ready: false,
+    points: Array.from({ length: size }, (_, pointIndex) => {
+      const angle = (Math.PI * 2 * pointIndex) / size;
+      return { label: String(pointIndex + 1), lon: -9 + groupIndex + Math.cos(angle) * 0.1, lat: 11 + groupIndex + Math.sin(angle) * 0.1 };
+    })
+  }));
+}
 
 function candidate(overrides = {}) {
   return {
@@ -191,6 +208,68 @@ assert.equal(cleanManual.decisionState, COORDINATE_DECISION_STATE.AUTO_EXPORT, "
 assert.equal(cleanManual.kmlReady, true);
 assert.deepEqual(cleanManual.geometry, dmsPolygon);
 
+const acquisitionDeltaInput = createLegacyFinalizerInput({
+  recognitionResult: { precisionMode: "dms-coordinates" },
+  coordinateEngineV2: {
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    acquisition_delta_provenance: {
+      schemaVersion: "dms_grouped_acquisition_delta_v1",
+      ownerFamily: "dms_grouped",
+      candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+      baselineRowCount: 13,
+      retryRowCount: 16,
+      addedRowCount: 3,
+      baselineRowsPreserved: true,
+      groupLocalBaselineRowsPreserved: true,
+      baselineGroupCount: 3,
+      baselineGroupSizes: [6, 4, 3],
+      baselineGroupIdentities: acquisitionGroupIdentities,
+      retryGroupCount: 3,
+      retryGroupSizes: acquisitionGroupSizes,
+      retryGroupIdentities: acquisitionGroupIdentities,
+      strongBoundariesProven: true,
+      labelsContinuous: true,
+      sourceCandidateSeparate: true,
+      directCanonicalPromotion: false,
+      stage1CandidateSha256: "c".repeat(64),
+      retryCandidateSha256: "d".repeat(64)
+    },
+    groups: acquisitionDeltaGroups()
+  },
+  verification: { status: "REVIEW", warnings: [] },
+  revision: { resultId: "p08f-acquisition-delta", resultRevision: 1 }
+});
+const acquisitionPending = finalizeCoordinateResult(acquisitionDeltaInput, { clock });
+runtime.register(acquisitionPending);
+assert.equal(acquisitionPending.kmlReady, false, "expanded reread candidate blocks KML before confirmation");
+assert.equal(new MapPreviewAdapter().adapt(acquisitionPending, { clock }).previewEligibility.allowed, false,
+  "expanded reread candidate blocks Map before confirmation");
+const acquisitionConfirmed = runtime.confirm({
+  resultId: acquisitionPending.resultId,
+  resultRevision: acquisitionPending.resultRevision,
+  geometryHash: acquisitionPending.geometryHash,
+  action: "accept"
+}).finalizedCoordinateResult;
+assert.equal(acquisitionConfirmed.kmlReady, true, "exact confirmed expanded candidate can release KML");
+assert.equal(new MapPreviewAdapter().adapt(acquisitionConfirmed, { clock }).previewEligibility.allowed, true,
+  "exact confirmed expanded candidate can release Map");
+const malformedAcquisitionTopology = finalizeCoordinateResult(createLegacyFinalizerInput({
+  recognitionResult: { precisionMode: "dms-coordinates" },
+  coordinateEngineV2: {
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    acquisition_delta_provenance: acquisitionDeltaInput.familySafetyPolicy.acquisitionDeltaProvenance,
+    groups: acquisitionDeltaGroups().slice(0, 2)
+  },
+  verification: { status: "REVIEW", warnings: [] },
+  revision: { resultId: "p08f-acquisition-malformed", resultRevision: 1 }
+}), { clock });
+assert.equal(malformedAcquisitionTopology.decisionState, COORDINATE_DECISION_STATE.BLOCKED,
+  "two-group acquisition provenance cannot reach confirmation or consumers");
+
 const html = await readFile(path.join(repoRoot, "index.html"), "utf8");
 function extractFunctionSource(source, functionName) {
   const marker = `function ${functionName}(`;
@@ -228,7 +307,7 @@ assert.match(downloadKmlInternalSource, /consumeUsage\("convert"\)/, "quota cons
 
 console.log(JSON.stringify({
   suite: "p08f-review-confirm-kml-regression",
-  passed: 23,
+  passed: 28,
   cases: [
     "REVIEW_PENDING_READY_WITH_WARNING",
     "REVIEW_PENDING_MAP_PREVIEW_ALLOWED",
@@ -242,6 +321,11 @@ console.log(JSON.stringify({
     "NO_COORDINATE_BLOCKED",
     "STALE_RESULT_BLOCKED",
     "DIRECT_MANUAL_FINALIZE_PRESERVED",
+    "ACQUISITION_DELTA_PENDING_KML_BLOCKED",
+    "ACQUISITION_DELTA_PENDING_MAP_BLOCKED",
+    "ACQUISITION_DELTA_CONFIRMED_KML_ALLOWED",
+    "ACQUISITION_DELTA_CONFIRMED_MAP_ALLOWED",
+    "ACQUISITION_DELTA_MALFORMED_TOPOLOGY_BLOCKED",
     "FRONTEND_CONSUMES_SERVER_KML_READY",
     "CONFIRMATION_UI_BOUND",
     "REVISION_UI_BOUND",

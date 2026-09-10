@@ -20,6 +20,8 @@ import { CANDIDATE_SELECTION_DECISION, compareCandidateEvidence } from "./server
 import { buildHandwrittenCandidateEvidence, materializeHandwrittenDmsRows } from "./server/recognition/handwritten-candidate-evidence.js";
 import {
   createDmsGroupedRetryOrchestrator,
+  evaluateDmsGroupedAcquisitionExpansion,
+  evaluateDmsGroupedRoutePriority,
   evaluateDmsGroupedRetryCoverage,
   evaluateDmsGroupedRetryEligibility,
   extractDmsSourceStructure,
@@ -3682,12 +3684,12 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
 
   const isHandwrittenDms = isOcrImage
     && documentEvidence.handwrittenPositiveSignal
+    && (!documentEvidence.printedTableSignal || documentEvidence.explicitHandwrittenSignal)
     && (dmsRows >= 4 || rawDmsRows >= 4)
     && (pointRows >= 4 || rawDmsRows >= 4)
     && (looksLikeHandwrittenDmsBlock(sourceText) || hasStrongHandwrittenDmsRows)
     && (!getDmsGroupedCoordinateInfo(sourceText).output || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
     && !hasStrongPrintedProjectedTable
-    && (!documentEvidence.printedTableSignal || documentEvidence.handwrittenPositiveSignal)
     && (!looksLikeCoordinateTable(sourceText) || hasStrongHandwrittenDmsRows)
     && (!hasDmsGroupedContext(sourceText) || hasExplicitHandwrittenDmsContext || hasStrongHandwrittenDmsRows)
     && !getFrenchPerimeterDmsInfo(sourceText).isFrenchPerimeterDms
@@ -3737,6 +3739,7 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   };
 
   if (!evidence.ocrTextAvailable || documentEvidence.projectedTableSignal
+    || (documentEvidence.printedTableSignal && !documentEvidence.explicitHandwrittenSignal)
     || !documentEvidence.handwrittenPositiveSignal) {
     return evidence;
   }
@@ -3830,7 +3833,7 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
   }
 
   if (documentEvidence.projectedTableSignal
-    || (documentEvidence.printedTableSignal && !documentEvidence.handwrittenPositiveSignal)
+    || (documentEvidence.printedTableSignal && !explicitHandwrittenContext)
     || !documentEvidence.handwrittenPositiveSignal) {
     evidence.reason = documentEvidence.projectedTableSignal ? "projected_table_blocked" : "no_positive_handwritten_evidence";
     return evidence;
@@ -14206,10 +14209,27 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const generalVisionRawText = rawText;
     let handwrittenVisionRawText = "";
     let selectedHandwrittenDmsRows = null;
+    const dmsGroupedRetryOwner = "dms_grouped";
+    const initialDmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
+    const initialDmsDocumentEvidence = getDmsDocumentEvidence(rawText);
+    const structuredDmsRoutePriority = evaluateDmsGroupedRoutePriority({
+      isImageInput: Boolean(req.file),
+      printedTableSignal: initialDmsDocumentEvidence.printedDmsCandidateSignal,
+      explicitHandwrittenSignal: initialDmsDocumentEvidence.explicitHandwrittenSignal,
+      structureText: rawText
+    });
     let handwrittenVisionRouting = getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates, {
       file: req.file,
       hint: coordinateRawHint
     });
+    if (structuredDmsRoutePriority.suppressHandwrittenRetry) {
+      handwrittenVisionRouting = {
+        ...handwrittenVisionRouting,
+        shouldRetry: false,
+        reason: "structured_dms_priority"
+      };
+      parserTrace.push("DMS_GROUPED:typed_route_precedence");
+    }
     if (handwrittenVisionRouting.shouldRetry) {
       try {
         if (!claimRequestRetry(RETRY_OWNER_FAMILY.HANDWRITTEN_DMS)) {
@@ -14315,6 +14335,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     });
     let pointAzDmsTableAccepted = false;
     let dmsGroupedRetryBoundaryFailure = null;
+    let dmsGroupedAcquisitionExpansion = null;
     const canonicalDmsCoordinates = coordinates;
     const canonicalDmsGrouping = reconstructDmsGroupsFromNormalizedCoordinates({
       structureText: rawText,
@@ -14336,7 +14357,6 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const claimDownstreamFamilyRetry = targetOwner => {
       return claimRequestRetry(targetOwner);
     };
-    const dmsGroupedRetryOwner = "dms_grouped";
     const dmsGroupedRetryDispatch = authorizeFamilyRetryDispatch({
       activeFamilyOwner,
       targetOwner: dmsGroupedRetryOwner
@@ -14347,7 +14367,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       isImageInput: Boolean(req.file),
       groupedRowCount: countCoordinateRows(dmsGroupedInfo.output),
       lonLatOrderLines: countDmsGroupedLonLatOrderLines(rawText),
-      familyRetryAllowed: dmsGroupedRetryDispatch.allowed
+      familyRetryAllowed: dmsGroupedRetryDispatch.allowed,
+      typedRouteEligible: structuredDmsRoutePriority.typedDmsGrouped
     });
     if (dmsGroupedRetryEligibility.failClosed) {
       applyDmsGroupedRetryFailClosed(dmsGroupedRetryEligibility.reason);
@@ -14383,6 +14404,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           baselineText: rawText,
           retryText: dmsGroupedRetryRawText
         });
+        const dmsGroupedExpansionCoverage = evaluateDmsGroupedAcquisitionExpansion({
+          baselineText: rawText,
+          retryText: dmsGroupedRetryRawText
+        });
 
         const retryCanonicalGrouping = reconstructDmsGroupsFromNormalizedCoordinates({
           structureText: dmsGroupedRetryRawText,
@@ -14400,9 +14425,55 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             groups: dmsGroupedRetryCoverage.groupCount,
             coverage: dmsGroupedRetryCoverage.reason
           });
+        } else if (dmsGroupedExpansionCoverage.accepted === true) {
+          const stage1Candidate = Object.freeze({ rawText, coordinates });
+          dmsGroupedAcquisitionExpansion = Object.freeze({
+            stage1Candidate,
+            rawText: dmsGroupedRetryRawText,
+            normalizedCoordinates: dmsGroupedExpansionCoverage.normalizedCoordinates,
+            provenance: Object.freeze({
+              schemaVersion: "dms_grouped_acquisition_delta_v1",
+              ownerFamily: dmsGroupedRetryOwner,
+              candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+              baselineRowCount: dmsGroupedExpansionCoverage.baselineRowCount,
+              retryRowCount: dmsGroupedExpansionCoverage.retryRowCount,
+              addedRowCount: dmsGroupedExpansionCoverage.addedRowCount,
+              baselineRowsPreserved: true,
+              groupLocalBaselineRowsPreserved: true,
+              strongBoundariesProven: true,
+              labelsContinuous: true,
+              sourceCandidateSeparate: true,
+              directCanonicalPromotion: false,
+              baselineGroupCount: dmsGroupedExpansionCoverage.baselineGroupCount,
+              baselineGroupSizes: dmsGroupedExpansionCoverage.baselineGroupSizes,
+              baselineGroupIdentities: dmsGroupedExpansionCoverage.baselineGroupIdentities,
+              retryGroupCount: dmsGroupedExpansionCoverage.groupCount,
+              retryGroupSizes: dmsGroupedExpansionCoverage.groupSizes,
+              retryGroupIdentities: dmsGroupedExpansionCoverage.groupIdentities,
+              stage1CandidateSha256: crypto.createHash("sha256")
+                .update(JSON.stringify(stage1Candidate))
+                .digest("hex"),
+              retryCandidateSha256: crypto.createHash("sha256")
+                .update(JSON.stringify({
+                  rawText: dmsGroupedRetryRawText,
+                  coordinates: dmsGroupedExpansionCoverage.normalizedCoordinates
+                }))
+                .digest("hex")
+            })
+          });
+          parserTrace.push("DMS_GROUPED:acquisition_expansion_review_required");
+          usedModel = `${aliyunVisionModel}+dms-grouped-acquisition-candidate`;
+          console.log("DMS grouped acquisition expansion retained for review", {
+            baselineRows: dmsGroupedExpansionCoverage.baselineRowCount,
+            retryRows: dmsGroupedExpansionCoverage.retryRowCount,
+            addedRows: dmsGroupedExpansionCoverage.addedRowCount,
+            groups: dmsGroupedExpansionCoverage.groupCount,
+            reviewRequired: true
+          });
         } else {
-          parserTrace.push(`DMS_GROUPED:retry_rejected:${dmsGroupedRetryCoverage.reason}`);
-          applyDmsGroupedRetryFailClosed(dmsGroupedRetryCoverage.reason);
+          const rejectionReason = dmsGroupedExpansionCoverage.reason || dmsGroupedRetryCoverage.reason;
+          parserTrace.push(`DMS_GROUPED:retry_rejected:${rejectionReason}`);
+          applyDmsGroupedRetryFailClosed(rejectionReason);
           console.log("DMS grouped direct prompt rejected", {
             baselineRows: dmsGroupedBaselineRows,
             retryRows: countDmsCoordinateRows(dmsGroupedRetryRawText),
@@ -15159,8 +15230,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const finalWarning = wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning);
     const recognitionPayload = {
       model: usedModel,
-      rawText,
-      coordinates,
+      rawText: dmsGroupedAcquisitionExpansion?.stage1Candidate.rawText ?? rawText,
+      coordinates: dmsGroupedAcquisitionExpansion?.stage1Candidate.coordinates ?? coordinates,
       precisionMode: finalPrecisionMode,
       warning: finalWarning,
       projection: utm30Accepted ? "utm30n" : undefined,
@@ -15181,10 +15252,44 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         finalRawText: rawText
       },
       parserTrace,
+      acquisitionExpansionCandidate: dmsGroupedAcquisitionExpansion ? {
+        rawText: dmsGroupedAcquisitionExpansion.rawText,
+        coordinates: dmsGroupedAcquisitionExpansion.normalizedCoordinates,
+        precisionMode: "dms-coordinates",
+        provenance: dmsGroupedAcquisitionExpansion.provenance
+      } : null,
       quota: consumeResult.quota
     };
 
-    let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(recognitionPayload, { fileName: uploadedFileName, rawHint: coordinateEngineV2ContextHint });
+    const finalRecognitionCandidate = dmsGroupedAcquisitionExpansion
+      ? {
+          ...recognitionPayload,
+          stage1Candidate: Object.freeze({
+            rawText: dmsGroupedAcquisitionExpansion.stage1Candidate.rawText,
+            coordinates: dmsGroupedAcquisitionExpansion.stage1Candidate.coordinates,
+            precisionMode: recognitionPayload.precisionMode,
+            candidateRole: "STAGE1_ACQUISITION_CANDIDATE"
+          }),
+          rawText: dmsGroupedAcquisitionExpansion.rawText,
+          coordinates: dmsGroupedAcquisitionExpansion.normalizedCoordinates,
+          precisionMode: "dms-coordinates",
+          warning: "结构化复读补充了坐标行；必须对照原图确认后才能用于地图或 KML。",
+          acquisitionDeltaProvenance: dmsGroupedAcquisitionExpansion.provenance
+        }
+      : recognitionPayload;
+    let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(finalRecognitionCandidate, {
+      fileName: uploadedFileName,
+      rawHint: coordinateEngineV2ContextHint,
+      lockedCoordinateType: dmsGroupedAcquisitionExpansion ? "standard_dms_table" : undefined,
+      forceRequiresReview: Boolean(dmsGroupedAcquisitionExpansion)
+    });
+    if (dmsGroupedAcquisitionExpansion) {
+      coordinateEngineV2 = {
+        ...coordinateEngineV2,
+        requires_review: true,
+        acquisition_delta_provenance: dmsGroupedAcquisitionExpansion.provenance
+      };
+    }
     const shouldReadCoteDIvoireV2 = hasCoteDIvoireGeographicDmsCue([
       uploadedFileName,
       rawText,
@@ -15245,7 +15350,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    res.json(buildCoordinateVerificationResponse(recognitionPayload, coordinateEngineV2));
+    const verificationResponse = buildCoordinateVerificationResponse(finalRecognitionCandidate, coordinateEngineV2);
+    res.json(dmsGroupedAcquisitionExpansion ? {
+      ...verificationResponse,
+      rawText: recognitionPayload.rawText,
+      coordinates: recognitionPayload.coordinates,
+      precisionMode: recognitionPayload.precisionMode
+    } : verificationResponse);
   } catch (error) {
     if (getRecognitionDeadlineSignal()?.aborted || res.headersSent || error?.code === RECOGNITION_DEADLINE_CODE) {
       return;

@@ -4,7 +4,10 @@ import {
   FINALIZED_COORDINATE_CRS
 } from "./reason-codes.js";
 import { geometryFromStructuredGroups } from "./geometry-finalizer.js";
-import { applyFamilySafetyPolicy } from "./family-safety-policy.js";
+import {
+  applyFamilySafetyPolicy,
+  isDmsGroupedAcquisitionDeltaProvenance
+} from "./family-safety-policy.js";
 import {
   FAMILY_AVAILABILITY_STATUS,
   isFamilyAvailabilityBlocked
@@ -33,9 +36,13 @@ function commonInput({
 }) {
   const groups = Array.isArray(structuredResult.groups) ? structuredResult.groups : [];
   const geometryResult = geometryFromStructuredGroups(groups);
+  const acquisitionDeltaDeclared = structuredResult?.acquisition_delta_provenance !== null
+    && structuredResult?.acquisition_delta_provenance !== undefined;
+  const acquisitionDeltaApplies = isDmsGroupedAcquisitionDeltaProvenance(structuredResult);
+  const acquisitionDeltaInvalid = acquisitionDeltaDeclared && !acquisitionDeltaApplies;
   const underlyingRequiresReview = Boolean(structuredResult.requires_review || groups.some(group => group?.requires_review !== false));
   const underlyingKmlReady = groups.length > 0 && groups.every(group => group?.kml_ready === true);
-  const technicalKmlReady = geometryResult.ok && verification?.status !== "BLOCK";
+  const technicalKmlReady = geometryResult.ok && verification?.status !== "BLOCK" && !acquisitionDeltaInvalid;
   const underlyingGroups = groups.map(group => ({
     groupId: group?.group_id || null,
     requiresReview: group?.requires_review !== false,
@@ -44,7 +51,10 @@ function commonInput({
   const familyPolicyApplies = String(structuredResult.coordinate_type || "").toLowerCase() === "standard_dms_table"
     && String(structuredResult.precision_mode || "").toLowerCase() === "point-az-dms-table";
   const reviewOnlyTechnicalKmlReady = verification?.status === "REVIEW" && technicalKmlReady;
-  const needsConfirmation = confirmationRequired(structuredResult) || familyPolicyApplies || reviewOnlyTechnicalKmlReady;
+  const needsConfirmation = confirmationRequired(structuredResult)
+    || familyPolicyApplies
+    || acquisitionDeltaApplies
+    || reviewOnlyTechnicalKmlReady;
   const confirmationOnlyReview = needsConfirmation && reviewOnlyTechnicalKmlReady;
   const confirmationStatus = revision.confirmationStatus || (needsConfirmation
     ? COORDINATE_CONFIRMATION_STATUS.PENDING
@@ -65,7 +75,7 @@ function commonInput({
   const invalidCrs = recognitionResult.invalidCrsConfirmation === true || revision.invalidCrsConfirmation === true;
   const productionSource = ["legacy", "manual_input", "coordinate_engine_v2"].includes(sourceAuthority);
   const currentAuthorizedGeometryExportable = geometryResult.ok && productionSource
-    && !technicalFailure && !authorityRejected && !invalidCrs;
+    && !technicalFailure && !authorityRejected && !invalidCrs && !acquisitionDeltaDeclared;
   // Provider availability governs acquisition, not an already valid deterministic result.
   const availabilityStatus = currentAuthorizedGeometryExportable ? FAMILY_AVAILABILITY_STATUS.AVAILABLE
     : familyAvailability?.status || FAMILY_AVAILABILITY_STATUS.AVAILABLE;
@@ -84,11 +94,15 @@ function commonInput({
     familyAvailabilityPolicy: familyAvailability || null,
     crs: invalidCrs ? null : FINALIZED_COORDINATE_CRS,
     explicitAuthorityRejected: authorityRejected,
-    kmlAuthorityBlocked: technicalFailure || invalidCrs || authorityRejected,
-    geometry: geometryResult.ok ? geometryResult.geometry : null,
-    geometryFailureReason: geometryResult.ok ? null : geometryResult.reasonCode,
+    kmlAuthorityBlocked: technicalFailure || invalidCrs || authorityRejected || acquisitionDeltaInvalid,
+    geometry: geometryResult.ok && !acquisitionDeltaInvalid ? geometryResult.geometry : null,
+    geometryFailureReason: acquisitionDeltaInvalid
+      ? "ACQUISITION_DELTA_PROVENANCE_INVALID"
+      : (geometryResult.ok ? null : geometryResult.reasonCode),
     confirmationStatus,
-    qualityGateStatus: availabilityBlocked
+    qualityGateStatus: acquisitionDeltaInvalid
+      ? COORDINATE_QUALITY_GATE_STATUS.FAILED
+      : availabilityBlocked
       ? COORDINATE_QUALITY_GATE_STATUS.FAILED
       : verificationQualityStatus(verification),
     technicalKmlReady: availabilityBlocked ? false : technicalKmlReady,
@@ -107,6 +121,10 @@ function commonInput({
     groups: familySafety.groups,
     familySafetyPolicy: familySafety.policy,
     warnings: [
+      ...(acquisitionDeltaApplies
+        ? ["结构化复读补充了坐标行；确认当前精确结果前，地图及 KML 均不可用。"]
+        : []),
+      ...(acquisitionDeltaInvalid ? ["结构化复读候选的安全来源证明无效，结果已阻断。"] : []),
       ...(currentAuthorizedGeometryExportable && (underlyingRequiresReview || confirmationStatus === "pending")
         ? ["当前坐标仍需核对；地图及 KML 使用服务端当前有效几何。"] : []),
       ...(Array.isArray(structuredResult.warnings) ? structuredResult.warnings : []),

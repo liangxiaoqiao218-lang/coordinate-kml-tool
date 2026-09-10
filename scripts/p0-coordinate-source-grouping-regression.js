@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildDmsGroupedRetryFailClosedPatch,
   createDmsGroupedRetryOrchestrator,
+  evaluateDmsGroupedAcquisitionExpansion,
+  evaluateDmsGroupedRoutePriority,
   evaluateDmsGroupedRetryCoverage,
   evaluateDmsGroupedRetryEligibility,
   extractDmsSourceStructure,
@@ -14,6 +17,10 @@ import {
   resolveDmsEngineGroupNames
 } from "../server/recognition/dms-source-structure.js";
 import { buildSourceCoordinateRepresentation } from "../server/source-coordinate-representation.js";
+import { getDmsDocumentEvidence } from "../server/recognition/family-primary-routing.js";
+import { buildCoordinateVerificationResponse } from "../server/verification/index.js";
+import { CoordinateConfirmationRuntime } from "../server/coordinate-finalizer/index.js";
+import { MapPreviewAdapter } from "../server/spatial/adapters/map-preview-adapter.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const server = await readFile(path.join(root, "server.js"), "utf8");
@@ -92,6 +99,19 @@ const structuredText = [
   "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 12), "",
   "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(12)
 ].join("\n");
+const stage1OmittedIndexes = new Set([3, 7, 15]);
+const stage1ThirteenText = structuredText.split("\n")
+  .filter(line => !dmsRows.some((row, index) => stage1OmittedIndexes.has(index) && line === row))
+  .join("\n");
+const acquisitionTopologyProvenance = Object.freeze({
+  groupLocalBaselineRowsPreserved: true,
+  baselineGroupCount: 3,
+  baselineGroupSizes: Object.freeze([6, 4, 3]),
+  baselineGroupIdentities: Object.freeze(["SITE:1", "SITE:2", "SITE:3"]),
+  retryGroupCount: 3,
+  retryGroupSizes: Object.freeze([8, 4, 4]),
+  retryGroupIdentities: Object.freeze(["SITE:1", "SITE:2", "SITE:3"])
+});
 const structure = extractDmsSourceStructure(structuredText);
 
 dynamicCase("three visible DMS tables stay separate", () => assert.equal(structure.groupCount, 3));
@@ -120,6 +140,131 @@ dynamicCase("source representation exposes group names", () => {
 });
 dynamicCase("editable display keeps group separators", () => {
   assert.match(grouped.displayText, /^SITES1[\s\S]*\n\nSITES2[\s\S]*\n\nSITES3/);
+});
+
+dynamicCase("source representation keeps Stage-1 and structured reread as separate candidates", () => {
+  const stage1Raw = stage1ThirteenText;
+  const stage1Coordinates = decimalRows.filter((_, index) => !stage1OmittedIndexes.has(index)).join("\n");
+  const retryCoordinates = [decimalRows.slice(0, 8).join("\n"), decimalRows.slice(8, 12).join("\n"), decimalRows.slice(12).join("\n")].join("\n\n");
+  const recognition = {
+    rawText: stage1Raw,
+    coordinates: stage1Coordinates,
+    acquisitionExpansionCandidate: {
+      rawText: structuredText,
+      coordinates: retryCoordinates,
+      precisionMode: "dms-coordinates",
+      provenance: {
+        schemaVersion: "dms_grouped_acquisition_delta_v1",
+        ownerFamily: "dms_grouped",
+        candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+        baselineRowCount: 13,
+        retryRowCount: 16,
+        addedRowCount: 3,
+        baselineRowsPreserved: true,
+        ...acquisitionTopologyProvenance,
+        strongBoundariesProven: true,
+        labelsContinuous: true,
+        sourceCandidateSeparate: true,
+        directCanonicalPromotion: false,
+        stage1CandidateSha256: createHash("sha256").update(JSON.stringify({ rawText: stage1Raw, coordinates: stage1Coordinates })).digest("hex"),
+        retryCandidateSha256: createHash("sha256").update(JSON.stringify({ rawText: structuredText, coordinates: retryCoordinates })).digest("hex")
+      }
+    }
+  };
+  const result = buildSourceCoordinateRepresentation(recognition, groupedEngine);
+  assert.equal(result.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+  assert.equal(result.sourceCandidates.stage1.rowCount, 13);
+  assert.equal(result.sourceCandidates.structuredReread.rowCount, 16);
+  assert.deepEqual(result.groups.map(group => group.length), [8, 4, 4]);
+  assert.equal(recognition.rawText, stage1Raw);
+  assert.equal(recognition.coordinates, stage1Coordinates);
+
+  const tampered = buildSourceCoordinateRepresentation({
+    ...recognition,
+    acquisitionExpansionCandidate: {
+      ...recognition.acquisitionExpansionCandidate,
+      provenance: { ...recognition.acquisitionExpansionCandidate.provenance, retryCandidateSha256: "0".repeat(64) }
+    }
+  }, groupedEngine);
+  assert.equal(tampered.sourceCandidates, null);
+  assert.equal(tampered.candidateRole, "CURRENT_RECOGNITION_CANDIDATE");
+
+  const malformedTopology = buildSourceCoordinateRepresentation({
+    ...recognition,
+    acquisitionExpansionCandidate: {
+      ...recognition.acquisitionExpansionCandidate,
+      provenance: {
+        ...recognition.acquisitionExpansionCandidate.provenance,
+        retryGroupCount: 2,
+        retryGroupSizes: [8, 8],
+        retryGroupIdentities: ["SITE:1", "SITE:2"]
+      }
+    }
+  }, groupedEngine);
+  assert.equal(malformedTopology.sourceCandidates, null);
+  assert.equal(malformedTopology.candidateRole, "CURRENT_RECOGNITION_CANDIDATE");
+});
+
+dynamicCase("production verification keeps 16-point candidate blocked until exact confirmation", () => {
+  const stage1Coordinates = decimalRows.filter((_, index) => !stage1OmittedIndexes.has(index)).join("\n");
+  const retryCoordinates = [decimalRows.slice(0, 8).join("\n"), decimalRows.slice(8, 12).join("\n"), decimalRows.slice(12).join("\n")].join("\n\n");
+  const provenance = {
+    schemaVersion: "dms_grouped_acquisition_delta_v1",
+    ownerFamily: "dms_grouped",
+    candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+    baselineRowCount: 13,
+    retryRowCount: 16,
+    addedRowCount: 3,
+    baselineRowsPreserved: true,
+    ...acquisitionTopologyProvenance,
+    strongBoundariesProven: true,
+    labelsContinuous: true,
+    sourceCandidateSeparate: true,
+    directCanonicalPromotion: false,
+    stage1CandidateSha256: createHash("sha256").update(JSON.stringify({ rawText: stage1ThirteenText, coordinates: stage1Coordinates })).digest("hex"),
+    retryCandidateSha256: createHash("sha256").update(JSON.stringify({ rawText: structuredText, coordinates: retryCoordinates })).digest("hex")
+  };
+  const payload = {
+    rawText: structuredText,
+    coordinates: retryCoordinates,
+    precisionMode: "dms-coordinates",
+    stage1Candidate: { rawText: stage1ThirteenText, coordinates: stage1Coordinates },
+    acquisitionExpansionCandidate: { rawText: structuredText, coordinates: retryCoordinates, precisionMode: "dms-coordinates", provenance },
+    acquisitionDeltaProvenance: provenance
+  };
+  const engine = {
+    ...groupedEngine,
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    acquisition_delta_provenance: provenance,
+    groups: groupedEngine.groups.map(group => ({
+      ...group,
+      geometry: "polygon",
+      requires_review: true,
+      kml_ready: false,
+      points: group.points.map(point => ({ label: point.label, lat: point.latitude, lon: point.longitude }))
+    }))
+  };
+  const response = buildCoordinateVerificationResponse(payload, engine);
+  const pending = response.finalizedCoordinateResult;
+  assert.equal(response.verification.status, "REVIEW");
+  assert.equal(response.sourceCoordinateRepresentation.sourceCandidates.stage1.rowCount, 13);
+  assert.equal(response.sourceCoordinateRepresentation.sourceCandidates.structuredReread.rowCount, 16);
+  assert.equal(pending.kmlReady, false);
+  assert.equal(new MapPreviewAdapter().adapt(pending).previewEligibility.allowed, false);
+
+  const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
+  runtime.register(pending);
+  const confirmed = runtime.confirm({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: pending.geometryHash,
+    action: "accept"
+  }).finalizedCoordinateResult;
+  assert.equal(confirmed.decisionState, "AUTO_EXPORT");
+  assert.equal(confirmed.kmlReady, true);
+  assert.equal(new MapPreviewAdapter().adapt(confirmed).previewEligibility.allowed, true);
 });
 
 dynamicCase("same row count with changed coordinate fails closed to normalized display", () => {
@@ -450,6 +595,153 @@ dynamicCase("single table blank line does not authorize retry", () => {
   assert.equal(evaluateDmsGroupedRetryEligibility({ rawText: text, isImageInput: true, familyRetryAllowed: true }).allowed, false);
 });
 
+dynamicCase("intra-site blank lines do not split titled 8 4 4 groups", () => {
+  const withIntraSiteBlanks = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 4), "", ...dmsRows.slice(4, 8), "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 10), "", ...dmsRows.slice(10, 12), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(12, 14), "", ...dmsRows.slice(14)
+  ].join("\n");
+  const structure = extractDmsSourceStructure(withIntraSiteBlanks);
+  assert.deepEqual(structure.groups.map(group => group.rows.length), [8, 4, 4]);
+  assert.deepEqual(structure.groups.map(group => group.boundaryProvenance), ["section_title", "section_title", "section_title"]);
+  assert.equal(hasExplicitDmsMultiRegionEvidence(withIntraSiteBlanks), true);
+});
+
+dynamicCase("printed multi-site route suppresses damaged-token handwritten retry without changing shared evidence", () => {
+  const damagedPrintedTable = structuredText.replace(dmsRows[0], `1 | 12°00.369'N | 9°09'40.8\"E`);
+  const evidence = getDmsDocumentEvidence(damagedPrintedTable);
+  assert.equal(evidence.printedTableSignal, true);
+  assert.equal(evidence.damagedDmsSignal, true);
+  assert.equal(evidence.explicitHandwrittenSignal, false);
+  assert.equal(evidence.handwrittenPositiveSignal, true);
+  assert.equal(evidence.printedDmsCandidateSignal, true);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: evidence.printedTableSignal,
+    explicitHandwrittenSignal: evidence.explicitHandwrittenSignal,
+    structureText: damagedPrintedTable
+  });
+  assert.equal(route.typedDmsGrouped, true);
+  assert.equal(route.suppressHandwrittenRetry, true);
+});
+
+dynamicCase("incomplete 13-point structured result remains fail closed", () => {
+  const incomplete = structuredText.replace(dmsRows[3], "").replace(dmsRows[7], "").replace(dmsRows[15], "");
+  const coverage = evaluateDmsGroupedRetryCoverage({ baselineText: structuredText, retryText: incomplete });
+  assert.equal(coverage.accepted, false);
+  assert.equal(coverage.reason, "ROW_COUNT_MISMATCH");
+});
+
+dynamicCase("Stage-1 13 points and structured reread 16 points form a review-only acquisition delta", () => {
+  const expansion = evaluateDmsGroupedAcquisitionExpansion({ baselineText: stage1ThirteenText, retryText: structuredText });
+  assert.equal(extractDmsSourceStructure(stage1ThirteenText).rowCount, 13);
+  assert.equal(expansion.accepted, true);
+  assert.equal(expansion.baselineRowCount, 13);
+  assert.equal(expansion.retryRowCount, 16);
+  assert.equal(expansion.addedRowCount, 3);
+  assert.deepEqual(expansion.groupSizes, [8, 4, 4]);
+  assert.equal(expansion.normalizedCoordinates.replace(/\n\n/g, "\n").split("\n").length, 16);
+});
+
+dynamicCase("expanded reread rejects a changed Stage-1 point", () => {
+  const changedRetry = structuredText.replace(`12°00'36.9"N`, `12°00'37.9"N`);
+  const expansion = evaluateDmsGroupedAcquisitionExpansion({ baselineText: stage1ThirteenText, retryText: changedRetry });
+  assert.equal(expansion.accepted, false);
+  assert.equal(expansion.reason, "BASELINE_GROUP_POINT_CHANGED_OR_MISSING");
+});
+
+dynamicCase("two strong groups totaling 16 cannot satisfy the three-group acquisition contract", () => {
+  const twoGroupRetry = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 8),
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8).map((row, index) => row.replace(/^\d+\./, `${index + 1}.`))
+  ].join("\n");
+  const twoGroupBaseline = twoGroupRetry.split("\n")
+    .filter(line => ![dmsRows[3], dmsRows[7], dmsRows[15].replace(/^4\./, "8.")].includes(line))
+    .join("\n");
+  const expansion = evaluateDmsGroupedAcquisitionExpansion({ baselineText: twoGroupBaseline, retryText: twoGroupRetry });
+  assert.equal(expansion.accepted, false);
+  assert.equal(expansion.reason, "THREE_GROUP_BOUNDARY_CONTRACT_REQUIRED");
+});
+
+dynamicCase("Stage-1 group identity or order mismatch fails closed", () => {
+  const swappedBaseline = stage1ThirteenText
+    .replace("SITES1", "SITE99")
+    .replace("SITES2", "SITES1")
+    .replace("SITE99", "SITES2");
+  const expansion = evaluateDmsGroupedAcquisitionExpansion({ baselineText: swappedBaseline, retryText: structuredText });
+  assert.equal(expansion.accepted, false);
+  assert.equal(expansion.reason, "BASELINE_GROUP_IDENTITY_OR_ORDER_MISMATCH");
+});
+
+dynamicCase("matching values moved across named groups cannot satisfy group-local preservation", () => {
+  const firstSiteRow = dmsRows[0];
+  const secondSiteRow = dmsRows[8];
+  const crossGroupRetry = structuredText
+    .replace(firstSiteRow, "__FIRST_SITE_ROW__")
+    .replace(secondSiteRow, firstSiteRow.replace(/^1\./, "1."))
+    .replace("__FIRST_SITE_ROW__", secondSiteRow.replace(/^1\./, "1."));
+  const expansion = evaluateDmsGroupedAcquisitionExpansion({ baselineText: stage1ThirteenText, retryText: crossGroupRetry });
+  assert.equal(expansion.accepted, false);
+  assert.equal(expansion.reason, "BASELINE_GROUP_POINT_CHANGED_OR_MISSING");
+});
+
+dynamicCase("duplicate and decrement labels do not prove a number-restart boundary", () => {
+  const duplicated = [...dmsRows.slice(0, 4), dmsRows[3], ...dmsRows.slice(4, 8)].join("\n");
+  const decremented = [...dmsRows.slice(0, 4), dmsRows[2], ...dmsRows.slice(4, 8)].join("\n");
+  assert.equal(extractDmsSourceStructure(duplicated).groupCount, 1);
+  assert.equal(extractDmsSourceStructure(decremented).groupCount, 1);
+});
+
+dynamicCase("explicit handwritten multi-SITE evidence does not enter printed dms_grouped priority", () => {
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: true,
+    explicitHandwrittenSignal: true,
+    structureText: structuredText
+  });
+  assert.equal(route.typedDmsGrouped, false);
+  assert.equal(route.suppressHandwrittenRetry, false);
+});
+
+dynamicCase("typed dms_grouped retry consumes one owner claim and one Provider call", () => {
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: true,
+    explicitHandwrittenSignal: false,
+    structureText: stage1ThirteenText
+  });
+  const eligibility = evaluateDmsGroupedRetryEligibility({
+    rawText: stage1ThirteenText,
+    dmsGroupedInfo: { output: "stage1-normalized-present" },
+    isImageInput: true,
+    familyRetryAllowed: true,
+    typedRouteEligible: route.typedDmsGrouped
+  });
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  let providerCalls = 0;
+  if (eligibility.allowed && orchestrator.claim("dms_grouped")) providerCalls += 1;
+  assert.equal(providerCalls, 1);
+  assert.equal(orchestrator.snapshot().activeFamilyOwner, "dms_grouped");
+});
+
+dynamicCase("complete 16-point structured result does not expand Provider budget", () => {
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: true,
+    explicitHandwrittenSignal: false,
+    structureText: structuredText
+  });
+  const eligibility = evaluateDmsGroupedRetryEligibility({
+    rawText: structuredText,
+    dmsGroupedInfo: { output: decimalRows.join("\n") },
+    isImageInput: true,
+    familyRetryAllowed: true,
+    typedRouteEligible: route.typedDmsGrouped
+  });
+  assert.equal(eligibility.allowed, false);
+  assert.equal(eligibility.reason, "DMS_GROUPED_RETRY_NOT_REQUIRED");
+});
+
 dynamicCase("normalized points reconstruct exact 8 4 4 without retry values", () => {
   const canonical = decimalRows.join("\n");
   const reconstructed = reconstructDmsGroupsFromNormalizedCoordinates({ structureText: structuredText, normalizedCoordinates: canonical });
@@ -566,6 +858,18 @@ staticAssertion("handwritten Provider retry requires a successful request-owner 
   assert.match(path, /ownerError\.code = "RETRY_OWNER_BLOCKED"/);
   assert.doesNotMatch(path.slice(provider), /claimRequestRetry\(RETRY_OWNER_FAMILY\.HANDWRITTEN_DMS\)/);
 });
+staticAssertion("structured multi-site DMS computes typed priority before handwritten retry and claims only at execution", () => {
+  const priority = server.indexOf("const structuredDmsRoutePriority");
+  const handwritten = server.indexOf("if (handwrittenVisionRouting.shouldRetry)");
+  const downstream = server.indexOf("const dmsGroupedRetryEligibility");
+  assert.ok(priority >= 0 && handwritten > priority && downstream > handwritten);
+  assert.doesNotMatch(server.slice(priority, handwritten), /claimRequestRetry\(dmsGroupedRetryOwner\)/);
+  assert.match(server.slice(priority, handwritten), /reason:\s*"structured_dms_priority"/);
+  const execution = server.indexOf("if (dmsGroupedRetryEligibility.allowed)");
+  const provider = server.indexOf("await callAliyunVision", execution);
+  assert.ok(execution > downstream && provider > execution);
+  assert.match(server.slice(execution, provider), /claimDownstreamFamilyRetry\(dmsGroupedRetryOwner\)/);
+});
 staticAssertion("all timeout and fallback provider retries claim the request owner", () => {
   assert.match(server, /handwrittenTimeoutRoutingEvidence\?\.shouldRetry[\s\S]{0,120}claimRequestRetry\(RETRY_OWNER_FAMILY\.HANDWRITTEN_DMS\)/);
   assert.match(server, /hasKyrgyzTimeoutEvidence[\s\S]{0,120}claimRequestRetry\("kyrgyz_gk"\)/);
@@ -574,6 +878,14 @@ staticAssertion("all timeout and fallback provider retries claim the request own
 });
 staticAssertion("failed multi-region retry blocks cross-group geometry consumption", () => {
   assert.match(server, /dmsGroupedRetryBoundaryFailure[\s\S]*coordinates\s*=\s*""[\s\S]*DMS_GROUPED:boundary_unresolved_review_required/);
+});
+staticAssertion("13-point Stage-1 candidate is snapshotted before downstream routing can mutate working variables", () => {
+  const snapshot = server.indexOf("const stage1Candidate = Object.freeze({ rawText, coordinates })");
+  const downstream = server.indexOf('claimDownstreamFamilyRetry("french_perimeter_dms")');
+  const response = server.indexOf("const finalRecognitionCandidate", snapshot);
+  assert.ok(snapshot >= 0 && downstream > snapshot && response > downstream);
+  assert.match(server.slice(snapshot, response), /stage1CandidateSha256[\s\S]*JSON\.stringify\(stage1Candidate\)/);
+  assert.match(server.slice(response, response + 900), /stage1Candidate:\s*Object\.freeze\([\s\S]*dmsGroupedAcquisitionExpansion\.stage1Candidate\.rawText/);
 });
 staticAssertion("retry prompt preserves SITE grouping instructions", () => {
   assert.match(server, /SITES1 \/ SITE 1 \/ SITES2 \/ SITE 2/);

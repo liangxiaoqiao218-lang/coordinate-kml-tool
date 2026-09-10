@@ -111,6 +111,22 @@ const dmsPolygon = Object.freeze({
   ])])
 });
 
+const acquisitionGroupSizes = Object.freeze([8, 4, 4]);
+const acquisitionGroupIdentities = Object.freeze(["SITE:1", "SITE:2", "SITE:3"]);
+function acquisitionDeltaGroups() {
+  return acquisitionGroupSizes.map((size, groupIndex) => ({
+    group_id: `group_${groupIndex + 1}`,
+    group_name: `SITES${groupIndex + 1}`,
+    geometry: "polygon",
+    requires_review: true,
+    kml_ready: false,
+    points: Array.from({ length: size }, (_, pointIndex) => {
+      const angle = (Math.PI * 2 * pointIndex) / size;
+      return { label: String(pointIndex + 1), lon: -9 + groupIndex + Math.cos(angle) * 0.1, lat: 11 + groupIndex + Math.sin(angle) * 0.1 };
+    })
+  }));
+}
+
 const reviewOnlyInput = createLegacyFinalizerInput({
   recognitionResult: {
     coordinates: "-9.020463888888889,11.72123611111111\n-9.015563888888888,11.719222222222223\n-9.016297222222223,11.717605555555556\n-9.02090277777778,11.719805555555556",
@@ -151,6 +167,64 @@ assert.equal(reviewOnlyFinalized.qualityGateStatus, COORDINATE_QUALITY_GATE_STAT
 assert.equal(reviewOnlyFinalized.decisionState, COORDINATE_DECISION_STATE.REVIEW_REQUIRED, "review-only result waits for user confirmation");
 assert.equal(reviewOnlyFinalized.technicalKmlReady, true, "review-only result remains technically KML-ready");
 assert.equal(reviewOnlyFinalized.kmlReady, true, "valid current review-only geometry remains KML-ready with warning");
+
+const acquisitionDeltaInput = createLegacyFinalizerInput({
+  recognitionResult: { precisionMode: "dms-coordinates" },
+  coordinateEngineV2: {
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    acquisition_delta_provenance: {
+      schemaVersion: "dms_grouped_acquisition_delta_v1",
+      ownerFamily: "dms_grouped",
+      candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+      baselineRowCount: 13,
+      retryRowCount: 16,
+      addedRowCount: 3,
+      baselineRowsPreserved: true,
+      groupLocalBaselineRowsPreserved: true,
+      baselineGroupCount: 3,
+      baselineGroupSizes: [6, 4, 3],
+      baselineGroupIdentities: acquisitionGroupIdentities,
+      retryGroupCount: 3,
+      retryGroupSizes: acquisitionGroupSizes,
+      retryGroupIdentities: acquisitionGroupIdentities,
+      strongBoundariesProven: true,
+      labelsContinuous: true,
+      sourceCandidateSeparate: true,
+      directCanonicalPromotion: false,
+      stage1CandidateSha256: "e".repeat(64),
+      retryCandidateSha256: "f".repeat(64)
+    },
+    groups: acquisitionDeltaGroups()
+  },
+  verification: { status: "REVIEW", warnings: [] },
+  revision: { resultId: "p08h-acquisition-delta", resultRevision: 1, currentRevision: 1 }
+});
+const acquisitionDeltaFinalized = finalizeCoordinateResult(acquisitionDeltaInput, {
+  clock: () => "2026-08-28T00:00:00.000Z"
+});
+assert.equal(acquisitionDeltaFinalized.confirmationStatus, COORDINATE_CONFIRMATION_STATUS.PENDING,
+  "expanded candidate enters canonical confirmation workflow");
+assert.equal(acquisitionDeltaFinalized.kmlReady, false, "expanded candidate cannot use KML before confirmation");
+assert.equal(acquisitionDeltaFinalized.familySafetyPolicy.confirmationReleaseMode,
+  "EXACT_RESULT_ID_REVISION_GEOMETRY_HASH", "expanded candidate confirmation is exact-identity bound");
+const malformedAcquisitionTopology = finalizeCoordinateResult(createLegacyFinalizerInput({
+  recognitionResult: { precisionMode: "dms-coordinates" },
+  coordinateEngineV2: {
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    acquisition_delta_provenance: acquisitionDeltaInput.familySafetyPolicy.acquisitionDeltaProvenance,
+    groups: acquisitionDeltaGroups().slice(0, 2)
+  },
+  verification: { status: "REVIEW", warnings: [] },
+  revision: { resultId: "p08h-acquisition-malformed", resultRevision: 1, currentRevision: 1 }
+}), { clock: () => "2026-08-28T00:00:00.000Z" });
+assert.equal(malformedAcquisitionTopology.decisionState, COORDINATE_DECISION_STATE.BLOCKED,
+  "malformed two-group acquisition topology fails before confirmation UI authority");
 
 const serializedReviewOnly = JSON.parse(JSON.stringify(reviewOnlyFinalized));
 assert.equal(Object.hasOwn(serializedReviewOnly, "currentAuthorizedGeometryExportable"), false);
@@ -242,7 +316,7 @@ assert.equal(hardFailureFinalized.decisionState, COORDINATE_DECISION_STATE.BLOCK
 
 console.log(JSON.stringify({
   suite: "p08h-confirmation-ui-lifecycle-regression",
-  passed: 18,
+  passed: 22,
   cases: [
     "PENDING_FINALIZED_RESULT_SHOWS_CONFIRMATION_UI",
     "CONFIRMATION_RENDER_SOURCE_CANONICAL_FINALIZED_RESULT",
@@ -257,6 +331,10 @@ console.log(JSON.stringify({
     "RECOGNITION_ADOPTION_SYNCS_UI",
     "KML_USES_SERVER_KML_READY",
     "REVIEW_ONLY_RECOGNITION_ENTERS_CONFIRMATION_WORKFLOW",
+    "ACQUISITION_DELTA_ENTERS_CONFIRMATION_WORKFLOW",
+    "ACQUISITION_DELTA_PENDING_KML_BLOCKED",
+    "ACQUISITION_DELTA_CONFIRMATION_EXACT_IDENTITY_BOUND",
+    "ACQUISITION_DELTA_MALFORMED_TOPOLOGY_BLOCKED",
     "HARD_FAILURE_REMAINS_BLOCKED",
     "SERIALIZED_RESPONSE_SHAPE_OMITS_INTERNAL_FIELDS",
     "ORDINARY_REVIEW_DOM_BUTTON_ABSENT_WARNING_PRESENT",
