@@ -19,6 +19,7 @@ import {
 import { CANDIDATE_SELECTION_DECISION, compareCandidateEvidence } from "./server/recognition/candidate-selection.js";
 import { buildHandwrittenCandidateEvidence, materializeHandwrittenDmsRows } from "./server/recognition/handwritten-candidate-evidence.js";
 import {
+  classifyDmsRetryOwnership,
   createDmsGroupedRetryOrchestrator,
   evaluateDmsGroupedAcquisitionExpansion,
   evaluateDmsGroupedRoutePriority,
@@ -3681,10 +3682,12 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
   const hasStrongPrintedProjectedTable = hasStrongPrintedProjectedTableEvidence(sourceText);
   const documentEvidence = getDmsDocumentEvidence(sourceText);
   const hasExplicitHandwrittenDmsContext = Boolean(options.hasExplicitHandwrittenDmsContext);
+  const explicitHandwrittenEvidence = hasExplicitHandwrittenDmsContext
+    || documentEvidence.explicitHandwrittenSignal;
 
   const isHandwrittenDms = isOcrImage
-    && documentEvidence.handwrittenPositiveSignal
-    && (!documentEvidence.printedTableSignal || documentEvidence.explicitHandwrittenSignal)
+    && explicitHandwrittenEvidence
+    && (!documentEvidence.printedTableSignal || explicitHandwrittenEvidence)
     && (dmsRows >= 4 || rawDmsRows >= 4)
     && (pointRows >= 4 || rawDmsRows >= 4)
     && (looksLikeHandwrittenDmsBlock(sourceText) || hasStrongHandwrittenDmsRows)
@@ -3718,12 +3721,15 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   const fileSize = Number(file?.size || file?.buffer?.length || 0);
   const highConfidenceNameOrHint = /手写|手寫|鎵嬪啓|HANDWRITTEN_DMS|handwritten|hand-written|hand\s*written|manual\s*dms|manuscript|handwritten_dms|handwritten-dms/i.test(value)
     || /handwritten[_\s-]*dms|hand\s*written[_\s-]*dms|manuscript/.test(folded);
+  const explicitHandwrittenContext = highConfidenceNameOrHint
+    || documentEvidence.explicitHandwrittenSignal;
 
   const evidence = {
     shouldRetry: false,
     reason: "insufficient_positive_evidence",
     documentEvidence,
     highConfidenceNameOrHint,
+    explicitHandwrittenContext,
     hasImageMime: /^image\/(?:jpe?g|png|webp|bmp|tiff?)$/.test(mimeType),
     fileSize,
     ocrTextAvailable: Boolean(ocrText.trim()),
@@ -3739,8 +3745,8 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   };
 
   if (!evidence.ocrTextAvailable || documentEvidence.projectedTableSignal
-    || (documentEvidence.printedTableSignal && !documentEvidence.explicitHandwrittenSignal)
-    || !documentEvidence.handwrittenPositiveSignal) {
+    || (documentEvidence.printedTableSignal && !explicitHandwrittenContext)
+    || !explicitHandwrittenContext) {
     return evidence;
   }
 
@@ -3755,10 +3761,10 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   addStableReason(getWgs84TableCoordinatesInfo(ocrText).isWgs84TableCoordinates, "wgs84_table");
   addStableReason(getKyrgyzGkInfo(ocrText).isKyrgyzGk, "kyrgyz_gk");
   addStableReason(hasBftmContext(ocrText) || getBftmLongTableInfo(ocrText, extractCoordinateLines(ocrText)).isBftmLongTable, "bftm");
-  addStableReason(getDmsGroupedCoordinateInfo(ocrText).output && !documentEvidence.explicitHandwrittenSignal, "standard_dms_grouped");
+  addStableReason(getDmsGroupedCoordinateInfo(ocrText).output && !explicitHandwrittenContext, "standard_dms_grouped");
   addStableReason(getFrenchPerimeterDmsInfo(ocrText).isFrenchPerimeterDms, "french_perimeter_dms");
   addStableReason(looksLikePointAzDmsTable(ocrText), "point_az_dms_table");
-  addStableReason(looksLikeCoordinateTable(ocrText) && !documentEvidence.handwrittenPositiveSignal, "printed_coordinate_table");
+  addStableReason(looksLikeCoordinateTable(ocrText) && !explicitHandwrittenContext, "printed_coordinate_table");
 
   evidence.stableDetectorMatched = evidence.stableDetectorReasons.length > 0;
   if (evidence.stableDetectorMatched) {
@@ -3801,7 +3807,7 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   if (looksLikeCorrectionContext(ocrText)) evidence.score += 1;
 
   const hasEnoughDmsStructure = evidence.dmsPairLineCount >= 3 || evidence.damagedDmsLineCount >= 3;
-  evidence.shouldRetry = documentEvidence.handwrittenPositiveSignal && evidence.score >= 5 && hasEnoughDmsStructure;
+  evidence.shouldRetry = explicitHandwrittenContext && evidence.score >= 5 && hasEnoughDmsStructure;
   evidence.reason = evidence.shouldRetry ? "ocr_dms_structure" : "insufficient_evidence";
   return evidence;
 }
@@ -3810,7 +3816,8 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
   const text = String(rawText || "");
   const coordinateText = String(coordinates || "");
   const documentEvidence = getDmsDocumentEvidence(text);
-  const explicitHandwrittenContext = documentEvidence.explicitHandwrittenSignal;
+  const explicitHandwrittenContext = documentEvidence.explicitHandwrittenSignal
+    || options.explicitHandwrittenSignal === true;
   const evidence = {
     shouldRetry: false,
     reason: "",
@@ -3823,6 +3830,7 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
     damagedMergedDmsLineCount: 0,
     directionTokenCount: (text.match(/[NSEWO]/gi) || []).length,
     numericTokenCount: (text.match(/\d+/g) || []).length,
+    shapeRetryCandidate: false,
     stableDetectorMatched: false,
     stableDetectorReasons: []
   };
@@ -3834,7 +3842,7 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
 
   if (documentEvidence.projectedTableSignal
     || (documentEvidence.printedTableSignal && !explicitHandwrittenContext)
-    || !documentEvidence.handwrittenPositiveSignal) {
+    || (!explicitHandwrittenContext && !documentEvidence.handwrittenPositiveSignal)) {
     evidence.reason = documentEvidence.projectedTableSignal ? "projected_table_blocked" : "no_positive_handwritten_evidence";
     return evidence;
   }
@@ -3879,7 +3887,7 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
     }
   }
 
-  if (documentEvidence.explicitHandwrittenSignal) evidence.score += 3;
+  if (explicitHandwrittenContext) evidence.score += 3;
   if (evidence.coordinateRowCount >= 4) evidence.score += 1;
   if (evidence.dmsLikeTokenCount >= 8) evidence.score += 2;
   if (evidence.dmsPairLineCount >= 4) evidence.score += 2;
@@ -3894,8 +3902,9 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
     && evidence.dmsLikeTokenCount >= 8
     && evidence.dmsPairLineCount >= 3;
 
-  evidence.shouldRetry = documentEvidence.handwrittenPositiveSignal
-    && evidence.score >= 5 && (hasDamagedHandwrittenShape || hasMultiLineDmsShape);
+  evidence.shapeRetryCandidate = evidence.score >= 5
+    && (hasDamagedHandwrittenShape || hasMultiLineDmsShape);
+  evidence.shouldRetry = explicitHandwrittenContext && evidence.shapeRetryCandidate;
   evidence.reason = evidence.shouldRetry ? "handwritten_dms_evidence" : "insufficient_evidence";
   return evidence;
 }
@@ -14215,14 +14224,42 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const structuredDmsRoutePriority = evaluateDmsGroupedRoutePriority({
       isImageInput: Boolean(req.file),
       printedTableSignal: initialDmsDocumentEvidence.printedDmsCandidateSignal,
-      explicitHandwrittenSignal: initialDmsDocumentEvidence.explicitHandwrittenSignal,
+      projectedTableSignal: initialDmsDocumentEvidence.projectedTableSignal,
+      explicitHandwrittenSignal: initialDmsDocumentEvidence.explicitHandwrittenSignal || handwrittenDmsUploadContext,
       structureText: rawText
     });
     let handwrittenVisionRouting = getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates, {
       file: req.file,
-      hint: coordinateRawHint
+      hint: coordinateRawHint,
+      explicitHandwrittenSignal: handwrittenDmsUploadContext
     });
-    if (structuredDmsRoutePriority.suppressHandwrittenRetry) {
+    const dmsRetryOwnership = classifyDmsRetryOwnership({
+      isImageInput: Boolean(req.file),
+      routePriority: structuredDmsRoutePriority,
+      projectedTableSignal: initialDmsDocumentEvidence.projectedTableSignal,
+      explicitHandwrittenSignal: initialDmsDocumentEvidence.explicitHandwrittenSignal || handwrittenDmsUploadContext,
+      nonHandwrittenDmsCandidateSignal: initialDmsDocumentEvidence.nonHandwrittenDmsCandidateSignal,
+      handwrittenShapeRetryCandidate: handwrittenVisionRouting.shapeRetryCandidate
+    });
+    parserTrace.push(`DMS_RETRY_ROUTE:${dmsRetryOwnership.classification}`);
+    let preliminaryDmsRetryFailClosedPatch = null;
+    if (dmsRetryOwnership.failClosed) {
+      preliminaryDmsRetryFailClosedPatch = requestRetryOrchestrator.failClose(dmsRetryOwnership.reason);
+      handwrittenVisionRouting = {
+        ...handwrittenVisionRouting,
+        shouldRetry: false,
+        reason: "dms_retry_route_fail_closed"
+      };
+    } else if (dmsRetryOwnership.retryOwner
+      && !requestRetryOrchestrator.reserve(dmsRetryOwnership.retryOwner)) {
+      preliminaryDmsRetryFailClosedPatch = requestRetryOrchestrator.failClose("DMS_RETRY_OWNER_RESERVATION_CONFLICT");
+      handwrittenVisionRouting = {
+        ...handwrittenVisionRouting,
+        shouldRetry: false,
+        reason: "dms_retry_owner_reservation_conflict"
+      };
+    }
+    if (dmsRetryOwnership.retryOwner === dmsGroupedRetryOwner) {
       handwrittenVisionRouting = {
         ...handwrittenVisionRouting,
         shouldRetry: false,
@@ -14344,8 +14381,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     dmsGroupedInfo = { ...dmsGroupedInfo, output: canonicalDmsGrouping.accepted ? canonicalDmsGrouping.output : "" };
     dmsGroupedAccepted = canonicalDmsGrouping.accepted === true;
     const dmsGroupedRetryOrchestrator = requestRetryOrchestrator;
-    const applyDmsGroupedRetryFailClosed = reason => {
-      const patch = dmsGroupedRetryOrchestrator.failClose(reason);
+    const applyDmsGroupedRetryFailurePatch = patch => {
       dmsGroupedRetryBoundaryFailure = patch.reason;
       coordinates = patch.coordinates;
       dmsGroupedAccepted = patch.dmsGroupedAccepted;
@@ -14354,6 +14390,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       if (patch.resetWgs84TableCoordinates) wgs84TableCoordinates = getWgs84TableCoordinatesInfo("");
       parserTrace.splice(0, parserTrace.length, ...patch.parserTrace);
     };
+    const applyDmsGroupedRetryFailClosed = reason => {
+      const patch = dmsGroupedRetryOrchestrator.failClose(reason);
+      applyDmsGroupedRetryFailurePatch(patch);
+    };
+    if (preliminaryDmsRetryFailClosedPatch) {
+      applyDmsGroupedRetryFailurePatch(preliminaryDmsRetryFailClosedPatch);
+    }
     const claimDownstreamFamilyRetry = targetOwner => {
       return claimRequestRetry(targetOwner);
     };
@@ -14368,12 +14411,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       groupedRowCount: countCoordinateRows(dmsGroupedInfo.output),
       lonLatOrderLines: countDmsGroupedLonLatOrderLines(rawText),
       familyRetryAllowed: dmsGroupedRetryDispatch.allowed,
-      typedRouteEligible: structuredDmsRoutePriority.typedDmsGrouped
+      typedRouteEligible: dmsRetryOwnership.retryOwner === dmsGroupedRetryOwner
     });
-    if (dmsGroupedRetryEligibility.failClosed) {
+    if (!dmsGroupedRetryBoundaryFailure && dmsGroupedRetryEligibility.failClosed) {
       applyDmsGroupedRetryFailClosed(dmsGroupedRetryEligibility.reason);
     }
-    if (dmsGroupedRetryEligibility.allowed) {
+    if (!dmsGroupedRetryBoundaryFailure && dmsGroupedRetryEligibility.allowed) {
       try {
         if (!claimDownstreamFamilyRetry(dmsGroupedRetryOwner)) {
           applyDmsGroupedRetryFailClosed("DMS_GROUPED_RETRY_OWNER_BLOCKED");

@@ -100,11 +100,20 @@ export function hasStrongPrintedProjectedTableEvidence(value = "") {
   });
   const projectedRows = lines.filter(line => {
     const cells = line.split(/[|;\t]/).map(cell => cell.trim()).filter(Boolean);
-    if (cells.length < 3) return false;
-    const x = Number(normalizeDecimalToken(cells[1]));
-    const y = Number(normalizeDecimalToken(cells[2]));
-    return Number.isFinite(x) && x >= 100000 && x <= 900000
-      && Number.isFinite(y) && y >= 0 && y <= 10000000;
+    const coordinateCandidates = [];
+    if (cells.length >= 3) {
+      coordinateCandidates.push([cells[1], cells[2]]);
+    } else {
+      const whitespaceCells = line.split(/\s+/).map(cell => cell.trim()).filter(Boolean);
+      if (whitespaceCells.length >= 3) coordinateCandidates.push([whitespaceCells[1], whitespaceCells[2]]);
+      if (whitespaceCells.length >= 2) coordinateCandidates.push([whitespaceCells[0], whitespaceCells[1]]);
+    }
+    return coordinateCandidates.some(([xToken, yToken]) => {
+      const x = Number(normalizeDecimalToken(xToken));
+      const y = Number(normalizeDecimalToken(yToken));
+      return Number.isFinite(x) && x >= 100000 && x <= 900000
+        && Number.isFinite(y) && y >= 0 && y <= 10000000;
+    });
   }).length;
   return hasProjectedHeader && projectedRows >= 3;
 }
@@ -113,6 +122,10 @@ export function hasStrongPrintedProjectedTableEvidence(value = "") {
 // country, fixture IDs, Golden values, and row counts are not positive evidence.
 export function getDmsDocumentEvidence(value = "") {
   const text = normalizeCoordinateEvidenceText(value);
+  const dmsPairLineCount = text.split("\n").filter(line => {
+    const components = line.match(/[-+]?\d{1,3}\s*[°º]\s*\d{1,2}(?:\s*['′’]\s*\d{1,2}(?:[.,]\d+)?)?\s*["″”]?\s*(?:N|S|E|W|O|NORD|NORTH|SUD|SOUTH|EST|EAST|OUEST|WEST)?/gi) || [];
+    return components.length >= 2;
+  }).length;
   const projectedTableSignal = hasStrongPrintedProjectedTableEvidence(text);
   const printedTableSignal = projectedTableSignal
     || /(?:latitude|longitude|easting|northing|coordonn[eé]es|\bPoint\b|\bOrdem\b|\bX\s*\|\s*Y\b)/i.test(text);
@@ -124,9 +137,13 @@ export function getDmsDocumentEvidence(value = "") {
   const printedDmsCandidateSignal = printedTableSignal
     && !projectedTableSignal
     && !explicitHandwrittenSignal;
+  const nonHandwrittenDmsCandidateSignal = !projectedTableSignal
+    && !explicitHandwrittenSignal
+    && (dmsPairLineCount >= 3 || damagedDmsSignal);
   return Object.freeze({ printedTableSignal, projectedTableSignal,
     handwrittenPositiveSignal: explicitHandwrittenSignal || damagedDmsSignal,
-    explicitHandwrittenSignal, damagedDmsSignal, printedDmsCandidateSignal });
+    explicitHandwrittenSignal, damagedDmsSignal, printedDmsCandidateSignal,
+    nonHandwrittenDmsCandidateSignal, dmsPairLineCount });
 }
 
 export function getIndonesiaUtm50Info(value = "", { transform } = {}) {

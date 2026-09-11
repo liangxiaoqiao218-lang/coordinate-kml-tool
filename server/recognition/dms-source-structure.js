@@ -2,6 +2,13 @@ import { authorizeFamilyRetryDispatch } from "./family-retry-policy.js";
 
 const DMS_COMPONENT_PATTERN = /[-+]?\d{1,3}\s*[°º]\s*\d{1,2}\s*['′’]\s*\d{1,2}(?:[.,]\d+)?\s*["″”]?\s*(?:N|S|E|W|O|NORD|NORTH|SUD|SOUTH|EST|EAST|OUEST|WEST)?/gi;
 
+export const DMS_RETRY_ROUTE_CLASSIFICATION = Object.freeze({
+  DMS_GROUPED_ONLY: "DMS_GROUPED_ONLY",
+  HANDWRITTEN_DMS_ONLY: "HANDWRITTEN_DMS_ONLY",
+  FAIL_CLOSED: "FAIL_CLOSED_UNPROVEN_DMS_STRUCTURE",
+  NONE: "NO_DMS_RETRY_OWNER"
+});
+
 function sourceLines(text) {
   return String(text || "").replace(/\r\n/g, "\n").split("\n");
 }
@@ -214,16 +221,24 @@ export function extractDmsSourceStructure(text) {
   closeGroup(reason || "single_group");
 
   const rows = groups.flatMap(group => group.rows);
-  const laterBoundaries = groups.slice(1).map(group => group.boundaryProvenance);
+  const laterGroups = groups.slice(1);
+  const laterBoundaries = laterGroups.map(group => group.boundaryProvenance);
+  const hasProvenBlankLineBoundary = groups.length > 1
+    && laterBoundaries.includes("blank_line")
+    && groups.every(group => group.rows.length >= 3 && hasContinuousNumberedRows(group.rows))
+    && laterGroups.every(group => group.boundaryProvenance !== "blank_line"
+      || parseDmsSourceCoordinateRow(group.rows[0])?.label === "1");
   const allBoundariesProven = groups.length > 1 && laterBoundaries.every(value => [
     "section_title",
     "repeated_table_header",
     "number_restart"
-  ].includes(value));
+  ].includes(value) || (value === "blank_line" && hasProvenBlankLineBoundary));
   const hasProvenNumberRestart = groups.some((group, index) => index > 0
     && group.boundaryProvenance === "number_restart"
     && hasContinuousNumberedRows(group.rows));
-  const documentHasStrongMultiRegionEvidence = hasDmsGroupBoundaryContext(text) || hasProvenNumberRestart;
+  const documentHasStrongMultiRegionEvidence = hasDmsGroupBoundaryContext(text)
+    || hasProvenNumberRestart
+    || hasProvenBlankLineBoundary;
   const displayText = groups.map(group => {
     const lines = [...(group.name ? [group.name] : []), ...group.displayRows];
     while (lines[0] === "") lines.shift();
@@ -239,6 +254,7 @@ export function extractDmsSourceStructure(text) {
     boundaryProvenance: Object.freeze(groups.map(group => group.boundaryProvenance)),
     documentHasStrongMultiRegionEvidence,
     allBoundariesProven,
+    hasProvenBlankLineBoundary,
     hasUnprovenBoundary: groups.length > 1 && !allBoundariesProven,
     displayText
   });
@@ -265,32 +281,80 @@ export function hasExplicitDmsMultiRegionEvidence(text, dmsGroupedInfo = {}) {
     && sourceStructure.groups.slice(1).every(group => group.boundaryProvenance === "number_restart")
     && sourceStructure.groups.every(group => group.rows.length >= 3
       && parseDmsSourceCoordinateRow(group.rows[0])?.label === "1");
+  const strongBlankLineBoundary = laterBoundariesProven
+    && sourceStructure.hasProvenBlankLineBoundary;
   return Boolean(
     (laterBoundariesProven && hasDmsGroupBoundaryContext(text))
     || (laterBoundariesProven && namedIdentities.length >= 2)
     || strongNumberRestart
+    || strongBlankLineBoundary
   );
 }
 
 export function evaluateDmsGroupedRoutePriority({
   isImageInput = false,
   printedTableSignal = false,
+  projectedTableSignal = false,
   explicitHandwrittenSignal = false,
   structureText = ""
 } = {}) {
   const structure = extractDmsSourceStructure(structureText);
+  const printedEvidenceEstablished = Boolean(printedTableSignal
+    || (structure.allBoundariesProven && structure.documentHasStrongMultiRegionEvidence));
   const typedDmsGrouped = Boolean(isImageInput
-    && printedTableSignal
+    && !projectedTableSignal
+    && printedEvidenceEstablished
     && !explicitHandwrittenSignal
     && structure.rowCount > 0
+    && structure.allBoundariesProven
     && structure.documentHasStrongMultiRegionEvidence);
   return Object.freeze({
     typedDmsGrouped,
     suppressHandwrittenRetry: typedDmsGrouped,
     documentHasStrongMultiRegionEvidence: structure.documentHasStrongMultiRegionEvidence,
+    printedEvidenceEstablished,
     allBoundariesProven: structure.allBoundariesProven,
     hasUnprovenBoundary: structure.hasUnprovenBoundary,
     reason: typedDmsGrouped ? "PRINTED_MULTI_SITE_DMS" : "DMS_GROUPED_PRIORITY_NOT_ESTABLISHED"
+  });
+}
+
+export function classifyDmsRetryOwnership({
+  isImageInput = false,
+  routePriority = {},
+  projectedTableSignal = false,
+  explicitHandwrittenSignal = false,
+  nonHandwrittenDmsCandidateSignal = false,
+  handwrittenShapeRetryCandidate = false
+} = {}) {
+  let classification = DMS_RETRY_ROUTE_CLASSIFICATION.NONE;
+  let retryOwner = null;
+  let failClosed = false;
+
+  if (!isImageInput || projectedTableSignal) {
+    classification = DMS_RETRY_ROUTE_CLASSIFICATION.NONE;
+  } else if (explicitHandwrittenSignal) {
+    classification = DMS_RETRY_ROUTE_CLASSIFICATION.HANDWRITTEN_DMS_ONLY;
+    retryOwner = "handwritten_dms";
+  } else if (routePriority?.typedDmsGrouped === true) {
+    classification = DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_ONLY;
+    retryOwner = "dms_grouped";
+  } else if (
+    handwrittenShapeRetryCandidate === true
+    || (nonHandwrittenDmsCandidateSignal === true && (
+      routePriority?.documentHasStrongMultiRegionEvidence === true
+      || routePriority?.hasUnprovenBoundary === true
+    ))
+  ) {
+    classification = DMS_RETRY_ROUTE_CLASSIFICATION.FAIL_CLOSED;
+    failClosed = true;
+  }
+
+  return Object.freeze({
+    classification,
+    retryOwner,
+    failClosed,
+    reason: classification
   });
 }
 
@@ -510,6 +574,7 @@ export function buildDmsGroupedRetryFailClosedPatch(reason, parserTrace = []) {
 
 export function createDmsGroupedRetryOrchestrator({ activeFamilyOwner = null, parserTrace = [] } = {}) {
   let owner = String(activeFamilyOwner || "").trim() || null;
+  let reservedOwner = null;
   let failurePatch = null;
   const trace = Array.isArray(parserTrace) ? parserTrace : [];
   return Object.freeze({
@@ -517,16 +582,28 @@ export function createDmsGroupedRetryOrchestrator({ activeFamilyOwner = null, pa
       failurePatch = buildDmsGroupedRetryFailClosedPatch(reason, trace);
       return failurePatch;
     },
+    reserve(targetOwner) {
+      if (failurePatch) return false;
+      const target = String(targetOwner || "").trim();
+      if (!target || (reservedOwner && reservedOwner !== target)) return false;
+      const authorization = authorizeFamilyRetryDispatch({ activeFamilyOwner: owner, targetOwner: target });
+      if (!authorization.allowed) return false;
+      reservedOwner = target;
+      return true;
+    },
     claim(targetOwner) {
       if (failurePatch) return false;
-      const authorization = authorizeFamilyRetryDispatch({ activeFamilyOwner: owner, targetOwner });
+      const target = String(targetOwner || "").trim();
+      if (reservedOwner && target !== reservedOwner) return false;
+      const authorization = authorizeFamilyRetryDispatch({ activeFamilyOwner: owner, targetOwner: target });
       if (!authorization.allowed) return false;
-      owner = String(targetOwner || "").trim();
+      owner = target;
       return true;
     },
     snapshot() {
       return Object.freeze({
         activeFamilyOwner: owner,
+        reservedFamilyOwner: reservedOwner,
         failed: Boolean(failurePatch),
         failureReason: failurePatch?.reason || null
       });
