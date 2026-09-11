@@ -5,7 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildDmsGroupedRetryFailClosedPatch,
+  classifyDmsRetryOwnership,
   createDmsGroupedRetryOrchestrator,
+  DMS_RETRY_ROUTE_CLASSIFICATION,
   evaluateDmsGroupedAcquisitionExpansion,
   evaluateDmsGroupedRoutePriority,
   evaluateDmsGroupedRetryCoverage,
@@ -17,7 +19,7 @@ import {
   resolveDmsEngineGroupNames
 } from "../server/recognition/dms-source-structure.js";
 import { buildSourceCoordinateRepresentation } from "../server/source-coordinate-representation.js";
-import { getDmsDocumentEvidence } from "../server/recognition/family-primary-routing.js";
+import { getDmsDocumentEvidence, getPrintedProjectedDmsReference } from "../server/recognition/family-primary-routing.js";
 import { buildCoordinateVerificationResponse } from "../server/verification/index.js";
 import { CoordinateConfirmationRuntime } from "../server/coordinate-finalizer/index.js";
 import { MapPreviewAdapter } from "../server/spatial/adapters/map-preview-adapter.js";
@@ -538,6 +540,7 @@ dynamicCase("production retry orchestrator enforces one owner and blocks every c
   assert.equal(orchestrator.claim("dms_grouped"), false);
   assert.deepEqual(orchestrator.snapshot(), {
     activeFamilyOwner: "dms_grouped",
+    reservedFamilyOwner: null,
     failed: true,
     failureReason: "ROW_COUNT_MISMATCH"
   });
@@ -615,6 +618,8 @@ dynamicCase("printed multi-site route suppresses damaged-token handwritten retry
   assert.equal(evidence.explicitHandwrittenSignal, false);
   assert.equal(evidence.handwrittenPositiveSignal, true);
   assert.equal(evidence.printedDmsCandidateSignal, true);
+  assert.equal(evidence.nonHandwrittenDmsCandidateSignal, true);
+  assert.ok(evidence.dmsPairLineCount >= 3);
   const route = evaluateDmsGroupedRoutePriority({
     isImageInput: true,
     printedTableSignal: evidence.printedTableSignal,
@@ -623,6 +628,355 @@ dynamicCase("printed multi-site route suppresses damaged-token handwritten retry
   });
   assert.equal(route.typedDmsGrouped, true);
   assert.equal(route.suppressHandwrittenRetry, true);
+});
+
+dynamicCase("proven printed multi-site structure reserves dms_grouped as the only retry owner", () => {
+  const evidence = getDmsDocumentEvidence(stage1ThirteenText);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: evidence.printedDmsCandidateSignal,
+    explicitHandwrittenSignal: false,
+    structureText: stage1ThirteenText
+  });
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    nonHandwrittenDmsCandidateSignal: evidence.nonHandwrittenDmsCandidateSignal,
+    handwrittenShapeRetryCandidate: true
+  });
+  assert.deepEqual(ownership, {
+    classification: DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_ONLY,
+    retryOwner: "dms_grouped",
+    failClosed: false,
+    reason: DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_ONLY
+  });
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  assert.equal(orchestrator.reserve(ownership.retryOwner), true);
+  assert.equal(orchestrator.claim("handwritten_dms"), false);
+  assert.equal(orchestrator.claim("generic_ocr"), false);
+  assert.equal(orchestrator.claim("dms_grouped"), true);
+  assert.equal(orchestrator.snapshot().reservedFamilyOwner, "dms_grouped");
+});
+
+dynamicCase("unproven printed multi-site structure fails closed before any alternate Provider retry", () => {
+  const ambiguous = [
+    ...dmsRows.slice(0, 3),
+    ...dmsRows.slice(8, 11),
+    "",
+    ...flatRows.slice(6, 9)
+  ].join("\n");
+  const evidence = getDmsDocumentEvidence(ambiguous);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: evidence.printedDmsCandidateSignal,
+    explicitHandwrittenSignal: false,
+    structureText: ambiguous
+  });
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    nonHandwrittenDmsCandidateSignal: evidence.nonHandwrittenDmsCandidateSignal
+  });
+  assert.equal(route.documentHasStrongMultiRegionEvidence, true);
+  assert.equal(route.typedDmsGrouped, false);
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.FAIL_CLOSED);
+  assert.equal(ownership.failClosed, true);
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  orchestrator.failClose(ownership.reason);
+  let providerCalls = 0;
+  for (const owner of ["handwritten_dms", "generic_ocr", "wgs84_table", "dms_grouped"]) {
+    if (orchestrator.claim(owner)) providerCalls += 1;
+  }
+  assert.equal(providerCalls, 0);
+});
+
+dynamicCase("non-explicit handwritten-shaped DMS cannot acquire handwritten or generic retry ownership", () => {
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: evaluateDmsGroupedRoutePriority({ isImageInput: true, structureText: dmsRows.slice(0, 4).join("\n") }),
+    nonHandwrittenDmsCandidateSignal: true,
+    handwrittenShapeRetryCandidate: true
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.FAIL_CLOSED);
+  assert.equal(ownership.retryOwner, null);
+  assert.equal(ownership.failClosed, true);
+});
+
+dynamicCase("explicit handwritten evidence alone retains handwritten retry ownership", () => {
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: evaluateDmsGroupedRoutePriority({
+      isImageInput: true,
+      printedTableSignal: true,
+      explicitHandwrittenSignal: true,
+      structureText: structuredText
+    }),
+    explicitHandwrittenSignal: true,
+    nonHandwrittenDmsCandidateSignal: false,
+    handwrittenShapeRetryCandidate: true
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.HANDWRITTEN_DMS_ONLY);
+  assert.equal(ownership.retryOwner, "handwritten_dms");
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  assert.equal(orchestrator.reserve(ownership.retryOwner), true);
+  assert.equal(orchestrator.claim("dms_grouped"), false);
+  assert.equal(orchestrator.claim("handwritten_dms"), true);
+});
+
+dynamicCase("non-DMS image leaves retry ownership unreserved", () => {
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: evaluateDmsGroupedRoutePriority({ isImageInput: true, structureText: "ordinary image text" })
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.NONE);
+  assert.equal(ownership.retryOwner, null);
+  assert.equal(ownership.failClosed, false);
+});
+
+dynamicCase("retry routing classification is sanitized finite metadata only", () => {
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: { documentHasStrongMultiRegionEvidence: true, hasUnprovenBoundary: true },
+    nonHandwrittenDmsCandidateSignal: true
+  });
+  assert.deepEqual(Object.keys(ownership), ["classification", "retryOwner", "failClosed", "reason"]);
+  assert.doesNotMatch(JSON.stringify(ownership), /12°|SITES1|latitude|longitude|raw|image/i);
+});
+
+dynamicCase("projected X Y table with damaged DMS reference cannot be captured by dms_grouped", () => {
+  const projectedReferenceRows = [
+    `1 | 500001 | 1200001 | 12°00'36.9"N | 9°09'40.8"E`,
+    `2 | 500002 | 1200002 | 12°00'34.0"N | 9°09'22.0"E`,
+    `3 | 500003 | 1200003 | 12°00'48.1"N | 9°08'32.7"E`,
+    `1 | 500004 | 1200004 | 11°59'46.7"N | 9°07'27.0"E`,
+    `2 | 500005 | 1200005 | INVALID_DMS | 9°05'59.9"E`,
+    `3 | 500006 | 1200006 | 12°00'36.1"N | 9°05'56.5"E`
+  ];
+  const projectedMultiSite = [
+    "SITES1", "POINT | X | Y | LATITUDE | LONGITUDE", ...projectedReferenceRows.slice(0, 3),
+    "SITES2", "POINT | X | Y | LATITUDE | LONGITUDE", ...projectedReferenceRows.slice(3)
+  ].join("\n");
+  assert.equal(getPrintedProjectedDmsReference(projectedMultiSite), null);
+  const evidence = getDmsDocumentEvidence(projectedMultiSite);
+  assert.equal(evidence.projectedTableSignal, true);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: evidence.printedDmsCandidateSignal,
+    projectedTableSignal: evidence.projectedTableSignal,
+    structureText: projectedMultiSite
+  });
+  assert.equal(route.documentHasStrongMultiRegionEvidence, true);
+  assert.equal(route.typedDmsGrouped, false);
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    projectedTableSignal: evidence.projectedTableSignal,
+    nonHandwrittenDmsCandidateSignal: evidence.nonHandwrittenDmsCandidateSignal
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.NONE);
+  assert.equal(ownership.retryOwner, null);
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  assert.equal(orchestrator.snapshot().reservedFamilyOwner, null);
+  assert.equal(orchestrator.claim("projected_xy"), true);
+});
+
+dynamicCase("whitespace projected X Y rows cannot be captured by dms_grouped", () => {
+  const projectedWhitespaceMultiSite = [
+    "SITES1", "POINT X Y LATITUDE LONGITUDE",
+    `10001 500001 1200001 12°00'36.9\"N 9°09'40.8\"E`,
+    `10002 500002 1200002 12°00'34.0\"N 9°09'22.0\"E`,
+    `10003 500003 1200003 12°00'48.1\"N 9°08'32.7\"E`,
+    "SITES2", "POINT X Y LATITUDE LONGITUDE",
+    `20001 500004 1200004 11°59'46.7\"N 9°07'27.0\"E`,
+    `20002 500005 1200005 INVALID_DMS 9°05'59.9\"E`,
+    `20003 500006 1200006 12°00'36.1\"N 9°05'56.5\"E`
+  ].join("\n");
+  assert.equal(getPrintedProjectedDmsReference(projectedWhitespaceMultiSite), null);
+  const evidence = getDmsDocumentEvidence(projectedWhitespaceMultiSite);
+  assert.equal(evidence.projectedTableSignal, true);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: evidence.printedDmsCandidateSignal,
+    projectedTableSignal: evidence.projectedTableSignal,
+    structureText: projectedWhitespaceMultiSite
+  });
+  assert.equal(route.documentHasStrongMultiRegionEvidence, true);
+  assert.equal(route.typedDmsGrouped, false);
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    projectedTableSignal: evidence.projectedTableSignal,
+    nonHandwrittenDmsCandidateSignal: evidence.nonHandwrittenDmsCandidateSignal
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.NONE);
+  assert.equal(ownership.retryOwner, null);
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  assert.equal(orchestrator.snapshot().reservedFamilyOwner, null);
+  assert.equal(orchestrator.claim("projected_xy"), true);
+});
+
+dynamicCase("projected evidence outranks explicit handwritten text for retry ownership", () => {
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: true,
+    projectedTableSignal: true,
+    explicitHandwrittenSignal: true,
+    structureText: structuredText
+  });
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    projectedTableSignal: true,
+    explicitHandwrittenSignal: true,
+    handwrittenShapeRetryCandidate: true
+  });
+  assert.equal(route.typedDmsGrouped, false);
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.NONE);
+  assert.equal(ownership.retryOwner, null);
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  assert.equal(orchestrator.claim("projected_xy"), true);
+});
+
+dynamicCase("headerless named multi-site DMS keeps printed priority after Stage-1 drops table headers", () => {
+  const headerless = [
+    "SITES1", ...dmsRows.slice(0, 8),
+    "SITES2", ...dmsRows.slice(8, 12),
+    "SITES3", ...dmsRows.slice(12)
+  ].join("\n");
+  const evidence = getDmsDocumentEvidence(headerless);
+  assert.equal(evidence.printedDmsCandidateSignal, false);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: evidence.printedDmsCandidateSignal,
+    explicitHandwrittenSignal: false,
+    structureText: headerless
+  });
+  assert.equal(route.printedEvidenceEstablished, true);
+  assert.equal(route.typedDmsGrouped, true);
+  assert.equal(route.suppressHandwrittenRetry, true);
+});
+
+dynamicCase("headerless 13-point Stage-1 routes exactly one dms_grouped reread and zero handwritten rereads", () => {
+  const headerlessStage1 = stage1ThirteenText.split("\n")
+    .filter(line => !/POINT\s*\|\s*LATITUDE\s*\|\s*LONGITUDE/i.test(line))
+    .join("\n");
+  const evidence = getDmsDocumentEvidence(headerlessStage1);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: evidence.printedDmsCandidateSignal,
+    explicitHandwrittenSignal: false,
+    structureText: headerlessStage1
+  });
+  const eligibility = evaluateDmsGroupedRetryEligibility({
+    rawText: headerlessStage1,
+    dmsGroupedInfo: { output: "stage1-normalized-present" },
+    isImageInput: true,
+    familyRetryAllowed: true,
+    typedRouteEligible: route.typedDmsGrouped
+  });
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  let handwrittenCalls = 0;
+  let dmsGroupedCalls = 0;
+  if (!route.suppressHandwrittenRetry) handwrittenCalls += 1;
+  if (eligibility.allowed && orchestrator.claim("dms_grouped")) dmsGroupedCalls += 1;
+  assert.equal(extractDmsSourceStructure(headerlessStage1).rowCount, 13);
+  assert.equal(route.typedDmsGrouped, true);
+  assert.equal(eligibility.allowed, true);
+  assert.equal(handwrittenCalls, 0);
+  assert.equal(dmsGroupedCalls, 1);
+  assert.equal(orchestrator.snapshot().activeFamilyOwner, "dms_grouped");
+});
+
+dynamicCase("headerless numbered restarts establish multi-site printed priority", () => {
+  const headerless = dmsRows.join("\n");
+  const structure = extractDmsSourceStructure(headerless);
+  assert.deepEqual(structure.groups.map(group => group.rows.length), [8, 4, 4]);
+  assert.deepEqual(structure.groups.map(group => group.boundaryProvenance), ["document_start", "number_restart", "number_restart"]);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    structureText: headerless
+  });
+  assert.equal(route.typedDmsGrouped, true);
+});
+
+dynamicCase("blank-separated groups require independent continuous numbering before gaining priority", () => {
+  const proven = [
+    ...dmsRows.slice(0, 3), "",
+    ...dmsRows.slice(8, 11), "",
+    ...dmsRows.slice(12, 15)
+  ].join("\n");
+  const structure = extractDmsSourceStructure(proven);
+  assert.deepEqual(structure.groups.map(group => group.rows.length), [3, 3, 3]);
+  assert.equal(structure.hasProvenBlankLineBoundary, true);
+  assert.equal(structure.allBoundariesProven, true);
+  assert.equal(hasExplicitDmsMultiRegionEvidence(proven), true);
+  assert.equal(evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    structureText: proven
+  }).typedDmsGrouped, true);
+
+  const unproven = [...flatRows.slice(0, 3), "", ...flatRows.slice(3, 6)].join("\n");
+  const unprovenStructure = extractDmsSourceStructure(unproven);
+  assert.equal(unprovenStructure.hasProvenBlankLineBoundary, false);
+  assert.equal(unprovenStructure.allBoundariesProven, false);
+  assert.equal(evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    structureText: unproven
+  }).typedDmsGrouped, false);
+});
+
+dynamicCase("printed table signal cannot bypass a mixed proven and unproven group boundary", () => {
+  const mixedBoundaries = [
+    ...dmsRows.slice(0, 3),
+    ...dmsRows.slice(8, 11),
+    "",
+    ...flatRows.slice(6, 9)
+  ].join("\n");
+  const structure = extractDmsSourceStructure(mixedBoundaries);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: true,
+    explicitHandwrittenSignal: false,
+    structureText: mixedBoundaries
+  });
+  assert.deepEqual(structure.groups.map(group => group.boundaryProvenance), [
+    "document_start",
+    "number_restart",
+    "blank_line"
+  ]);
+  assert.equal(structure.documentHasStrongMultiRegionEvidence, true);
+  assert.equal(structure.allBoundariesProven, false);
+  assert.equal(structure.hasUnprovenBoundary, true);
+  assert.equal(route.typedDmsGrouped, false);
+  assert.equal(route.suppressHandwrittenRetry, false);
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    nonHandwrittenDmsCandidateSignal: getDmsDocumentEvidence(mixedBoundaries).nonHandwrittenDmsCandidateSignal
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.FAIL_CLOSED);
+});
+
+dynamicCase("explicit handwritten context still retains the handwritten retry path", () => {
+  const headerless = [
+    "SITES1", ...dmsRows.slice(0, 8),
+    "SITES2", ...dmsRows.slice(8, 12),
+    "SITES3", ...dmsRows.slice(12)
+  ].join("\n");
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: false,
+    explicitHandwrittenSignal: true,
+    structureText: headerless
+  });
+  assert.equal(route.typedDmsGrouped, false);
+  assert.equal(route.suppressHandwrittenRetry, false);
 });
 
 dynamicCase("incomplete 13-point structured result remains fail closed", () => {
@@ -801,7 +1155,7 @@ dynamicCase("handwritten owner conflict permits zero Provider calls", () => {
 
 staticAssertion("server calls production DMS grouped retry eligibility", () => {
   assert.match(server, /evaluateDmsGroupedRetryEligibility\(\{/);
-  assert.match(server, /if \(dmsGroupedRetryEligibility\.allowed\)/);
+  assert.match(server, /if \(!dmsGroupedRetryBoundaryFailure && dmsGroupedRetryEligibility\.allowed\)/);
 });
 staticAssertion("server applies production fail-closed patch before downstream family retries", () => {
   const applyIndex = server.indexOf("applyDmsGroupedRetryFailClosed(dmsGroupedRetryEligibility.reason)");
@@ -860,15 +1214,70 @@ staticAssertion("handwritten Provider retry requires a successful request-owner 
 });
 staticAssertion("structured multi-site DMS computes typed priority before handwritten retry and claims only at execution", () => {
   const priority = server.indexOf("const structuredDmsRoutePriority");
+  const ownership = server.indexOf("const dmsRetryOwnership", priority);
   const handwritten = server.indexOf("if (handwrittenVisionRouting.shouldRetry)");
   const downstream = server.indexOf("const dmsGroupedRetryEligibility");
-  assert.ok(priority >= 0 && handwritten > priority && downstream > handwritten);
+  assert.ok(priority >= 0 && ownership > priority && handwritten > ownership && downstream > handwritten);
   assert.doesNotMatch(server.slice(priority, handwritten), /claimRequestRetry\(dmsGroupedRetryOwner\)/);
   assert.match(server.slice(priority, handwritten), /reason:\s*"structured_dms_priority"/);
-  const execution = server.indexOf("if (dmsGroupedRetryEligibility.allowed)");
+  const execution = server.indexOf("if (!dmsGroupedRetryBoundaryFailure && dmsGroupedRetryEligibility.allowed)");
   const provider = server.indexOf("await callAliyunVision", execution);
   assert.ok(execution > downstream && provider > execution);
   assert.match(server.slice(execution, provider), /claimDownstreamFamilyRetry\(dmsGroupedRetryOwner\)/);
+});
+staticAssertion("server preserves explicit handwritten upload routing while prioritizing proven printed structure", () => {
+  const priority = server.indexOf("const structuredDmsRoutePriority");
+  const handwritten = server.indexOf("if (handwrittenVisionRouting.shouldRetry)", priority);
+  const path = server.slice(priority, handwritten);
+  assert.match(path, /explicitHandwrittenSignal:\s*initialDmsDocumentEvidence\.explicitHandwrittenSignal\s*\|\|\s*handwrittenDmsUploadContext/);
+  assert.match(path, /explicitHandwrittenSignal:\s*handwrittenDmsUploadContext/);
+  assert.match(path, /if \(dmsRetryOwnership\.retryOwner === dmsGroupedRetryOwner\)/);
+});
+staticAssertion("projected evidence is wired through both route layers and ownership alone authorizes typed dms_grouped retry", () => {
+  const priority = server.indexOf("const structuredDmsRoutePriority");
+  const handwritten = server.indexOf("if (handwrittenVisionRouting.shouldRetry)", priority);
+  const routePath = server.slice(priority, handwritten);
+  assert.match(routePath, /projectedTableSignal:\s*initialDmsDocumentEvidence\.projectedTableSignal/g);
+  const eligibility = server.indexOf("const dmsGroupedRetryEligibility", handwritten);
+  const eligibilityEnd = server.indexOf("if (!dmsGroupedRetryBoundaryFailure && dmsGroupedRetryEligibility.failClosed)", eligibility);
+  const eligibilityPath = server.slice(eligibility, eligibilityEnd);
+  assert.match(eligibilityPath, /typedRouteEligible:\s*dmsRetryOwnership\.retryOwner === dmsGroupedRetryOwner/);
+  assert.doesNotMatch(eligibilityPath, /typedRouteEligible:\s*structuredDmsRoutePriority\.typedDmsGrouped/);
+});
+staticAssertion("server freezes sanitized retry ownership before any Stage-2 Provider branch", () => {
+  const priority = server.indexOf("const structuredDmsRoutePriority");
+  const classification = server.indexOf("const dmsRetryOwnership = classifyDmsRetryOwnership", priority);
+  const trace = server.indexOf("DMS_RETRY_ROUTE:${dmsRetryOwnership.classification}", classification);
+  const reserve = server.indexOf("requestRetryOrchestrator.reserve(dmsRetryOwnership.retryOwner)", classification);
+  const failClosed = server.indexOf("requestRetryOrchestrator.failClose(dmsRetryOwnership.reason)", classification);
+  const handwritten = server.indexOf("if (handwrittenVisionRouting.shouldRetry)", classification);
+  assert.ok(classification > priority && trace > classification);
+  assert.ok(reserve > classification && reserve < handwritten);
+  assert.ok(failClosed > classification && failClosed < handwritten);
+  assert.doesNotMatch(server.slice(classification, handwritten), /rawText|coordinates|response|imageItems/);
+});
+staticAssertion("handwritten Stage-2 routing requires explicit handwritten evidence and shape", () => {
+  const start = server.indexOf("function getHandwrittenDmsVisionRoutingEvidence");
+  const end = server.indexOf("function shouldRetryHandwrittenDmsOnTimeout", start);
+  const path = server.slice(start, end);
+  assert.match(path, /explicitHandwrittenContext = documentEvidence\.explicitHandwrittenSignal\s*\|\|\s*options\.explicitHandwrittenSignal === true/);
+  assert.match(path, /evidence\.shapeRetryCandidate = evidence\.score >= 5/);
+  assert.match(path, /evidence\.shouldRetry = explicitHandwrittenContext && evidence\.shapeRetryCandidate/);
+});
+staticAssertion("handwritten timeout retry requires explicit document or upload evidence", () => {
+  const start = server.indexOf("function getHandwrittenDmsTimeoutRoutingEvidence");
+  const end = server.indexOf("function getHandwrittenDmsVisionRoutingEvidence", start);
+  const path = server.slice(start, end);
+  assert.match(path, /explicitHandwrittenContext = highConfidenceNameOrHint\s*\|\|\s*documentEvidence\.explicitHandwrittenSignal/);
+  assert.match(path, /\|\| !explicitHandwrittenContext\) \{/);
+  assert.match(path, /evidence\.shouldRetry = explicitHandwrittenContext && evidence\.score >= 5/);
+});
+staticAssertion("final handwritten classification cannot be inferred from damaged printed DMS alone", () => {
+  const start = server.indexOf("function getHandwrittenDmsInfo");
+  const end = server.indexOf("function getHandwrittenDmsTimeoutRoutingEvidence", start);
+  const path = server.slice(start, end);
+  assert.match(path, /explicitHandwrittenEvidence = hasExplicitHandwrittenDmsContext\s*\|\|\s*documentEvidence\.explicitHandwrittenSignal/);
+  assert.match(path, /const isHandwrittenDms = isOcrImage\s*&& explicitHandwrittenEvidence/);
 });
 staticAssertion("all timeout and fallback provider retries claim the request owner", () => {
   assert.match(server, /handwrittenTimeoutRoutingEvidence\?\.shouldRetry[\s\S]{0,120}claimRequestRetry\(RETRY_OWNER_FAMILY\.HANDWRITTEN_DMS\)/);
