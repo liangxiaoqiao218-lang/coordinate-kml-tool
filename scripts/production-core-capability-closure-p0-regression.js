@@ -6,6 +6,7 @@ import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 import * as routing from '../server/recognition/family-primary-routing.js';
+import * as dmsSourceStructure from '../server/recognition/dms-source-structure.js';
 import * as boundary from '../server/structured-coordinate-boundary.js';
 import * as finalizer from '../server/coordinate-finalizer/index.js';
 import {convertKyrgyzGkToWgs84} from '../server/projection/kyrgyz-gk.js';
@@ -63,7 +64,7 @@ function extract(text, name) {
   }
   throw new Error('function extraction failed: '+name);
 }
-const runtime = vm.createContext({...routing,...boundary,Buffer});
+const runtime = vm.createContext({...routing,...dmsSourceStructure,...boundary,Buffer});
 for (const match of source.matchAll(/^(?:async )?function (\w+)\(/gm)) vm.runInContext(extract(source,match[1]),runtime);
 for (const name of ['noCoordinatesText','MGRS_BANDS','MGRS_COLUMN_SETS','MGRS_ROW_SETS','MOZAMBIQUE_TETE_KNOWN_ROW_TOLERANCE']) {
   vm.runInContext(source.match(new RegExp(`^const ${name} = .+;$`,'m'))[0],runtime);

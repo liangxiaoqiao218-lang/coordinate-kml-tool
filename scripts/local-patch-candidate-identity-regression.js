@@ -68,6 +68,25 @@ function expectMismatch(spec, requestedOverrides = {}, observationOverrides = {}
   );
 }
 
+async function findImmutableCandidateCommit(spec) {
+  const { stdout } = await execFileAsync('git', ['rev-list', '--all', '--parents'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  const directChildren = stdout.trim().split(/\r?\n/).map(line => line.trim().split(/\s+/)).filter(parts => parts.slice(1).includes(spec.baseCommit));
+  for (const [candidateCommit] of directChildren) {
+    const hashes = await computeCanonicalCandidateFileHashes({
+      repoRoot,
+      baseCommit: spec.baseCommit,
+      candidatePaths: Object.keys(spec.files),
+      candidateCommit,
+    });
+    if (JSON.stringify(hashes) === JSON.stringify(spec.files)) return candidateCommit;
+  }
+  return null;
+}
+
 await test('historical legacy spec preserves and validates exact original identity', () => {
   assert.equal(LOCAL_PATCH_CANDIDATE_SPEC.candidateSpecId, HISTORICAL_LOCAL_PATCH_CANDIDATE_SPEC_ID);
   assert.equal(LOCAL_PATCH_CANDIDATE_SPEC.baseCommit, 'a80c908f4ba38e45a98eb3aa30c8361a03422db4');
@@ -97,18 +116,19 @@ await test('P1 exact repository spec binds pre-commit patch or verifies immutabl
     assert.equal(result.candidateSourceHashMatch, true);
     return;
   }
-  const { stdout: parentOutput } = await execFileAsync('git', ['rev-parse', 'HEAD^'], { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
-  assert.equal(parentOutput.trim().toLowerCase(), p1Spec.baseCommit);
+  const candidateCommit = await findImmutableCandidateCommit(p1Spec);
+  assert.ok(candidateCommit, 'frozen P1 candidate commit must remain reachable in repository history');
+  await execFileAsync('git', ['merge-base', '--is-ancestor', candidateCommit, actualHead], { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
   const hashes = await computeCanonicalCandidateFileHashes({
     repoRoot,
     baseCommit: p1Spec.baseCommit,
     candidatePaths: Object.keys(p1Spec.files),
-    candidateCommit: actualHead,
+    candidateCommit,
   });
   assert.deepEqual(hashes, p1Spec.files);
 });
 
-await test('canonical candidate identity is invariant to CRLF checkout bytes and survives commit', async () => {
+await test('canonical candidate file identity survives CRLF checkout while manifest CRLF fails closed', async () => {
   const temporaryRepository = await mkdtemp(path.join(os.tmpdir(), 'geokit-canonical-file-regression-'));
   try {
     const run = (...args) => execFileAsync('git', args, { cwd: temporaryRepository, encoding: 'utf8', windowsHide: true });
@@ -148,11 +168,10 @@ await test('canonical candidate identity is invariant to CRLF checkout bytes and
     const canonicalManifest = await readFile(path.join(repoRoot, 'release-governance', 'local-patch-candidate-specs', 'p1-spatial-ui-v1.json'), 'utf8');
     await mkdir(path.dirname(manifestPath), { recursive: true });
     await writeFile(manifestPath, canonicalManifest.replaceAll('\n', '\r\n'), 'utf8');
-    const crlfManifestSpec = await resolveLocalPatchCandidateSpec({
+    await assert.rejects(resolveLocalPatchCandidateSpec({
       repoRoot: temporaryRepository,
       candidateSpecId: P1_LOCAL_PATCH_CANDIDATE_SPEC_ID,
-    });
-    assert.equal(crlfManifestSpec.candidateManifestSha256, p1Spec.candidateManifestSha256);
+    }), error => error?.code === 'EVIDENCE_BINDING_MISMATCH' && error?.field === 'CANDIDATE_MANIFEST_SHA256');
   } finally {
     await rm(temporaryRepository, { recursive: true, force: true });
   }

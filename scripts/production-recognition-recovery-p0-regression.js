@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import crypto from "node:crypto";
 import * as primaryRouting from "../server/recognition/family-primary-routing.js";
+import * as dmsSourceStructure from "../server/recognition/dms-source-structure.js";
 import {
   COORDINATE_CONFIRMATION_STATUS,
   COORDINATE_DECISION_STATE,
@@ -34,7 +35,7 @@ const replay = JSON.parse(await readFile(path.join(root, "release-governance/p0-
 const releaseGate = JSON.parse(await readFile(path.join(root, "release-governance/p0-release-gate-governance.json"), "utf8"));
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
 // Execute the actual runtime function declarations without app startup or Provider I/O.
-const runtime = vm.createContext({ ...primaryRouting, utmToWgs84, Buffer, crypto,
+const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, utmToWgs84, Buffer, crypto,
   process: { env: {} }, setTimeout: () => ({ unref() {} }) });
 const declarations = [];
 for (const start of serverSource.matchAll(/^(?:async )?function \w+\(/gm)) {
@@ -346,10 +347,13 @@ test("incomplete DMS reference is review and missing title cannot acquire owner"
   assert.equal(getIndonesiaUtm50Info(structuredText.replace('UTM WGS 1984 ZONA 50S', ''), { transform: utmToWgs84 }).isIndonesiaUtm50, false);
 });
 
-test("damaged handwritten morphology retains retry without filename evidence", () => {
+test("damaged DMS morphology alone cannot claim handwritten retry ownership", () => {
   const text = Array.from({ length: 4 }, (_, index) => `${index + 1}. 11°28.3126N 08°40.4213W`).join("\n");
   assert.equal(primaryRouting.getDmsDocumentEvidence(text).handwrittenPositiveSignal, true);
-  assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(text, text).shouldRetry, true);
+  const routing = runtime.getHandwrittenDmsVisionRoutingEvidence(text, text);
+  assert.equal(routing.shapeRetryCandidate, true);
+  assert.equal(routing.explicitHandwrittenContext, false);
+  assert.equal(routing.shouldRetry, false);
 });
 
 test("explicit handwritten correction evidence retains retry on complete DMS", () => {

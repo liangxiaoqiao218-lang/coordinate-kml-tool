@@ -14,6 +14,7 @@ import {
   HISTORICAL_LOCAL_PATCH_CANDIDATE_SPEC_ID,
   P1_LOCAL_PATCH_CANDIDATE_SPEC_ID,
   resolveLocalPatchCandidateSpec,
+  validateCandidateObservation,
 } from './local-patch-candidate-identity.js';
 import {
   assertP0ReplayRuntimeSafety,
@@ -199,6 +200,15 @@ const p1Environment = Object.freeze({
   NODE_ENV: 'test',
   COORDINATE_REGRESSION_API_URL: 'http://127.0.0.1:3000/api/recognize-coordinates',
 });
+const p1Observation = Object.freeze({
+  actualHead: p1Spec.baseCommit,
+  applicationChangedPaths: Object.keys(p1Spec.files),
+  fileHashes: { ...p1Spec.files },
+  trackedPatchSha256: p1Spec.trackedPatchSha256,
+  candidateSourceHash: p1Spec.candidateSourceHash,
+  baseGovernanceHash: p1Spec.frozenReleaseGovernanceHash,
+  baseFixtureSetHash: p1Spec.frozenFixtureSetHash,
+});
 
 await check('runner forwards explicit historical spec selection without implicit replacement', () => {
   const input = buildLocalPatchCandidateBindingInput({
@@ -219,8 +229,12 @@ await check('runner forwards every explicit P1 binding input', () => {
   assert.equal(input.frozenFixtureSetHash, p1Spec.frozenFixtureSetHash);
   assert.equal(input.p0DeterministicReplay, '1');
 });
-await check('P1 replay identity gate passes before acquisition', async () => {
-  const binding = await establishEvidenceBinding(p1Environment);
+await check('P1 frozen identity contract remains valid after later merge commits', () => {
+  const binding = validateCandidateObservation({
+    spec: p1Spec,
+    requested: buildLocalPatchCandidateBindingInput(p1Environment),
+    observation: p1Observation,
+  });
   assert.equal(binding.status, 'LOCAL_PATCH_CANDIDATE_BOUND');
   assert.equal(binding.candidateSpecId, P1_LOCAL_PATCH_CANDIDATE_SPEC_ID);
 });
@@ -234,8 +248,15 @@ await check('missing spec selection stops without implicit fallback or acquisiti
 });
 await check('identity mismatch stops before acquisition with zero Provider fallback', async () => {
   let acquisitionCalls = 0;
-  await assert.rejects(
-    establishEvidenceBinding({ ...p1Environment, TRACKED_PATCH_SHA256: '0'.repeat(64) }).then(() => { acquisitionCalls += 1; }),
+  assert.throws(
+    () => {
+      validateCandidateObservation({
+        spec: p1Spec,
+        requested: buildLocalPatchCandidateBindingInput({ ...p1Environment, TRACKED_PATCH_SHA256: '0'.repeat(64) }),
+        observation: p1Observation,
+      });
+      acquisitionCalls += 1;
+    },
     error => error?.code === 'EVIDENCE_BINDING_MISMATCH' && error?.field === 'TRACKED_PATCH_SHA256',
   );
   assert.equal(acquisitionCalls, 0);

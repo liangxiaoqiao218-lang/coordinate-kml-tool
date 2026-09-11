@@ -963,6 +963,7 @@ function getShareMeta(req) {
     url: canonicalUrl,
     canonicalUrl,
     imageUrl: `${shareMetaOrigin}${meta.image}`,
+    fallbackImageUrl: meta.image,
     structuredData: JSON.stringify(getStructuredData(meta, canonicalPath))
   };
 }
@@ -973,6 +974,7 @@ function renderIndexWithMeta(req, res) {
     .replaceAll("<!--TITLE-->", escapeHtml(meta.title))
     .replaceAll("<!--DESC-->", escapeHtml(meta.desc))
     .replaceAll("<!--IMAGE-->", escapeHtml(meta.imageUrl))
+    .replaceAll("<!--FALLBACK_IMAGE-->", escapeHtml(meta.fallbackImageUrl))
     .replaceAll("<!--URL-->", escapeHtml(meta.url))
     .replaceAll("<!--CANONICAL-->", escapeHtml(meta.canonicalUrl))
     .replaceAll("<!--JSONLD-->", meta.structuredData);

@@ -64,7 +64,10 @@ test("shared page exposes one restrained acquisition CTA", () => {
   assert.doesNotMatch(page, /shareId=.*shared_spatial_result/);
 });
 test("shared page renders text without raw HTML", () => assert.doesNotMatch(client, /innerHTML|insertAdjacentHTML|document\.write/));
-test("Coordinate Result keeps Map primary and share secondary", () => assert.match(index, /id="mapPreviewAction"[\s\S]*class="coordinate-secondary-actions"[\s\S]*id="shareResultAction"/));
+test("Coordinate Result keeps Map primary, copy secondary, and no share action", () => {
+  assert.match(index, /id="mapPreviewAction"[\s\S]*class="coordinate-secondary-actions"[\s\S]*id="coordinateCopyAction"/);
+  assert.doesNotMatch(index, /id="shareResultAction"/);
+});
 test("Map Result uses compact header share action", () => assert.match(index, /id="spatialResultCard"[\s\S]*id="spatialShareCardAction"[\s\S]*id="spatialResultSheetToggle"/));
 test("share sheet exposes exactly access and usage controls", () => {
   assert.match(index, /谁可以查看[\s\S]*仅接收者[\s\S]*获得链接的人[\s\S]*允许对方[\s\S]*仅查看[\s\S]*允许修改/);
