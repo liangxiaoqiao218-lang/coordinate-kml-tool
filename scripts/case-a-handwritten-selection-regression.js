@@ -161,16 +161,19 @@ test("COMPARATOR_IS_THE_ONLY_HANDWRITTEN_SELECTION_AUTHORITY", () => {
   assert.match(serverSource, /materializeHandwrittenDmsRows\(selection\.selectedFieldEvidence, selection\.pointLabels\)/);
 });
 test("POINT_AZ_AUTHORIZATION_PRECEDES_PROVIDER_CALL", () => {
-  const authorization = serverSource.indexOf("const pointAzRetryAuthorized = authorizeFamilyRetryDispatch(");
-  const condition = serverSource.indexOf("pointAzRetryAuthorized && shouldRetryPointAzDmsLongTable", authorization);
+  const authorization = serverSource.indexOf("const pointAzRetryAuthorized = canAuthorizePointAzRetry(");
+  const condition = serverSource.indexOf("!dmsGroupedAccepted", authorization);
+  const pointAzGate = serverSource.indexOf("pointAzRetryAuthorized && shouldRetryPointAzDmsLongTable", condition);
+  const ownerClaim = serverSource.indexOf("claimDownstreamFamilyRetry(RETRY_OWNER_FAMILY.POINT_AZ_DMS_TABLE)", pointAzGate);
   const provider = serverSource.indexOf("prompt: pointAzDmsRetryPrompt", condition);
-  assert.ok(authorization >= 0 && condition > authorization && provider > condition);
+  assert.ok(authorization >= 0 && condition > authorization && pointAzGate > condition && ownerClaim > pointAzGate && provider > ownerClaim);
 });
 test("STAGE_2_HANDWRITTEN_EVIDENCE_LOCKS_OWNER_BEFORE_POINT_AZ", () => {
-  const retryEvidence = serverSource.indexOf("const retryHandwrittenCandidate = buildHandwrittenCandidateEvidence(");
-  const retryOwnerLock = serverSource.indexOf("activeFamilyOwner = RETRY_OWNER_FAMILY.HANDWRITTEN_DMS;", retryEvidence);
-  const pointAzAuthorization = serverSource.indexOf("const pointAzRetryAuthorized = authorizeFamilyRetryDispatch(", retryOwnerLock);
-  assert.ok(retryEvidence >= 0 && retryOwnerLock > retryEvidence && pointAzAuthorization > retryOwnerLock);
+  const retryOwnerLock = serverSource.indexOf("if (!claimRequestRetry(RETRY_OWNER_FAMILY.HANDWRITTEN_DMS))");
+  const provider = serverSource.indexOf("const handwrittenRead = await readHandwrittenDmsWithPrompt(", retryOwnerLock);
+  const retryEvidence = serverSource.indexOf("const retryHandwrittenCandidate = buildHandwrittenCandidateEvidence(", provider);
+  const pointAzAuthorization = serverSource.indexOf("const pointAzRetryAuthorized = canAuthorizePointAzRetry(", retryEvidence);
+  assert.ok(retryOwnerLock >= 0 && provider > retryOwnerLock && retryEvidence > provider && pointAzAuthorization > retryEvidence);
 });
 test("SELECTION_HAS_NO_GOLDEN_OR_FIXTURE_ORACLE", () => {
   assert.doesNotMatch(selectionSource, /golden|fixture|expected.?truth/i);

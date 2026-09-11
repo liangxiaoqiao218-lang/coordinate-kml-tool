@@ -4459,7 +4459,7 @@
   <link rel="stylesheet" href="/assets/spatial-map/spatial-map.css" />
 </head>
 <body>
-  <img id="socialShareFallbackImage" class="social-share-fallback-image" src="<!--IMAGE-->" alt="GeoKit Lab 分享预览图" width="300" height="300" />
+  <img id="socialShareFallbackImage" class="social-share-fallback-image" src="<!--FALLBACK_IMAGE-->" alt="GeoKit Lab 分享预览图" width="300" height="300" />
   <main class="page">
     <section id="homePage" class="view active home-view">
       <div class="home-hero">
@@ -5307,31 +5307,36 @@ Au值 = 纯度 × 10 后取整数</div>
         path: "/",
         title: "GeoKit Lab | 地理空间工具",
         desc: "简单、高效的地理空间工具，支持坐标处理、矿地快判和黄金成色计算。",
-        image: "https://geokitlab.com/share-home-og.jpg"
+        image: "https://geokitlab.com/share-home-og.jpg",
+        fallbackImage: "/share-home-og.jpg"
       },
       coordinate: {
         path: "/coordinate",
         title: "GeoKit Lab｜坐标处理工具",
         desc: "上传坐标图或粘贴坐标，一键整理并生成 KML 文件。",
-        image: "https://geokitlab.com/share-coordinate-og.jpg"
+        image: "https://geokitlab.com/share-coordinate-og.jpg",
+        fallbackImage: "/share-coordinate-og.jpg"
       },
       spatialResult: {
         path: "/coordinate/map",
         title: "GeoKit Lab｜空间结果",
         desc: "查看当前坐标形成的地图预览与基础空间事实。",
-        image: "https://geokitlab.com/share-coordinate-og.jpg"
+        image: "https://geokitlab.com/share-coordinate-og.jpg",
+        fallbackImage: "/share-coordinate-og.jpg"
       },
       judge: {
         path: "/mining",
         title: "GeoKit Lab｜AI矿地判读",
         desc: "上传矿石、河道或卫星图，快速判断是否值得继续投入。",
-        image: "https://geokitlab.com/share-judge-og.jpg"
+        image: "https://geokitlab.com/share-judge-og.jpg",
+        fallbackImage: "/share-judge-og.jpg"
       },
       gold: {
         path: "/gold",
         title: "GeoKit Lab｜黄金成色计算器",
         desc: "输入重量和排水差重，快速估算纯度、K值和参考价格。",
-        image: "https://geokitlab.com/share-gold-og.jpg"
+        image: "https://geokitlab.com/share-gold-og.jpg",
+        fallbackImage: "/share-gold-og.jpg"
       }
     };
 
@@ -5438,7 +5443,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
       const fallbackImage = document.getElementById("socialShareFallbackImage");
       if (fallbackImage) {
-        fallbackImage.src = meta.image;
+        fallbackImage.src = meta.fallbackImage;
       }
     }
 

@@ -322,29 +322,33 @@ test("P11-01", "desktop and mobile result cards visually follow the shared expan
   assert.match(html, /setSpatialSheetExpanded\(!window\.matchMedia\("\(max-width: 640px\)"\)\.matches\)/);
 });
 
-test("P11-02", "Coordinate Result keeps Map and export actions before optional family controls", () => {
+test("P11-02", "Coordinate Result keeps Map, export, and copy actions before optional family controls", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const actions = html.indexOf('class="coordinate-result-actions"');
   const map = html.indexOf('id="mapPreviewAction"');
   const kml = html.indexOf('id="coordinateKmlAction"');
-  const share = html.indexOf('id="shareResultAction"');
+  const copy = html.indexOf('id="coordinateCopyAction"');
   const handwritten = html.indexOf('id="handwrittenDmsReviewPanel"');
   const grid = html.indexOf('id="cadastralGridPanel"');
   const details = html.indexOf('id="debugPanel"');
-  assert.ok(actions < map && map < kml && kml < share);
-  assert.ok(share < handwritten && handwritten < grid && grid < details);
+  assert.ok(actions < map && map < kml && kml < copy);
+  assert.ok(copy < handwritten && handwritten < grid && grid < details);
+  assert.doesNotMatch(html, /id="shareResultAction"/);
+  assert.match(html, /image: "https:\/\/geokitlab\.com\/share-coordinate-og\.jpg",\s*fallbackImage: "\/share-coordinate-og\.jpg"/);
+  assert.match(html, /fallbackImage\.src = meta\.fallbackImage/);
+  assert.doesNotMatch(html, /fallbackImage\.src = meta\.image/);
   assert.match(html, /@media \(max-width: 720px\)[\s\S]*#coordinatePage[\s\S]*overflow-x: clip/);
 });
 
 test("KML-UI-01", "coordinate page eligible state is visibly enabled", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  assert.match(html, /function coordinateKmlVisuallyEligible\([\s\S]*activeFinalizedCoordinateResult\.kmlReady === true/);
+  assert.match(html, /function coordinateKmlVisualState\([\s\S]*activeFinalizedCoordinateResult\.kmlReady === true \? "enabled" : "blocked"/);
   assert.match(html, /coordinate-kml-action\[data-state="enabled"\]/);
 });
 test("KML-UI-02", "coordinate page blocked state is disabled", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(html, /id="coordinateKmlAction"[^>]*data-state="blocked"[^>]*aria-disabled="true"[^>]*disabled/);
-  assert.match(html, /button\.disabled = kmlGenerationInProgress \|\| !eligible/);
+  assert.match(html, /button\.disabled = kmlGenerationInProgress \|\| state === "blocked"/);
 });
 test("KML-UI-03", "coordinate KML loading always cleans up and restores eligibility", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
@@ -359,7 +363,9 @@ test("KML-UI-04", "spatial eligible KML lifecycle uses the shared visual state",
 });
 test("KML-UI-05", "spatial blocked KML lifecycle remains disabled", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  assert.match(html, /const state = kmlGenerationInProgress \? "loading" : \(eligible \? "enabled" : "blocked"\)/);
+  assert.match(html, /const normalizedState = typeof visualState === "boolean" \? \(visualState \? "enabled" : "blocked"\) : visualState/);
+  assert.match(html, /const state = kmlGenerationInProgress \? "loading" : normalizedState/);
+  assert.match(html, /button\.disabled = kmlGenerationInProgress \|\| state === "blocked"/);
   assert.match(html, /spatial-kml-action\[data-state="blocked"\]/);
 });
 test("MESSAGE-01", "ordinary UI maps internal gate enums to natural language", () => {
