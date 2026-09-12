@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "mining_judgeability_negative_golden_v1",
+  "recordId": "GJ-MINING-OCCLUDED-POLYGON-001",
+  "containsCustomerData": false,
+  "containsImage": false,
+  "containsCoordinates": false,
+  "inputClass": "SYNTHETIC_METADATA_ONLY",
+  "visibilityEvidence": {
+    "targetPresent": true,
+    "targetCoreCovered": true,
+    "coverType": "OPAQUE_POLYGON_ANNOTATION",
+    "uiCovered": false,
+    "surroundingContextAvailable": true
+  },
+  "providerStub": {
+    "judgeabilityStatus": "FAILED",
+    "judgeabilityReason": "ANNOTATION_OCCLUDED",
+    "alsoReturnsForbiddenSubstantiveClaims": true
+  },
+  "expected": {
+    "httpStatus": 422,
+    "reason": "JUDGEABILITY_FAILED",
+    "primaryReason": "ANNOTATION_OCCLUDED",
+    "userCharge": false,
+    "providerAutomaticRetry": false,
+    "recordWriteCount": 0,
+    "caseWriteCount": 0,
+    "historyWriteCount": 0,
+    "shareWriteCount": 0,
+    "substantiveOutputAllowed": false
+  }
+}

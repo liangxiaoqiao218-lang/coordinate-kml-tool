@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import Tesseract from "tesseract.js";
+import { applyMiningJudgeabilityGate } from "./server/mining-judgeability.js";
 import { runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
 import {
   authorizeFamilyRetryDispatch,
@@ -11970,7 +11971,6 @@ app.post("/api/analyze-mining-image", upload.fields([
   console.log("收到图片数量：", uploadedFiles.length);
   console.log("AI判读收到文件详情：", uploadedFiles.map(file => ({
     fieldname: file.fieldname || "",
-    originalname: file.originalname || "image",
     mimetype: file.mimetype,
     size: file.size,
     isCompressedJudgeUpload: file.originalname === "judge-upload.jpg" && file.mimetype === "image/jpeg"
@@ -12024,7 +12024,6 @@ app.post("/api/analyze-mining-image", upload.fields([
     const invalidImageFile = uploadedFiles.find(file => !allowedImageTypes.has(String(file.mimetype || "").toLowerCase()));
     if (invalidImageFile) {
       console.error("AI判读图片格式不支持：", {
-        originalname: invalidImageFile.originalname,
         mimetype: invalidImageFile.mimetype,
         size: invalidImageFile.size
       });
@@ -12039,7 +12038,6 @@ app.post("/api/analyze-mining-image", upload.fields([
     const oversizedImageFile = uploadedFiles.find(file => Number(file.size || 0) > 3 * 1024 * 1024);
     if (oversizedImageFile) {
       console.error("AI判读图片过大：", {
-        originalname: oversizedImageFile.originalname,
         mimetype: oversizedImageFile.mimetype,
         size: oversizedImageFile.size
       });
@@ -12201,7 +12199,6 @@ B 可以观察
 
     const judgeImageFiles = imageFiles.slice(0, 1);
     console.log("AI判读最终传给阿里云的图片：", judgeImageFiles.map(file => ({
-      originalname: file.originalname || "image",
       mimetype: file.mimetype,
       size: file.size,
       bufferBytes: file.buffer?.length || 0,
@@ -12213,7 +12210,25 @@ B 可以观察
         url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`
       }
     }));
-    const prompt = `你是“砂金快判”风格的现场快判助手。Stage 0 必须先做【对象类型】识别，再做【场景分类】，最后选择对应判读模式；不要把所有图片都套进原矿石逻辑。
+    const prompt = `你是“砂金快判”风格的现场快判助手。任何实质矿业分析之前，必须先判断图片能否可靠判读。
+
+【可判读性合同：必须首先输出】
+第一段只能是：
+【可判读性】
+JUDGEABLE
+或
+【可判读性】
+FAILED
+
+第二段只能是：
+【可判读性原因】
+JUDGEABLE
+或以下固定失败码之一：ANNOTATION_OCCLUDED / UI_OCCLUDED / CLOUD_OBSCURED / TARGET_OCCLUDED / RESOLUTION_TOO_LOW / TARGET_NOT_IDENTIFIABLE / INSUFFICIENT_SPATIAL_CONTEXT。
+
+若目标区被不透明 Polygon、填充面、批注、标注、菜单、弹窗、图例、云层或其他内容遮挡，或分辨率、目标身份、周边空间语境不足，必须输出 FAILED 和对应失败码，并立即停止；不得继续输出矿业类型、采坑、河道、扰动、Score、Grade、Confidence 或投入建议。
+只有目标和支撑结论所需的视觉证据均清晰可见时，才可输出 JUDGEABLE / JUDGEABLE，并继续以下 Stage 0 和10段结果。
+
+Stage 0 必须先做【对象类型】识别，再做【场景分类】，最后选择对应判读模式；不要把所有图片都套进原矿石逻辑。
 
 场景分类只能选一个：原矿石 / 矿化岩石 / 河道沉积 / 卫星图 / 老鼠洞 / 自然金块 / 砂金金块 / 人工熔炼金属 / 其他。
 
@@ -12315,7 +12330,7 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
     console.log("AI判读调用阿里云开始：", {
       startedAt: new Date(aliyunStartedAt).toISOString(),
       model: aliyunVisionModel,
-      fileNames: judgeImageFiles.map(file => file.originalname || "image"),
+      fileCount: judgeImageFiles.length,
       mimeTypes: judgeImageFiles.map(file => file.mimetype),
       sizes: judgeImageFiles.map(file => file.size)
     });
@@ -12336,13 +12351,11 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       requestId: response?.request_id || response?.requestId || response?.RequestId
     });
 
-    console.log("AI判读阿里云完整返回：", {
-      data: response,
-      choices: response?.choices,
-      message: response?.choices?.[0]?.message,
-      content: response?.choices?.[0]?.message?.content,
-      usage: response?.usage,
-      requestId: response?.request_id || response?.requestId || response?.RequestId
+    console.log("AI判读阿里云返回元数据：", {
+      hasChoices: Array.isArray(response?.choices) && response.choices.length > 0,
+      hasContent: Boolean(response?.choices?.[0]?.message?.content),
+      usagePresent: Boolean(response?.usage),
+      requestIdPresent: Boolean(response?.request_id || response?.requestId || response?.RequestId)
     });
 
     const originalContent = response.choices?.[0]?.message?.content || "";
@@ -12356,8 +12369,8 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
         JSON.parse(rawOutput);
       } catch (parseError) {
         console.error("AI判读 content JSON.parse 失败：", {
-          message: parseError.message,
-          content: rawOutput
+          reason: "provider_content_json_invalid",
+          messagePresent: Boolean(parseError?.message)
         });
       }
     }
@@ -12374,6 +12387,17 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
         detail: "识别服务返回空结果，请更换图片或稍后重试。",
         requestId: response?.request_id || response?.requestId || response?.RequestId
       });
+    }
+    const judgeabilityGate = applyMiningJudgeabilityGate(rawOutput);
+    if (!judgeabilityGate.allowed) {
+      console.warn("AI判读可判读性失败关闭：", {
+        status: judgeabilityGate.evaluation.status,
+        primaryReason: judgeabilityGate.evaluation.primaryReason,
+        contractVersion: judgeabilityGate.evaluation.contractVersion,
+        persisted: false,
+        charged: false
+      });
+      return res.status(judgeabilityGate.statusCode).json(judgeabilityGate.payload);
     }
     const normalizedOutput = normalizeJudgeOutput(rawOutput);
     const objectConsistency = checkJudgeObjectTypeConsistency(normalizedOutput);
