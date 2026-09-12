@@ -5249,6 +5249,15 @@ Au值 = 纯度 × 10 后取整数</div>
       "judgeRecentResults",
       "judgeBestScore"
     ];
+    const JUDGEABILITY_SAFE_MESSAGES = Object.freeze({
+      ANNOTATION_OCCLUDED: "目标区域被不透明标注遮挡，当前图片不足以进行可靠判读。请关闭填充或标注后重新上传。",
+      UI_OCCLUDED: "目标区域被界面元素遮挡，当前图片不足以进行可靠判读。请关闭菜单或面板后重新上传。",
+      CLOUD_OBSCURED: "目标区域受到云层或云影遮挡，当前图片不足以进行可靠判读。请更换影像后重新上传。",
+      TARGET_OCCLUDED: "目标区域存在遮挡，当前图片不足以进行可靠判读。请提供无遮挡图片后重试。",
+      RESOLUTION_TOO_LOW: "图片清晰度或缩放级别不足，当前无法进行可靠判读。请上传更清晰的图片。",
+      TARGET_NOT_IDENTIFIABLE: "当前图片中无法明确识别需要分析的目标区域。请标明目标并补充清晰图片。",
+      INSUFFICIENT_SPATIAL_CONTEXT: "当前图片缺少可靠判读所需的周边空间信息。请补充更完整的区域截图。"
+    });
 
     function hydrateSharedRecipientWorkingCopy() {
       if (new URLSearchParams(location.search).get("from") !== "shared_spatial_result_edit") return;
@@ -8386,6 +8395,17 @@ Au值 = 纯度 × 10 后取整数</div>
       }).join("");
     }
 
+    function handleJudgeabilityFailure(data = {}) {
+      const primaryReason = String(data?.judgeability?.primary_reason || "");
+      const safeMessage = JUDGEABILITY_SAFE_MESSAGES[primaryReason]
+        || "当前图片不足以进行可靠判读，请补充无遮挡、清晰且包含目标周边信息的图片后重试。";
+      judgeResult.value = "";
+      clearJudgeDecisionCard();
+      resetJudgeFeedback();
+      hideJudgeProgressVisual();
+      showJudgeMessage(safeMessage, true);
+    }
+
     if (judgeResult) {
       Object.defineProperty(judgeResult, "value", {
         get() {
@@ -9298,16 +9318,13 @@ Au值 = 纯度 × 10 后取整数</div>
           try {
             const compressed = await compressJudgeImage(file);
             console.log("AI判读移动端状态：图片压缩完成", {
-              originalName: file.name,
               originalSize: file.size,
-              outputName: compressed.name,
               outputType: compressed.type,
               outputSize: compressed.size
             });
             return compressed;
           } catch (error) {
             console.warn("AI判读移动端状态：图片压缩失败，使用原图兜底", {
-              name: file.name,
               type: file.type,
               size: file.size,
               message: error.message
@@ -9316,7 +9333,6 @@ Au值 = 纯度 × 10 后取整数</div>
           }
         }));
         console.log("AI判读即将上传：", compressedFiles.map(file => ({
-          name: file.name,
           type: file.type,
           size: file.size
         })));
@@ -9393,6 +9409,12 @@ Au值 = 纯度 × 10 后取整数</div>
           clearInterval(progressTimer);
           hideJudgeProgressVisual();
           showJudgeMessage(sanitizeUserFacingTechMessage(data.error || "当前用户暂未开通矿地快判。"), true);
+          return;
+        }
+
+        if (data?.reason === "JUDGEABILITY_FAILED" || data?.judgeability?.status === "FAILED") {
+          clearInterval(progressTimer);
+          handleJudgeabilityFailure(data);
           return;
         }
 
