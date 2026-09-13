@@ -134,16 +134,31 @@ export function getDmsDocumentEvidence(value = "") {
   const damagedDmsSignal = /\d{1,3}\s*[°º]\s*\d{1,2}\.\d{3,5}\s*['′]?\s*[NSEWO]\b/i.test(text)
     || /\d{1,3}[.°º]\d{1,2}\.\d{1,2}\.\d+\s*[NSEWO]\b/i.test(text)
     || /\d[OIl?]\d[^\n]{0,15}[NSEW]\b/.test(text);
+  // These structure-only signals deliberately ignore wording returned by the
+  // Provider. Text such as "handwritten DMS" is an observation, not trusted
+  // evidence that may acquire a second Provider call.
+  const dmsStructureCandidateSignal = !projectedTableSignal
+    && (dmsPairLineCount >= 3 || damagedDmsSignal);
+  const printedDmsStructureSignal = printedTableSignal && !projectedTableSignal;
   const printedDmsCandidateSignal = printedTableSignal
     && !projectedTableSignal
     && !explicitHandwrittenSignal;
   const nonHandwrittenDmsCandidateSignal = !projectedTableSignal
     && !explicitHandwrittenSignal
     && (dmsPairLineCount >= 3 || damagedDmsSignal);
+  // A complete 16-row printed DMS acquisition is a safety-risk signal only.
+  // It does not prove a multi-site topology; the structure module must still
+  // prove the individual group boundaries before Map/KML can consume it.
+  const stage1FullMultisiteRiskSignal = nonHandwrittenDmsCandidateSignal
+    && dmsPairLineCount === 16;
+  const stage1FullMultisiteStructureSignal = dmsStructureCandidateSignal
+    && dmsPairLineCount === 16;
   return Object.freeze({ printedTableSignal, projectedTableSignal,
     handwrittenPositiveSignal: explicitHandwrittenSignal || damagedDmsSignal,
     explicitHandwrittenSignal, damagedDmsSignal, printedDmsCandidateSignal,
-    nonHandwrittenDmsCandidateSignal, dmsPairLineCount });
+    nonHandwrittenDmsCandidateSignal, stage1FullMultisiteRiskSignal,
+    dmsStructureCandidateSignal, printedDmsStructureSignal,
+    stage1FullMultisiteStructureSignal, dmsPairLineCount });
 }
 
 export function getIndonesiaUtm50Info(value = "", { transform } = {}) {

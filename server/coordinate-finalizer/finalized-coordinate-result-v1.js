@@ -58,6 +58,7 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
     qualityGateStatus: candidate.qualityGateStatus || null,
     decisionState: gate.decisionState,
     technicalKmlReady: effectiveCandidate.technicalKmlReady === true,
+    ...(candidate.kmlAuthorityBlocked === true ? { kmlAuthorityBlocked: true } : {}),
     requiresReview: effectiveCandidate.requiresReview !== false,
     kmlReady: gate.kmlReady === true,
     reasonCodes: gate.reasonCodes,

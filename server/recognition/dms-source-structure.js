@@ -470,9 +470,169 @@ export function evaluateImageDmsAcquisitionCompleteness({
   });
 }
 
+// Provider-returned wording is not an identity authority. Only independent
+// upload evidence may authorize the handwritten retry path; structural DMS
+// evidence remains available to reserve dms_grouped or fail closed.
+export function resolveDmsRetryTrustBoundary({
+  documentEvidence = {},
+  trustedHandwrittenSignal = false
+} = {}) {
+  const projectedTableSignal = documentEvidence?.projectedTableSignal === true;
+  const explicitHandwrittenSignal = trustedHandwrittenSignal === true;
+  return Object.freeze({
+    explicitHandwrittenSignal,
+    printedDmsCandidateSignal: !explicitHandwrittenSignal
+      && !projectedTableSignal
+      && documentEvidence?.printedDmsStructureSignal === true,
+    nonHandwrittenDmsCandidateSignal: !explicitHandwrittenSignal
+      && !projectedTableSignal
+      && documentEvidence?.dmsStructureCandidateSignal === true,
+    stage1FullMultisiteRiskSignal: !explicitHandwrittenSignal
+      && !projectedTableSignal
+      && documentEvidence?.stage1FullMultisiteStructureSignal === true
+  });
+}
+
+export const STAGE1_FULL_MULTISITE_POLICY_ID = "DMS_GROUPED_STAGE1_FULL_MULTISITE_POLICY";
+const STAGE1_FULL_MULTISITE_ROW_COUNT = 16;
+const STAGE1_FULL_MULTISITE_GROUP_SIZES = Object.freeze([8, 4, 4]);
+
+export function isStage1FullMultisiteConfirmationPending(finalizedResult = {}) {
+  return finalizedResult?.familySafetyPolicy?.policyId === STAGE1_FULL_MULTISITE_POLICY_ID
+    && finalizedResult?.familySafetyPolicy?.policyVersion === "1"
+    && finalizedResult?.familySafetyPolicy?.applied === true
+    && finalizedResult?.confirmationStatus !== "accepted";
+}
+
+export function evaluateStage1FullMultisiteSafety({
+  isImageInput = false,
+  riskSignal = false,
+  structureText = "",
+  normalizedCoordinates = ""
+} = {}) {
+  const structure = extractDmsSourceStructure(structureText);
+  // The independent 16-row risk detector opens the gate. A weaker structure
+  // parse must therefore fail closed below; it must never disable the gate.
+  const gateRequired = Boolean(isImageInput && riskSignal);
+  const base = {
+    gateRequired,
+    requiresConfirmation: gateRequired,
+    mapKmlBlockedUntilConfirmation: gateRequired,
+    expectedGroupSizes: STAGE1_FULL_MULTISITE_GROUP_SIZES,
+    rowCount: structure.rowCount,
+    groupCount: structure.groupCount,
+    groupSizes: Object.freeze(structure.groups.map(group => group.rows.length))
+  };
+  if (!gateRequired) {
+    return Object.freeze({
+      ...base,
+      acceptedForReview: false,
+      failClosed: false,
+      reason: "STAGE1_FULL_MULTISITE_GATE_NOT_REQUIRED",
+      groupedCoordinates: ""
+    });
+  }
+
+  const exactOrderedGrouping = structure.allBoundariesProven
+    && !structure.hasUnprovenBoundary
+    && hasExplicitDmsMultiRegionEvidence(structureText)
+    && structure.rowCount === STAGE1_FULL_MULTISITE_ROW_COUNT
+    && structure.groupCount === STAGE1_FULL_MULTISITE_GROUP_SIZES.length
+    && STAGE1_FULL_MULTISITE_GROUP_SIZES.every((size, index) => structure.groups[index]?.rows.length === size);
+  if (!exactOrderedGrouping) {
+    return Object.freeze({
+      ...base,
+      acceptedForReview: false,
+      failClosed: true,
+      reason: "STAGE1_FULL_MULTISITE_GROUPING_UNPROVEN",
+      groupedCoordinates: ""
+    });
+  }
+
+  const semanticEquivalence = evaluateDmsNormalizedPointwiseEquivalence({
+    structureText,
+    normalizedCoordinates
+  });
+  if (!semanticEquivalence.accepted) {
+    return Object.freeze({
+      ...base,
+      acceptedForReview: false,
+      failClosed: true,
+      reason: semanticEquivalence.reason,
+      groupedCoordinates: ""
+    });
+  }
+
+  const reconstructed = reconstructDmsGroupsFromNormalizedCoordinates({
+    structureText,
+    normalizedCoordinates
+  });
+  if (!reconstructed.accepted
+    || reconstructed.groupSizes.length !== STAGE1_FULL_MULTISITE_GROUP_SIZES.length
+    || STAGE1_FULL_MULTISITE_GROUP_SIZES.some((size, index) => reconstructed.groupSizes[index] !== size)) {
+    return Object.freeze({
+      ...base,
+      acceptedForReview: false,
+      failClosed: true,
+      reason: reconstructed.reason || "STAGE1_FULL_MULTISITE_NORMALIZED_GROUPING_REJECTED",
+      groupedCoordinates: ""
+    });
+  }
+
+  return Object.freeze({
+    ...base,
+    acceptedForReview: true,
+    failClosed: false,
+    reason: "STAGE1_FULL_MULTISITE_REVIEW_REQUIRED",
+    groupedCoordinates: reconstructed.output
+  });
+}
+
+export function evaluateStage1FullMultisitePromotion({
+  stage1Safety = {},
+  imageDmsSourceCompleteness = {},
+  retryBoundaryFailed = false
+} = {}) {
+  if (stage1Safety?.gateRequired !== true) {
+    return Object.freeze({
+      allowed: false,
+      failClosed: false,
+      reason: "STAGE1_FULL_MULTISITE_PROMOTION_NOT_REQUIRED"
+    });
+  }
+  if (stage1Safety?.acceptedForReview !== true || stage1Safety?.failClosed !== false) {
+    return Object.freeze({
+      allowed: false,
+      failClosed: true,
+      reason: "STAGE1_FULL_MULTISITE_SAFETY_REJECTED"
+    });
+  }
+  if (imageDmsSourceCompleteness?.allowed !== true
+    || imageDmsSourceCompleteness?.failClosed !== false) {
+    return Object.freeze({
+      allowed: false,
+      failClosed: true,
+      reason: "STAGE1_FULL_MULTISITE_IMAGE_SOURCE_BLOCKED"
+    });
+  }
+  if (retryBoundaryFailed === true) {
+    return Object.freeze({
+      allowed: false,
+      failClosed: true,
+      reason: "STAGE1_FULL_MULTISITE_RETRY_BOUNDARY_BLOCKED"
+    });
+  }
+  return Object.freeze({
+    allowed: true,
+    failClosed: false,
+    reason: "STAGE1_FULL_MULTISITE_READY_FOR_CONFIRMATION"
+  });
+}
+
 export function classifyDmsRetryOwnership({
   isImageInput = false,
   routePriority = {},
+  stage1FullMultisiteSafety = {},
   projectedTableSignal = false,
   explicitHandwrittenSignal = false,
   nonHandwrittenDmsCandidateSignal = false,
@@ -484,6 +644,9 @@ export function classifyDmsRetryOwnership({
 
   if (!isImageInput || projectedTableSignal) {
     classification = DMS_RETRY_ROUTE_CLASSIFICATION.NONE;
+  } else if (stage1FullMultisiteSafety?.failClosed === true) {
+    classification = DMS_RETRY_ROUTE_CLASSIFICATION.FAIL_CLOSED;
+    failClosed = true;
   } else if (explicitHandwrittenSignal) {
     classification = DMS_RETRY_ROUTE_CLASSIFICATION.HANDWRITTEN_DMS_ONLY;
     retryOwner = "handwritten_dms";
@@ -523,6 +686,81 @@ function normalizedCoordinateRows(text) {
     .split("\n")
     .map(line => line.trim())
     .filter(line => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?(?:\s*,\s*[-+]?\d+(?:\.\d+)?)?$/.test(line));
+}
+
+function normalizedLongitudeLatitudePoint(line) {
+  const match = String(line || "").trim().match(
+    /^([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)(?:\s*,\s*[-+]?\d+(?:\.\d+)?)?$/
+  );
+  if (!match) return null;
+  const longitude = Number(match[1]);
+  const latitude = Number(match[2]);
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude)
+    || Math.abs(longitude) > 180 || Math.abs(latitude) > 90) return null;
+  return Object.freeze({ longitude, latitude });
+}
+
+function coordinateHemisphere(value, positive, negative) {
+  if (!Number.isFinite(value) || value === 0 || Object.is(value, -0)) return null;
+  return value > 0 ? positive : negative;
+}
+
+function hemisphereMatchesCoordinate(sourceHemisphere, value, positive, negative) {
+  const normalizedHemisphere = coordinateHemisphere(value, positive, negative);
+  return normalizedHemisphere === null
+    ? sourceHemisphere === positive || sourceHemisphere === negative
+    : sourceHemisphere === normalizedHemisphere;
+}
+
+export function evaluateDmsNormalizedPointwiseEquivalence({
+  structureText = "",
+  normalizedCoordinates = ""
+} = {}) {
+  const structure = extractDmsSourceStructure(structureText);
+  const normalizedRows = normalizedCoordinateRows(normalizedCoordinates);
+  const normalizedPoints = normalizedRows.map(normalizedLongitudeLatitudePoint);
+  if (structure.rowCount === 0 || normalizedPoints.length !== structure.rowCount
+    || normalizedPoints.some(point => !point)) {
+    return Object.freeze({ accepted: false, reason: "NORMALIZED_DMS_POINT_COVERAGE_MISMATCH" });
+  }
+
+  const headerAxisOrders = sourceLines(structureText)
+    .map(explicitGenericDmsTableHeaderAxisOrder)
+    .filter(Boolean);
+  const expectedSourceAxisOrder = headerAxisOrders.length > 0
+    ? headerAxisOrders[0]
+    : "latitude_longitude";
+  if ((headerAxisOrders.length > 0 && new Set(headerAxisOrders).size !== 1)
+    || structure.rows.some(row => parseDmsSourceCoordinateRow(row)?.axisOrder !== expectedSourceAxisOrder)) {
+    return Object.freeze({ accepted: false, reason: "NORMALIZED_DMS_AXIS_ORDER_MISMATCH" });
+  }
+
+  let offset = 0;
+  for (const group of structure.groups) {
+    for (let pointIndex = 0; pointIndex < group.rows.length; pointIndex += 1) {
+      const sourcePoint = parseDmsSourceCoordinateRow(group.rows[pointIndex]);
+      const normalizedPoint = normalizedPoints[offset + pointIndex];
+      if (!sourcePoint || !normalizedPoint) {
+        return Object.freeze({ accepted: false, reason: "NORMALIZED_DMS_POINT_UNPARSABLE" });
+      }
+      if (normalizeLabel(sourcePoint.label) !== String(pointIndex + 1)) {
+        return Object.freeze({ accepted: false, reason: "NORMALIZED_DMS_LABEL_ORDER_MISMATCH" });
+      }
+      if (!hemisphereMatchesCoordinate(sourcePoint.latitudeHemisphere, normalizedPoint.latitude, "N", "S")
+        || !hemisphereMatchesCoordinate(sourcePoint.longitudeHemisphere, normalizedPoint.longitude, "E", "W")) {
+        return Object.freeze({ accepted: false, reason: "NORMALIZED_DMS_HEMISPHERE_MISMATCH" });
+      }
+      if (!closeEnough(sourcePoint.latitude, normalizedPoint.latitude, sourcePoint.latitudeTolerance)
+        || !closeEnough(sourcePoint.longitude, normalizedPoint.longitude, sourcePoint.longitudeTolerance)) {
+        return Object.freeze({ accepted: false, reason: "NORMALIZED_DMS_POINT_VALUE_MISMATCH" });
+      }
+    }
+    offset += group.rows.length;
+  }
+  if (offset !== normalizedPoints.length) {
+    return Object.freeze({ accepted: false, reason: "NORMALIZED_DMS_POINT_ORDER_MISMATCH" });
+  }
+  return Object.freeze({ accepted: true, reason: "NORMALIZED_DMS_POINTWISE_SEMANTIC_MATCH" });
 }
 
 export function reconstructDmsGroupsFromNormalizedCoordinates({ structureText = "", normalizedCoordinates = "" } = {}) {
