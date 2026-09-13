@@ -183,10 +183,34 @@ for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked a
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([new Uint8Array([255,216,255,217])],{type:'image/jpeg'}),'synthetic.jpg');
   if(scenario==='kyrgyz')form.set('rawHint','Kyrgyzstan Gauss Kruger № points X Y');
   const {status,payload}=await post('/api/recognize-coordinates',form,true);assert.equal(status,200,JSON.stringify(payload));
-  const result=payload.finalizedCoordinateResult;complete(result);assert.equal(result.kmlReady,true,JSON.stringify({type:payload.coordinateEngineV2?.coordinate_type,reasons:result.reasonCodes}));
+  const result=payload.finalizedCoordinateResult;
+  if(scenario==='unresolved'){
+    const expectedSourceRows=[
+      {label:'1',latitudeDms:'2°31\'21.134" S',longitudeDms:'119°30\'40.863" E'},
+      {label:'2',latitudeDms:'2°31\'21.116" S',longitudeDms:'119°30\'50.018" E'},
+      {label:'3',latitudeDms:'2°31\'26.910" S',longitudeDms:'119°30\'50.029" E'},
+      {label:'4',latitudeDms:'2°31\'26.928" S',longitudeDms:'119°30\'40.874" E'}
+    ];
+    assert.equal(payload.geometrySource,'DMS_DOCUMENT_REFERENCE');
+    assert.equal(payload.projectedSourceStatus,'UNRESOLVED');
+    assert.equal(payload.explicitAuthorityRejected,true);
+    assert.equal(payload.requiresReview,true);
+    assert.equal(payload.coordinates,'');
+    assert.equal(payload.documentReference.sourceRows.length,4);
+    assert.deepEqual(payload.documentReference.sourceRows.map(({label,latitudeDms,longitudeDms})=>({label,latitudeDms,longitudeDms})),expectedSourceRows);
+    assert.equal(payload.imageDmsSourceCompleteness.failClosed,true);
+    assert.ok(result);
+    assert.equal(result.geometry,null);
+    assert.equal(result.geometryHash,null);
+    assert.equal(result.kmlReady,false);
+    assert.equal(result.decisionState,'BLOCKED');
+    assert.equal(adapter.adapt(result).ok,false);
+    assert.equal(new MapPreviewAdapter().adapt(result,{expectedIdentity:result}).previewEligibility.allowed,false);
+    return;
+  }
+  complete(result);assert.equal(result.kmlReady,true,JSON.stringify({type:payload.coordinateEngineV2?.coordinate_type,reasons:result.reasonCodes}));
   if(scenario==='handwritten'){assert.equal(payload.coordinateEngineV2.coordinate_type,'handwritten_dms_experimental');assert.equal(result.requiresReview,true,JSON.stringify({decision:result.decisionState,quality:result.qualityGateStatus,availability:result.availabilityStatus,policy:result.familySafetyPolicy,engineReview:payload.coordinateEngineV2.requires_review}));}
   if(scenario==='kyrgyz')assert.equal(payload.coordinateEngineV2.coordinate_type,'kyrgyzstan_gk');
-  if(scenario==='unresolved'){assert.equal(payload.geometrySource,'DMS_DOCUMENT_REFERENCE');assert.equal(payload.projectedSourceStatus,'UNRESOLVED');}
 }));
 test('HTTP manual edit, recovery and stale/hash guards',()=>httpScenario('manual',async post=>{
   const start=await post('/api/coordinate-manual-finalize',{coordinateText:'75,41\n75.01,41\n75.01,41.01\n75,41.01',requireConfirmation:true});assert.equal(start.status,200);const r=start.payload.finalizedCoordinateResult;complete(r);assert.equal(r.kmlReady,true);
