@@ -20,12 +20,14 @@ import {
 import { CANDIDATE_SELECTION_DECISION, compareCandidateEvidence } from "./server/recognition/candidate-selection.js";
 import { buildHandwrittenCandidateEvidence, materializeHandwrittenDmsRows } from "./server/recognition/handwritten-candidate-evidence.js";
 import {
+  IMAGE_DMS_SELECTED_ROUTE,
   classifyDmsRetryOwnership,
   createDmsGroupedRetryOrchestrator,
   evaluateDmsGroupedAcquisitionExpansion,
   evaluateDmsGroupedRoutePriority,
   evaluateDmsGroupedRetryCoverage,
   evaluateDmsGroupedRetryEligibility,
+  evaluateImageDmsAcquisitionCompleteness,
   extractDmsSourceStructure,
   hasDmsGroupBoundaryContext,
   hasExplicitDmsMultiRegionEvidence,
@@ -6851,6 +6853,57 @@ function countDmsCoordinateRows(text) {
     .filter(Boolean)
     .filter(line => parseDmsCoordinateLine(line))
     .length;
+}
+
+function hasIndependentHandwrittenDmsAuthorityEvidence({
+  initialDocumentEvidence = {},
+  handwrittenDms = {},
+  handwrittenVisionRouting = {},
+  activeFamilyOwner = null
+} = {}) {
+  const sourceEvidence = initialDocumentEvidence.explicitHandwrittenSignal === true
+    && Number(initialDocumentEvidence.dmsPairLineCount) >= 4
+    && Number(handwrittenDms.rawDmsRows) >= 4;
+  const retryCandidateEvidence = activeFamilyOwner === RETRY_OWNER_FAMILY.HANDWRITTEN_DMS
+    && handwrittenVisionRouting.retrySuccess === true
+    && Number(handwrittenVisionRouting.selectedFieldEvidenceCount) >= 4
+    && handwrittenVisionRouting.candidateSelectionDecision !== CANDIDATE_SELECTION_DECISION.REJECT_CANDIDATE;
+  return sourceEvidence || retryCandidateEvidence;
+}
+
+function selectImageDmsCompletenessRoute({
+  dmsGroupedAccepted = false,
+  frenchPerimeterDms = {},
+  pointAzDmsTableAccepted = false,
+  handwrittenDms = {},
+  handwrittenAuthorityEvidenceProven = false,
+  dmsAccepted = false
+} = {}) {
+  if (dmsGroupedAccepted) return IMAGE_DMS_SELECTED_ROUTE.DMS_GROUPED;
+  if (frenchPerimeterDms.isFrenchPerimeterDms === true) return IMAGE_DMS_SELECTED_ROUTE.FRENCH_PERIMETER_DMS;
+  if (pointAzDmsTableAccepted) return IMAGE_DMS_SELECTED_ROUTE.POINT_AZ_DMS_TABLE;
+  if (handwrittenDms.isHandwrittenDms === true && handwrittenAuthorityEvidenceProven === true) {
+    return IMAGE_DMS_SELECTED_ROUTE.HANDWRITTEN_DMS;
+  }
+  if (dmsAccepted) return IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS;
+  return IMAGE_DMS_SELECTED_ROUTE.NONE;
+}
+
+function buildImageDmsAcquisitionFailClosedPatch(completeness = {}, parserTrace = []) {
+  if (completeness.failClosed !== true) return null;
+  const trace = Array.isArray(parserTrace) ? [...parserTrace] : [];
+  if (!trace.includes("IMAGE_DMS_SOURCE:structure_unproven_fail_closed")) {
+    trace.push("IMAGE_DMS_SOURCE:structure_unproven_fail_closed");
+  }
+  return Object.freeze({
+    coordinates: "",
+    dmsAccepted: false,
+    resetChatCoordinates: true,
+    resetWgs84TableCoordinates: true,
+    explicitAuthorityRejected: true,
+    forceRequiresReview: true,
+    parserTrace: Object.freeze(trace)
+  });
 }
 
 function fixLikelyLatLonOrder(firstText, secondText) {
@@ -14233,11 +14286,35 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     if (documentReference) {
       const usage = await consumeCoordinateUsage({ note: "Coordinate recognition consumed after document DMS reference parser" });
       if (!usage.success) return res.status(usage.reason === "limit_exceeded" ? 403 : 500).json({ success: false, reason: usage.reason, coordinates: "", rawText: "" });
-      const referencePayload = { model: aliyunVisionModel, rawText, coordinates: documentReference.coordinates,
-        precisionMode: "dms-coordinates", geometrySource: "DMS_DOCUMENT_REFERENCE",
-        projectedSourceStatus: "UNRESOLVED", documentReference, requiresReview: true, quota: usage.quota };
-      return res.json(buildCoordinateVerificationResponse(referencePayload,
-        buildCoordinateEngineV2ShadowResult(referencePayload, { lockedCoordinateType: "standard_dms_table", forceRequiresReview: true })));
+      const referenceCompleteness = evaluateImageDmsAcquisitionCompleteness({
+        isImageInput: Boolean(req.file),
+        rawText,
+        normalizedCoordinates: documentReference.coordinates,
+        selectedRoute: IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+      });
+      const referenceFailClosedPatch = buildImageDmsAcquisitionFailClosedPatch(referenceCompleteness, [
+        "IMAGE_DMS_SOURCE:projected_structure_unresolved"
+      ]);
+      const referencePayload = {
+        model: aliyunVisionModel,
+        rawText,
+        coordinates: referenceFailClosedPatch?.coordinates || "",
+        precisionMode: "dms-coordinates",
+        geometrySource: "DMS_DOCUMENT_REFERENCE",
+        projectedSourceStatus: "UNRESOLVED",
+        documentReference,
+        imageDmsSourceCompleteness: referenceCompleteness,
+        explicitAuthorityRejected: true,
+        requiresReview: true,
+        warning: "图片中的投影坐标表缺少可证明的完整 CRS 或投影字段；DMS 仅保留为复核证据，不能生成地图或 KML。",
+        parserTrace: referenceFailClosedPatch?.parserTrace || ["IMAGE_DMS_SOURCE:projected_structure_unresolved"],
+        quota: usage.quota
+      };
+      const referenceEngine = buildCoordinateEngineV2ShadowResult({ ...referencePayload, rawText: "" }, {
+        lockedCoordinateType: "standard_dms_table",
+        forceRequiresReview: true
+      });
+      return res.json(buildCoordinateVerificationResponse(referencePayload, referenceEngine));
     }
     let warning = extractRecognitionWarning(rawText);
     let usedModel = aliyunVisionModel;
@@ -14399,6 +14476,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let pointAzDmsTableAccepted = false;
     let dmsGroupedRetryBoundaryFailure = null;
     let dmsGroupedAcquisitionExpansion = null;
+    let imageDmsAcquisitionCompleteness = null;
+    let imageDmsFailClosedPatch = null;
     const canonicalDmsCoordinates = coordinates;
     const canonicalDmsGrouping = reconstructDmsGroupsFromNormalizedCoordinates({
       structureText: rawText,
@@ -15226,6 +15305,40 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       coordinates = formatChatCoordinateRows(chatCoordinates.points);
     }
 
+    const handwrittenAuthorityEvidenceProven = hasIndependentHandwrittenDmsAuthorityEvidence({
+      initialDocumentEvidence: initialDmsDocumentEvidence,
+      handwrittenDms,
+      handwrittenVisionRouting,
+      activeFamilyOwner
+    });
+    const selectedImageDmsRoute = selectImageDmsCompletenessRoute({
+      dmsGroupedAccepted,
+      frenchPerimeterDms,
+      pointAzDmsTableAccepted,
+      handwrittenDms,
+      handwrittenAuthorityEvidenceProven,
+      dmsAccepted
+    });
+    imageDmsAcquisitionCompleteness = evaluateImageDmsAcquisitionCompleteness({
+      isImageInput: Boolean(req.file),
+      rawText,
+      normalizedCoordinates: coordinates,
+      selectedRoute: selectedImageDmsRoute
+    });
+    if (imageDmsAcquisitionCompleteness.failClosed) {
+      imageDmsFailClosedPatch = buildImageDmsAcquisitionFailClosedPatch(
+        imageDmsAcquisitionCompleteness,
+        parserTrace
+      );
+      const imageDmsWarning = "图片中的 DMS 行缺少可证明的完整坐标类型、CRS 或源表结构；当前结果仅供核对，不能生成地图或 KML。";
+      warning = warning ? `${warning} ${imageDmsWarning}` : imageDmsWarning;
+      coordinates = imageDmsFailClosedPatch.coordinates;
+      dmsAccepted = imageDmsFailClosedPatch.dmsAccepted;
+      if (imageDmsFailClosedPatch.resetChatCoordinates) chatCoordinates = getChatCoordinatesInfo("");
+      if (imageDmsFailClosedPatch.resetWgs84TableCoordinates) wgs84TableCoordinates = getWgs84TableCoordinatesInfo("");
+      parserTrace.splice(0, parserTrace.length, ...imageDmsFailClosedPatch.parserTrace);
+    }
+
     if (dmsGroupedRetryBoundaryFailure) {
       const dmsGroupedBoundaryWarning = "识别到多区域 DMS 坐标结构，但未能安全重建完整分组边界；请人工核对后再生成地图或 KML。";
       warning = warning ? `${warning} ${dmsGroupedBoundaryWarning}` : dmsGroupedBoundaryWarning;
@@ -15320,6 +15433,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         handwrittenVisionRawText,
         finalRawText: rawText
       },
+      imageDmsSourceCompleteness: imageDmsAcquisitionCompleteness,
+      explicitAuthorityRejected: imageDmsFailClosedPatch?.explicitAuthorityRejected === true,
       parserTrace,
       acquisitionExpansionCandidate: dmsGroupedAcquisitionExpansion ? {
         rawText: dmsGroupedAcquisitionExpansion.rawText,
@@ -15350,7 +15465,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       fileName: uploadedFileName,
       rawHint: coordinateEngineV2ContextHint,
       lockedCoordinateType: dmsGroupedAcquisitionExpansion ? "standard_dms_table" : undefined,
-      forceRequiresReview: Boolean(dmsGroupedAcquisitionExpansion)
+      forceRequiresReview: Boolean(dmsGroupedAcquisitionExpansion || imageDmsFailClosedPatch?.forceRequiresReview)
     });
     if (dmsGroupedAcquisitionExpansion) {
       coordinateEngineV2 = {

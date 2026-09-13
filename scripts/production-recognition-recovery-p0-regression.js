@@ -9,15 +9,19 @@ import { once } from "node:events";
 import crypto from "node:crypto";
 import * as primaryRouting from "../server/recognition/family-primary-routing.js";
 import * as dmsSourceStructure from "../server/recognition/dms-source-structure.js";
+import * as familyRetryPolicy from "../server/recognition/family-retry-policy.js";
+import * as candidateSelection from "../server/recognition/candidate-selection.js";
 import {
   COORDINATE_CONFIRMATION_STATUS,
   COORDINATE_DECISION_STATE,
   COORDINATE_GATE_REASON,
   COORDINATE_QUALITY_GATE_STATUS,
   FINALIZED_COORDINATE_CRS,
+  consumeFinalizedGeometry,
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
 import { buildFamilyAvailabilityBlockedEngine } from "../server/coordinate-finalizer/family-availability-policy.js";
+import { buildCoordinateVerificationResponse } from "../server/verification/index.js";
 import {
   buildMadagascarCadastralCellPolygons,
   collapseExactRepeatedCoordinateSequence,
@@ -35,7 +39,7 @@ const replay = JSON.parse(await readFile(path.join(root, "release-governance/p0-
 const releaseGate = JSON.parse(await readFile(path.join(root, "release-governance/p0-release-gate-governance.json"), "utf8"));
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
 // Execute the actual runtime function declarations without app startup or Provider I/O.
-const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, utmToWgs84, Buffer, crypto,
+const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, utmToWgs84, Buffer, crypto,
   process: { env: {} }, setTimeout: () => ({ unref() {} }) });
 const declarations = [];
 for (const start of serverSource.matchAll(/^(?:async )?function \w+\(/gm)) {
@@ -292,6 +296,256 @@ test("actual observed DMS-only text is not Indonesia owner and does not trigger 
   assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(observedText, observedText, { file: { originalname: "handwritten_indonesia.jpg" }, hint: "handwritten" }).shouldRetry, false);
 });
 
+test("image DMS without typed family or complete table structure fails closed", () => {
+  const result = dmsSourceStructure.evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: true,
+    rawText: observedText,
+    normalizedCoordinates: runtime.extractCoordinateLines(observedText),
+    selectedRoute: dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+  });
+  assert.equal(result.allowed, false);
+  assert.equal(result.failClosed, true);
+  assert.equal(result.state, dmsSourceStructure.IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.FAIL_CLOSED);
+});
+
+test("generic image DMS accepted by the runtime parser but absent from strict source structure fails closed end to end", () => {
+  const looseDms = [
+    "1. 10.00.00.0N 20.00.00.0E",
+    "2. 10.00.01.0N 20.00.01.0E",
+    "3. 10.00.02.0N 20.00.02.0E",
+    "4. 10.00.03.0N 20.00.03.0E"
+  ].join("\n");
+  const normalizedCoordinates = runtime.extractCoordinateLines(looseDms);
+  assert.equal(runtime.countDmsCoordinateRows(looseDms), 4);
+  assert.equal(dmsSourceStructure.extractDmsSourceStructure(looseDms).rowCount, 0);
+  const completeness = dmsSourceStructure.evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: true,
+    rawText: looseDms,
+    normalizedCoordinates,
+    selectedRoute: dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+  });
+  assert.equal(completeness.failClosed, true);
+  const patch = runtime.buildImageDmsAcquisitionFailClosedPatch(completeness, ["OCR"]);
+  assert.equal(patch.explicitAuthorityRejected, true);
+  assert.equal(patch.coordinates, "");
+  const blockedPayload = {
+    success: true,
+    model: "offline-regression",
+    rawText: looseDms,
+    coordinates: patch.coordinates,
+    precisionMode: "preserve-original-decimals-and-parse-dms",
+    explicitAuthorityRejected: patch.explicitAuthorityRejected,
+    imageDmsSourceCompleteness: completeness,
+    parserTrace: patch.parserTrace
+  };
+  const blockedEngine = {
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: "standard_dms_table",
+    precision_mode: "preserve-original-decimals-and-parse-dms",
+    groups: [],
+    requires_review: patch.forceRequiresReview,
+    kml_ready: false,
+    warnings: []
+  };
+  const response = buildCoordinateVerificationResponse(blockedPayload, blockedEngine);
+  assert.deepEqual(response.coordinateEngineV2.groups, []);
+  assert.equal(response.explicitAuthorityRejected, true);
+  assert.equal(response.finalizedCoordinateResult.geometry, null);
+  assert.equal(response.finalizedCoordinateResult.requiresReview, true);
+  assert.equal(response.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(response.finalizedCoordinateResult.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+  assert.ok(response.finalizedCoordinateResult.blockingReasons.some(reason => reason.code === COORDINATE_GATE_REASON.KML_NOT_READY));
+  assert.equal(consumeFinalizedGeometry(response.finalizedCoordinateResult, geometry => geometry).consumed, false);
+});
+
+test("complete single-table image DMS requires explicit header exact coverage and row order", () => {
+  const complete = [
+    "Point | Latitude | Longitude",
+    "1 | 10°00'00.0\" N | 20°00'00.0\" E",
+    "2 | 10°00'01.0\" N | 20°00'01.0\" E",
+    "3 | 10°00'02.0\" N | 20°00'02.0\" E",
+    "4 | 10°00'03.0\" N | 20°00'03.0\" E"
+  ].join("\n");
+  const completePoints = dmsSourceStructure.extractDmsSourceStructure(complete).groups[0].rows
+    .map(dmsSourceStructure.parseDmsSourceCoordinateRow);
+  const normalized = completePoints.map(point => `${point.longitude},${point.latitude}`).join("\n");
+  const accepted = dmsSourceStructure.evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: true,
+    rawText: complete,
+    normalizedCoordinates: normalized,
+    selectedRoute: dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+  });
+  assert.equal(accepted.allowed, true);
+  assert.equal(accepted.failClosed, false);
+  assert.equal(accepted.state, dmsSourceStructure.IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.COMPLETE_GENERIC_TABLE);
+  for (const rejected of [
+    { text: complete.replace("Point | Latitude | Longitude\n", ""), coordinates: normalized },
+    { text: complete.replace("4 |", "7 |"), coordinates: normalized },
+    { text: complete, coordinates: normalized.split("\n").slice(0, 3).join("\n") },
+    { text: complete, coordinates: [normalized.split("\n")[1], normalized.split("\n")[0], ...normalized.split("\n").slice(2)].join("\n") },
+    { text: complete, coordinates: normalized.replace(/^[-+]?\d+(?:\.\d+)?/, "21") },
+    { text: complete.replace("Point | Latitude | Longitude", "Point | Longitude | Latitude"), coordinates: normalized },
+    { text: complete.replace("Point | Latitude | Longitude", "This note mentions Point, Latitude and Longitude"), coordinates: normalized }
+  ]) {
+    const result = dmsSourceStructure.evaluateImageDmsAcquisitionCompleteness({
+      isImageInput: true,
+      rawText: rejected.text,
+      normalizedCoordinates: rejected.coordinates,
+      selectedRoute: dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+    });
+    assert.equal(result.failClosed, true);
+  }
+});
+
+test("manual DMS and the actually selected strong typed family remain outside the incomplete-image block", () => {
+  const manual = dmsSourceStructure.evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: false,
+    rawText: observedText,
+    normalizedCoordinates: runtime.extractCoordinateLines(observedText),
+    selectedRoute: dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+  });
+  assert.equal(manual.failClosed, false);
+  const typed = dmsSourceStructure.evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: true,
+    rawText: observedText,
+    normalizedCoordinates: runtime.extractCoordinateLines(observedText),
+    selectedRoute: dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.HANDWRITTEN_DMS
+  });
+  assert.equal(typed.failClosed, false);
+  assert.equal(typed.state, dmsSourceStructure.IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.TYPED_FAMILY_PROVEN);
+});
+
+test("complete structured recovery retains the existing projected family authority path", () => {
+  const incomplete = dmsSourceStructure.evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: true,
+    rawText: observedText,
+    normalizedCoordinates: runtime.extractCoordinateLines(observedText),
+    selectedRoute: dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+  });
+  assert.equal(incomplete.failClosed, true);
+  const recovered = getIndonesiaUtm50Info(structuredText, { transform: utmToWgs84 });
+  assert.equal(recovered.isIndonesiaUtm50, true);
+  assert.equal(recovered.structureConfirmed, true);
+  assert.equal(recovered.transformStatus, "SUCCESS");
+  assert.equal(recovered.ownerIntent, "indonesia_utm50_projected");
+});
+
+test("projected image table with DMS references but unresolved CRS cannot bypass the completeness gate", () => {
+  const unresolvedProjectedTable = [
+    "Point | X | Y | Latitude | Longitude",
+    "1 | 500000 | 9000000 | 10°00'00.0\" N | 20°00'00.0\" E",
+    "2 | 500100 | 9000100 | 10°00'01.0\" N | 20°00'01.0\" E",
+    "3 | 500200 | 9000200 | 10°00'02.0\" N | 20°00'02.0\" E",
+    "4 | 500300 | 9000300 | 10°00'03.0\" N | 20°00'03.0\" E"
+  ].join("\n");
+  const reference = primaryRouting.getPrintedProjectedDmsReference(unresolvedProjectedTable);
+  assert.ok(reference);
+  assert.equal(reference.projectedSourceStatus, "UNRESOLVED");
+  assert.equal(reference.sourceCrs, null);
+  const completeness = dmsSourceStructure.evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: true,
+    rawText: unresolvedProjectedTable,
+    normalizedCoordinates: reference.coordinates,
+    selectedRoute: dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+  });
+  assert.equal(completeness.failClosed, true);
+  const patch = runtime.buildImageDmsAcquisitionFailClosedPatch(completeness, [
+    "IMAGE_DMS_SOURCE:projected_structure_unresolved"
+  ]);
+  assert.equal(patch.coordinates, "");
+  assert.equal(patch.explicitAuthorityRejected, true);
+  const response = buildCoordinateVerificationResponse({
+    success: true,
+    coordinates: patch.coordinates,
+    explicitAuthorityRejected: patch.explicitAuthorityRejected,
+    imageDmsSourceCompleteness: completeness,
+    rawText: unresolvedProjectedTable,
+    projectedSourceStatus: "UNRESOLVED",
+    documentReference: reference
+  }, {
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    groups: [],
+    requires_review: true,
+    kml_ready: false,
+    warnings: []
+  });
+  assert.equal(response.finalizedCoordinateResult.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+  assert.equal(response.finalizedCoordinateResult.geometry, null);
+  assert.equal(response.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(consumeFinalizedGeometry(response.finalizedCoordinateResult, geometry => geometry).consumed, false);
+});
+
+test("overlapping detectors and hint-only handwriting cannot authorize a generic image DMS route", () => {
+  const coordinates = runtime.extractCoordinateLines(observedText);
+  for (const ignoredWeakSignal of ["bftm_detector", "wgs84_detector", "handwritten_hint", "filename_hint"]) {
+    const result = dmsSourceStructure.evaluateImageDmsAcquisitionCompleteness({
+      isImageInput: true,
+      rawText: `${observedText}\n${ignoredWeakSignal}`,
+      normalizedCoordinates: coordinates,
+      selectedRoute: dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+    });
+    assert.equal(result.failClosed, true);
+  }
+  const hintedOnlyEvidence = runtime.hasIndependentHandwrittenDmsAuthorityEvidence({
+    initialDocumentEvidence: { explicitHandwrittenSignal: false, dmsPairLineCount: 8 },
+    handwrittenDms: { isHandwrittenDms: true, rawDmsRows: 8 },
+    handwrittenVisionRouting: { retrySuccess: false, selectedFieldEvidenceCount: 0 },
+    activeFamilyOwner: "handwritten_dms"
+  });
+  assert.equal(hintedOnlyEvidence, false);
+  const hintedOnlyRoute = runtime.selectImageDmsCompletenessRoute({
+    handwrittenDms: { isHandwrittenDms: true },
+    handwrittenAuthorityEvidenceProven: hintedOnlyEvidence,
+    dmsAccepted: true
+  });
+  assert.equal(hintedOnlyRoute, dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS);
+  const sourceEvidence = runtime.hasIndependentHandwrittenDmsAuthorityEvidence({
+    initialDocumentEvidence: { explicitHandwrittenSignal: true, dmsPairLineCount: 8 },
+    handwrittenDms: { isHandwrittenDms: true, rawDmsRows: 8 }
+  });
+  assert.equal(sourceEvidence, true);
+  const retryEvidence = runtime.hasIndependentHandwrittenDmsAuthorityEvidence({
+    handwrittenDms: { isHandwrittenDms: true, rawDmsRows: 8 },
+    handwrittenVisionRouting: {
+      retrySuccess: true,
+      selectedFieldEvidenceCount: 8,
+      candidateSelectionDecision: "REPLACE_CURRENT"
+    },
+    activeFamilyOwner: "handwritten_dms"
+  });
+  assert.equal(retryEvidence, true);
+  assert.equal(runtime.selectImageDmsCompletenessRoute({
+    handwrittenDms: { isHandwrittenDms: true },
+    handwrittenAuthorityEvidenceProven: retryEvidence,
+    dmsAccepted: true
+  }), dmsSourceStructure.IMAGE_DMS_SELECTED_ROUTE.HANDWRITTEN_DMS);
+  assert.doesNotMatch(serverSource, /typedFamilyProven:\s*imageDmsTypedFamilyProven/);
+  assert.doesNotMatch(serverSource, /explicitHandwrittenEvidence:/);
+});
+
+test("retry failure classes prevent fallback and the grouped Provider path has one non-recursive call site", () => {
+  for (const reason of [
+    "RETRY_ERROR",
+    "RETRY_TIMEOUT",
+    "MALFORMED_RETRY_OUTPUT",
+    "DMS_GROUPED_RETRY_BUDGET_BLOCKED"
+  ]) {
+    const orchestrator = dmsSourceStructure.createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+    const patch = orchestrator.failClose(reason);
+    assert.equal(patch.coordinates, "");
+    assert.equal(patch.dmsAccepted, false);
+    assert.equal(patch.dmsGroupedAccepted, false);
+    assert.equal(orchestrator.claim("generic_ocr"), false);
+    assert.equal(orchestrator.claim("dms_grouped"), false);
+    assert.equal(orchestrator.snapshot().failed, true);
+  }
+  assert.equal((serverSource.match(/prompt:\s*dmsGroupedDirectPrompt/g) || []).length, 1);
+  assert.equal((serverSource.match(/evaluateDmsGroupedRetryEligibility\s*\(/g) || []).length, 1);
+  assert.doesNotMatch(serverSource, /function\s+evaluateDmsGroupedRetryEligibility[\s\S]*callAliyunVision/);
+});
+
 test("printed projected table cannot trigger handwritten retry even with misleading upload metadata", () => {
   assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(structuredText, observedText, { file: { originalname: "handwritten.jpg" } }).shouldRetry, false);
   assert.equal(runtime.getHandwrittenDmsTimeoutRoutingEvidence({ originalname: "handwritten.jpg" }, "", { ocrText: structuredText }).shouldRetry, false);
@@ -394,6 +648,14 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
     if (scenario === 'observed') {
       assert.equal(payload.indonesiaUtm50?.isIndonesiaUtm50 === true, false);
       assert.equal(payload.coordinateEngineV2.coordinate_type === 'handwritten_dms_experimental', false);
+      assert.equal(payload.imageDmsSourceCompleteness.failClosed, true);
+      assert.equal(payload.explicitAuthorityRejected, true);
+      assert.equal(payload.coordinates, '');
+      assert.deepEqual(payload.coordinateEngineV2.groups, []);
+      assert.notEqual(payload.finalizedCoordinateResult.decisionState, 'AUTO_EXPORT');
+      assert.equal(payload.finalizedCoordinateResult.geometry, null);
+      assert.ok(payload.finalizedCoordinateResult.blockingReasons.some(reason => reason.code === COORDINATE_GATE_REASON.KML_NOT_READY));
+      assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
     } else {
       assert.equal(payload.coordinateEngineV2.coordinate_type, 'indonesia_utm50_projected');
       assert.equal(payload.indonesiaUtm50.projectedTransformExecuted, true);
@@ -404,7 +666,7 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
       assert.ok(Math.abs(payload.finalizedCoordinateResult.geometry.coordinates[0][0][0] - first.lon) < 1e-11);
       if (scenario === 'mismatch') assert.equal(payload.coordinateEngineV2.requires_review, true);
     }
-    assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+    if (scenario !== 'observed') assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
   });
 }
 
@@ -498,9 +760,13 @@ test("approved replay history is immutable and cannot qualify real acquisition",
 });
 
 let passed = 0;
-for (const entry of cases) {
+const noServiceMode = process.argv.includes("--no-service");
+const selectedCases = noServiceMode
+  ? cases.filter(entry => !entry.name.startsWith("actual HTTP "))
+  : cases;
+for (const entry of selectedCases) {
   await entry.fn();
   passed += 1;
   console.log(`PASS ${entry.name}`);
 }
-console.log(`Production recognition recovery P0 regression: ${passed}/${cases.length} PASS`);
+console.log(`Production recognition recovery P0 regression: ${passed}/${selectedCases.length} PASS${noServiceMode ? ` (${cases.length - selectedCases.length} localhost integration cases not started)` : ""}`);

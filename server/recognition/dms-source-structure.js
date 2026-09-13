@@ -9,6 +9,29 @@ export const DMS_RETRY_ROUTE_CLASSIFICATION = Object.freeze({
   NONE: "NO_DMS_RETRY_OWNER"
 });
 
+export const IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE = Object.freeze({
+  NOT_APPLICABLE: "IMAGE_DMS_ACQUISITION_NOT_APPLICABLE",
+  TYPED_FAMILY_PROVEN: "IMAGE_DMS_TYPED_FAMILY_PROVEN",
+  COMPLETE_GENERIC_TABLE: "IMAGE_DMS_GENERIC_TABLE_COMPLETE",
+  FAIL_CLOSED: "IMAGE_DMS_SOURCE_STRUCTURE_UNPROVEN"
+});
+
+export const IMAGE_DMS_SELECTED_ROUTE = Object.freeze({
+  NONE: "NO_DMS_ROUTE_SELECTED",
+  GENERIC_DMS: "GENERIC_DMS",
+  DMS_GROUPED: "DMS_GROUPED",
+  FRENCH_PERIMETER_DMS: "FRENCH_PERIMETER_DMS",
+  POINT_AZ_DMS_TABLE: "POINT_AZ_DMS_TABLE",
+  HANDWRITTEN_DMS: "HANDWRITTEN_DMS"
+});
+
+const IMAGE_DMS_TYPED_ROUTE_ALLOWLIST = new Set([
+  IMAGE_DMS_SELECTED_ROUTE.DMS_GROUPED,
+  IMAGE_DMS_SELECTED_ROUTE.FRENCH_PERIMETER_DMS,
+  IMAGE_DMS_SELECTED_ROUTE.POINT_AZ_DMS_TABLE,
+  IMAGE_DMS_SELECTED_ROUTE.HANDWRITTEN_DMS
+]);
+
 function sourceLines(text) {
   return String(text || "").replace(/\r\n/g, "\n").split("\n");
 }
@@ -31,6 +54,24 @@ export function normalizeDmsBoundaryIdentity(value) {
 function isTableHeader(line) {
   const value = String(line || "").toLowerCase();
   return /\bpoint\b/.test(value) && /\blatitude\b/.test(value) && /\blongitude\b/.test(value);
+}
+
+function explicitGenericDmsTableHeaderAxisOrder(line) {
+  const value = String(line || "").trim();
+  const identityPattern = /^(?:point|vertex|no\.?|number|id)$/i;
+  const latitudePattern = /^(?:latitude|lat|parall[eè]le)$/i;
+  const longitudePattern = /^(?:longitude|lon|m[eé]ridien)$/i;
+  let cells = [];
+  if (/[|;,\t]/.test(value)) {
+    cells = value.split(/\s*(?:\||;|,|\t)\s*/).map(cell => cell.trim()).filter(Boolean);
+  } else {
+    const match = value.match(/^\s*(point|vertex|no\.?|number|id)\s+(latitude|lat|parall[eè]le|longitude|lon|m[eé]ridien)\s+(latitude|lat|parall[eè]le|longitude|lon|m[eé]ridien)\s*$/i);
+    if (match) cells = match.slice(1);
+  }
+  if (cells.length !== 3 || !identityPattern.test(cells[0])) return "";
+  if (latitudePattern.test(cells[1]) && longitudePattern.test(cells[2])) return "latitude_longitude";
+  if (longitudePattern.test(cells[1]) && latitudePattern.test(cells[2])) return "longitude_latitude";
+  return "";
 }
 
 function leadingRowNumber(line) {
@@ -316,6 +357,116 @@ export function evaluateDmsGroupedRoutePriority({
     allBoundariesProven: structure.allBoundariesProven,
     hasUnprovenBoundary: structure.hasUnprovenBoundary,
     reason: typedDmsGrouped ? "PRINTED_MULTI_SITE_DMS" : "DMS_GROUPED_PRIORITY_NOT_ESTABLISHED"
+  });
+}
+
+export function evaluateImageDmsAcquisitionCompleteness({
+  isImageInput = false,
+  rawText = "",
+  normalizedCoordinates = "",
+  selectedRoute = IMAGE_DMS_SELECTED_ROUTE.NONE
+} = {}) {
+  const structure = extractDmsSourceStructure(rawText);
+  const normalizedRows = String(normalizedCoordinates || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const match = line.match(/^([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)$/);
+      if (!match) return null;
+      const longitude = Number(match[1]);
+      const latitude = Number(match[2]);
+      if (!Number.isFinite(longitude) || !Number.isFinite(latitude)
+        || Math.abs(longitude) > 180 || Math.abs(latitude) > 90) return null;
+      return Object.freeze({ longitude, latitude });
+    });
+  const route = String(selectedRoute || "").trim();
+  const groupSizes = Object.freeze(structure.groups.map(group => group.rows.length));
+  const base = {
+    sourceRowCount: structure.rowCount,
+    normalizedCoordinateRowCount: normalizedRows.length,
+    groupCount: structure.groupCount,
+    groupSizes,
+    selectedRoute: Object.values(IMAGE_DMS_SELECTED_ROUTE).includes(route)
+      ? route
+      : "UNLISTED_DMS_ROUTE"
+  };
+
+  if (!isImageInput || route === IMAGE_DMS_SELECTED_ROUTE.NONE) {
+    return Object.freeze({
+      ...base,
+      allowed: true,
+      failClosed: false,
+      state: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.NOT_APPLICABLE,
+      reason: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.NOT_APPLICABLE
+    });
+  }
+
+  if (IMAGE_DMS_TYPED_ROUTE_ALLOWLIST.has(route)) {
+    return Object.freeze({
+      ...base,
+      allowed: true,
+      failClosed: false,
+      state: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.TYPED_FAMILY_PROVEN,
+      reason: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.TYPED_FAMILY_PROVEN
+    });
+  }
+
+  if (route !== IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS) {
+    return Object.freeze({
+      ...base,
+      allowed: false,
+      failClosed: true,
+      state: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.FAIL_CLOSED,
+      reason: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.FAIL_CLOSED
+    });
+  }
+
+  if (structure.rowCount === 0) {
+    return Object.freeze({
+      ...base,
+      allowed: false,
+      failClosed: true,
+      state: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.FAIL_CLOSED,
+      reason: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.FAIL_CLOSED
+    });
+  }
+
+  const headerOrders = sourceLines(rawText)
+    .map(explicitGenericDmsTableHeaderAxisOrder)
+    .filter(Boolean);
+  const singleGroup = structure.groupCount === 1;
+  const sourcePoints = singleGroup
+    ? structure.groups[0].rows.map(parseDmsSourceCoordinateRow)
+    : [];
+  const exactCoverage = structure.rowCount === normalizedRows.length
+    && normalizedRows.every(Boolean)
+    && sourcePoints.every(Boolean);
+  const continuousRows = singleGroup && hasContinuousNumberedRows(structure.groups[0]?.rows || []);
+  const axisOrderMatchesHeader = headerOrders.length === 1
+    && sourcePoints.every(point => point?.axisOrder === headerOrders[0]);
+  const semanticRowsMatch = exactCoverage && sourcePoints.every((point, index) => {
+    const normalized = normalizedRows[index];
+    return closeEnough(normalized?.latitude, point?.latitude, point?.latitudeTolerance)
+      && closeEnough(normalized?.longitude, point?.longitude, point?.longitudeTolerance);
+  });
+  if (singleGroup && exactCoverage && continuousRows && axisOrderMatchesHeader && semanticRowsMatch) {
+    return Object.freeze({
+      ...base,
+      allowed: true,
+      failClosed: false,
+      state: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.COMPLETE_GENERIC_TABLE,
+      reason: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.COMPLETE_GENERIC_TABLE
+    });
+  }
+
+  return Object.freeze({
+    ...base,
+    allowed: false,
+    failClosed: true,
+    state: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.FAIL_CLOSED,
+    reason: IMAGE_DMS_ACQUISITION_COMPLETENESS_STATE.FAIL_CLOSED
   });
 }
 
