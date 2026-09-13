@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 
 function extractFunctionSource(source, functionName) {
@@ -31,6 +32,18 @@ function extractFunctionSource(source, functionName) {
 }
 
 const indexHtml = fs.readFileSync("index.html", "utf8");
+const faviconPath = "share-cover.svg";
+assert.equal(fs.existsSync(faviconPath), true);
+const faviconBytes = fs.readFileSync(faviconPath);
+const faviconSvg = faviconBytes.toString("utf8");
+assert.equal(
+  crypto.createHash("sha256").update(faviconBytes).digest("hex"),
+  "8459cf3b3d86fe34a9e26d426840c0299a62885ecc894655330879e3949869a5"
+);
+const loadUserQuotaSource = extractFunctionSource(indexHtml, "loadUserQuota");
+assert.doesNotMatch(indexHtml, /\/api\/user-usage/);
+assert.match(loadUserQuotaSource, /\/api\/usage\/quota\?visitorId=/);
+assert.match(indexHtml, /<link rel="icon" type="image\/svg\+xml" href="\/share-cover\.svg" \/>/);
 const kmlFunctionNames = [
   "escapeXml",
   "coordinatesAreSame",
@@ -77,6 +90,11 @@ async function request(path, options = {}) {
   const payload = await response.json();
   return { response, payload };
 }
+
+const faviconResponse = await fetch(`${baseUrl}/share-cover.svg`);
+assert.equal(faviconResponse.status, 200);
+assert.match(String(faviconResponse.headers.get("content-type") || ""), /^image\/svg\+xml(?:;|$)/i);
+assert.equal(await faviconResponse.text(), faviconSvg);
 
 const config = await request(`/api/config?visitorId=${encodeURIComponent(visitorId)}`);
 assert.equal(config.response.status, 200);
@@ -125,8 +143,12 @@ assert.equal(
 
 console.log(JSON.stringify({
   suite: "kml-export-permission-regression",
-  passed: 5,
+  passed: 9,
   cases: [
+    { id: "canonical_quota_endpoint_only", status: "PASS" },
+    { id: "local_favicon_declared", status: "PASS" },
+    { id: "local_favicon_asset_valid", status: "PASS" },
+    { id: "local_favicon_served", status: "PASS" },
     { id: "free_identity_and_entitlement", status: "PASS" },
     { id: "point_quota_authorized", status: "PASS" },
     { id: "line_quota_authorized", status: "PASS" },

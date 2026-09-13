@@ -25,6 +25,7 @@
   <meta name="twitter:title" content="<!--TITLE-->" />
   <meta name="twitter:description" content="<!--DESC-->" />
   <meta name="twitter:image" content="<!--IMAGE-->" />
+  <link rel="icon" type="image/svg+xml" href="/share-cover.svg" />
   <script id="pageStructuredData" type="application/ld+json"><!--JSONLD--></script>
   <style>
     * {
@@ -5771,18 +5772,6 @@ Au值 = 纯度 × 10 后取整数</div>
 
     async function loadUserQuota() {
       try {
-        const usageResponse = await fetch(`/api/user-usage?visitorId=${encodeURIComponent(visitorId)}`, {
-          headers: getSourceHeaders({
-            "x-visitor-id": visitorId
-          })
-        });
-        const usageData = await usageResponse.json().catch(() => ({}));
-
-        if (usageResponse.ok && typeof usageData.judge_remaining !== "undefined" && typeof usageData.convert_remaining !== "undefined") {
-          updateSimpleUsageDisplay(usageData);
-          return;
-        }
-
         const response = await fetch(`/api/usage/quota?visitorId=${encodeURIComponent(visitorId)}`, {
           headers: getSourceHeaders({
             "x-visitor-id": visitorId
