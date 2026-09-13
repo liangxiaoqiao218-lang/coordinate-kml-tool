@@ -1,0 +1,138 @@
+{
+  "$schema": "https:\u002f\u002fjson-schema.org\u002fdraft\u002f2020-12\u002fschema",
+  "$id": "urn:geokit-lab:mining-block-nomenclature-ruleset-provenance-v1",
+  "title": "Mining Block Nomenclature Ruleset Provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "data_class",
+    "as_of_date",
+    "aggregate_ruleset_status",
+    "authority_failure_reason",
+    "sources"
+  ],
+  "properties": {
+    "schema_version": { "const": "mining_block_nomenclature_ruleset_provenance_v1" },
+    "data_class": { "const": "PUBLIC_OFFICIAL_METADATA_ONLY" },
+    "as_of_date": { "const": "2026-09-13" },
+    "aggregate_ruleset_status": { "const": "UNKNOWN_RULESET" },
+    "authority_failure_reason": { "const": "UNKNOWN_RULESET_NO_SPATIAL_AUTHORITY" },
+    "sources": {
+      "type": "array",
+      "minItems": 4,
+      "items": { "$ref": "#/$defs/source" }
+    }
+  },
+  "$defs": {
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base_sheet_semantics",
+        "fine_grid_numbering_direction",
+        "cell_angular_dimensions",
+        "crs_and_datum",
+        "axis_order",
+        "boundary_and_edge_rules"
+      ],
+      "properties": {
+        "base_sheet_semantics": { "type": "boolean" },
+        "fine_grid_numbering_direction": { "type": "boolean" },
+        "cell_angular_dimensions": { "type": "boolean" },
+        "crs_and_datum": { "type": "boolean" },
+        "axis_order": { "type": "boolean" },
+        "boundary_and_edge_rules": { "type": "boolean" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "source_status",
+        "official_source",
+        "title",
+        "jurisdiction",
+        "official_uri",
+        "status_checked_on",
+        "effective_status",
+        "supported_claim_classes",
+        "requirements_supported",
+        "all_required_semantics_proven",
+        "spatial_authority_eligible"
+      ],
+      "properties": {
+        "source_id": { "type": "string", "pattern": "^[A-Z0-9_]{3,96}$" },
+        "source_status": { "enum": ["VERIFIED_CURRENT", "HISTORICAL_OR_SUPERSEDED", "UNKNOWN"] },
+        "official_source": { "type": "boolean" },
+        "title": { "type": "string", "minLength": 3, "maxLength": 240 },
+        "jurisdiction": { "const": "KAZAKHSTAN" },
+        "official_uri": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^https:\u002f\u002f(?:www\\.)?adilet\\.zan\\.kz\u002f" }
+          ]
+        },
+        "status_checked_on": { "oneOf": [{ "const": "2026-09-13" }, { "type": "null" }] },
+        "effective_status": { "enum": ["CURRENT", "SUPERSEDED", "NOT_ESTABLISHED"] },
+        "supported_claim_classes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "TOPOGRAPHIC_SHEET_FRAMEWORK",
+              "PUBLIC_SUBSOIL_MAP_AVAILABILITY",
+              "IDENTIFIER_FORMAT_EXAMPLE_ONLY",
+              "ONE_ARCMINUTE_HISTORICAL_STATEMENT",
+              "FINE_GRID_NUMBERING",
+              "CRS_DATUM",
+              "AXIS_ORDER",
+              "BOUNDARY_EDGE_RULES",
+              "PARTIAL_LEGAL_CLIP"
+            ]
+          }
+        },
+        "requirements_supported": { "$ref": "#/$defs/requirements" },
+        "all_required_semantics_proven": { "const": false },
+        "spatial_authority_eligible": { "const": false }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "source_status": { "const": "VERIFIED_CURRENT" } }, "required": ["source_status"] },
+          "then": {
+            "properties": {
+              "official_source": { "const": true },
+              "official_uri": { "type": "string" },
+              "status_checked_on": { "const": "2026-09-13" },
+              "effective_status": { "const": "CURRENT" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "source_status": { "const": "HISTORICAL_OR_SUPERSEDED" } }, "required": ["source_status"] },
+          "then": {
+            "properties": {
+              "official_source": { "const": true },
+              "official_uri": { "type": "string" },
+              "effective_status": { "const": "SUPERSEDED" },
+              "spatial_authority_eligible": { "const": false }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "source_status": { "const": "UNKNOWN" } }, "required": ["source_status"] },
+          "then": {
+            "properties": {
+              "official_source": { "const": false },
+              "official_uri": { "type": "null" },
+              "status_checked_on": { "type": "null" },
+              "effective_status": { "const": "NOT_ESTABLISHED" },
+              "supported_claim_classes": { "maxItems": 0 },
+              "spatial_authority_eligible": { "const": false }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
