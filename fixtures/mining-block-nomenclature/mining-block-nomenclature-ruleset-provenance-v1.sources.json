@@ -1,0 +1,93 @@
+{
+  "schema_version": "mining_block_nomenclature_ruleset_provenance_v1",
+  "data_class": "PUBLIC_OFFICIAL_METADATA_ONLY",
+  "as_of_date": "2026-09-13",
+  "aggregate_ruleset_status": "UNKNOWN_RULESET",
+  "authority_failure_reason": "UNKNOWN_RULESET_NO_SPATIAL_AUTHORITY",
+  "sources": [
+    {
+      "source_id": "KZ_CARTOGRAPHIC_PRODUCT_INSTRUCTION_2023",
+      "source_status": "VERIFIED_CURRENT",
+      "official_source": true,
+      "title": "Instruction for the creation of cartographic products using budget funds",
+      "jurisdiction": "KAZAKHSTAN",
+      "official_uri": "https://www.adilet.zan.kz/rus/docs/V2300032161",
+      "status_checked_on": "2026-09-13",
+      "effective_status": "CURRENT",
+      "supported_claim_classes": ["TOPOGRAPHIC_SHEET_FRAMEWORK"],
+      "requirements_supported": {
+        "base_sheet_semantics": true,
+        "fine_grid_numbering_direction": false,
+        "cell_angular_dimensions": false,
+        "crs_and_datum": false,
+        "axis_order": false,
+        "boundary_and_edge_rules": false
+      },
+      "all_required_semantics_proven": false,
+      "spatial_authority_eligible": false
+    },
+    {
+      "source_id": "KZ_UNIFIED_SUBSOIL_PLATFORM_RULES_2026",
+      "source_status": "VERIFIED_CURRENT",
+      "official_source": true,
+      "title": "Rules for operation of the unified subsoil-use platform",
+      "jurisdiction": "KAZAKHSTAN",
+      "official_uri": "https://adilet.zan.kz/rus/docs/V2600038204",
+      "status_checked_on": "2026-09-13",
+      "effective_status": "CURRENT",
+      "supported_claim_classes": ["PUBLIC_SUBSOIL_MAP_AVAILABILITY"],
+      "requirements_supported": {
+        "base_sheet_semantics": false,
+        "fine_grid_numbering_direction": false,
+        "cell_angular_dimensions": false,
+        "crs_and_datum": false,
+        "axis_order": false,
+        "boundary_and_edge_rules": false
+      },
+      "all_required_semantics_proven": false,
+      "spatial_authority_eligible": false
+    },
+    {
+      "source_id": "KZ_PUBLIC_SUBSOIL_INFORMATION_ORDER_2023",
+      "source_status": "HISTORICAL_OR_SUPERSEDED",
+      "official_source": true,
+      "title": "Superseded public subsoil information order with identifier-format example",
+      "jurisdiction": "KAZAKHSTAN",
+      "official_uri": "https://adilet.zan.kz/rus/docs/V2300032366",
+      "status_checked_on": "2026-09-13",
+      "effective_status": "SUPERSEDED",
+      "supported_claim_classes": ["IDENTIFIER_FORMAT_EXAMPLE_ONLY"],
+      "requirements_supported": {
+        "base_sheet_semantics": false,
+        "fine_grid_numbering_direction": false,
+        "cell_angular_dimensions": false,
+        "crs_and_datum": false,
+        "axis_order": false,
+        "boundary_and_edge_rules": false
+      },
+      "all_required_semantics_proven": false,
+      "spatial_authority_eligible": false
+    },
+    {
+      "source_id": "KZ_FINE_GRID_AND_PARTIAL_BOUNDARY_RULESET",
+      "source_status": "UNKNOWN",
+      "official_source": false,
+      "title": "Current fine-grid numbering and partial legal-boundary rules not yet established",
+      "jurisdiction": "KAZAKHSTAN",
+      "official_uri": null,
+      "status_checked_on": null,
+      "effective_status": "NOT_ESTABLISHED",
+      "supported_claim_classes": [],
+      "requirements_supported": {
+        "base_sheet_semantics": false,
+        "fine_grid_numbering_direction": false,
+        "cell_angular_dimensions": false,
+        "crs_and_datum": false,
+        "axis_order": false,
+        "boundary_and_edge_rules": false
+      },
+      "all_required_semantics_proven": false,
+      "spatial_authority_eligible": false
+    }
+  ]
+}
