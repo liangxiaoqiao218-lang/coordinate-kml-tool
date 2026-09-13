@@ -1,0 +1,241 @@
+{
+  "$schema": "https:\u002f\u002fjson-schema.org\u002fdraft\u002f2020-12\u002fschema",
+  "$id": "urn:geokit-lab:g2-r2:mining-block-nomenclature-grammar-fixture-v1",
+  "title": "Mining Block Nomenclature Grammar Fixture v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "data_class",
+    "case_id",
+    "case_class",
+    "raw_synthetic_string",
+    "normalized_tokens",
+    "lexical_safety_status",
+    "lexical_reason_code",
+    "normalization_status",
+    "normalization_reason_code",
+    "grammar_status",
+    "grammar_reason_code",
+    "interpretation_status",
+    "interpretation_reason_code",
+    "ruleset_status",
+    "authority_failure_reason",
+    "partial_assertions_required",
+    "partial_assertions",
+    "spatial_expectations",
+    "spatial_authority_expected"
+  ],
+  "properties": {
+    "schema_version": { "const": "mining_block_nomenclature_grammar_fixture_v1" },
+    "data_class": { "const": "SYNTHETIC_ONLY" },
+    "case_id": { "type": "string", "pattern": "^(P(0[1-9]|1[01])|N0[1-8]|A0[1-6])$" },
+    "case_class": { "enum": ["POSITIVE", "NEGATIVE", "AMBIGUOUS"] },
+    "raw_synthetic_string": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "normalized_tokens": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "type": "string", "pattern": "^ATOM:ZZSYN-[A-ZА-ЯЁӘҒҚҢӨҰҮҺІ]{2}-[0-9]{2}$" },
+          { "const": "LIST_SEPARATOR:," },
+          { "const": "RANGE_OPERATOR:.." },
+          { "const": "GROUP_OPEN:(" },
+          { "const": "GROUP_CLOSE:)" },
+          { "const": "QUALIFIER:PARTIAL" },
+          { "const": "QUALIFIER:ЧАСТИЧНО" },
+          { "const": "QUALIFIER:ТОЛЫҚ ЕМЕС" },
+          { "type": "string", "pattern": "^UNKNOWN:[^\\r\\n]{1,96}$" }
+        ]
+      }
+    },
+    "lexical_safety_status": { "enum": ["SAFE", "UNSAFE"] },
+    "lexical_reason_code": { "enum": ["LEXICAL_OK", "MIXED_SCRIPT_CONFUSABLE"] },
+    "normalization_status": { "enum": ["UNCHANGED", "NORMALIZED", "COLLISION"] },
+    "normalization_reason_code": { "enum": ["NORMALIZATION_NOT_REQUIRED", "NORMALIZATION_APPLIED", "NORMALIZATION_COLLISION"] },
+    "grammar_status": { "enum": ["PARSED", "REJECTED"] },
+    "grammar_reason_code": {
+      "enum": [
+        "GRAMMAR_OK",
+        "MISSING_LEVEL",
+        "UNKNOWN_TOKEN",
+        "MALFORMED_GROUP",
+        "EMPTY_LIST_MEMBER",
+        "INCOMPLETE_RANGE",
+        "UNKNOWN_QUALIFIER"
+      ]
+    },
+    "interpretation_status": { "enum": ["UNRESOLVED", "BLOCKED"] },
+    "interpretation_reason_code": {
+      "enum": [
+        "RULESET_UNKNOWN",
+        "RANGE_SEMANTICS_UNKNOWN",
+        "GROUP_SEMANTICS_UNKNOWN",
+        "GRAMMAR_OK_PARTIAL_UNRESOLVED",
+        "PARTIAL_SCOPE_AMBIGUOUS",
+        "GRAMMAR_REJECTED",
+        "LEXICAL_SAFETY_BLOCK",
+        "NORMALIZATION_COLLISION_BLOCK"
+      ]
+    },
+    "ruleset_status": { "const": "UNKNOWN_RULESET" },
+    "authority_failure_reason": { "const": "UNKNOWN_RULESET_NO_SPATIAL_AUTHORITY" },
+    "partial_assertions_required": { "type": "boolean" },
+    "partial_assertions": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/partialAssertions" }
+      ]
+    },
+    "spatial_expectations": { "$ref": "#/$defs/zeroSpatialAuthority" },
+    "spatial_authority_expected": { "const": false }
+  },
+  "$defs": {
+    "partialAssertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clip_outline_present",
+        "legal_boundary_generation_allowed",
+        "geometry_export_allowed",
+        "failure_reason"
+      ],
+      "properties": {
+        "clip_outline_present": { "const": false },
+        "legal_boundary_generation_allowed": { "const": false },
+        "geometry_export_allowed": { "const": false },
+        "failure_reason": { "const": "PARTIAL_WITHOUT_CLIP_OUTLINE" }
+      }
+    },
+    "zeroSpatialAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "geometry_expected",
+        "crs_expected",
+        "bounds_expected",
+        "adjacency_expected",
+        "area_expected",
+        "legal_boundary_expected",
+        "resolver_success_expected",
+        "finalizer_auto_export_expected",
+        "map_authority_expected",
+        "kml_export_expected",
+        "kmz_export_expected"
+      ],
+      "properties": {
+        "geometry_expected": { "const": false },
+        "crs_expected": { "const": false },
+        "bounds_expected": { "const": false },
+        "adjacency_expected": { "const": false },
+        "area_expected": { "const": false },
+        "legal_boundary_expected": { "const": false },
+        "resolver_success_expected": { "const": false },
+        "finalizer_auto_export_expected": { "const": false },
+        "map_authority_expected": { "const": false },
+        "kml_export_expected": { "const": false },
+        "kmz_export_expected": { "const": false }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "case_class": { "const": "POSITIVE" } }, "required": ["case_class"] },
+      "then": {
+        "properties": {
+          "case_id": { "pattern": "^P(0[1-9]|1[01])$" },
+          "lexical_safety_status": { "const": "SAFE" },
+          "grammar_status": { "const": "PARSED" },
+          "interpretation_status": { "const": "UNRESOLVED" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "case_class": { "const": "NEGATIVE" } }, "required": ["case_class"] },
+      "then": {
+        "properties": {
+          "case_id": { "pattern": "^N0[1-8]$" },
+          "grammar_status": { "const": "REJECTED" },
+          "interpretation_status": { "const": "BLOCKED" },
+          "interpretation_reason_code": { "const": "GRAMMAR_REJECTED" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "case_class": { "const": "AMBIGUOUS" } }, "required": ["case_class"] },
+      "then": { "properties": { "case_id": { "pattern": "^A0[1-6]$" } } }
+    },
+    {
+      "if": { "properties": { "lexical_reason_code": { "const": "MIXED_SCRIPT_CONFUSABLE" } }, "required": ["lexical_reason_code"] },
+      "then": { "properties": { "lexical_safety_status": { "const": "UNSAFE" }, "interpretation_status": { "const": "BLOCKED" }, "interpretation_reason_code": { "const": "LEXICAL_SAFETY_BLOCK" } } },
+      "else": { "properties": { "lexical_safety_status": { "const": "SAFE" }, "lexical_reason_code": { "const": "LEXICAL_OK" } } }
+    },
+    {
+      "if": { "properties": { "normalization_reason_code": { "const": "NORMALIZATION_APPLIED" } }, "required": ["normalization_reason_code"] },
+      "then": { "properties": { "normalization_status": { "const": "NORMALIZED" } } }
+    },
+    {
+      "if": { "properties": { "normalization_reason_code": { "const": "NORMALIZATION_COLLISION" } }, "required": ["normalization_reason_code"] },
+      "then": { "properties": { "normalization_status": { "const": "COLLISION" }, "interpretation_status": { "const": "BLOCKED" }, "interpretation_reason_code": { "const": "NORMALIZATION_COLLISION_BLOCK" } } }
+    },
+    {
+      "if": { "properties": { "normalization_reason_code": { "const": "NORMALIZATION_NOT_REQUIRED" } }, "required": ["normalization_reason_code"] },
+      "then": { "properties": { "normalization_status": { "const": "UNCHANGED" } } }
+    },
+    {
+      "if": { "properties": { "grammar_reason_code": { "const": "GRAMMAR_OK" } }, "required": ["grammar_reason_code"] },
+      "then": { "properties": { "grammar_status": { "const": "PARSED" } } },
+      "else": { "properties": { "grammar_status": { "const": "REJECTED" }, "interpretation_status": { "const": "BLOCKED" }, "interpretation_reason_code": { "const": "GRAMMAR_REJECTED" } } }
+    },
+    {
+      "if": { "properties": { "interpretation_reason_code": { "enum": ["RULESET_UNKNOWN", "RANGE_SEMANTICS_UNKNOWN", "GROUP_SEMANTICS_UNKNOWN", "GRAMMAR_OK_PARTIAL_UNRESOLVED", "PARTIAL_SCOPE_AMBIGUOUS"] } }, "required": ["interpretation_reason_code"] },
+      "then": { "properties": { "interpretation_status": { "const": "UNRESOLVED" } } },
+      "else": { "properties": { "interpretation_status": { "const": "BLOCKED" } } }
+    },
+    {
+      "if": { "properties": { "interpretation_reason_code": { "enum": ["GRAMMAR_OK_PARTIAL_UNRESOLVED", "PARTIAL_SCOPE_AMBIGUOUS"] } }, "required": ["interpretation_reason_code"] },
+      "then": {
+        "properties": {
+          "partial_assertions_required": { "const": true },
+          "partial_assertions": { "$ref": "#/$defs/partialAssertions" },
+          "normalized_tokens": { "contains": { "enum": ["QUALIFIER:PARTIAL", "QUALIFIER:ЧАСТИЧНО", "QUALIFIER:ТОЛЫҚ ЕМЕС"] }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "partial_assertions_required": { "const": false },
+          "partial_assertions": { "type": "null" },
+          "normalized_tokens": {
+            "not": { "contains": { "enum": ["QUALIFIER:PARTIAL", "QUALIFIER:ЧАСТИЧНО", "QUALIFIER:ТОЛЫҚ ЕМЕС"] } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "partial_assertions_required": { "const": true } }, "required": ["partial_assertions_required"] },
+      "then": { "properties": { "interpretation_reason_code": { "enum": ["GRAMMAR_OK_PARTIAL_UNRESOLVED", "PARTIAL_SCOPE_AMBIGUOUS"] }, "partial_assertions": { "$ref": "#/$defs/partialAssertions" } } },
+      "else": {
+        "properties": {
+          "interpretation_reason_code": { "not": { "enum": ["GRAMMAR_OK_PARTIAL_UNRESOLVED", "PARTIAL_SCOPE_AMBIGUOUS"] } },
+          "partial_assertions": { "type": "null" },
+          "normalized_tokens": {
+            "not": { "contains": { "enum": ["QUALIFIER:PARTIAL", "QUALIFIER:ЧАСТИЧНО", "QUALIFIER:ТОЛЫҚ ЕМЕС"] } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "partial_assertions": { "type": "null" } }, "required": ["partial_assertions"] },
+      "then": {
+        "properties": {
+          "partial_assertions_required": { "const": false },
+          "interpretation_reason_code": { "not": { "enum": ["GRAMMAR_OK_PARTIAL_UNRESOLVED", "PARTIAL_SCOPE_AMBIGUOUS"] } },
+          "normalized_tokens": {
+            "not": { "contains": { "enum": ["QUALIFIER:PARTIAL", "QUALIFIER:ЧАСТИЧНО", "QUALIFIER:ТОЛЫҚ ЕМЕС"] } }
+          }
+        }
+      }
+    }
+  ]
+}
