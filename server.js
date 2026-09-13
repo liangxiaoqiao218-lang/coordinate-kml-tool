@@ -28,11 +28,15 @@ import {
   evaluateDmsGroupedRetryCoverage,
   evaluateDmsGroupedRetryEligibility,
   evaluateImageDmsAcquisitionCompleteness,
+  evaluateStage1FullMultisitePromotion,
+  evaluateStage1FullMultisiteSafety,
   extractDmsSourceStructure,
   hasDmsGroupBoundaryContext,
   hasExplicitDmsMultiRegionEvidence,
+  isStage1FullMultisiteConfirmationPending,
   reconstructDmsGroupsFromNormalizedCoordinates,
-  resolveDmsEngineGroupNames
+  resolveDmsEngineGroupNames,
+  resolveDmsRetryTrustBoundary
 } from "./server/recognition/dms-source-structure.js";
 import {
   KYRGYZ_PRIMARY_STAGE_CAP_MS,
@@ -92,9 +96,12 @@ import {
   getRecognitionBudget,
   getRecognitionDeadlineSignal,
   getRecognitionHardDeadlineMs,
+  buildStage1FullMultisiteConfirmationPolicy,
+  STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE,
   buildFamilyAvailabilityBlockedEngine,
   evaluateFamilyAvailability,
   enforceSpatialApiEnabled,
+  finalizeCoordinateResult,
   isSpatialResultEnabled,
   isRecognitionStopError,
   recognitionDeadlineMiddleware,
@@ -3687,8 +3694,7 @@ function getHandwrittenDmsInfo(rawText, coordinates, options = {}) {
   const hasStrongPrintedProjectedTable = hasStrongPrintedProjectedTableEvidence(sourceText);
   const documentEvidence = getDmsDocumentEvidence(sourceText);
   const hasExplicitHandwrittenDmsContext = Boolean(options.hasExplicitHandwrittenDmsContext);
-  const explicitHandwrittenEvidence = hasExplicitHandwrittenDmsContext
-    || documentEvidence.explicitHandwrittenSignal;
+  const explicitHandwrittenEvidence = hasExplicitHandwrittenDmsContext;
 
   const isHandwrittenDms = isOcrImage
     && explicitHandwrittenEvidence
@@ -3726,8 +3732,7 @@ function getHandwrittenDmsTimeoutRoutingEvidence(file, hint = "", options = {}) 
   const fileSize = Number(file?.size || file?.buffer?.length || 0);
   const highConfidenceNameOrHint = /手写|手寫|鎵嬪啓|HANDWRITTEN_DMS|handwritten|hand-written|hand\s*written|manual\s*dms|manuscript|handwritten_dms|handwritten-dms/i.test(value)
     || /handwritten[_\s-]*dms|hand\s*written[_\s-]*dms|manuscript/.test(folded);
-  const explicitHandwrittenContext = highConfidenceNameOrHint
-    || documentEvidence.explicitHandwrittenSignal;
+  const explicitHandwrittenContext = highConfidenceNameOrHint;
 
   const evidence = {
     shouldRetry: false,
@@ -3821,8 +3826,7 @@ function getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates = "", optio
   const text = String(rawText || "");
   const coordinateText = String(coordinates || "");
   const documentEvidence = getDmsDocumentEvidence(text);
-  const explicitHandwrittenContext = documentEvidence.explicitHandwrittenSignal
-    || options.explicitHandwrittenSignal === true;
+  const explicitHandwrittenContext = options.explicitHandwrittenSignal === true;
   const evidence = {
     shouldRetry: false,
     reason: "",
@@ -12797,6 +12801,12 @@ app.post("/api/map-preview", enforceSpatialApiEnabled, (req, res) => {
   if (!current.ok) {
     return res.status(current.httpStatus).json({ success: false, code: current.code });
   }
+  if (isStage1FullMultisiteConfirmationPending(current.result)) {
+    return res.status(422).json({
+      success: false,
+      code: "STAGE1_FULL_MULTISITE_CONFIRMATION_REQUIRED"
+    });
+  }
 
   const mapPreviewObject = mapPreviewAdapter.adapt(current.result, {
     expectedIdentity: identity
@@ -14324,12 +14334,22 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const dmsGroupedRetryOwner = "dms_grouped";
     const initialDmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
     const initialDmsDocumentEvidence = getDmsDocumentEvidence(rawText);
+    const dmsRetryTrustBoundary = resolveDmsRetryTrustBoundary({
+      documentEvidence: initialDmsDocumentEvidence,
+      trustedHandwrittenSignal: handwrittenDmsUploadContext
+    });
     const structuredDmsRoutePriority = evaluateDmsGroupedRoutePriority({
       isImageInput: Boolean(req.file),
-      printedTableSignal: initialDmsDocumentEvidence.printedDmsCandidateSignal,
+      printedTableSignal: dmsRetryTrustBoundary.printedDmsCandidateSignal,
       projectedTableSignal: initialDmsDocumentEvidence.projectedTableSignal,
-      explicitHandwrittenSignal: initialDmsDocumentEvidence.explicitHandwrittenSignal || handwrittenDmsUploadContext,
+      explicitHandwrittenSignal: dmsRetryTrustBoundary.explicitHandwrittenSignal,
       structureText: rawText
+    });
+    const stage1FullMultisiteSafety = evaluateStage1FullMultisiteSafety({
+      isImageInput: Boolean(req.file),
+      riskSignal: dmsRetryTrustBoundary.stage1FullMultisiteRiskSignal,
+      structureText: rawText,
+      normalizedCoordinates: coordinates
     });
     let handwrittenVisionRouting = getHandwrittenDmsVisionRoutingEvidence(rawText, coordinates, {
       file: req.file,
@@ -14339,9 +14359,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const dmsRetryOwnership = classifyDmsRetryOwnership({
       isImageInput: Boolean(req.file),
       routePriority: structuredDmsRoutePriority,
+      stage1FullMultisiteSafety,
       projectedTableSignal: initialDmsDocumentEvidence.projectedTableSignal,
-      explicitHandwrittenSignal: initialDmsDocumentEvidence.explicitHandwrittenSignal || handwrittenDmsUploadContext,
-      nonHandwrittenDmsCandidateSignal: initialDmsDocumentEvidence.nonHandwrittenDmsCandidateSignal,
+      explicitHandwrittenSignal: dmsRetryTrustBoundary.explicitHandwrittenSignal,
+      nonHandwrittenDmsCandidateSignal: dmsRetryTrustBoundary.nonHandwrittenDmsCandidateSignal,
       handwrittenShapeRetryCandidate: handwrittenVisionRouting.shapeRetryCandidate
     });
     parserTrace.push(`DMS_RETRY_ROUTE:${dmsRetryOwnership.classification}`);
@@ -15352,6 +15373,24 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
+    const stage1FullMultisitePromotion = evaluateStage1FullMultisitePromotion({
+      stage1Safety: stage1FullMultisiteSafety,
+      imageDmsSourceCompleteness: imageDmsAcquisitionCompleteness,
+      retryBoundaryFailed: Boolean(dmsGroupedRetryBoundaryFailure)
+    });
+    const stage1FullMultisiteReviewCandidate = stage1FullMultisitePromotion.allowed === true;
+    if (stage1FullMultisiteReviewCandidate) {
+      coordinates = stage1FullMultisiteSafety.groupedCoordinates;
+      dmsGroupedInfo = { ...dmsGroupedInfo, output: stage1FullMultisiteSafety.groupedCoordinates };
+      dmsGroupedAccepted = true;
+      warning = warning
+        ? `${warning} Stage-1 已完整识别多区域 DMS；必须对照原图确认 8/4/4 分组后再生成地图或 KML。`
+        : "Stage-1 已完整识别多区域 DMS；必须对照原图确认 8/4/4 分组后再生成地图或 KML。";
+      if (!parserTrace.includes("DMS_GROUPED:stage1_full_multisite_review_required")) {
+        parserTrace.push("DMS_GROUPED:stage1_full_multisite_review_required");
+      }
+    }
+
     bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     const bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
 
@@ -15442,6 +15481,19 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         precisionMode: "dms-coordinates",
         provenance: dmsGroupedAcquisitionExpansion.provenance
       } : null,
+      stage1FullMultisiteSafety: stage1FullMultisiteSafety.gateRequired ? {
+        gateRequired: true,
+        acceptedForReview: stage1FullMultisiteReviewCandidate,
+        failClosed: stage1FullMultisitePromotion.failClosed === true,
+        requiresConfirmation: stage1FullMultisiteReviewCandidate,
+        mapKmlBlockedUntilConfirmation: true,
+        reason: stage1FullMultisiteReviewCandidate
+          ? stage1FullMultisiteSafety.reason
+          : stage1FullMultisitePromotion.reason,
+        rowCount: stage1FullMultisiteSafety.rowCount,
+        groupCount: stage1FullMultisiteSafety.groupCount,
+        groupSizes: stage1FullMultisiteSafety.groupSizes
+      } : null,
       quota: consumeResult.quota
     };
 
@@ -15464,14 +15516,23 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(finalRecognitionCandidate, {
       fileName: uploadedFileName,
       rawHint: coordinateEngineV2ContextHint,
-      lockedCoordinateType: dmsGroupedAcquisitionExpansion ? "standard_dms_table" : undefined,
-      forceRequiresReview: Boolean(dmsGroupedAcquisitionExpansion || imageDmsFailClosedPatch?.forceRequiresReview)
+      lockedCoordinateType: dmsGroupedAcquisitionExpansion || stage1FullMultisiteReviewCandidate
+        ? "standard_dms_table"
+        : undefined,
+      forceRequiresReview: Boolean(
+        dmsGroupedAcquisitionExpansion
+        || stage1FullMultisiteSafety.gateRequired
+        || imageDmsFailClosedPatch?.forceRequiresReview
+      )
     });
-    if (dmsGroupedAcquisitionExpansion) {
+    if (dmsGroupedAcquisitionExpansion || stage1FullMultisiteSafety.gateRequired) {
       coordinateEngineV2 = {
         ...coordinateEngineV2,
         requires_review: true,
-        acquisition_delta_provenance: dmsGroupedAcquisitionExpansion.provenance
+        ...(dmsGroupedAcquisitionExpansion
+          ? { acquisition_delta_provenance: dmsGroupedAcquisitionExpansion.provenance }
+          : {}),
+        stage1_full_multisite_safety: recognitionPayload.stage1FullMultisiteSafety
       };
     }
     const shouldReadCoteDIvoireV2 = hasCoteDIvoireGeographicDmsCue([
@@ -15534,7 +15595,36 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    const verificationResponse = buildCoordinateVerificationResponse(finalRecognitionCandidate, coordinateEngineV2);
+    let verificationResponse = buildCoordinateVerificationResponse(finalRecognitionCandidate, coordinateEngineV2);
+    if (stage1FullMultisiteReviewCandidate) {
+      const stage1FullMultisiteConfirmationPolicy = buildStage1FullMultisiteConfirmationPolicy({
+        finalizedResult: verificationResponse.finalizedCoordinateResult,
+        verification: verificationResponse.verification,
+        stage1Safety: stage1FullMultisiteSafety,
+        confirmationSource: STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE
+      });
+      const pendingStage1FullMultisiteResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
+        ...verificationResponse.finalizedCoordinateResult,
+        confirmationStatus: "pending",
+        confirmedRevision: null,
+        requiresReview: true,
+        kmlReady: false,
+        familySafetyPolicy: stage1FullMultisiteConfirmationPolicy,
+        groups: verificationResponse.finalizedCoordinateResult.groups.map(group => ({
+          ...group,
+          requiresReview: true,
+          kmlReady: false
+        })),
+        warnings: [
+          ...(verificationResponse.finalizedCoordinateResult.warnings || []),
+          "Stage-1 完整多区域 DMS 必须确认有序 8/4/4 分组后才能用于地图或 KML。"
+        ]
+      }));
+      verificationResponse = {
+        ...verificationResponse,
+        finalizedCoordinateResult: pendingStage1FullMultisiteResult
+      };
+    }
     res.json(dmsGroupedAcquisitionExpansion ? {
       ...verificationResponse,
       rawText: recognitionPayload.rawText,

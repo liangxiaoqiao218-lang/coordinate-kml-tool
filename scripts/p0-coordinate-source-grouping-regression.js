@@ -8,20 +8,34 @@ import {
   classifyDmsRetryOwnership,
   createDmsGroupedRetryOrchestrator,
   DMS_RETRY_ROUTE_CLASSIFICATION,
+  IMAGE_DMS_SELECTED_ROUTE,
   evaluateDmsGroupedAcquisitionExpansion,
   evaluateDmsGroupedRoutePriority,
   evaluateDmsGroupedRetryCoverage,
   evaluateDmsGroupedRetryEligibility,
+  evaluateDmsNormalizedPointwiseEquivalence,
+  evaluateImageDmsAcquisitionCompleteness,
+  evaluateStage1FullMultisitePromotion,
+  evaluateStage1FullMultisiteSafety,
   extractDmsSourceStructure,
   hasExplicitDmsMultiRegionEvidence,
+  isStage1FullMultisiteConfirmationPending,
   parseDmsSourceCoordinateRow,
   reconstructDmsGroupsFromNormalizedCoordinates,
-  resolveDmsEngineGroupNames
+  resolveDmsRetryTrustBoundary,
+  resolveDmsEngineGroupNames,
+  STAGE1_FULL_MULTISITE_POLICY_ID
 } from "../server/recognition/dms-source-structure.js";
 import { buildSourceCoordinateRepresentation } from "../server/source-coordinate-representation.js";
 import { getDmsDocumentEvidence, getPrintedProjectedDmsReference } from "../server/recognition/family-primary-routing.js";
 import { buildCoordinateVerificationResponse } from "../server/verification/index.js";
-import { CoordinateConfirmationRuntime } from "../server/coordinate-finalizer/index.js";
+import {
+  buildStage1FullMultisiteConfirmationPolicy,
+  CoordinateConfirmationRuntime,
+  finalizeCoordinateResult,
+  releaseConfirmedFamilySafetyPolicy,
+  STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE
+} from "../server/coordinate-finalizer/index.js";
 import { MapPreviewAdapter } from "../server/spatial/adapters/map-preview-adapter.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -61,6 +75,14 @@ function decimalRowsFromDms(rows) {
   });
 }
 
+function productionNormalizedRowsFromDms(rows) {
+  return rows.map(row => {
+    const parsed = parseDmsSourceCoordinateRow(row);
+    assert.ok(parsed, `DMS row must parse: ${row}`);
+    return `${parsed.longitude.toFixed(8)},${parsed.latitude.toFixed(8)}`;
+  });
+}
+
 function pointsFromDms(rows) {
   return rows.map(row => {
     const parsed = parseDmsSourceCoordinateRow(row);
@@ -73,6 +95,7 @@ function pointsFromDms(rows) {
 }
 
 const decimalRows = decimalRowsFromDms(flatRows);
+const productionNormalizedRows = productionNormalizedRowsFromDms(flatRows);
 const flatEngine = {
   coordinate_type: "wgs84_chat_coordinates",
   precision_mode: "wgs84-chat-coordinates",
@@ -101,10 +124,20 @@ const structuredText = [
   "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 12), "",
   "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(12)
 ].join("\n");
+const headerlessStructuredText = structuredText
+  .split("\n")
+  .filter(line => line !== "POINT | LATITUDE | LONGITUDE")
+  .join("\n");
 const stage1OmittedIndexes = new Set([3, 7, 15]);
 const stage1ThirteenText = structuredText.split("\n")
   .filter(line => !dmsRows.some((row, index) => stage1OmittedIndexes.has(index) && line === row))
   .join("\n");
+const stage1FourFourFourOneText = [
+  "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 4), "",
+  "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(4, 8).map((row, index) => row.replace(/^\d+\./, `${index + 1}.`)), "",
+  "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 12), "",
+  "SITES4", "POINT | LATITUDE | LONGITUDE", dmsRows[12]
+].join("\n");
 const acquisitionTopologyProvenance = Object.freeze({
   groupLocalBaselineRowsPreserved: true,
   baselineGroupCount: 3,
@@ -115,6 +148,840 @@ const acquisitionTopologyProvenance = Object.freeze({
   retryGroupIdentities: Object.freeze(["SITE:1", "SITE:2", "SITE:3"])
 });
 const structure = extractDmsSourceStructure(structuredText);
+
+dynamicCase("Stage-1 full multi-site risk signal is narrow and never proves topology", () => {
+  const fullPrinted = getDmsDocumentEvidence(structuredText);
+  const fifteenPrinted = getDmsDocumentEvidence([
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 8), "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 12), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(12, 15)
+  ].join("\n"));
+  const explicitHandwritten = getDmsDocumentEvidence(`handwritten DMS\n${structuredText}`);
+  assert.equal(fullPrinted.dmsPairLineCount, 16);
+  assert.equal(fullPrinted.stage1FullMultisiteRiskSignal, true);
+  assert.equal(fifteenPrinted.stage1FullMultisiteRiskSignal, false);
+  assert.equal(explicitHandwritten.explicitHandwrittenSignal, true);
+  assert.equal(explicitHandwritten.stage1FullMultisiteRiskSignal, false);
+  assert.equal(explicitHandwritten.stage1FullMultisiteStructureSignal, true);
+  assert.equal(resolveDmsRetryTrustBoundary({
+    documentEvidence: explicitHandwritten,
+    trustedHandwrittenSignal: false
+  }).stage1FullMultisiteRiskSignal, true);
+  assert.equal(resolveDmsRetryTrustBoundary({
+    documentEvidence: explicitHandwritten,
+    trustedHandwrittenSignal: true
+  }).stage1FullMultisiteRiskSignal, false);
+});
+
+dynamicCase("Stage-1 direct 16-point multi-site DMS requires exact ordered 8/4/4 confirmation", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(safety.gateRequired, true);
+  assert.equal(safety.acceptedForReview, true);
+  assert.equal(safety.requiresConfirmation, true);
+  assert.equal(safety.mapKmlBlockedUntilConfirmation, true);
+  assert.deepEqual(safety.groupSizes, [8, 4, 4]);
+  assert.deepEqual(safety.groupedCoordinates.split(/\n\n/).map(group => group.split("\n").length), [8, 4, 4]);
+});
+
+dynamicCase("Direct-16 rejects equal-count normalized coordinates with unrelated values", () => {
+  const unrelated = productionNormalizedRows.map((row, index) => index === 0 ? "70.00000000,40.00000000" : row);
+  const semantic = evaluateDmsNormalizedPointwiseEquivalence({
+    structureText: structuredText,
+    normalizedCoordinates: unrelated.join("\n")
+  });
+  assert.deepEqual(semantic, { accepted: false, reason: "NORMALIZED_DMS_POINT_VALUE_MISMATCH" });
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: unrelated.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.groupedCoordinates, "");
+});
+
+dynamicCase("Direct-16 rejects normalized latitude-longitude axis swap", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: decimalRows.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.reason, "NORMALIZED_DMS_POINT_VALUE_MISMATCH");
+});
+
+dynamicCase("Direct-16 rejects source axis order that contradicts its table header", () => {
+  const sourceAxisSwap = structuredText.replace(
+    `1. 12°00'36.9"N, 9°09'40.8"E`,
+    `1. 9°09'40.8"E, 12°00'36.9"N`
+  );
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: sourceAxisSwap,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.reason, "NORMALIZED_DMS_AXIS_ORDER_MISMATCH");
+});
+
+dynamicCase("Direct-16 preserves an explicit longitude-latitude table when every row matches", () => {
+  const longitudeLatitudeTable = structuredText
+    .replaceAll("POINT | LATITUDE | LONGITUDE", "POINT | LONGITUDE | LATITUDE")
+    .split("\n")
+    .map(line => {
+      const point = parseDmsSourceCoordinateRow(line);
+      if (!point) return line;
+      const body = line.replace(/^\s*\d+[.)、:\-]?\s*/, "");
+      const parts = body.split(/\s*,\s*/);
+      return `${point.label}. ${parts[1]}, ${parts[0]}`;
+    })
+    .join("\n");
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: longitudeLatitudeTable,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, true);
+  assert.equal(safety.failClosed, false);
+  assert.deepEqual(safety.groupSizes, [8, 4, 4]);
+});
+
+dynamicCase("Direct-16 accepts consistent latitude-longitude source rows without table headers", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: headerlessStructuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, true);
+  assert.equal(safety.failClosed, false);
+  assert.deepEqual(safety.groupSizes, [8, 4, 4]);
+});
+
+dynamicCase("Direct-16 rejects one swapped source row without table headers", () => {
+  const oneSwapped = headerlessStructuredText.replace(
+    `1. 12°00'36.9"N, 9°09'40.8"E`,
+    `1. 9°09'40.8"E, 12°00'36.9"N`
+  );
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: oneSwapped,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.reason, "NORMALIZED_DMS_AXIS_ORDER_MISMATCH");
+});
+
+dynamicCase("Direct-16 rejects all swapped source rows without table headers", () => {
+  const allSwapped = headerlessStructuredText
+    .split("\n")
+    .map(line => {
+      const point = parseDmsSourceCoordinateRow(line);
+      if (!point) return line;
+      const body = line.replace(/^\s*\d+[.)、:\-]?\s*/, "");
+      const parts = body.split(/\s*,\s*/);
+      return `${point.label}. ${parts[1]}, ${parts[0]}`;
+    })
+    .join("\n");
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: allSwapped,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.reason, "NORMALIZED_DMS_AXIS_ORDER_MISMATCH");
+});
+
+dynamicCase("Direct-16 preserves legal zero-degree hemisphere semantics", () => {
+  const zeroSource = structuredText.replace(
+    `1. 12°00'36.9"N, 9°09'40.8"E`,
+    `1. 0°00'00.0"N, 0°00'00.0"E`
+  );
+  const zeroNormalized = [...productionNormalizedRows];
+  zeroNormalized[0] = "0.00000000,0.00000000";
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: zeroSource,
+    normalizedCoordinates: zeroNormalized.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, true);
+  assert.equal(safety.failClosed, false);
+  assert.deepEqual(safety.groupSizes, [8, 4, 4]);
+});
+
+dynamicCase("Direct-16 rejects hemisphere mismatch", () => {
+  const wrongHemisphere = structuredText.replace(`12°00'36.9"N`, `12°00'36.9"S`);
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: wrongHemisphere,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.reason, "NORMALIZED_DMS_HEMISPHERE_MISMATCH");
+});
+
+dynamicCase("Direct-16 rejects group-local label mismatch", () => {
+  const wrongLabel = structuredText.replace(`SITES2\nPOINT | LATITUDE | LONGITUDE\n1.`, `SITES2\nPOINT | LATITUDE | LONGITUDE\n2.`);
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: wrongLabel,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.reason, "NORMALIZED_DMS_LABEL_ORDER_MISMATCH");
+});
+
+dynamicCase("Direct-16 rejects normalized point-order mutation", () => {
+  const wrongOrder = [...productionNormalizedRows];
+  [wrongOrder[0], wrongOrder[1]] = [wrongOrder[1], wrongOrder[0]];
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: wrongOrder.join("\n")
+  });
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.reason, "NORMALIZED_DMS_POINT_VALUE_MISMATCH");
+});
+
+dynamicCase("Stage-1 direct 16 promotion requires both grouped safety and image source completeness", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  const completeness = evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: true,
+    rawText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n"),
+    selectedRoute: IMAGE_DMS_SELECTED_ROUTE.DMS_GROUPED
+  });
+  assert.equal(completeness.allowed, true);
+  assert.equal(completeness.failClosed, false);
+  assert.deepEqual(completeness.groupSizes, [8, 4, 4]);
+  assert.deepEqual(evaluateStage1FullMultisitePromotion({
+    stage1Safety: safety,
+    imageDmsSourceCompleteness: completeness
+  }), {
+    allowed: true,
+    failClosed: false,
+    reason: "STAGE1_FULL_MULTISITE_READY_FOR_CONFIRMATION"
+  });
+});
+
+dynamicCase("Stage-1 direct 16 cannot override an image source completeness blocker", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  const completeness = evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: true,
+    rawText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n"),
+    selectedRoute: IMAGE_DMS_SELECTED_ROUTE.GENERIC_DMS
+  });
+  assert.equal(completeness.allowed, false);
+  assert.equal(completeness.failClosed, true);
+  assert.deepEqual(evaluateStage1FullMultisitePromotion({
+    stage1Safety: safety,
+    imageDmsSourceCompleteness: completeness
+  }), {
+    allowed: false,
+    failClosed: true,
+    reason: "STAGE1_FULL_MULTISITE_IMAGE_SOURCE_BLOCKED"
+  });
+});
+
+dynamicCase("Stage-1 direct 16 cannot promote after a grouped retry boundary failure", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  const completeness = evaluateImageDmsAcquisitionCompleteness({
+    isImageInput: true,
+    rawText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n"),
+    selectedRoute: IMAGE_DMS_SELECTED_ROUTE.DMS_GROUPED
+  });
+  assert.deepEqual(evaluateStage1FullMultisitePromotion({
+    stage1Safety: safety,
+    imageDmsSourceCompleteness: completeness,
+    retryBoundaryFailed: true
+  }), {
+    allowed: false,
+    failClosed: true,
+    reason: "STAGE1_FULL_MULTISITE_RETRY_BOUNDARY_BLOCKED"
+  });
+});
+
+dynamicCase("Stage-1 direct 16 rejects missing image source completeness evidence", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.deepEqual(evaluateStage1FullMultisitePromotion({ stage1Safety: safety }), {
+    allowed: false,
+    failClosed: true,
+    reason: "STAGE1_FULL_MULTISITE_IMAGE_SOURCE_BLOCKED"
+  });
+});
+
+dynamicCase("Stage-1 direct 16-point DMS without group proof fails closed", () => {
+  const ungrouped = flatRows.join("\n");
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: ungrouped,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(extractDmsSourceStructure(ungrouped).groupCount, 1);
+  assert.equal(safety.gateRequired, true);
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.groupedCoordinates, "");
+  assert.equal(safety.reason, "STAGE1_FULL_MULTISITE_GROUPING_UNPROVEN");
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: evaluateDmsGroupedRoutePriority({ isImageInput: true, structureText: ungrouped }),
+    stage1FullMultisiteSafety: safety,
+    nonHandwrittenDmsCandidateSignal: true
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.FAIL_CLOSED);
+  assert.equal(ownership.retryOwner, null);
+});
+
+dynamicCase("Stage-1 16-row risk cannot be bypassed by a weaker structure parse", () => {
+  const incompleteStructureText = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 8), "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 12), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(12, 15)
+  ].join("\n");
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: incompleteStructureText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.equal(extractDmsSourceStructure(incompleteStructureText).rowCount, 15);
+  assert.equal(safety.gateRequired, true);
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.reason, "STAGE1_FULL_MULTISITE_GROUPING_UNPROVEN");
+});
+
+dynamicCase("Stage-1 direct 16-point DMS with wrong group order fails closed", () => {
+  const wrongOrder = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 4), "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(4, 12), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(12)
+  ].join("\n");
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: wrongOrder,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  assert.deepEqual(extractDmsSourceStructure(wrongOrder).groups.map(group => group.rows.length), [4, 8, 4]);
+  assert.equal(safety.gateRequired, true);
+  assert.equal(safety.acceptedForReview, false);
+  assert.equal(safety.failClosed, true);
+  assert.equal(safety.groupedCoordinates, "");
+  assert.equal(safety.reason, "STAGE1_FULL_MULTISITE_GROUPING_UNPROVEN");
+});
+
+dynamicCase("Stage-1 full multi-site result cannot bypass confirmation", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  const engine = {
+    ...groupedEngine,
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: safety.requiresConfirmation,
+    groups: groupedEngine.groups.map(group => ({
+      ...group,
+      geometry: "polygon",
+      requires_review: true,
+      kml_ready: false,
+      points: group.points.map(point => ({ label: point.label, lat: point.latitude, lon: point.longitude }))
+    }))
+  };
+  const response = buildCoordinateVerificationResponse({
+    rawText: structuredText,
+    coordinates: safety.groupedCoordinates,
+    precisionMode: "dms-coordinates",
+    stage1FullMultisiteSafety: safety
+  }, engine);
+  assert.equal(response.verification.status, "REVIEW");
+  const pending = finalizeCoordinateResult({
+    ...response.finalizedCoordinateResult,
+    confirmationStatus: "pending",
+    confirmedRevision: null,
+    requiresReview: true,
+    kmlReady: false,
+    familySafetyPolicy: buildStage1FullMultisiteConfirmationPolicy({
+      finalizedResult: response.finalizedCoordinateResult,
+      verification: response.verification,
+      stage1Safety: safety,
+      confirmationSource: STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE
+    }),
+    groups: response.finalizedCoordinateResult.groups.map(group => ({
+      ...group,
+      requiresReview: true,
+      kmlReady: false
+    }))
+  }, { clock: () => "2026-09-12T00:00:00.000Z" });
+  assert.equal(pending.kmlReady, false);
+  assert.equal(isStage1FullMultisiteConfirmationPending(pending), true);
+  assert.equal(pending.familySafetyPolicy.effectiveState, "REVIEW_REQUIRED_UNTIL_EXACT_IDENTITY_CONFIRMED");
+  assert.equal(pending.familySafetyPolicy.exportEligible, false);
+  assert.equal(pending.groups.every(group => group.requiresReview === true && group.kmlReady === false), true);
+
+  const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
+  runtime.register(pending);
+  const wrongIdentity = runtime.confirm({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: "0".repeat(64),
+    action: "accept"
+  });
+  assert.equal(wrongIdentity.ok, false);
+  const stillPending = runtime.validateIdentity({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: pending.geometryHash
+  }).result;
+  assert.equal(stillPending.kmlReady, false);
+  assert.equal(stillPending.familySafetyPolicy.effectiveState, "REVIEW_REQUIRED_UNTIL_EXACT_IDENTITY_CONFIRMED");
+  assert.equal(stillPending.familySafetyPolicy.exportEligible, false);
+
+  const confirmed = runtime.confirm({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: pending.geometryHash,
+    action: "accept"
+  }).finalizedCoordinateResult;
+  assert.equal(confirmed.kmlReady, true);
+  assert.equal(Object.hasOwn(confirmed, "kmlAuthorityBlocked"), false);
+  assert.equal(isStage1FullMultisiteConfirmationPending(confirmed), false);
+  assert.equal(confirmed.familySafetyPolicy.effectiveState, "CONFIRMED_SUBJECT_TO_INDEPENDENT_GATES");
+  assert.equal(confirmed.familySafetyPolicy.exportEligible, true);
+  assert.equal(confirmed.familySafetyPolicy.underlyingReadiness.requiresReview, false);
+  assert.equal(confirmed.familySafetyPolicy.underlyingReadiness.kmlReady, true);
+  assert.equal(confirmed.groups.every(group => group.requiresReview === false && group.kmlReady === true), true);
+  assert.equal(new MapPreviewAdapter().adapt(confirmed).previewEligibility.allowed, true);
+});
+
+dynamicCase("Stage-1 policy without bound confirmation scope and readiness fails closed", () => {
+  const released = releaseConfirmedFamilySafetyPolicy({
+    technicalKmlReady: true,
+    qualityGateStatus: "review_required",
+    reasonCodes: ["QUALITY_GATE_REVIEW_REQUIRED", "REVIEW_REQUIRED"],
+    blockingReasons: [{ code: "KML_NOT_READY" }],
+    groups: [{ groupId: "site-1" }, { groupId: "site-2" }, { groupId: "site-3" }],
+    familySafetyPolicy: {
+      policyId: STAGE1_FULL_MULTISITE_POLICY_ID,
+      policyVersion: "1",
+      applied: true
+    }
+  });
+  assert.equal(released.requiresReview, true);
+  assert.equal(released.kmlReady, false);
+  assert.equal(released.kmlAuthorityBlocked, true);
+  assert.equal(released.familySafetyPolicy.exportEligible, false);
+});
+
+dynamicCase("Stage-1 policy with forged readiness and scope cannot release", () => {
+  const released = releaseConfirmedFamilySafetyPolicy({
+    resultId: "forged-result",
+    resultRevision: 1,
+    geometryHash: "1".repeat(64),
+    groups: [{ groupId: "site-1" }, { groupId: "site-2" }, { groupId: "site-3" }],
+    familySafetyPolicy: {
+      policyId: STAGE1_FULL_MULTISITE_POLICY_ID,
+      policyVersion: "1",
+      applied: true,
+      confirmationScope: "STAGE1_FULL_MULTISITE_GROUPING",
+      confirmationSource: STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE,
+      underlyingReadinessProven: true,
+      underlyingReadiness: {
+        requiresReview: false,
+        kmlReady: true,
+        groups: [
+          { groupId: "site-1", requiresReview: false, kmlReady: true },
+          { groupId: "site-2", requiresReview: false, kmlReady: true },
+          { groupId: "site-3", requiresReview: false, kmlReady: true }
+        ]
+      },
+      authorityBinding: {
+        resultId: "forged-result",
+        resultRevision: 1,
+        geometryHash: "1".repeat(64)
+      },
+      integrity: { algorithm: "HMAC-SHA256", signature: "0".repeat(64) }
+    }
+  });
+  assert.equal(released.requiresReview, true);
+  assert.equal(released.kmlReady, false);
+  assert.equal(released.kmlAuthorityBlocked, true);
+  assert.equal(released.familySafetyPolicy.exportEligible, false);
+});
+
+dynamicCase("Confirmation Runtime cannot promote a forged Stage-1 readiness policy", () => {
+  const geometry = {
+    type: "Polygon",
+    coordinates: [[[9, 12], [9.1, 12], [9.1, 12.1], [9, 12]]]
+  };
+  const base = finalizeCoordinateResult({
+    sourceAuthority: "legacy",
+    coordinateType: "standard_dms_table",
+    crs: { id: "EPSG:4326", axisOrder: "longitude_latitude" },
+    geometry,
+    confirmationStatus: "pending",
+    qualityGateStatus: "review_required",
+    technicalKmlReady: true,
+    requiresReview: true,
+    kmlReady: false,
+    groups: [{ groupId: "site-1" }, { groupId: "site-2" }, { groupId: "site-3" }]
+  }, { clock: () => "2026-09-12T00:00:00.000Z" });
+  const forgedPolicy = {
+    policyId: STAGE1_FULL_MULTISITE_POLICY_ID,
+    policyVersion: "1",
+    applied: true,
+    confirmationScope: "STAGE1_FULL_MULTISITE_GROUPING",
+    confirmationSource: STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE,
+    underlyingReadinessProven: true,
+    underlyingReadiness: {
+      requiresReview: false,
+      kmlReady: true,
+      groups: base.groups.map(group => ({ ...group, requiresReview: false, kmlReady: true }))
+    },
+    authorityBinding: {
+      resultId: base.resultId,
+      resultRevision: base.resultRevision,
+      geometryHash: base.geometryHash
+    },
+    integrity: { algorithm: "HMAC-SHA256", signature: "0".repeat(64) }
+  };
+  const pending = finalizeCoordinateResult({
+    ...base,
+    familySafetyPolicy: forgedPolicy,
+    currentRevision: base.resultRevision,
+    confirmationStatus: "pending",
+    requiresReview: true,
+    kmlReady: false
+  }, { clock: () => "2026-09-12T00:00:00.000Z" });
+  const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
+  runtime.register(pending);
+  const confirmed = runtime.confirm({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: pending.geometryHash,
+    action: "accept"
+  }).finalizedCoordinateResult;
+  assert.equal(confirmed.confirmationStatus, "accepted");
+  assert.equal(confirmed.decisionState, "BLOCKED");
+  assert.equal(confirmed.kmlReady, false);
+  assert.equal(confirmed.kmlAuthorityBlocked, true);
+  assert.equal(confirmed.familySafetyPolicy.exportEligible, false);
+});
+
+dynamicCase("Stage-1 full multi-site confirmation cannot override an independent quality blocker", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  const engine = {
+    ...groupedEngine,
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    groups: groupedEngine.groups.map(group => ({
+      ...group,
+      geometry: "polygon",
+      requires_review: true,
+      kml_ready: false,
+      points: group.points.map(point => ({ label: point.label, lat: point.latitude, lon: point.longitude }))
+    }))
+  };
+  const response = buildCoordinateVerificationResponse({
+    rawText: structuredText,
+    coordinates: safety.groupedCoordinates,
+    precisionMode: "dms-coordinates",
+    stage1FullMultisiteSafety: safety
+  }, engine);
+  const pending = finalizeCoordinateResult({
+    ...response.finalizedCoordinateResult,
+    confirmationStatus: "pending",
+    confirmedRevision: null,
+    qualityGateStatus: "failed",
+    requiresReview: true,
+    kmlReady: false,
+    familySafetyPolicy: buildStage1FullMultisiteConfirmationPolicy({
+      finalizedResult: { ...response.finalizedCoordinateResult, qualityGateStatus: "failed" },
+      verification: response.verification,
+      stage1Safety: safety,
+      confirmationSource: STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE
+    }),
+    groups: response.finalizedCoordinateResult.groups.map(group => ({
+      ...group,
+      requiresReview: true,
+      kmlReady: false
+    }))
+  }, { clock: () => "2026-09-12T00:00:00.000Z" });
+  const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
+  runtime.register(pending);
+  const confirmed = runtime.confirm({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: pending.geometryHash,
+    action: "accept"
+  }).finalizedCoordinateResult;
+  assert.equal(confirmed.confirmationStatus, "accepted");
+  assert.equal(confirmed.decisionState, "BLOCKED");
+  assert.equal(confirmed.kmlReady, false);
+  assert.equal(confirmed.familySafetyPolicy.effectiveState, "CONFIRMED_SUBJECT_TO_INDEPENDENT_GATES");
+  assert.equal(confirmed.familySafetyPolicy.exportEligible, false);
+  assert.equal(confirmed.familySafetyPolicy.underlyingReadiness.requiresReview, true);
+  assert.equal(confirmed.familySafetyPolicy.underlyingReadiness.kmlReady, false);
+  assert.equal(confirmed.groups.every(group => group.requiresReview === true && group.kmlReady === false), true);
+});
+
+function confirmStage1FullMultisiteWithOverrides(overrides = {}, verificationOverrides = {}) {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  const engine = {
+    ...groupedEngine,
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    groups: groupedEngine.groups.map(group => ({
+      ...group,
+      geometry: "polygon",
+      requires_review: true,
+      kml_ready: false,
+      points: group.points.map(point => ({ label: point.label, lat: point.latitude, lon: point.longitude }))
+    }))
+  };
+  const response = buildCoordinateVerificationResponse({
+    rawText: structuredText,
+    coordinates: safety.groupedCoordinates,
+    precisionMode: "dms-coordinates",
+    stage1FullMultisiteSafety: safety
+  }, engine);
+  const candidateWithOverrides = finalizeCoordinateResult({
+    ...response.finalizedCoordinateResult,
+    ...overrides
+  }, { clock: () => "2026-09-12T00:00:00.000Z" });
+  const pending = finalizeCoordinateResult({
+    ...candidateWithOverrides,
+    confirmationStatus: "pending",
+    confirmedRevision: null,
+    requiresReview: true,
+    kmlReady: false,
+    familySafetyPolicy: buildStage1FullMultisiteConfirmationPolicy({
+      finalizedResult: candidateWithOverrides,
+      verification: { ...response.verification, ...verificationOverrides },
+      stage1Safety: safety,
+      confirmationSource: STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE
+    }),
+    groups: response.finalizedCoordinateResult.groups.map(group => ({
+      ...group,
+      requiresReview: true,
+      kmlReady: false
+    }))
+  }, { clock: () => "2026-09-12T00:00:00.000Z" });
+  const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
+  runtime.register(pending);
+  return runtime.confirm({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: pending.geometryHash,
+    action: "accept"
+  }).finalizedCoordinateResult;
+}
+
+function assertStage1IndependentBlockerPreserved(confirmed) {
+  assert.equal(confirmed.confirmationStatus, "accepted");
+  assert.equal(confirmed.decisionState, "BLOCKED");
+  assert.equal(confirmed.kmlReady, false);
+  assert.equal(confirmed.familySafetyPolicy.effectiveState, "CONFIRMED_SUBJECT_TO_INDEPENDENT_GATES");
+  assert.equal(confirmed.familySafetyPolicy.exportEligible, false);
+  assert.equal(confirmed.familySafetyPolicy.underlyingReadiness.requiresReview, true);
+  assert.equal(confirmed.familySafetyPolicy.underlyingReadiness.kmlReady, false);
+  assert.equal(confirmed.groups.every(group => group.requiresReview === true && group.kmlReady === false), true);
+}
+
+function validMultiPolygonWithGroupSizes(groupSizes) {
+  return {
+    type: "MultiPolygon",
+    coordinates: groupSizes.map((size, groupIndex) => {
+      const ring = Array.from({ length: size }, (_, pointIndex) => [
+        9 + groupIndex + (pointIndex % 3) * 0.01,
+        12 + Math.floor(pointIndex / 3) * 0.01
+      ]);
+      return [[...ring, [...ring[0]]]];
+    })
+  };
+}
+
+function expectedStage1MultiPolygon() {
+  const positions = productionNormalizedRows.map(row => row.split(",").map(Number));
+  let offset = 0;
+  return {
+    type: "MultiPolygon",
+    coordinates: [8, 4, 4].map(size => {
+      const ring = positions.slice(offset, offset + size).map(position => [...position]);
+      offset += size;
+      return [[...ring, [...ring[0]]]];
+    })
+  };
+}
+
+dynamicCase("Stage-1 full multi-site confirmation cannot override an independent CRS blocker", () => {
+  const confirmed = confirmStage1FullMultisiteWithOverrides({
+    crs: { id: "EPSG:3857", axisOrder: "longitude_latitude" }
+  });
+  assertStage1IndependentBlockerPreserved(confirmed);
+});
+
+dynamicCase("Stage-1 grouping confirmation cannot clear an independent review-required quality reason", () => {
+  const confirmed = confirmStage1FullMultisiteWithOverrides({}, {
+    conflicts: [{ severity: "medium", field: "independent_quality_review" }]
+  });
+  assertStage1IndependentBlockerPreserved(confirmed);
+  assert.equal(confirmed.qualityGateStatus, "review_required");
+  assert.equal(confirmed.kmlAuthorityBlocked, true);
+});
+
+dynamicCase("Stage-1 grouping confirmation rejects an independent reason code even with generic REVIEW readiness", () => {
+  const confirmed = confirmStage1FullMultisiteWithOverrides({}, {
+    reasonCode: "INDEPENDENT_REVIEW_REQUIRED"
+  });
+  assertStage1IndependentBlockerPreserved(confirmed);
+  assert.equal(confirmed.qualityGateStatus, "review_required");
+  assert.equal(confirmed.kmlAuthorityBlocked, true);
+});
+
+dynamicCase("Stage-1 full multi-site confirmation cannot override an independent geometry blocker", () => {
+  const confirmed = confirmStage1FullMultisiteWithOverrides({
+    geometry: { type: "MultiPolygon", coordinates: [] }
+  });
+  assertStage1IndependentBlockerPreserved(confirmed);
+});
+
+dynamicCase("Stage-1 confirmation rejects valid three-by-three-by-three geometry topology", () => {
+  const confirmed = confirmStage1FullMultisiteWithOverrides({
+    geometry: validMultiPolygonWithGroupSizes([3, 3, 3])
+  });
+  assertStage1IndependentBlockerPreserved(confirmed);
+  assert.equal(confirmed.kmlAuthorityBlocked, true);
+});
+
+dynamicCase("Stage-1 confirmation rejects valid eight-four-three geometry topology", () => {
+  const confirmed = confirmStage1FullMultisiteWithOverrides({
+    geometry: validMultiPolygonWithGroupSizes([8, 4, 3])
+  });
+  assertStage1IndependentBlockerPreserved(confirmed);
+  assert.equal(confirmed.kmlAuthorityBlocked, true);
+});
+
+dynamicCase("Stage-1 confirmation rejects swapped equal-size polygon order", () => {
+  const geometry = expectedStage1MultiPolygon();
+  geometry.coordinates = [geometry.coordinates[0], geometry.coordinates[2], geometry.coordinates[1]];
+  const confirmed = confirmStage1FullMultisiteWithOverrides({ geometry });
+  assertStage1IndependentBlockerPreserved(confirmed);
+  assert.equal(confirmed.kmlAuthorityBlocked, true);
+});
+
+dynamicCase("Stage-1 confirmation rejects cross-group point exchange with preserved eight-four-four sizes", () => {
+  const geometry = expectedStage1MultiPolygon();
+  const firstGroupPoint = geometry.coordinates[0][0][1];
+  geometry.coordinates[0][0][1] = geometry.coordinates[1][0][1];
+  geometry.coordinates[1][0][1] = firstGroupPoint;
+  const confirmed = confirmStage1FullMultisiteWithOverrides({ geometry });
+  assertStage1IndependentBlockerPreserved(confirmed);
+  assert.equal(confirmed.kmlAuthorityBlocked, true);
+});
+
+dynamicCase("Stage-1 full multi-site confirmation cannot override an independent KML blocker", () => {
+  const confirmed = confirmStage1FullMultisiteWithOverrides({
+    technicalKmlReady: true,
+    kmlAuthorityBlocked: true
+  });
+  assertStage1IndependentBlockerPreserved(confirmed);
+  assert.equal(confirmed.technicalKmlReady, true);
+  assert.equal(confirmed.kmlAuthorityBlocked, true);
+});
+
+dynamicCase("Stage-1 full multi-site confirmation cannot override an independent source authority blocker", () => {
+  const confirmed = confirmStage1FullMultisiteWithOverrides({
+    sourceAuthority: "untrusted_source"
+  });
+  assertStage1IndependentBlockerPreserved(confirmed);
+});
+
+dynamicCase("Stage-1 full multi-site confirmation cannot override an independent availability blocker", () => {
+  const confirmed = confirmStage1FullMultisiteWithOverrides({
+    availabilityStatus: "BLOCKED_BY_PROVIDER"
+  });
+  assertStage1IndependentBlockerPreserved(confirmed);
+});
+
+dynamicCase("Stage-1 full multi-site geometry never creates cross-group edges", () => {
+  const safety = evaluateStage1FullMultisiteSafety({
+    isImageInput: true,
+    riskSignal: true,
+    structureText: structuredText,
+    normalizedCoordinates: productionNormalizedRows.join("\n")
+  });
+  const groups = safety.groupedCoordinates.split(/\n\n/).map(group => group.split("\n"));
+  assert.deepEqual(groups.map(group => group.length), [8, 4, 4]);
+  const edges = groups.flatMap(group => group.map((point, index) => (
+    `${point}->${group[(index + 1) % group.length]}`
+  )));
+  assert.equal(edges.length, 16);
+  assert.equal(edges.includes(`${groups[0].at(-1)}->${groups[1][0]}`), false);
+  assert.equal(edges.includes(`${groups[1].at(-1)}->${groups[2][0]}`), false);
+  assert.equal(edges.includes(`${groups[2].at(-1)}->${groups[0][0]}`), false);
+});
 
 dynamicCase("three visible DMS tables stay separate", () => assert.equal(structure.groupCount, 3));
 dynamicCase("8/4/4 group sizes stay exact", () => assert.deepEqual(structure.groups.map(group => group.rows.length), [8, 4, 4]));
@@ -656,6 +1523,146 @@ dynamicCase("proven printed multi-site structure reserves dms_grouped as the onl
   assert.equal(orchestrator.claim("generic_ocr"), false);
   assert.equal(orchestrator.claim("dms_grouped"), true);
   assert.equal(orchestrator.snapshot().reservedFamilyOwner, "dms_grouped");
+});
+
+dynamicCase("Provider pseudo-handwritten wording cannot hijack a proven 13-point dms_grouped reread", () => {
+  const providerText = `Recognition hint: handwritten DMS\n${stage1ThirteenText}`;
+  const evidence = getDmsDocumentEvidence(providerText);
+  assert.equal(evidence.explicitHandwrittenSignal, true);
+  assert.equal(evidence.dmsPairLineCount, 13);
+  assert.equal(evidence.dmsStructureCandidateSignal, true);
+  const trust = resolveDmsRetryTrustBoundary({
+    documentEvidence: evidence,
+    trustedHandwrittenSignal: false
+  });
+  assert.equal(trust.explicitHandwrittenSignal, false);
+  assert.equal(trust.printedDmsCandidateSignal, true);
+  assert.equal(trust.nonHandwrittenDmsCandidateSignal, true);
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: trust.printedDmsCandidateSignal,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    structureText: providerText
+  });
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    nonHandwrittenDmsCandidateSignal: trust.nonHandwrittenDmsCandidateSignal,
+    handwrittenShapeRetryCandidate: true
+  });
+  const eligibility = evaluateDmsGroupedRetryEligibility({
+    rawText: providerText,
+    dmsGroupedInfo: { output: "stage1-normalized-present" },
+    isImageInput: true,
+    familyRetryAllowed: true,
+    typedRouteEligible: ownership.retryOwner === "dms_grouped"
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_ONLY);
+  assert.equal(eligibility.allowed, true);
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  assert.equal(orchestrator.reserve(ownership.retryOwner), true);
+  let providerCalls = 0;
+  for (const owner of ["handwritten_dms", "generic_ocr", "wgs84_table", "french_perimeter_dms"]) {
+    if (orchestrator.claim(owner)) providerCalls += 1;
+  }
+  if (orchestrator.claim("dms_grouped")) providerCalls += 1;
+  assert.equal(providerCalls, 1);
+  assert.equal(orchestrator.snapshot().activeFamilyOwner, "dms_grouped");
+});
+
+dynamicCase("runtime-equivalent 4 4 4 1 Stage-1 evidence gives the only second call to dms_grouped", () => {
+  const providerText = `识别提示：手写坐标\n${stage1FourFourFourOneText}`;
+  const structure = extractDmsSourceStructure(providerText);
+  assert.equal(structure.rowCount, 13);
+  assert.deepEqual(structure.groups.map(group => group.rows.length), [4, 4, 4, 1]);
+  const evidence = getDmsDocumentEvidence(providerText);
+  const trust = resolveDmsRetryTrustBoundary({ documentEvidence: evidence });
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: trust.printedDmsCandidateSignal,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    structureText: providerText
+  });
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    nonHandwrittenDmsCandidateSignal: trust.nonHandwrittenDmsCandidateSignal,
+    handwrittenShapeRetryCandidate: true
+  });
+  const eligibility = evaluateDmsGroupedRetryEligibility({
+    rawText: providerText,
+    dmsGroupedInfo: { output: "stage1-normalized-present" },
+    isImageInput: true,
+    familyRetryAllowed: true,
+    typedRouteEligible: ownership.retryOwner === "dms_grouped"
+  });
+  assert.equal(route.typedDmsGrouped, true);
+  assert.equal(ownership.retryOwner, "dms_grouped");
+  assert.equal(eligibility.allowed, true);
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  assert.equal(orchestrator.reserve(ownership.retryOwner), true);
+  assert.equal(orchestrator.claim("handwritten_dms"), false);
+  assert.equal(orchestrator.claim("generic_ocr"), false);
+  assert.equal(orchestrator.claim("wgs84_table"), false);
+  assert.equal(orchestrator.claim("dms_grouped"), true);
+});
+
+dynamicCase("pseudo-handwritten multi-site DMS with unproven boundaries fails before every second Provider route", () => {
+  const ambiguous = [
+    "Recognition hint: handwritten coordinates",
+    ...dmsRows.slice(0, 3),
+    ...dmsRows.slice(8, 11),
+    "",
+    ...flatRows.slice(6, 9)
+  ].join("\n");
+  const evidence = getDmsDocumentEvidence(ambiguous);
+  const trust = resolveDmsRetryTrustBoundary({ documentEvidence: evidence });
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: trust.printedDmsCandidateSignal,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    structureText: ambiguous
+  });
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    nonHandwrittenDmsCandidateSignal: trust.nonHandwrittenDmsCandidateSignal,
+    handwrittenShapeRetryCandidate: true
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.FAIL_CLOSED);
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  orchestrator.failClose(ownership.reason);
+  for (const owner of ["handwritten_dms", "generic_ocr", "wgs84_table", "dms_grouped"]) {
+    assert.equal(orchestrator.claim(owner), false);
+  }
+});
+
+dynamicCase("independent trusted handwritten evidence preserves the genuine handwritten reread", () => {
+  const providerText = `Recognition hint: handwritten DMS\n${dmsRows.slice(0, 4).join("\n")}`;
+  const evidence = getDmsDocumentEvidence(providerText);
+  const trust = resolveDmsRetryTrustBoundary({
+    documentEvidence: evidence,
+    trustedHandwrittenSignal: true
+  });
+  const route = evaluateDmsGroupedRoutePriority({
+    isImageInput: true,
+    printedTableSignal: trust.printedDmsCandidateSignal,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    structureText: providerText
+  });
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: route,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    nonHandwrittenDmsCandidateSignal: trust.nonHandwrittenDmsCandidateSignal,
+    handwrittenShapeRetryCandidate: true
+  });
+  assert.equal(trust.nonHandwrittenDmsCandidateSignal, false);
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.HANDWRITTEN_DMS_ONLY);
+  assert.equal(ownership.retryOwner, "handwritten_dms");
 });
 
 dynamicCase("unproven printed multi-site structure fails closed before any alternate Provider retry", () => {
@@ -1225,11 +2232,15 @@ staticAssertion("structured multi-site DMS computes typed priority before handwr
   assert.ok(execution > downstream && provider > execution);
   assert.match(server.slice(execution, provider), /claimDownstreamFamilyRetry\(dmsGroupedRetryOwner\)/);
 });
-staticAssertion("server preserves explicit handwritten upload routing while prioritizing proven printed structure", () => {
+staticAssertion("server trusts only independent handwritten upload evidence while prioritizing proven printed structure", () => {
   const priority = server.indexOf("const structuredDmsRoutePriority");
   const handwritten = server.indexOf("if (handwrittenVisionRouting.shouldRetry)", priority);
   const path = server.slice(priority, handwritten);
-  assert.match(path, /explicitHandwrittenSignal:\s*initialDmsDocumentEvidence\.explicitHandwrittenSignal\s*\|\|\s*handwrittenDmsUploadContext/);
+  assert.match(server.slice(server.indexOf("const initialDmsDocumentEvidence"), priority), /resolveDmsRetryTrustBoundary\(\{[\s\S]*trustedHandwrittenSignal:\s*handwrittenDmsUploadContext/);
+  assert.match(path, /explicitHandwrittenSignal:\s*dmsRetryTrustBoundary\.explicitHandwrittenSignal/g);
+  assert.match(path, /nonHandwrittenDmsCandidateSignal:\s*dmsRetryTrustBoundary\.nonHandwrittenDmsCandidateSignal/);
+  assert.match(path, /riskSignal:\s*dmsRetryTrustBoundary\.stage1FullMultisiteRiskSignal/);
+  assert.doesNotMatch(path, /initialDmsDocumentEvidence\.explicitHandwrittenSignal\s*\|\|/);
   assert.match(path, /explicitHandwrittenSignal:\s*handwrittenDmsUploadContext/);
   assert.match(path, /if \(dmsRetryOwnership\.retryOwner === dmsGroupedRetryOwner\)/);
 });
@@ -1260,23 +2271,31 @@ staticAssertion("handwritten Stage-2 routing requires explicit handwritten evide
   const start = server.indexOf("function getHandwrittenDmsVisionRoutingEvidence");
   const end = server.indexOf("function shouldRetryHandwrittenDmsOnTimeout", start);
   const path = server.slice(start, end);
-  assert.match(path, /explicitHandwrittenContext = documentEvidence\.explicitHandwrittenSignal\s*\|\|\s*options\.explicitHandwrittenSignal === true/);
+  assert.match(path, /explicitHandwrittenContext = options\.explicitHandwrittenSignal === true/);
+  assert.doesNotMatch(path, /explicitHandwrittenContext = documentEvidence\.explicitHandwrittenSignal/);
   assert.match(path, /evidence\.shapeRetryCandidate = evidence\.score >= 5/);
   assert.match(path, /evidence\.shouldRetry = explicitHandwrittenContext && evidence\.shapeRetryCandidate/);
 });
-staticAssertion("handwritten timeout retry requires explicit document or upload evidence", () => {
+staticAssertion("handwritten timeout retry requires independent upload evidence", () => {
   const start = server.indexOf("function getHandwrittenDmsTimeoutRoutingEvidence");
   const end = server.indexOf("function getHandwrittenDmsVisionRoutingEvidence", start);
   const path = server.slice(start, end);
-  assert.match(path, /explicitHandwrittenContext = highConfidenceNameOrHint\s*\|\|\s*documentEvidence\.explicitHandwrittenSignal/);
+  assert.match(path, /explicitHandwrittenContext = highConfidenceNameOrHint/);
+  assert.doesNotMatch(path, /explicitHandwrittenContext = highConfidenceNameOrHint\s*\|\|/);
   assert.match(path, /\|\| !explicitHandwrittenContext\) \{/);
   assert.match(path, /evidence\.shouldRetry = explicitHandwrittenContext && evidence\.score >= 5/);
 });
-staticAssertion("final handwritten classification cannot be inferred from damaged printed DMS alone", () => {
+staticAssertion("Provider-returned handwriting wording remains observation-only at the retry trust boundary", () => {
+  assert.match(server, /resolveDmsRetryTrustBoundary\(\{[\s\S]{0,180}documentEvidence:\s*initialDmsDocumentEvidence,[\s\S]{0,120}trustedHandwrittenSignal:\s*handwrittenDmsUploadContext/);
+  assert.doesNotMatch(server, /trustedHandwrittenSignal:\s*initialDmsDocumentEvidence\.explicitHandwrittenSignal/);
+  assert.match(server, /printedTableSignal:\s*dmsRetryTrustBoundary\.printedDmsCandidateSignal/);
+});
+staticAssertion("final handwritten identity requires independent trusted context", () => {
   const start = server.indexOf("function getHandwrittenDmsInfo");
   const end = server.indexOf("function getHandwrittenDmsTimeoutRoutingEvidence", start);
   const path = server.slice(start, end);
-  assert.match(path, /explicitHandwrittenEvidence = hasExplicitHandwrittenDmsContext\s*\|\|\s*documentEvidence\.explicitHandwrittenSignal/);
+  assert.match(path, /explicitHandwrittenEvidence = hasExplicitHandwrittenDmsContext/);
+  assert.doesNotMatch(path, /explicitHandwrittenEvidence = hasExplicitHandwrittenDmsContext\s*\|\|/);
   assert.match(path, /const isHandwrittenDms = isOcrImage\s*&& explicitHandwrittenEvidence/);
 });
 staticAssertion("all timeout and fallback provider retries claim the request owner", () => {
@@ -1287,6 +2306,30 @@ staticAssertion("all timeout and fallback provider retries claim the request own
 });
 staticAssertion("failed multi-region retry blocks cross-group geometry consumption", () => {
   assert.match(server, /dmsGroupedRetryBoundaryFailure[\s\S]*coordinates\s*=\s*""[\s\S]*DMS_GROUPED:boundary_unresolved_review_required/);
+});
+staticAssertion("Stage-1 full multi-site safety is applied before response and re-registers a pending final authority", () => {
+  const safety = server.indexOf("const stage1FullMultisiteSafety = evaluateStage1FullMultisiteSafety");
+  const promotion = server.indexOf("const stage1FullMultisitePromotion = evaluateStage1FullMultisitePromotion", safety);
+  const engine = server.indexOf("let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult", safety);
+  const response = server.indexOf("let verificationResponse = buildCoordinateVerificationResponse", engine);
+  const pending = server.indexOf("const pendingStage1FullMultisiteResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult", response);
+  const send = server.indexOf("res.json(dmsGroupedAcquisitionExpansion", pending);
+  assert.ok(safety >= 0 && promotion > safety && engine > promotion && response > engine && pending > response && send > pending);
+  assert.match(server.slice(promotion, engine), /imageDmsSourceCompleteness:\s*imageDmsAcquisitionCompleteness/);
+  assert.match(server.slice(promotion, engine), /retryBoundaryFailed:\s*Boolean\(dmsGroupedRetryBoundaryFailure\)/);
+  assert.match(server.slice(promotion, engine), /failClosed:\s*stage1FullMultisitePromotion\.failClosed\s*===\s*true/);
+  assert.match(server.slice(promotion, engine), /requiresConfirmation:\s*stage1FullMultisiteReviewCandidate/);
+  assert.match(server.slice(engine, response), /forceRequiresReview:\s*Boolean\([\s\S]*stage1FullMultisiteSafety\.gateRequired[\s\S]*imageDmsFailClosedPatch\?\.forceRequiresReview/);
+  assert.match(server.slice(pending, send), /confirmationStatus:\s*"pending"/);
+  assert.match(server.slice(pending, send), /requiresReview:\s*true/);
+  assert.match(server.slice(pending, send), /kmlReady:\s*false/);
+  assert.match(server.slice(response, pending), /buildStage1FullMultisiteConfirmationPolicy\(\{[\s\S]*verification:\s*verificationResponse\.verification[\s\S]*stage1Safety:\s*stage1FullMultisiteSafety[\s\S]*confirmationSource:\s*STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE/);
+  assert.match(server.slice(pending, send), /familySafetyPolicy:\s*stage1FullMultisiteConfirmationPolicy/);
+  const mapRoute = server.slice(server.indexOf('app.post("/api/map-preview"'), server.indexOf('app.post("/api/spatial-shares"'));
+  const confirmationGuard = mapRoute.indexOf("isStage1FullMultisiteConfirmationPending(current.result)");
+  const adapter = mapRoute.indexOf("mapPreviewAdapter.adapt(current.result");
+  assert.ok(confirmationGuard >= 0 && adapter > confirmationGuard);
+  assert.match(mapRoute.slice(confirmationGuard, adapter), /STAGE1_FULL_MULTISITE_CONFIRMATION_REQUIRED/);
 });
 staticAssertion("13-point Stage-1 candidate is snapshotted before downstream routing can mutate working variables", () => {
   const snapshot = server.indexOf("const stage1Candidate = Object.freeze({ rawText, coordinates })");

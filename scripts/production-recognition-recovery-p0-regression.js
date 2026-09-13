@@ -610,12 +610,15 @@ test("damaged DMS morphology alone cannot claim handwritten retry ownership", ()
   assert.equal(routing.shouldRetry, false);
 });
 
-test("explicit handwritten correction evidence retains retry on complete DMS", () => {
+test("Provider-returned handwritten wording cannot acquire retry ownership", () => {
   const text = `${observedText}\n识别提示：手写坐标存在需核对字符`;
-  assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(text, observedText).shouldRetry, true);
+  assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(text, observedText).shouldRetry, false);
+  assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(text, observedText, {
+    explicitHandwrittenSignal: true
+  }).shouldRetry, true);
 });
 
-test("hash-bound R5-R2 real handwritten stage-1 evidence retains retry and final classification", () => {
+test("hash-bound R5-R2 stage text still requires independent handwritten upload evidence", () => {
   // Exact sanitized stage text; artifact SHA256 1e8883f3c76b6ef9f9d72b2995217f11edae870e4f81db413a56fd5806736d14.
   // This is observed acquisition evidence, not Golden coordinates or a new truth upgrade.
   const text = `11°28'37.26"N,08°40'42.13"W
@@ -637,9 +640,20 @@ test("hash-bound R5-R2 real handwritten stage-1 evidence retains retry and final
 
 识别提示：手写坐标存在需核对字符，请结合原图逐行核对。`;
   assert.equal(createHash('sha256').update(text).digest('hex'), '495a43fcb5659a274fb3357fad12e95f7c792550f26daf8cfff6b41c18626444');
-  assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(text, text).shouldRetry, true);
-  assert.equal(runtime.getHandwrittenDmsInfo(text, text, { isOcrImage: true }).isHandwrittenDms, true);
-  assert.equal(runtime.getHandwrittenDmsTimeoutRoutingEvidence({ mimetype: 'image/jpeg' }, '', { ocrText: text }).shouldRetry, true);
+  assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(text, text).shouldRetry, false);
+  assert.equal(runtime.getHandwrittenDmsInfo(text, text, { isOcrImage: true }).isHandwrittenDms, false);
+  assert.equal(runtime.getHandwrittenDmsTimeoutRoutingEvidence({ mimetype: 'image/jpeg' }, '', { ocrText: text }).shouldRetry, false);
+  assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(text, text, {
+    explicitHandwrittenSignal: true
+  }).shouldRetry, true);
+  assert.equal(runtime.getHandwrittenDmsInfo(text, text, {
+    isOcrImage: true,
+    hasExplicitHandwrittenDmsContext: true
+  }).isHandwrittenDms, true);
+  assert.equal(runtime.getHandwrittenDmsTimeoutRoutingEvidence({
+    mimetype: 'image/jpeg',
+    originalname: 'trusted-handwritten-dms.jpg'
+  }, '', { ocrText: text }).shouldRetry, true);
 });
 
 for (const scenario of ['observed', 'structured', 'mismatch']) {

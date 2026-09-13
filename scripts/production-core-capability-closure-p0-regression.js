@@ -136,7 +136,7 @@ test('printed projected+DMS excludes handwriting and missing CRS stays unresolve
   assert.equal(r.projectedSourceStatus,'UNRESOLVED');assert.equal(r.sourceCrs,null);assert.equal(r.projectedTransformExecuted,false);
   assert.equal(routing.getPrintedProjectedDmsReference(projected),null);
 });
-test('exact historical handwritten acquisition stays handwritten',()=>assert.equal(runtime.getHandwrittenDmsInfo(handwritten,cleanPrinted,{isOcrImage:true}).isHandwrittenDms,true));
+test('Provider handwritten wording alone cannot authorize handwritten acquisition',()=>assert.equal(runtime.getHandwrittenDmsInfo(handwritten,cleanPrinted,{isOcrImage:true}).isHandwrittenDms,false));
 for(const type of ['standard_dms_table','decimal_latlon','kyrgyzstan_gk']) test('family-neutral ordinary warning: '+type,()=>allowed(make({structured:engine(type,[{lat:41,lon:75}])})));
 for(const [name,options] of [
   ['invalid geometry',{structured:engine('standard_dms_table',[{lat:91,lon:75}])}],

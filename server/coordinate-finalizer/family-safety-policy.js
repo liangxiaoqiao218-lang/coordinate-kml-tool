@@ -1,5 +1,14 @@
-import { COORDINATE_CONFIRMATION_STATUS } from "./reason-codes.js";
-import { normalizeDmsBoundaryIdentity } from "../recognition/dms-source-structure.js";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  COORDINATE_CONFIRMATION_STATUS,
+  COORDINATE_DECISION_STATE,
+  COORDINATE_QUALITY_GATE_STATUS
+} from "./reason-codes.js";
+import { FAMILY_AVAILABILITY_STATUS } from "./family-availability-policy.js";
+import {
+  normalizeDmsBoundaryIdentity,
+  STAGE1_FULL_MULTISITE_POLICY_ID
+} from "../recognition/dms-source-structure.js";
 
 export const POINT_AZ_TEMPORARY_REVIEW_POLICY = Object.freeze({
   policyId: "POINT_AZ_TEMPORARY_REVIEW_POLICY",
@@ -32,6 +41,21 @@ export const DMS_GROUPED_ACQUISITION_DELTA_POLICY = Object.freeze({
   effectiveState: "REVIEW_REQUIRED_UNTIL_EXACT_IDENTITY_CONFIRMED",
   productionEligible: true
 });
+
+export const DMS_GROUPED_STAGE1_FULL_MULTISITE_POLICY = Object.freeze({
+  policyId: STAGE1_FULL_MULTISITE_POLICY_ID,
+  policyVersion: "1",
+  family: "dms_grouped",
+  reasonCode: "STAGE1_FULL_MULTISITE_CONFIRMATION_REQUIRED",
+  reason: "A complete Stage-1 multi-site DMS result must preserve its proven group topology and be confirmed before Map or KML use.",
+  effectiveState: "REVIEW_REQUIRED_UNTIL_EXACT_IDENTITY_CONFIRMED",
+  productionEligible: true
+});
+
+export const STAGE1_FULL_MULTISITE_CONFIRMATION_SCOPE = "STAGE1_FULL_MULTISITE_GROUPING";
+export const STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE = "STAGE1_FULL_MULTISITE_GROUPING_ONLY";
+
+const STAGE1_FULL_MULTISITE_POLICY_SIGNING_SECRET = randomBytes(32);
 
 function isPointAzFamily(structuredResult = {}) {
   return String(structuredResult.coordinate_type || "").toLowerCase() === "standard_dms_table"
@@ -121,6 +145,212 @@ function serializeUnderlyingGroups(groups = []) {
   }));
 }
 
+function isClosedRingWithPointCount(ring, pointCount) {
+  if (!Array.isArray(ring) || ring.length !== pointCount + 1) return false;
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  return Array.isArray(first)
+    && Array.isArray(last)
+    && first.length === 2
+    && last.length === 2
+    && first[0] === last[0]
+    && first[1] === last[1];
+}
+
+function parseStage1GroupedCoordinatePositions(groupedCoordinates = "") {
+  const groups = String(groupedCoordinates || "").trim().split(/\n\s*\n/);
+  if (groups.length !== 3) return null;
+  const parsedGroups = groups.map(group => group.split(/\r?\n/).map(row => {
+    const match = row.trim().match(
+      /^([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)(?:\s*,\s*[-+]?\d+(?:\.\d+)?)?$/
+    );
+    if (!match) return null;
+    const longitude = Number(match[1]);
+    const latitude = Number(match[2]);
+    const longitudeDecimals = (match[1].split(".")[1] || "").length;
+    const latitudeDecimals = (match[2].split(".")[1] || "").length;
+    return Number.isFinite(longitude) && Number.isFinite(latitude)
+      ? Object.freeze({
+          longitude,
+          latitude,
+          longitudeTolerance: (0.5 * (10 ** -longitudeDecimals)) + Number.EPSILON,
+          latitudeTolerance: (0.5 * (10 ** -latitudeDecimals)) + Number.EPSILON
+        })
+      : null;
+  }));
+  return parsedGroups.some(group => group.some(position => !position)) ? null : parsedGroups;
+}
+
+function ringMatchesOrderedPositions(ring, positions) {
+  return isClosedRingWithPointCount(ring, positions.length)
+    && positions.every((position, index) => Array.isArray(ring[index])
+      && ring[index].length === 2
+      && Math.abs(ring[index][0] - position.longitude) <= position.longitudeTolerance
+      && Math.abs(ring[index][1] - position.latitude) <= position.latitudeTolerance);
+}
+
+function hasExactStage1GroupTopology(stage1Safety = {}, finalizedResult = {}) {
+  const safetySizes = Array.isArray(stage1Safety.groupSizes) ? stage1Safety.groupSizes : [];
+  const expectedPositions = parseStage1GroupedCoordinatePositions(stage1Safety.groupedCoordinates);
+  const groups = Array.isArray(finalizedResult.groups) ? finalizedResult.groups : [];
+  const groupIds = groups.map(group => String(group?.groupId || "").trim());
+  const geometry = finalizedResult.geometry;
+  const polygons = geometry?.type === "MultiPolygon" && Array.isArray(geometry.coordinates)
+    ? geometry.coordinates
+    : [];
+  return stage1Safety.gateRequired === true
+    && stage1Safety.acceptedForReview === true
+    && stage1Safety.failClosed === false
+    && safetySizes.length === 3
+    && [8, 4, 4].every((size, index) => safetySizes[index] === size)
+    && groups.length === 3
+    && groupIds.every(Boolean)
+    && new Set(groupIds).size === 3
+    && polygons.length === 3
+    && polygons.every((polygon, index) => Array.isArray(polygon)
+      && polygon.length === 1
+      && Array.isArray(expectedPositions?.[index])
+      && expectedPositions[index].length === safetySizes[index]
+      && ringMatchesOrderedPositions(polygon[0], expectedPositions[index]));
+}
+
+function verificationReasonValues(verification = {}) {
+  const reasonFields = [
+    "reason",
+    "reasonCode",
+    "reasonCodes",
+    "reviewReason",
+    "reviewReasons",
+    "review_reason",
+    "review_reasons"
+  ];
+  return reasonFields.flatMap(field => {
+    const value = verification[field];
+    if (Array.isArray(value)) return value.map(item => String(item || "").trim()).filter(Boolean);
+    const normalized = String(value || "").trim();
+    return normalized ? [normalized] : [];
+  });
+}
+
+function isGroupingOnlyQualityReview(verification = {}, confirmationSource = "") {
+  const reasons = verificationReasonValues(verification);
+  return verification.status === "REVIEW"
+    && confirmationSource === STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE
+    && verification.validation_scope === "coordinate_and_geometry"
+    && verification.geometry_validation === "EVALUATED"
+    && Number(verification.verification_score) >= 0.85
+    && Array.isArray(verification.warnings)
+    && verification.warnings.length === 0
+    && Array.isArray(verification.conflicts)
+    && verification.conflicts.length === 0
+    && Array.isArray(verification.geometryWarnings)
+    && verification.geometryWarnings.length === 0
+    && reasons.every(reason => reason === STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE);
+}
+
+function stage1PolicyAuthorityBinding(finalizedResult = {}) {
+  return Object.freeze({
+    resultId: typeof finalizedResult.resultId === "string" ? finalizedResult.resultId : null,
+    resultRevision: Number.isSafeInteger(finalizedResult.resultRevision) ? finalizedResult.resultRevision : null,
+    geometryHash: typeof finalizedResult.geometryHash === "string" ? finalizedResult.geometryHash : null
+  });
+}
+
+function stage1PolicySignaturePayload(policy = {}) {
+  return JSON.stringify({
+    policyId: policy.policyId,
+    policyVersion: policy.policyVersion,
+    confirmationScope: policy.confirmationScope,
+    confirmationSource: policy.confirmationSource,
+    authorityBinding: policy.authorityBinding,
+    underlyingReadinessProven: policy.underlyingReadinessProven,
+    underlyingReadiness: policy.underlyingReadiness
+  });
+}
+
+function signStage1Policy(policy = {}) {
+  return createHmac("sha256", STAGE1_FULL_MULTISITE_POLICY_SIGNING_SECRET)
+    .update(stage1PolicySignaturePayload(policy))
+    .digest("hex");
+}
+
+function stage1PolicySignatureValid(policy = {}, finalizedResult = {}) {
+  const signature = String(policy?.integrity?.signature || "");
+  const binding = policy?.authorityBinding || {};
+  const identityBound = binding.resultId === finalizedResult.resultId
+    && binding.resultRevision === finalizedResult.resultRevision
+    && binding.geometryHash === finalizedResult.geometryHash;
+  if (!identityBound
+    || policy?.integrity?.algorithm !== "HMAC-SHA256"
+    || !/^[a-f0-9]{64}$/.test(signature)) return false;
+  const expected = signStage1Policy(policy);
+  return timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"));
+}
+
+export function buildStage1FullMultisiteConfirmationPolicy({
+  finalizedResult = {},
+  verification = {},
+  stage1Safety = {},
+  confirmationSource = ""
+} = {}) {
+  const groups = Array.isArray(finalizedResult.groups) ? finalizedResult.groups : [];
+  const topologyProven = hasExactStage1GroupTopology(stage1Safety, finalizedResult);
+  const groupingOnlyQualityReview = isGroupingOnlyQualityReview(verification, confirmationSource)
+    && finalizedResult.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED;
+  const independentGateClear = finalizedResult.decisionState !== COORDINATE_DECISION_STATE.BLOCKED
+    && finalizedResult.kmlAuthorityBlocked !== true
+    && finalizedResult.technicalKmlReady === true
+    && finalizedResult.availabilityStatus === FAMILY_AVAILABILITY_STATUS.AVAILABLE
+    && finalizedResult.geometry !== null
+    && finalizedResult.crs !== null;
+  const underlyingReady = topologyProven && groupingOnlyQualityReview && independentGateClear;
+  const underlyingGroups = groups.map(group => ({
+    groupId: group?.groupId || null,
+    requiresReview: !underlyingReady,
+    kmlReady: underlyingReady
+  }));
+  const unsignedPolicy = {
+    ...DMS_GROUPED_STAGE1_FULL_MULTISITE_POLICY,
+    active: true,
+    applied: true,
+    confirmationRequired: true,
+    confirmationScope: STAGE1_FULL_MULTISITE_CONFIRMATION_SCOPE,
+    confirmationSource: confirmationSource === STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE
+      ? confirmationSource
+      : null,
+    confirmationReleaseMode: "EXACT_RESULT_ID_REVISION_GEOMETRY_HASH",
+    confirmationOverridesIndependentBlockers: false,
+    effectiveState: DMS_GROUPED_STAGE1_FULL_MULTISITE_POLICY.effectiveState,
+    exportEligible: false,
+    underlyingReadinessProven: underlyingReady,
+    underlyingReadiness: Object.freeze({
+      requiresReview: !underlyingReady,
+      kmlReady: underlyingReady,
+      groups: serializeUnderlyingGroups(underlyingGroups)
+    }),
+    authorityBinding: stage1PolicyAuthorityBinding(finalizedResult)
+  };
+  return Object.freeze({
+    ...unsignedPolicy,
+    integrity: Object.freeze({
+      algorithm: "HMAC-SHA256",
+      signature: signStage1Policy(unsignedPolicy)
+    })
+  });
+}
+
+function failClosedUnderlyingReadiness(finalizedResult = {}) {
+  return Object.freeze({
+    requiresReview: true,
+    kmlReady: false,
+    groups: serializeUnderlyingGroups((Array.isArray(finalizedResult.groups) ? finalizedResult.groups : []).map(group => ({
+      groupId: group?.groupId || null,
+      requiresReview: true,
+      kmlReady: false
+    })))
+  });
+}
+
 export function applyFamilySafetyPolicy({
   structuredResult = {},
   confirmationStatus,
@@ -183,10 +413,13 @@ export function applyFamilySafetyPolicy({
 
 export function releaseConfirmedFamilySafetyPolicy(finalizedResult = {}) {
   const policy = finalizedResult.familySafetyPolicy;
+  const stage1FullMultisitePolicy = policy?.policyId === DMS_GROUPED_STAGE1_FULL_MULTISITE_POLICY.policyId
+    && policy?.policyVersion === DMS_GROUPED_STAGE1_FULL_MULTISITE_POLICY.policyVersion;
   const recognizedPolicy = (policy?.policyId === POINT_AZ_TEMPORARY_REVIEW_POLICY.policyId
       && policy?.policyVersion === POINT_AZ_TEMPORARY_REVIEW_POLICY.policyVersion)
     || (policy?.policyId === DMS_GROUPED_ACQUISITION_DELTA_POLICY.policyId
-      && policy?.policyVersion === DMS_GROUPED_ACQUISITION_DELTA_POLICY.policyVersion);
+      && policy?.policyVersion === DMS_GROUPED_ACQUISITION_DELTA_POLICY.policyVersion)
+    || stage1FullMultisitePolicy;
   if (!recognizedPolicy
     || policy?.applied !== true) {
     return Object.freeze({
@@ -197,15 +430,31 @@ export function releaseConfirmedFamilySafetyPolicy(finalizedResult = {}) {
     });
   }
 
-  const underlying = policy.underlyingReadiness || {};
+  const stage1ReadinessBound = !stage1FullMultisitePolicy || (
+    policy.confirmationScope === STAGE1_FULL_MULTISITE_CONFIRMATION_SCOPE
+    && policy.confirmationSource === STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE
+    && stage1PolicySignatureValid(policy, finalizedResult)
+    && policy.underlyingReadinessProven === true
+    && policy.underlyingReadiness?.requiresReview === false
+    && policy.underlyingReadiness?.kmlReady === true
+  );
+  const underlying = stage1ReadinessBound
+    ? (policy.underlyingReadiness || {})
+    : failClosedUnderlyingReadiness(finalizedResult);
   return Object.freeze({
     requiresReview: underlying.requiresReview === true,
     kmlReady: underlying.kmlReady === true,
+    ...(stage1FullMultisitePolicy && !stage1ReadinessBound ? { kmlAuthorityBlocked: true } : {}),
     groups: serializeUnderlyingGroups(underlying.groups),
     familySafetyPolicy: Object.freeze({
       ...policy,
       effectiveState: "CONFIRMED_SUBJECT_TO_INDEPENDENT_GATES",
-      exportEligible: underlying.requiresReview !== true && underlying.kmlReady === true
+      exportEligible: underlying.requiresReview !== true && underlying.kmlReady === true,
+      underlyingReadiness: Object.freeze({
+        requiresReview: underlying.requiresReview === true,
+        kmlReady: underlying.kmlReady === true,
+        groups: serializeUnderlyingGroups(underlying.groups)
+      })
     })
   });
 }
