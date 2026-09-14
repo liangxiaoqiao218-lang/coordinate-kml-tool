@@ -44,6 +44,7 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
     resultRevision,
     geometryHash,
     sourceAuthority: candidate.sourceAuthority || null,
+    explicitAuthorityRejected: candidate.explicitAuthorityRejected === true,
     coordinateType: candidate.coordinateType || null,
     precisionMode: candidate.precisionMode || null,
     family: candidate.family || candidate.coordinateType || null,
@@ -67,6 +68,17 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
     limitations: uniqueStrings(candidate.limitations),
     groups: Object.freeze((Array.isArray(candidate.groups) ? candidate.groups : []).map(group => Object.freeze({ ...group }))),
     familySafetyPolicy: candidate.familySafetyPolicy ? deepFreeze(structuredClone(candidate.familySafetyPolicy)) : null,
+    candidateRole: candidate.candidateRole === "NONAUTHORITATIVE_REVIEW_CANDIDATE"
+      ? candidate.candidateRole
+      : null,
+    sourceCandidateSeparate: candidate.sourceCandidateSeparate === true,
+    directCanonicalPromotion: candidate.directCanonicalPromotion === false ? false : null,
+    partialMultisiteRecoveryProvenance: candidate.partialMultisiteRecoveryProvenance
+      ? deepFreeze(structuredClone(candidate.partialMultisiteRecoveryProvenance))
+      : null,
+    sourceCandidates: candidate.sourceCandidates
+      ? deepFreeze(structuredClone(candidate.sourceCandidates))
+      : null,
     createdAt: candidate.createdAt || now,
     finalizedAt: now
   };

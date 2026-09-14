@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import {
+  buildDmsGroupedPartialMultisiteRecoveryCandidate,
   extractDmsSourceStructure,
   normalizeDmsBoundaryIdentity,
-  parseDmsSourceCoordinateRow
+  parseDmsSourceCoordinateRow,
+  partialMultisiteRecoveryProvenanceMatches
 } from "./recognition/dms-source-structure.js";
 
 const SOURCE_COORDINATE_REPRESENTATION_SCHEMA = "source_coordinate_representation_v1";
@@ -262,13 +264,79 @@ function acquisitionExpansionCandidate(recognitionResult = {}) {
   return candidate;
 }
 
+function partialMultisiteRecoveryCandidate(recognitionResult = {}) {
+  const candidate = recognitionResult?.partialMultisiteRecoveryCandidate;
+  const provenance = candidate?.provenance;
+  const stage1Candidate = recognitionResult?.stage1Candidate && typeof recognitionResult.stage1Candidate === "object"
+    ? recognitionResult.stage1Candidate
+    : recognitionResult?.sourceCandidates?.stage1;
+  if (!candidate || typeof candidate !== "object"
+    || !stage1Candidate || typeof stage1Candidate !== "object"
+    || provenance?.schemaVersion !== "dms_grouped_partial_multisite_recovery_v1") return null;
+  const rebuilt = buildDmsGroupedPartialMultisiteRecoveryCandidate({
+    stage1RawText: String(stage1Candidate.rawText || ""),
+    stage1Coordinates: String(stage1Candidate.coordinates || ""),
+    retryRawText: String(candidate.rawText || ""),
+    retryCoordinates: String(candidate.coordinates || ""),
+    expansion: {
+      accepted: true,
+      recoveryMode: provenance.recoveryMode,
+      baselineRowCount: provenance.baselineRowCount,
+      retryRowCount: provenance.retryRowCount,
+      addedRowCount: provenance.addedRowCount,
+      baselineRowsPreserved: provenance.baselineRowsPreserved,
+      groupLocalBaselineRowsPreserved: provenance.groupLocalBaselineRowsPreserved,
+      baselineGroupCount: provenance.baselineGroupCount,
+      baselineGroupSizes: provenance.baselineGroupSizes,
+      baselineGroupIdentities: provenance.baselineGroupIdentities,
+      groupCount: provenance.retryGroupCount,
+      groupSizes: provenance.retryGroupSizes,
+      groupIdentities: provenance.retryGroupIdentities
+    },
+    ownerFamily: provenance.ownerFamily
+  });
+  if (rebuilt.accepted !== true) return null;
+  const provenanceDeclarations = [provenance, recognitionResult?.partialMultisiteRecoveryProvenance]
+    .filter(value => value !== null && value !== undefined);
+  const declaredSources = recognitionResult?.sourceCandidates;
+  const declaredSourcesMatch = Boolean(declaredSources) && (
+    String(declaredSources?.stage1?.rawText || "") === rebuilt.stage1Candidate.rawText
+    && String(declaredSources?.stage1?.coordinates || "") === rebuilt.stage1Candidate.coordinates
+    && String(declaredSources?.structuredReread?.rawText || "") === rebuilt.rawText
+    && String(declaredSources?.structuredReread?.coordinates || "") === rebuilt.normalizedCoordinates
+    && declaredSources.stage1.rowCount === rebuilt.provenance.baselineRowCount
+    && declaredSources.structuredReread.rowCount === rebuilt.provenance.retryRowCount
+    && declaredSources.stage1.candidateRole === "STAGE1_ACQUISITION_CANDIDATE"
+    && declaredSources.structuredReread.candidateRole === "NONAUTHORITATIVE_REVIEW_CANDIDATE"
+    && declaredSources.stage1.candidateSha256 === rebuilt.provenance.stage1CandidateSha256
+    && declaredSources.structuredReread.candidateSha256 === rebuilt.provenance.retryCandidateSha256
+  );
+  if (provenanceDeclarations.length === 0
+    || provenanceDeclarations.some(declared => (
+      !partialMultisiteRecoveryProvenanceMatches(declared, rebuilt.provenance)
+    ))
+    || candidate.candidateRole !== "NONAUTHORITATIVE_REVIEW_CANDIDATE"
+    || recognitionResult.candidateRole !== "NONAUTHORITATIVE_REVIEW_CANDIDATE"
+    || recognitionResult.sourceCandidateSeparate !== true
+    || recognitionResult.directCanonicalPromotion !== false
+    || !declaredSourcesMatch) return null;
+  return Object.freeze({
+    ...candidate,
+    candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+    provenance: rebuilt.provenance,
+    stage1Candidate: rebuilt.stage1Candidate
+  });
+}
+
 export function buildSourceCoordinateRepresentation(recognitionResult = {}, coordinateEngineV2 = {}) {
   const expansionCandidate = acquisitionExpansionCandidate(recognitionResult);
+  const partialRecoveryCandidate = partialMultisiteRecoveryCandidate(recognitionResult);
+  const reviewCandidate = expansionCandidate || partialRecoveryCandidate;
   const stage1Candidate = recognitionResult?.stage1Candidate && typeof recognitionResult.stage1Candidate === "object"
     ? recognitionResult.stage1Candidate
     : recognitionResult;
-  const effectiveRecognitionResult = expansionCandidate
-    ? { ...recognitionResult, ...expansionCandidate }
+  const effectiveRecognitionResult = reviewCandidate
+    ? { ...recognitionResult, ...reviewCandidate }
     : recognitionResult;
   const family = String(coordinateEngineV2?.coordinate_type || effectiveRecognitionResult?.coordinateType || "").trim() || null;
   const format = String(coordinateEngineV2?.precision_mode || effectiveRecognitionResult?.precisionMode || "").trim() || null;
@@ -304,18 +372,27 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
     sourceEquivalence: rawDmsEquivalence.reason,
     displayText,
     editable: Boolean(displayText),
-    candidateRole: expansionCandidate ? "NONAUTHORITATIVE_REVIEW_CANDIDATE" : "CURRENT_RECOGNITION_CANDIDATE",
+    candidateRole: reviewCandidate ? "NONAUTHORITATIVE_REVIEW_CANDIDATE" : "CURRENT_RECOGNITION_CANDIDATE",
     acquisitionDeltaProvenance: expansionCandidate ? Object.freeze({ ...expansionCandidate.provenance }) : null,
-    sourceCandidates: expansionCandidate ? Object.freeze({
+    partialMultisiteRecoveryProvenance: partialRecoveryCandidate
+      ? Object.freeze({ ...partialRecoveryCandidate.provenance })
+      : null,
+    sourceCandidateSeparate: reviewCandidate ? true : false,
+    directCanonicalPromotion: reviewCandidate ? false : null,
+    sourceCandidates: reviewCandidate ? Object.freeze({
       stage1: Object.freeze({
         rawText: String(stage1Candidate?.rawText || ""),
         coordinates: String(stage1Candidate?.coordinates || ""),
-        rowCount: extractDmsSourceStructure(stage1Candidate?.rawText || stage1Candidate?.coordinates || "").rowCount
+        rowCount: extractDmsSourceStructure(stage1Candidate?.rawText || stage1Candidate?.coordinates || "").rowCount,
+        candidateRole: "STAGE1_ACQUISITION_CANDIDATE",
+        candidateSha256: reviewCandidate.provenance.stage1CandidateSha256
       }),
       structuredReread: Object.freeze({
-        rawText: String(expansionCandidate.rawText),
-        coordinates: String(expansionCandidate.coordinates),
-        rowCount: rawDmsStructure.rowCount
+        rawText: String(reviewCandidate.rawText),
+        coordinates: String(reviewCandidate.coordinates),
+        rowCount: rawDmsStructure.rowCount,
+        candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+        candidateSha256: reviewCandidate.provenance.retryCandidateSha256
       })
     }) : null
   });

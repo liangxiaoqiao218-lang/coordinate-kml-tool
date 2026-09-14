@@ -21,6 +21,7 @@ import { CANDIDATE_SELECTION_DECISION, compareCandidateEvidence } from "./server
 import { buildHandwrittenCandidateEvidence, materializeHandwrittenDmsRows } from "./server/recognition/handwritten-candidate-evidence.js";
 import {
   IMAGE_DMS_SELECTED_ROUTE,
+  buildDmsGroupedPartialMultisiteRecoveryCandidate,
   classifyDmsRetryOwnership,
   createDmsGroupedRetryOrchestrator,
   evaluateDmsGroupedAcquisitionExpansion,
@@ -14345,7 +14346,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       explicitHandwrittenSignal: dmsRetryTrustBoundary.explicitHandwrittenSignal,
       structureText: rawText
     });
-    const stage1FullMultisiteSafety = evaluateStage1FullMultisiteSafety({
+    let stage1FullMultisiteSafety = evaluateStage1FullMultisiteSafety({
       isImageInput: Boolean(req.file),
       riskSignal: dmsRetryTrustBoundary.stage1FullMultisiteRiskSignal,
       structureText: rawText,
@@ -14363,7 +14364,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       projectedTableSignal: initialDmsDocumentEvidence.projectedTableSignal,
       explicitHandwrittenSignal: dmsRetryTrustBoundary.explicitHandwrittenSignal,
       nonHandwrittenDmsCandidateSignal: dmsRetryTrustBoundary.nonHandwrittenDmsCandidateSignal,
-      handwrittenShapeRetryCandidate: handwrittenVisionRouting.shapeRetryCandidate
+      handwrittenShapeRetryCandidate: handwrittenVisionRouting.shapeRetryCandidate,
+      partialMultisiteRecoveryCandidateSignal: dmsRetryTrustBoundary.partialMultisiteRecoveryCandidateSignal
     });
     parserTrace.push(`DMS_RETRY_ROUTE:${dmsRetryOwnership.classification}`);
     let preliminaryDmsRetryFailClosedPatch = null;
@@ -14497,6 +14499,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let pointAzDmsTableAccepted = false;
     let dmsGroupedRetryBoundaryFailure = null;
     let dmsGroupedAcquisitionExpansion = null;
+    let dmsGroupedPartialMultisiteRecovery = null;
     let imageDmsAcquisitionCompleteness = null;
     let imageDmsFailClosedPatch = null;
     const canonicalDmsCoordinates = coordinates;
@@ -14537,7 +14540,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       groupedRowCount: countCoordinateRows(dmsGroupedInfo.output),
       lonLatOrderLines: countDmsGroupedLonLatOrderLines(rawText),
       familyRetryAllowed: dmsGroupedRetryDispatch.allowed,
-      typedRouteEligible: dmsRetryOwnership.retryOwner === dmsGroupedRetryOwner
+      typedRouteEligible: dmsRetryOwnership.classification
+        === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_ONLY,
+      partialMultisiteRecoveryEligible: dmsRetryOwnership.classification
+        === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_PARTIAL_RECOVERY_ONLY
     });
     if (!dmsGroupedRetryBoundaryFailure && dmsGroupedRetryEligibility.failClosed) {
       applyDmsGroupedRetryFailClosed(dmsGroupedRetryEligibility.reason);
@@ -14575,7 +14581,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         });
         const dmsGroupedExpansionCoverage = evaluateDmsGroupedAcquisitionExpansion({
           baselineText: rawText,
-          retryText: dmsGroupedRetryRawText
+          retryText: dmsGroupedRetryRawText,
+          allowPartialMultisiteRecovery: dmsRetryOwnership.classification
+            === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_PARTIAL_RECOVERY_ONLY
         });
 
         const retryCanonicalGrouping = reconstructDmsGroupsFromNormalizedCoordinates({
@@ -14594,6 +14602,40 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             groups: dmsGroupedRetryCoverage.groupCount,
             coverage: dmsGroupedRetryCoverage.reason
           });
+        } else if (dmsGroupedExpansionCoverage.accepted === true
+          && dmsGroupedExpansionCoverage.recoveryMode === "STAGE1_PARTIAL_MULTISITE_8_TO_16") {
+          const partialRecoveryCandidate = buildDmsGroupedPartialMultisiteRecoveryCandidate({
+            stage1RawText: rawText,
+            stage1Coordinates: coordinates,
+            retryRawText: dmsGroupedRetryRawText,
+            retryCoordinates: dmsGroupedExpansionCoverage.normalizedCoordinates,
+            expansion: dmsGroupedExpansionCoverage,
+            ownerFamily: dmsGroupedRetryOwner
+          });
+          if (partialRecoveryCandidate.accepted !== true || partialRecoveryCandidate.failClosed !== false) {
+            applyDmsGroupedRetryFailClosed(partialRecoveryCandidate.reason);
+          } else {
+            dmsGroupedPartialMultisiteRecovery = partialRecoveryCandidate;
+          }
+          if (dmsGroupedRetryBoundaryFailure) throw new Error("DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_CANDIDATE_INVALID");
+          rawText = dmsGroupedRetryRawText;
+          coordinates = dmsGroupedExpansionCoverage.normalizedCoordinates;
+          dmsGroupedInfo = { ...dmsGroupedRetryInfo, output: coordinates };
+          dmsGroupedAccepted = true;
+          dmsAccepted = false;
+          stage1FullMultisiteSafety = evaluateStage1FullMultisiteSafety({
+            isImageInput: true,
+            riskSignal: true,
+            structureText: rawText,
+            normalizedCoordinates: coordinates
+          });
+          if (stage1FullMultisiteSafety.acceptedForReview !== true
+            || stage1FullMultisiteSafety.failClosed !== false) {
+            applyDmsGroupedRetryFailClosed(stage1FullMultisiteSafety.reason);
+          } else {
+            parserTrace.push("DMS_GROUPED:partial_multisite_recovery_review_required");
+            usedModel = `${aliyunVisionModel}+dms-grouped-partial-multisite-candidate`;
+          }
         } else if (dmsGroupedExpansionCoverage.accepted === true) {
           const stage1Candidate = Object.freeze({ rawText, coordinates });
           dmsGroupedAcquisitionExpansion = Object.freeze({
@@ -15383,11 +15425,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       coordinates = stage1FullMultisiteSafety.groupedCoordinates;
       dmsGroupedInfo = { ...dmsGroupedInfo, output: stage1FullMultisiteSafety.groupedCoordinates };
       dmsGroupedAccepted = true;
-      warning = warning
-        ? `${warning} Stage-1 已完整识别多区域 DMS；必须对照原图确认 8/4/4 分组后再生成地图或 KML。`
+      const fullMultisiteReviewWarning = dmsGroupedPartialMultisiteRecovery
+        ? "结构化复读仅补充了非权威多区域 DMS 证据；必须对照原图确认 8/4/4 分组后再生成地图或 KML。"
         : "Stage-1 已完整识别多区域 DMS；必须对照原图确认 8/4/4 分组后再生成地图或 KML。";
-      if (!parserTrace.includes("DMS_GROUPED:stage1_full_multisite_review_required")) {
-        parserTrace.push("DMS_GROUPED:stage1_full_multisite_review_required");
+      warning = warning ? `${warning} ${fullMultisiteReviewWarning}` : fullMultisiteReviewWarning;
+      const fullMultisiteReviewTrace = dmsGroupedPartialMultisiteRecovery
+        ? "DMS_GROUPED:partial_multisite_recovery_confirmation_required"
+        : "DMS_GROUPED:stage1_full_multisite_review_required";
+      if (!parserTrace.includes(fullMultisiteReviewTrace)) {
+        parserTrace.push(fullMultisiteReviewTrace);
       }
     }
 
@@ -15449,10 +15495,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
                         ? "wgs84-chat-coordinates"
                         : "preserve-original-decimals-and-parse-dms";
     const finalWarning = wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning);
+    const dmsGroupedReviewCandidate = dmsGroupedAcquisitionExpansion || dmsGroupedPartialMultisiteRecovery;
     const recognitionPayload = {
       model: usedModel,
-      rawText: dmsGroupedAcquisitionExpansion?.stage1Candidate.rawText ?? rawText,
-      coordinates: dmsGroupedAcquisitionExpansion?.stage1Candidate.coordinates ?? coordinates,
+      rawText: dmsGroupedReviewCandidate?.stage1Candidate.rawText ?? rawText,
+      coordinates: dmsGroupedReviewCandidate?.stage1Candidate.coordinates ?? coordinates,
       precisionMode: finalPrecisionMode,
       warning: finalWarning,
       projection: utm30Accepted ? "utm30n" : undefined,
@@ -15481,12 +15528,40 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         precisionMode: "dms-coordinates",
         provenance: dmsGroupedAcquisitionExpansion.provenance
       } : null,
+      partialMultisiteRecoveryCandidate: dmsGroupedPartialMultisiteRecovery ? {
+        rawText: dmsGroupedPartialMultisiteRecovery.rawText,
+        coordinates: dmsGroupedPartialMultisiteRecovery.normalizedCoordinates,
+        precisionMode: "dms-coordinates",
+        candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+        provenance: dmsGroupedPartialMultisiteRecovery.provenance
+      } : null,
+      sourceCandidates: dmsGroupedPartialMultisiteRecovery ? {
+        stage1: Object.freeze({
+          rawText: dmsGroupedPartialMultisiteRecovery.stage1Candidate.rawText,
+          coordinates: dmsGroupedPartialMultisiteRecovery.stage1Candidate.coordinates,
+          rowCount: dmsGroupedPartialMultisiteRecovery.provenance.baselineRowCount,
+          candidateRole: "STAGE1_ACQUISITION_CANDIDATE",
+          candidateSha256: dmsGroupedPartialMultisiteRecovery.provenance.stage1CandidateSha256
+        }),
+        structuredReread: Object.freeze({
+          rawText: dmsGroupedPartialMultisiteRecovery.rawText,
+          coordinates: dmsGroupedPartialMultisiteRecovery.normalizedCoordinates,
+          rowCount: dmsGroupedPartialMultisiteRecovery.provenance.retryRowCount,
+          candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+          candidateSha256: dmsGroupedPartialMultisiteRecovery.provenance.retryCandidateSha256
+        })
+      } : null,
       stage1FullMultisiteSafety: stage1FullMultisiteSafety.gateRequired ? {
         gateRequired: true,
         acceptedForReview: stage1FullMultisiteReviewCandidate,
         failClosed: stage1FullMultisitePromotion.failClosed === true,
         requiresConfirmation: stage1FullMultisiteReviewCandidate,
         mapKmlBlockedUntilConfirmation: true,
+        candidateRole: dmsGroupedPartialMultisiteRecovery
+          ? "NONAUTHORITATIVE_REVIEW_CANDIDATE"
+          : "CURRENT_RECOGNITION_CANDIDATE",
+        evidenceSource: dmsGroupedPartialMultisiteRecovery ? "dms_grouped" : "stage1",
+        directCanonicalPromotion: dmsGroupedPartialMultisiteRecovery ? false : null,
         reason: stage1FullMultisiteReviewCandidate
           ? stage1FullMultisiteSafety.reason
           : stage1FullMultisitePromotion.reason,
@@ -15497,40 +15572,48 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       quota: consumeResult.quota
     };
 
-    const finalRecognitionCandidate = dmsGroupedAcquisitionExpansion
+    const finalRecognitionCandidate = dmsGroupedReviewCandidate
       ? {
           ...recognitionPayload,
           stage1Candidate: Object.freeze({
-            rawText: dmsGroupedAcquisitionExpansion.stage1Candidate.rawText,
-            coordinates: dmsGroupedAcquisitionExpansion.stage1Candidate.coordinates,
+            rawText: dmsGroupedReviewCandidate.stage1Candidate.rawText,
+            coordinates: dmsGroupedReviewCandidate.stage1Candidate.coordinates,
             precisionMode: recognitionPayload.precisionMode,
             candidateRole: "STAGE1_ACQUISITION_CANDIDATE"
           }),
-          rawText: dmsGroupedAcquisitionExpansion.rawText,
-          coordinates: dmsGroupedAcquisitionExpansion.normalizedCoordinates,
+          rawText: dmsGroupedReviewCandidate.rawText,
+          coordinates: dmsGroupedReviewCandidate.normalizedCoordinates,
           precisionMode: "dms-coordinates",
           warning: "结构化复读补充了坐标行；必须对照原图确认后才能用于地图或 KML。",
-          acquisitionDeltaProvenance: dmsGroupedAcquisitionExpansion.provenance
+          candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+          sourceCandidateSeparate: true,
+          directCanonicalPromotion: false,
+          ...(dmsGroupedAcquisitionExpansion
+            ? { acquisitionDeltaProvenance: dmsGroupedAcquisitionExpansion.provenance }
+            : { partialMultisiteRecoveryProvenance: dmsGroupedPartialMultisiteRecovery.provenance })
         }
       : recognitionPayload;
     let coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(finalRecognitionCandidate, {
       fileName: uploadedFileName,
       rawHint: coordinateEngineV2ContextHint,
-      lockedCoordinateType: dmsGroupedAcquisitionExpansion || stage1FullMultisiteReviewCandidate
+      lockedCoordinateType: dmsGroupedReviewCandidate || stage1FullMultisiteReviewCandidate
         ? "standard_dms_table"
         : undefined,
       forceRequiresReview: Boolean(
-        dmsGroupedAcquisitionExpansion
+        dmsGroupedReviewCandidate
         || stage1FullMultisiteSafety.gateRequired
         || imageDmsFailClosedPatch?.forceRequiresReview
       )
     });
-    if (dmsGroupedAcquisitionExpansion || stage1FullMultisiteSafety.gateRequired) {
+    if (dmsGroupedReviewCandidate || stage1FullMultisiteSafety.gateRequired) {
       coordinateEngineV2 = {
         ...coordinateEngineV2,
         requires_review: true,
         ...(dmsGroupedAcquisitionExpansion
           ? { acquisition_delta_provenance: dmsGroupedAcquisitionExpansion.provenance }
+          : {}),
+        ...(dmsGroupedPartialMultisiteRecovery
+          ? { partial_multisite_recovery_provenance: dmsGroupedPartialMultisiteRecovery.provenance }
           : {}),
         stage1_full_multisite_safety: recognitionPayload.stage1FullMultisiteSafety
       };
@@ -15617,7 +15700,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         })),
         warnings: [
           ...(verificationResponse.finalizedCoordinateResult.warnings || []),
-          "Stage-1 完整多区域 DMS 必须确认有序 8/4/4 分组后才能用于地图或 KML。"
+          dmsGroupedPartialMultisiteRecovery
+            ? "多站点 DMS 结构化恢复候选必须确认有序 8/4/4 分组后才能用于地图或 KML；该候选不是 Stage-1 Direct-16。"
+            : "Stage-1 完整多区域 DMS 必须确认有序 8/4/4 分组后才能用于地图或 KML。"
         ]
       }));
       verificationResponse = {
@@ -15625,7 +15710,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         finalizedCoordinateResult: pendingStage1FullMultisiteResult
       };
     }
-    res.json(dmsGroupedAcquisitionExpansion ? {
+    res.json(dmsGroupedReviewCandidate ? {
       ...verificationResponse,
       rawText: recognitionPayload.rawText,
       coordinates: recognitionPayload.coordinates,

@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { authorizeFamilyRetryDispatch } from "./family-retry-policy.js";
 
 const DMS_COMPONENT_PATTERN = /[-+]?\d{1,3}\s*[°º]\s*\d{1,2}\s*['′’]\s*\d{1,2}(?:[.,]\d+)?\s*["″”]?\s*(?:N|S|E|W|O|NORD|NORTH|SUD|SOUTH|EST|EAST|OUEST|WEST)?/gi;
 
 export const DMS_RETRY_ROUTE_CLASSIFICATION = Object.freeze({
   DMS_GROUPED_ONLY: "DMS_GROUPED_ONLY",
+  DMS_GROUPED_PARTIAL_RECOVERY_ONLY: "DMS_GROUPED_PARTIAL_RECOVERY_ONLY",
   HANDWRITTEN_DMS_ONLY: "HANDWRITTEN_DMS_ONLY",
   FAIL_CLOSED: "FAIL_CLOSED_UNPROVEN_DMS_STRUCTURE",
   NONE: "NO_DMS_RETRY_OWNER"
@@ -489,7 +491,10 @@ export function resolveDmsRetryTrustBoundary({
       && documentEvidence?.dmsStructureCandidateSignal === true,
     stage1FullMultisiteRiskSignal: !explicitHandwrittenSignal
       && !projectedTableSignal
-      && documentEvidence?.stage1FullMultisiteStructureSignal === true
+      && documentEvidence?.stage1FullMultisiteStructureSignal === true,
+    partialMultisiteRecoveryCandidateSignal: !explicitHandwrittenSignal
+      && !projectedTableSignal
+      && documentEvidence?.partialMultisiteRecoveryCandidateSignal === true
   });
 }
 
@@ -636,7 +641,8 @@ export function classifyDmsRetryOwnership({
   projectedTableSignal = false,
   explicitHandwrittenSignal = false,
   nonHandwrittenDmsCandidateSignal = false,
-  handwrittenShapeRetryCandidate = false
+  handwrittenShapeRetryCandidate = false,
+  partialMultisiteRecoveryCandidateSignal = false
 } = {}) {
   let classification = DMS_RETRY_ROUTE_CLASSIFICATION.NONE;
   let retryOwner = null;
@@ -652,6 +658,11 @@ export function classifyDmsRetryOwnership({
     retryOwner = "handwritten_dms";
   } else if (routePriority?.typedDmsGrouped === true) {
     classification = DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_ONLY;
+    retryOwner = "dms_grouped";
+  } else if (partialMultisiteRecoveryCandidateSignal === true
+    && nonHandwrittenDmsCandidateSignal === true
+    && handwrittenShapeRetryCandidate === true) {
+    classification = DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_PARTIAL_RECOVERY_ONLY;
     retryOwner = "dms_grouped";
   } else if (
     handwrittenShapeRetryCandidate === true
@@ -688,6 +699,22 @@ function normalizedCoordinateRows(text) {
     .filter(line => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?(?:\s*,\s*[-+]?\d+(?:\.\d+)?)?$/.test(line));
 }
 
+function nonEmptyNormalizedCoordinateRows(text) {
+  return String(text || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean);
+}
+
+function hasRejectedDmsCandidateLine(text) {
+  return sourceLines(text).some(sourceLine => {
+    const line = sourceLine.trim();
+    if (!line || isDmsCoordinateSourceRow(line) || boundaryName(line) || isTableHeader(line)) return false;
+    return /\d{1,3}\s*[°º]|["'′″”]\s*(?:N|S|E|W|O)\b|^\d{1,4}\s*[.)\-:]\s*/i.test(line);
+  });
+}
+
 function normalizedLongitudeLatitudePoint(line) {
   const match = String(line || "").trim().match(
     /^([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)(?:\s*,\s*[-+]?\d+(?:\.\d+)?)?$/
@@ -717,8 +744,12 @@ export function evaluateDmsNormalizedPointwiseEquivalence({
   normalizedCoordinates = ""
 } = {}) {
   const structure = extractDmsSourceStructure(structureText);
+  const allNormalizedRows = nonEmptyNormalizedCoordinateRows(normalizedCoordinates);
   const normalizedRows = normalizedCoordinateRows(normalizedCoordinates);
   const normalizedPoints = normalizedRows.map(normalizedLongitudeLatitudePoint);
+  if (allNormalizedRows.length !== normalizedRows.length) {
+    return Object.freeze({ accepted: false, reason: "NORMALIZED_DMS_MALFORMED_OR_EXTRA_ROW" });
+  }
   if (structure.rowCount === 0 || normalizedPoints.length !== structure.rowCount
     || normalizedPoints.some(point => !point)) {
     return Object.freeze({ accepted: false, reason: "NORMALIZED_DMS_POINT_COVERAGE_MISMATCH" });
@@ -815,14 +846,25 @@ export function evaluateDmsGroupedRetryEligibility({
   groupedRowCount = 0,
   lonLatOrderLines = 0,
   familyRetryAllowed = false,
-  typedRouteEligible = false
+  typedRouteEligible = false,
+  partialMultisiteRecoveryEligible = false
 } = {}) {
   const structure = extractDmsSourceStructure(rawText);
   const explicitEvidence = hasExplicitDmsMultiRegionEvidence(rawText, dmsGroupedInfo);
   const typedVerificationRequired = Boolean(typedRouteEligible
     && structure.documentHasStrongMultiRegionEvidence
     && structure.rowCount === 13);
-  const needsRepair = typedVerificationRequired || (explicitEvidence && (
+  const partialRecoveryRequired = Boolean(partialMultisiteRecoveryEligible
+    && structure.rowCount === 8
+    && structure.groupCount === 1);
+  if (partialMultisiteRecoveryEligible === true && !partialRecoveryRequired) {
+    return Object.freeze({
+      allowed: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_STRUCTURE_UNPROVEN"
+    });
+  }
+  const needsRepair = partialRecoveryRequired || typedVerificationRequired || (explicitEvidence && (
     !dmsGroupedInfo?.output
     || (Number(groupedRowCount) >= 4
       && Number(lonLatOrderLines) >= Math.max(2, Math.ceil(Number(groupedRowCount) * 0.5)))
@@ -833,7 +875,13 @@ export function evaluateDmsGroupedRetryEligibility({
   if (!familyRetryAllowed) {
     return Object.freeze({ allowed: false, failClosed: true, reason: "DMS_GROUPED_RETRY_BUDGET_BLOCKED" });
   }
-  return Object.freeze({ allowed: true, failClosed: false, reason: "DMS_GROUPED_RETRY_AUTHORIZED" });
+  return Object.freeze({
+    allowed: true,
+    failClosed: false,
+    reason: partialRecoveryRequired
+      ? "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_AUTHORIZED"
+      : "DMS_GROUPED_RETRY_AUTHORIZED"
+  });
 }
 
 function pointsEquivalent(left, right) {
@@ -860,7 +908,8 @@ export function normalizedCoordinatesFromDmsStructure(structureText = "") {
     if (parsed.some(point => !point)) {
       return Object.freeze({ accepted: false, reason: "UNPARSEABLE_DMS_ROW", output: "" });
     }
-    outputGroups.push(parsed.map(point => `${point.latitude},${point.longitude}`));
+    // Production normalized coordinates are always longitude,latitude.
+    outputGroups.push(parsed.map(point => `${point.longitude},${point.latitude}`));
   }
   return Object.freeze({
     accepted: true,
@@ -873,37 +922,89 @@ export function normalizedCoordinatesFromDmsStructure(structureText = "") {
   });
 }
 
-export function evaluateDmsGroupedAcquisitionExpansion({ baselineText = "", retryText = "" } = {}) {
+export function evaluateDmsGroupedAcquisitionExpansion({
+  baselineText = "",
+  retryText = "",
+  allowPartialMultisiteRecovery = false
+} = {}) {
   const baseline = extractDmsSourceStructure(baselineText);
   const retry = extractDmsSourceStructure(retryText);
   if (!baseline.rowCount) return Object.freeze({ accepted: false, reason: "NO_BASELINE_DMS_ROWS" });
   if (!retry.rowCount) return Object.freeze({ accepted: false, reason: "NO_RETRY_DMS_ROWS" });
   if (retry.rowCount <= baseline.rowCount) return Object.freeze({ accepted: false, reason: "RETRY_NOT_EXPANDED" });
-  if (baseline.rowCount !== 13 || retry.rowCount !== 16) {
+  const partialMultisiteRecovery = allowPartialMultisiteRecovery === true
+    && baseline.rowCount === 8
+    && retry.rowCount === 16;
+  const establishedAcquisitionExpansion = baseline.rowCount === 13 && retry.rowCount === 16;
+  if (!partialMultisiteRecovery && !establishedAcquisitionExpansion) {
     return Object.freeze({ accepted: false, reason: "UNSUPPORTED_ACQUISITION_DELTA_SIZE" });
   }
   if (!retry.documentHasStrongMultiRegionEvidence || !retry.allBoundariesProven
     || !hasExplicitDmsMultiRegionEvidence(retryText)) {
     return Object.freeze({ accepted: false, reason: "RETRY_BOUNDARY_EVIDENCE_UNPROVEN" });
   }
-  if (baseline.groupCount !== 3 || retry.groupCount !== 3
+  if (!partialMultisiteRecovery && (baseline.groupCount !== 3
     || !baseline.documentHasStrongMultiRegionEvidence || !baseline.allBoundariesProven
-    || !hasExplicitDmsMultiRegionEvidence(baselineText)) {
+    || !hasExplicitDmsMultiRegionEvidence(baselineText))) {
     return Object.freeze({ accepted: false, reason: "THREE_GROUP_BOUNDARY_CONTRACT_REQUIRED" });
   }
-  const baselineIdentities = baseline.groups.map(group => normalizeDmsBoundaryIdentity(group.name));
+  const retryGroupSizes = retry.groups.map(group => group.rows.length);
+  if (retry.groupCount !== 3 || retryGroupSizes.length !== 3
+    || ![8, 4, 4].every((size, index) => retryGroupSizes[index] === size)) {
+    return Object.freeze({ accepted: false, reason: "RETRY_ORDERED_8_4_4_GROUPING_REQUIRED" });
+  }
   const identities = retry.groups.map(group => normalizeDmsBoundaryIdentity(group.name));
-  if (baselineIdentities.some(identity => !identity)
-    || identities.some(identity => !identity)
-    || new Set(baselineIdentities).size !== baselineIdentities.length
+  const baselineIdentities = baseline.groups.map(group => normalizeDmsBoundaryIdentity(group.name));
+  if (identities.some(identity => !identity)
     || new Set(identities).size !== identities.length) {
     return Object.freeze({ accepted: false, reason: "RETRY_GROUP_IDENTITY_INVALID" });
   }
-  if (baselineIdentities.some((identity, index) => identity !== identities[index])) {
+  if (!partialMultisiteRecovery && (baselineIdentities.some(identity => !identity)
+    || new Set(baselineIdentities).size !== baselineIdentities.length)) {
+    return Object.freeze({ accepted: false, reason: "RETRY_GROUP_IDENTITY_INVALID" });
+  }
+  if (!partialMultisiteRecovery && baselineIdentities.some((identity, index) => identity !== identities[index])) {
     return Object.freeze({ accepted: false, reason: "BASELINE_GROUP_IDENTITY_OR_ORDER_MISMATCH" });
   }
   if (!groupsHaveContinuousLabels(retry)) {
     return Object.freeze({ accepted: false, reason: "RETRY_LABEL_SEQUENCE_INVALID" });
+  }
+  if (partialMultisiteRecovery) {
+    const baselineRows = baseline.groups[0]?.rows || [];
+    const baselineLabels = baselineRows.map(row => parseDmsSourceCoordinateRow(row)?.label || "");
+    const baselineOrderProven = baselineLabels.every(label => !label)
+      || hasContinuousNumberedRows(baselineRows);
+    if (baseline.groupCount !== 1 || !baselineOrderProven) {
+      return Object.freeze({ accepted: false, reason: "PARTIAL_BASELINE_SINGLE_ORDERED_GROUP_REQUIRED" });
+    }
+    const baselinePoints = baselineRows.map(parseDmsSourceCoordinateRow);
+    const firstRetryGroupPoints = retry.groups[0].rows.map(parseDmsSourceCoordinateRow);
+    if (baselinePoints.some(point => !point) || firstRetryGroupPoints.some(point => !point)) {
+      return Object.freeze({ accepted: false, reason: "UNPARSEABLE_DMS_ROW" });
+    }
+    if (baselinePoints.length !== firstRetryGroupPoints.length
+      || baselinePoints.some((point, index) => !pointsEquivalent(point, firstRetryGroupPoints[index]))) {
+      return Object.freeze({ accepted: false, reason: "PARTIAL_BASELINE_POINT_CHANGED_MISSING_OR_REORDERED" });
+    }
+    const normalized = normalizedCoordinatesFromDmsStructure(retryText);
+    if (!normalized.accepted) return normalized;
+    return Object.freeze({
+      accepted: true,
+      reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_REVIEW_REQUIRED",
+      recoveryMode: "STAGE1_PARTIAL_MULTISITE_8_TO_16",
+      baselineRowCount: baseline.rowCount,
+      retryRowCount: retry.rowCount,
+      addedRowCount: retry.rowCount - baseline.rowCount,
+      baselineRowsPreserved: true,
+      groupLocalBaselineRowsPreserved: true,
+      baselineGroupCount: baseline.groupCount,
+      baselineGroupSizes: Object.freeze(baseline.groups.map(group => group.rows.length)),
+      baselineGroupIdentities: Object.freeze([]),
+      groupCount: retry.groupCount,
+      groupSizes: normalized.groupSizes,
+      groupIdentities: normalized.groupIdentities,
+      normalizedCoordinates: normalized.output
+    });
   }
   for (let groupIndex = 0; groupIndex < baseline.groups.length; groupIndex += 1) {
     const baselinePoints = baseline.groups[groupIndex].rows.map(parseDmsSourceCoordinateRow);
@@ -943,6 +1044,155 @@ export function evaluateDmsGroupedAcquisitionExpansion({ baselineText = "", retr
     groupIdentities: normalized.groupIdentities,
     normalizedCoordinates: normalized.output
   });
+}
+
+export function buildDmsGroupedPartialMultisiteRecoveryCandidate({
+  stage1RawText = "",
+  stage1Coordinates = "",
+  retryRawText = "",
+  retryCoordinates = "",
+  expansion = {},
+  ownerFamily = ""
+} = {}) {
+  if (ownerFamily !== "dms_grouped"
+    || ![stage1RawText, stage1Coordinates, retryRawText, retryCoordinates]
+      .every(value => typeof value === "string" && value.trim())) {
+    return Object.freeze({
+      accepted: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_CANDIDATE_INVALID"
+    });
+  }
+  if (hasRejectedDmsCandidateLine(stage1RawText) || hasRejectedDmsCandidateLine(retryRawText)) {
+    return Object.freeze({
+      accepted: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_MALFORMED_SOURCE_ROW"
+    });
+  }
+  const recomputedExpansion = evaluateDmsGroupedAcquisitionExpansion({
+    baselineText: stage1RawText,
+    retryText: retryRawText,
+    allowPartialMultisiteRecovery: true
+  });
+  if (recomputedExpansion.accepted !== true
+    || recomputedExpansion.recoveryMode !== "STAGE1_PARTIAL_MULTISITE_8_TO_16") {
+    return Object.freeze({
+      accepted: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_CONTENT_UNPROVEN"
+    });
+  }
+  const sameArray = (left, right) => Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === right.length
+    && left.every((value, index) => value === right[index]);
+  const expansionBoundToContent = expansion?.accepted === true
+    && expansion?.recoveryMode === recomputedExpansion.recoveryMode
+    && expansion?.baselineRowCount === recomputedExpansion.baselineRowCount
+    && expansion?.retryRowCount === recomputedExpansion.retryRowCount
+    && expansion?.addedRowCount === recomputedExpansion.addedRowCount
+    && expansion?.baselineRowsPreserved === recomputedExpansion.baselineRowsPreserved
+    && expansion?.groupLocalBaselineRowsPreserved === recomputedExpansion.groupLocalBaselineRowsPreserved
+    && expansion?.baselineGroupCount === recomputedExpansion.baselineGroupCount
+    && expansion?.groupCount === recomputedExpansion.groupCount
+    && sameArray(expansion?.baselineGroupSizes, recomputedExpansion.baselineGroupSizes)
+    && sameArray(expansion?.baselineGroupIdentities, recomputedExpansion.baselineGroupIdentities)
+    && sameArray(expansion?.groupSizes, recomputedExpansion.groupSizes)
+    && sameArray(expansion?.groupIdentities, recomputedExpansion.groupIdentities);
+  if (!expansionBoundToContent) {
+    return Object.freeze({
+      accepted: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_EXPANSION_BINDING_MISMATCH"
+    });
+  }
+  const stage1Pointwise = evaluateDmsNormalizedPointwiseEquivalence({
+    structureText: stage1RawText,
+    normalizedCoordinates: stage1Coordinates
+  });
+  if (stage1Pointwise.accepted !== true) {
+    return Object.freeze({
+      accepted: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_PARTIAL_MULTISITE_STAGE1_POINTWISE_MISMATCH"
+    });
+  }
+  const retryPointwise = evaluateDmsNormalizedPointwiseEquivalence({
+    structureText: retryRawText,
+    normalizedCoordinates: retryCoordinates
+  });
+  if (retryPointwise.accepted !== true) {
+    return Object.freeze({
+      accepted: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_PARTIAL_MULTISITE_RETRY_POINTWISE_MISMATCH"
+    });
+  }
+  const stage1Candidate = Object.freeze({ rawText: stage1RawText, coordinates: stage1Coordinates });
+  const retryCandidate = Object.freeze({ rawText: retryRawText, coordinates: retryCoordinates });
+  const provenance = Object.freeze({
+    schemaVersion: "dms_grouped_partial_multisite_recovery_v1",
+    ownerFamily,
+    recoverySource: "dms_grouped",
+    recoveryMode: recomputedExpansion.recoveryMode,
+    candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+    baselineRowCount: recomputedExpansion.baselineRowCount,
+    retryRowCount: recomputedExpansion.retryRowCount,
+    addedRowCount: recomputedExpansion.addedRowCount,
+    baselineRowsPreserved: true,
+    groupLocalBaselineRowsPreserved: true,
+    pointwiseBaselineEquivalenceProven: true,
+    pointwiseAcquisitionDeltaProven: true,
+    strongBoundariesProven: true,
+    labelsContinuous: true,
+    sourceCandidateSeparate: true,
+    directCanonicalPromotion: false,
+    baselineGroupCount: recomputedExpansion.baselineGroupCount,
+    baselineGroupSizes: Object.freeze([...recomputedExpansion.baselineGroupSizes]),
+    baselineGroupIdentities: Object.freeze([...(recomputedExpansion.baselineGroupIdentities || [])]),
+    retryGroupCount: recomputedExpansion.groupCount,
+    retryGroupSizes: Object.freeze([...recomputedExpansion.groupSizes]),
+    retryGroupIdentities: Object.freeze([...recomputedExpansion.groupIdentities]),
+    stage1CandidateSha256: createHash("sha256").update(JSON.stringify(stage1Candidate)).digest("hex"),
+    retryCandidateSha256: createHash("sha256").update(JSON.stringify(retryCandidate)).digest("hex")
+  });
+  if (provenance.stage1CandidateSha256 === provenance.retryCandidateSha256) {
+    return Object.freeze({
+      accepted: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_CANDIDATES_NOT_SEPARATE"
+    });
+  }
+  return Object.freeze({
+    accepted: true,
+    failClosed: false,
+    reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_CANDIDATE_RETAINED",
+    stage1Candidate,
+    rawText: retryCandidate.rawText,
+    normalizedCoordinates: retryCandidate.coordinates,
+    provenance
+  });
+}
+
+export function partialMultisiteRecoveryProvenanceMatches(declared = {}, recomputed = {}) {
+  const scalarFields = [
+    "schemaVersion", "ownerFamily", "recoverySource", "recoveryMode", "candidateRole",
+    "baselineRowCount", "retryRowCount", "addedRowCount", "baselineRowsPreserved",
+    "groupLocalBaselineRowsPreserved", "pointwiseBaselineEquivalenceProven",
+    "pointwiseAcquisitionDeltaProven", "strongBoundariesProven", "labelsContinuous",
+    "sourceCandidateSeparate", "directCanonicalPromotion", "baselineGroupCount",
+    "retryGroupCount", "stage1CandidateSha256", "retryCandidateSha256"
+  ];
+  const arrayFields = [
+    "baselineGroupSizes", "baselineGroupIdentities", "retryGroupSizes", "retryGroupIdentities"
+  ];
+  return declared && typeof declared === "object" && !Array.isArray(declared)
+    && scalarFields.every(field => declared[field] === recomputed[field])
+    && arrayFields.every(field => Array.isArray(declared[field])
+      && Array.isArray(recomputed[field])
+      && declared[field].length === recomputed[field].length
+      && declared[field].every((value, index) => value === recomputed[field][index]));
 }
 
 export function buildDmsGroupedRetryFailClosedPatch(reason, parserTrace = []) {

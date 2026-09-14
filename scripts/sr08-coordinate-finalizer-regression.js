@@ -25,6 +25,11 @@ import {
   spatialResponseMatchesCurrent
 } from "../server/coordinate-finalizer/index.js";
 import { FinalizedResultSpatialGeometryAdapter } from "../server/spatial/adapters/finalized-result-adapter.js";
+import {
+  buildDmsGroupedPartialMultisiteRecoveryCandidate,
+  evaluateDmsGroupedAcquisitionExpansion,
+  parseDmsSourceCoordinateRow
+} from "../server/recognition/dms-source-structure.js";
 
 const FIXED_TIME = "2026-08-26T00:00:00.000Z";
 const clock = () => FIXED_TIME;
@@ -270,6 +275,219 @@ test("I01A", "13-to-16 dms_grouped acquisition delta requires exact confirmation
   assert.equal(malformedTopology.geometry, null);
   assert.equal(malformedTopology.qualityGateStatus, COORDINATE_QUALITY_GATE_STATUS.FAILED);
   assert.equal(malformedTopology.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+});
+
+test("I01B", "8-to-16 recovery identity survives Finalizer and Confirmation and forged content fails closed", () => {
+  const rows = Array.from({ length: 16 }, (_, index) => {
+    const label = index < 8 ? index + 1 : index < 12 ? index - 7 : index - 11;
+    return `${label}. 10°00'${String(index + 1).padStart(2, "0")}.0\"N, 20°00'${String(index + 1).padStart(2, "0")}.0\"E`;
+  });
+  const baselineText = rows.slice(0, 8).join("\n");
+  const retryText = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...rows.slice(0, 8), "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...rows.slice(8, 12), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...rows.slice(12)
+  ].join("\n");
+  const expansion = evaluateDmsGroupedAcquisitionExpansion({
+    baselineText,
+    retryText,
+    allowPartialMultisiteRecovery: true
+  });
+  const normalizedRows = expansion.normalizedCoordinates.split(/\r?\n/).filter(Boolean);
+  const built = buildDmsGroupedPartialMultisiteRecoveryCandidate({
+    stage1RawText: baselineText,
+    stage1Coordinates: normalizedRows.slice(0, 8).join("\n"),
+    retryRawText: retryText,
+    retryCoordinates: expansion.normalizedCoordinates,
+    expansion,
+    ownerFamily: "dms_grouped"
+  });
+  assert.equal(built.accepted, true);
+  const groups = [rows.slice(0, 8), rows.slice(8, 12), rows.slice(12)].map((groupRows, index) => ({
+    group_id: `group_${index + 1}`,
+    group_name: `SITES${index + 1}`,
+    geometry: "polygon",
+    requires_review: true,
+    kml_ready: false,
+    points: groupRows.map(row => {
+      const point = parseDmsSourceCoordinateRow(row);
+      return { label: point.label, lon: point.longitude, lat: point.latitude };
+    })
+  }));
+  const recognitionResult = {
+    stage1Candidate: built.stage1Candidate,
+    candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+    sourceCandidateSeparate: true,
+    directCanonicalPromotion: false,
+    partialMultisiteRecoveryCandidate: {
+      rawText: built.rawText,
+      coordinates: built.normalizedCoordinates,
+      candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+      provenance: built.provenance
+    },
+    partialMultisiteRecoveryProvenance: built.provenance,
+    sourceCandidates: {
+      stage1: {
+        ...built.stage1Candidate,
+        rowCount: built.provenance.baselineRowCount,
+        candidateRole: "STAGE1_ACQUISITION_CANDIDATE",
+        candidateSha256: built.provenance.stage1CandidateSha256
+      },
+      structuredReread: {
+        rawText: built.rawText,
+        coordinates: built.normalizedCoordinates,
+        rowCount: built.provenance.retryRowCount,
+        candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+        candidateSha256: built.provenance.retryCandidateSha256
+      }
+    }
+  };
+  const coordinateEngineV2 = {
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    partial_multisite_recovery_provenance: built.provenance,
+    groups
+  };
+  const input = createLegacyFinalizerInput({
+    recognitionResult,
+    coordinateEngineV2,
+    verification: { status: "REVIEW", warnings: [] },
+    revision: { resultId: "partial-recovery-1", resultRevision: 1 }
+  });
+  assert.equal(input.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+  assert.equal(input.sourceCandidateSeparate, true);
+  assert.equal(input.directCanonicalPromotion, false);
+  const pending = finalizeCoordinateResult(input, { clock });
+  assert.equal(pending.partialMultisiteRecoveryProvenance.recoverySource, "dms_grouped");
+  assert.equal(pending.sourceCandidates.stage1.rawText, baselineText);
+  assert.equal(pending.sourceCandidates.structuredReread.rawText, retryText);
+  assert.equal(pending.sourceCandidates.stage1.candidateRole, "STAGE1_ACQUISITION_CANDIDATE");
+  assert.equal(pending.sourceCandidates.structuredReread.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+  assert.equal(pending.sourceCandidates.stage1.candidateSha256, built.provenance.stage1CandidateSha256);
+  assert.equal(pending.sourceCandidates.structuredReread.candidateSha256, built.provenance.retryCandidateSha256);
+  assert.equal(pending.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+  assert.equal(pending.directCanonicalPromotion, false);
+
+  const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
+  runtime.register(pending);
+  const confirmed = runtime.confirm({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: pending.geometryHash,
+    action: "accept"
+  }).finalizedCoordinateResult;
+  assert.equal(confirmed.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+  assert.equal(confirmed.sourceCandidateSeparate, true);
+  assert.equal(confirmed.directCanonicalPromotion, false);
+  assert.equal(confirmed.partialMultisiteRecoveryProvenance.recoveryMode, "STAGE1_PARTIAL_MULTISITE_8_TO_16");
+  assert.equal(confirmed.sourceCandidates.stage1.rawText, baselineText);
+  assert.equal(confirmed.sourceCandidates.structuredReread.rawText, retryText);
+  assert.equal(confirmed.sourceCandidates.stage1.candidateSha256, built.provenance.stage1CandidateSha256);
+  assert.equal(confirmed.sourceCandidates.structuredReread.candidateSha256, built.provenance.retryCandidateSha256);
+
+  const forgedInput = createLegacyFinalizerInput({
+    recognitionResult: {
+      ...recognitionResult,
+      partialMultisiteRecoveryCandidate: {
+        ...recognitionResult.partialMultisiteRecoveryCandidate,
+        coordinates: recognitionResult.partialMultisiteRecoveryCandidate.coordinates.replace(normalizedRows[15], "99,12")
+      }
+    },
+    coordinateEngineV2,
+    verification: { status: "REVIEW", warnings: [] },
+    revision: { resultId: "partial-recovery-forged", resultRevision: 1 }
+  });
+  const forged = finalizeCoordinateResult(forgedInput, { clock });
+  assert.equal(forged.geometry, null);
+  assert.equal(forged.kmlAuthorityBlocked, true);
+  assert.equal(forged.qualityGateStatus, COORDINATE_QUALITY_GATE_STATUS.FAILED);
+  assert.equal(forged.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+
+  for (const [name, tamperedRecognition, tamperedEngine] of [
+    [
+      "structured-boundary",
+      recognitionResult,
+      {
+        ...coordinateEngineV2,
+        partial_multisite_recovery_provenance: { ...built.provenance, strongBoundariesProven: false }
+      }
+    ],
+    [
+      "recognition-label",
+      { ...recognitionResult, partialMultisiteRecoveryProvenance: { ...built.provenance, labelsContinuous: false } },
+      coordinateEngineV2
+    ],
+    [
+      "source-binding",
+      {
+        ...recognitionResult,
+        sourceCandidates: {
+          ...recognitionResult.sourceCandidates,
+          structuredReread: {
+            ...recognitionResult.sourceCandidates.structuredReread,
+            candidateSha256: "forged-reread-binding"
+          }
+        }
+      },
+      coordinateEngineV2
+    ]
+  ]) {
+    const tampered = finalizeCoordinateResult(createLegacyFinalizerInput({
+      recognitionResult: tamperedRecognition,
+      coordinateEngineV2: tamperedEngine,
+      verification: { status: "REVIEW", warnings: [] },
+      revision: { resultId: `partial-recovery-${name}`, resultRevision: 1 }
+    }), { clock });
+    assert.equal(tampered.geometry, null);
+    assert.equal(tampered.kmlAuthorityBlocked, true);
+    assert.equal(tampered.qualityGateStatus, COORDINATE_QUALITY_GATE_STATUS.FAILED);
+    assert.equal(tampered.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+    assert.equal(tampered.partialMultisiteRecoveryProvenance, null);
+    assert.equal(tampered.sourceCandidates, null);
+  }
+
+  const {
+    partialMultisiteRecoveryCandidate: _droppedCandidate,
+    partialMultisiteRecoveryProvenance: _droppedProvenance,
+    ...identityWithoutProof
+  } = recognitionResult;
+  const identityLoss = finalizeCoordinateResult(createLegacyFinalizerInput({
+    recognitionResult: identityWithoutProof,
+    coordinateEngineV2: {
+      ...coordinateEngineV2,
+      partial_multisite_recovery_provenance: undefined,
+      requires_review: false,
+      groups: coordinateEngineV2.groups.map(group => ({
+        ...group,
+        requires_review: false,
+        kml_ready: true
+      }))
+    },
+    verification: { status: "PASS", warnings: [] },
+    revision: { resultId: "partial-recovery-identity-loss", resultRevision: 1 }
+  }), { clock });
+  assert.equal(identityLoss.geometry, null);
+  assert.equal(identityLoss.kmlAuthorityBlocked, true);
+  assert.equal(identityLoss.qualityGateStatus, COORDINATE_QUALITY_GATE_STATUS.FAILED);
+  assert.equal(identityLoss.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+  assert.equal(identityLoss.kmlReady, false);
+
+  const driftedRows = finalizeCoordinateResult(createLegacyFinalizerInput({
+    recognitionResult: {
+      ...recognitionResult,
+      sourceCandidates: {
+        stage1: { ...recognitionResult.sourceCandidates.stage1, rowCount: 999 },
+        structuredReread: { ...recognitionResult.sourceCandidates.structuredReread, rowCount: 1 }
+      }
+    },
+    coordinateEngineV2,
+    verification: { status: "PASS", warnings: [] },
+    revision: { resultId: "partial-recovery-row-drift", resultRevision: 1 }
+  }), { clock });
+  assert.equal(driftedRows.geometry, null);
+  assert.equal(driftedRows.kmlAuthorityBlocked, true);
+  assert.equal(driftedRows.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
 });
 
 test("I02", "V3 remains fail closed without authority decision", () => {
