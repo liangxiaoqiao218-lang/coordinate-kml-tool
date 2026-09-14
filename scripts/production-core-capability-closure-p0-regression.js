@@ -179,11 +179,27 @@ async function httpScenario(scenario, run) {
     await run(post);
   }finally{const ended=once(child,'exit');child.kill();await ended;}
 }
-for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked acquisition canonical result: '+scenario,()=>httpScenario(scenario,async post=>{
+for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked acquisition preserves authority boundaries: '+scenario,()=>httpScenario(scenario,async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([new Uint8Array([255,216,255,217])],{type:'image/jpeg'}),'synthetic.jpg');
   if(scenario==='kyrgyz')form.set('rawHint','Kyrgyzstan Gauss Kruger № points X Y');
   const {status,payload}=await post('/api/recognize-coordinates',form,true);assert.equal(status,200,JSON.stringify(payload));
   const result=payload.finalizedCoordinateResult;
+  if(scenario==='handwritten'){
+    assert.equal(payload.coordinateEngineV2.coordinate_type === 'handwritten_dms_experimental',false);
+    assert.equal(payload.coordinates,'');
+    assert.deepEqual(payload.coordinateEngineV2.groups,[]);
+    assert.ok(result);
+    assert.equal(result.geometry,null);
+    assert.equal(result.geometryHash,null);
+    assert.equal(result.decisionState,'BLOCKED');
+    assert.equal(result.kmlReady,false);
+    assert.ok(result.blockingReasons.some(reason=>reason.code==='STRUCTURED_GEOMETRY_MISSING'));
+    assert.ok(result.blockingReasons.some(reason=>reason.code==='QUALITY_GATE_FAILED'));
+    assert.ok(result.blockingReasons.some(reason=>reason.code==='KML_NOT_READY'));
+    assert.equal(adapter.adapt(result).ok,false);
+    assert.equal(new MapPreviewAdapter().adapt(result,{expectedIdentity:result}).previewEligibility.allowed,false);
+    return;
+  }
   if(scenario==='unresolved'){
     const expectedSourceRows=[
       {label:'1',latitudeDms:'2°31\'21.134" S',longitudeDms:'119°30\'40.863" E'},
@@ -209,7 +225,6 @@ for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked a
     return;
   }
   complete(result);assert.equal(result.kmlReady,true,JSON.stringify({type:payload.coordinateEngineV2?.coordinate_type,reasons:result.reasonCodes}));
-  if(scenario==='handwritten'){assert.equal(payload.coordinateEngineV2.coordinate_type,'handwritten_dms_experimental');assert.equal(result.requiresReview,true,JSON.stringify({decision:result.decisionState,quality:result.qualityGateStatus,availability:result.availabilityStatus,policy:result.familySafetyPolicy,engineReview:payload.coordinateEngineV2.requires_review}));}
   if(scenario==='kyrgyz')assert.equal(payload.coordinateEngineV2.coordinate_type,'kyrgyzstan_gk');
 }));
 test('HTTP manual edit, recovery and stale/hash guards',()=>httpScenario('manual',async post=>{
