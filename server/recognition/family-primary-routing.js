@@ -153,12 +153,19 @@ export function getDmsDocumentEvidence(value = "") {
     && dmsPairLineCount === 16;
   const stage1FullMultisiteStructureSignal = dmsStructureCandidateSignal
     && dmsPairLineCount === 16;
+  // Eight valid rows plus a separate morphology-risk decision may justify one
+  // evidence-only grouped reread. This is deliberately not a multi-site or
+  // handwritten identity signal; the grouped retry must prove the full 8/4/4
+  // structure before the result can enter confirmation.
+  const partialMultisiteRecoveryCandidateSignal = dmsStructureCandidateSignal
+    && dmsPairLineCount === 8;
   return Object.freeze({ printedTableSignal, projectedTableSignal,
     handwrittenPositiveSignal: explicitHandwrittenSignal || damagedDmsSignal,
     explicitHandwrittenSignal, damagedDmsSignal, printedDmsCandidateSignal,
     nonHandwrittenDmsCandidateSignal, stage1FullMultisiteRiskSignal,
     dmsStructureCandidateSignal, printedDmsStructureSignal,
-    stage1FullMultisiteStructureSignal, dmsPairLineCount });
+    stage1FullMultisiteStructureSignal, partialMultisiteRecoveryCandidateSignal,
+    dmsPairLineCount });
 }
 
 export function getIndonesiaUtm50Info(value = "", { transform } = {}) {

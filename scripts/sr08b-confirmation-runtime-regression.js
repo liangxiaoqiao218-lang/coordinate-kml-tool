@@ -95,6 +95,67 @@ const crsConfirmed = runtime.confirm({
 });
 assert.equal(crsConfirmed.finalizedCoordinateResult.decisionState, "BLOCKED", "C08 confirmation cannot override CRS failure");
 
+const recoveryIdentity = {
+  candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+  sourceCandidateSeparate: true,
+  directCanonicalPromotion: false,
+  partialMultisiteRecoveryProvenance: {
+    schemaVersion: "dms_grouped_partial_multisite_recovery_v1",
+    recoveryMode: "STAGE1_PARTIAL_MULTISITE_8_TO_16",
+    recoverySource: "dms_grouped"
+  },
+  sourceCandidates: {
+    stage1: { rawText: "stage1", coordinates: "stage1-normalized" },
+    structuredReread: { rawText: "reread", coordinates: "reread-normalized" }
+  }
+};
+const recoveryPending = finalizeCoordinateResult(candidate({
+  resultId: "partial-recovery-lifecycle",
+  ...recoveryIdentity
+}), { clock });
+runtime.register(recoveryPending);
+const recoveryConfirmed = runtime.confirm({
+  resultId: recoveryPending.resultId,
+  resultRevision: recoveryPending.resultRevision,
+  geometryHash: recoveryPending.geometryHash,
+  action: "accept"
+}).finalizedCoordinateResult;
+assert.equal(recoveryConfirmed.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE", "C08A recovery role survives confirmation");
+assert.equal(recoveryConfirmed.sourceCandidateSeparate, true);
+assert.equal(recoveryConfirmed.directCanonicalPromotion, false);
+assert.equal(recoveryConfirmed.partialMultisiteRecoveryProvenance.recoveryMode, "STAGE1_PARTIAL_MULTISITE_8_TO_16");
+assert.equal(recoveryConfirmed.sourceCandidates.stage1.rawText, "stage1");
+assert.equal(recoveryConfirmed.sourceCandidates.structuredReread.rawText, "reread");
+
+const independentBlockers = [
+  { resultId: "recovery-source-blocked", explicitAuthorityRejected: true },
+  { resultId: "recovery-quality-blocked", qualityGateStatus: "failed" },
+  { resultId: "recovery-crs-blocked", crs: { id: "EPSG:3857", axisOrder: "longitude_latitude" } },
+  { resultId: "recovery-geometry-blocked", geometry: null },
+  { resultId: "recovery-kml-blocked", kmlAuthorityBlocked: true },
+  { resultId: "recovery-availability-blocked", availabilityStatus: "TEMPORARILY_UNAVAILABLE" }
+];
+for (const blocker of independentBlockers) {
+  const blockedPending = finalizeCoordinateResult(candidate({ ...recoveryIdentity, ...blocker }), { clock });
+  runtime.register(blockedPending);
+  const blockedConfirmed = runtime.confirm({
+    resultId: blockedPending.resultId,
+    resultRevision: blockedPending.resultRevision,
+    geometryHash: blockedPending.geometryHash,
+    action: "accept"
+  });
+  if (blockedConfirmed.ok) {
+    assert.equal(blockedConfirmed.finalizedCoordinateResult.decisionState, "BLOCKED", `C08B confirmation cannot override ${blocker.resultId}`);
+    assert.equal(blockedConfirmed.finalizedCoordinateResult.kmlReady, false);
+    assert.equal(blockedConfirmed.finalizedCoordinateResult.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+    assert.equal(blockedConfirmed.finalizedCoordinateResult.directCanonicalPromotion, false);
+  } else {
+    assert.equal(blockedPending.decisionState, "BLOCKED", `C08B unconfirmable ${blocker.resultId} remains blocked`);
+    assert.equal(blockedPending.kmlReady, false);
+    assert.equal(blockedConfirmed.code, COORDINATE_GATE_REASON.GEOMETRY_HASH_MISMATCH);
+  }
+}
+
 const mismatch = runtime.confirm({
   resultId: edited.resultId,
   resultRevision: edited.resultRevision,
@@ -132,6 +193,6 @@ assert.match(html, /if \(activeFinalizedCoordinateResult\) finalizedCoordinateDi
 
 console.log(JSON.stringify({
   suite: "sr08b-confirmation-runtime-regression",
-  passed: 13,
-  cases: ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10", "TTL", "UI_BINDING", "KML_GATE"]
+  passed: 15,
+  cases: ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C08A", "C08B", "C09", "C10", "TTL", "UI_BINDING", "KML_GATE"]
 }, null, 2));

@@ -618,6 +618,121 @@ test("Provider-returned handwritten wording cannot acquire retry ownership", () 
   }).shouldRetry, true);
 });
 
+test("eight-row Provider handwriting wording can only request non-authoritative grouped recovery", () => {
+  const rows = Array.from({ length: 8 }, (_, index) => `10°00'${String(index + 1).padStart(2, "0")}.0\"N, 20°00'${String(index + 1).padStart(2, "0")}.0\"E`);
+  const text = `${rows.join("\n")}\n识别提示：手写坐标存在需核对字符`;
+  const evidence = primaryRouting.getDmsDocumentEvidence(text);
+  const trust = dmsSourceStructure.resolveDmsRetryTrustBoundary({ documentEvidence: evidence });
+  const shape = runtime.getHandwrittenDmsVisionRoutingEvidence(text, text);
+  const ownership = dmsSourceStructure.classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: dmsSourceStructure.evaluateDmsGroupedRoutePriority({
+      isImageInput: true,
+      printedTableSignal: trust.printedDmsCandidateSignal,
+      explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+      structureText: text
+    }),
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    nonHandwrittenDmsCandidateSignal: trust.nonHandwrittenDmsCandidateSignal,
+    // A separate morphology detector may flag the shape, but the Provider
+    // wording itself still cannot become trusted handwritten identity.
+    handwrittenShapeRetryCandidate: true,
+    partialMultisiteRecoveryCandidateSignal: trust.partialMultisiteRecoveryCandidateSignal
+  });
+  assert.equal(evidence.dmsPairLineCount, 8);
+  assert.equal(trust.explicitHandwrittenSignal, false);
+  assert.equal(shape.shouldRetry, false);
+  assert.equal(ownership.classification, dmsSourceStructure.DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_PARTIAL_RECOVERY_ONLY);
+  assert.equal(ownership.retryOwner, "dms_grouped");
+});
+
+test("ordinary eight-point single-site DMS remains outside partial recovery without morphology risk", () => {
+  const rows = Array.from({ length: 8 }, (_, index) => `10°00'${String(index + 1).padStart(2, "0")}.0\"N, 20°00'${String(index + 1).padStart(2, "0")}.0\"E`);
+  assert.equal(rows.length, 8);
+  const text = rows.join("\n");
+  const evidence = primaryRouting.getDmsDocumentEvidence(text);
+  const trust = dmsSourceStructure.resolveDmsRetryTrustBoundary({ documentEvidence: evidence });
+  const ownership = dmsSourceStructure.classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: dmsSourceStructure.evaluateDmsGroupedRoutePriority({ isImageInput: true, structureText: text }),
+    nonHandwrittenDmsCandidateSignal: trust.nonHandwrittenDmsCandidateSignal,
+    handwrittenShapeRetryCandidate: false,
+    partialMultisiteRecoveryCandidateSignal: trust.partialMultisiteRecoveryCandidateSignal
+  });
+  assert.equal(ownership.classification, dmsSourceStructure.DMS_RETRY_ROUTE_CLASSIFICATION.NONE);
+  assert.equal(ownership.retryOwner, null);
+});
+
+test("eight-to-sixteen recovery requires exact baseline preservation and ordered 8 4 4", () => {
+  const rows = Array.from({ length: 16 }, (_, index) => {
+    const local = index < 8 ? index + 1 : index < 12 ? index - 7 : index - 11;
+    return `${local}. 10°00'${String(index + 1).padStart(2, "0")}.0\"N, 20°00'${String(index + 1).padStart(2, "0")}.0\"E`;
+  });
+  const baselineText = rows.slice(0, 8).join("\n");
+  const retryText = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...rows.slice(0, 8), "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...rows.slice(8, 12), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...rows.slice(12)
+  ].join("\n");
+  const accepted = dmsSourceStructure.evaluateDmsGroupedAcquisitionExpansion({
+    baselineText,
+    retryText,
+    allowPartialMultisiteRecovery: true
+  });
+  assert.equal(accepted.accepted, true);
+  assert.deepEqual(accepted.groupSizes, [8, 4, 4]);
+  const baselineCoordinates = accepted.normalizedCoordinates
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .slice(0, 8)
+    .join("\n");
+  const candidate = dmsSourceStructure.buildDmsGroupedPartialMultisiteRecoveryCandidate({
+    stage1RawText: baselineText,
+    stage1Coordinates: baselineCoordinates,
+    retryRawText: retryText,
+    retryCoordinates: accepted.normalizedCoordinates,
+    expansion: accepted,
+    ownerFamily: "dms_grouped"
+  });
+  assert.equal(candidate.accepted, true);
+  assert.equal(candidate.provenance.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+  assert.equal(candidate.provenance.sourceCandidateSeparate, true);
+  assert.equal(candidate.provenance.directCanonicalPromotion, false);
+  assert.equal(candidate.provenance.pointwiseBaselineEquivalenceProven, true);
+  assert.equal(candidate.provenance.pointwiseAcquisitionDeltaProven, true);
+  const direct16Masquerade = dmsSourceStructure.buildDmsGroupedPartialMultisiteRecoveryCandidate({
+    stage1RawText: baselineText,
+    stage1Coordinates: baselineCoordinates,
+    retryRawText: retryText,
+    retryCoordinates: accepted.normalizedCoordinates,
+    expansion: { ...accepted, recoveryMode: "STAGE1_DIRECT_16" },
+    ownerFamily: "dms_grouped"
+  });
+  assert.equal(direct16Masquerade.accepted, false);
+  assert.equal(direct16Masquerade.failClosed, true);
+  assert.equal(direct16Masquerade.reason, "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_EXPANSION_BINDING_MISMATCH");
+  const wrongGrouping = retryText.replace("SITES2", "").replace("SITES3", "");
+  assert.equal(dmsSourceStructure.evaluateDmsGroupedAcquisitionExpansion({
+    baselineText,
+    retryText: wrongGrouping,
+    allowPartialMultisiteRecovery: true
+  }).accepted, false);
+});
+
+test("partial recovery ownership without exact eight-row single-group qualification fails closed", () => {
+  const eligibility = dmsSourceStructure.evaluateDmsGroupedRetryEligibility({
+    rawText: Array.from({ length: 7 }, (_, index) => `10°00'${String(index + 1).padStart(2, "0")}.0\"N, 20°00'${String(index + 1).padStart(2, "0")}.0\"E`).join("\n"),
+    isImageInput: true,
+    familyRetryAllowed: true,
+    partialMultisiteRecoveryEligible: true
+  });
+  assert.deepEqual(eligibility, {
+    allowed: false,
+    failClosed: true,
+    reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_STRUCTURE_UNPROVEN"
+  });
+});
+
 test("hash-bound R5-R2 stage text still requires independent handwritten upload evidence", () => {
   // Exact sanitized stage text; artifact SHA256 1e8883f3c76b6ef9f9d72b2995217f11edae870e4f81db413a56fd5806736d14.
   // This is observed acquisition evidence, not Golden coordinates or a new truth upgrade.
