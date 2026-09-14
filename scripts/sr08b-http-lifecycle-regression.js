@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 
 const baseUrl = String(process.env.SR08B_BASE_URL || "http://127.0.0.1:32109").replace(/\/$/, "");
 const visitorId = `sr08b-${Date.now()}`;
+const syntheticPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 async function jsonRequest(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, options);
@@ -79,7 +80,7 @@ const scenarios = ["fast_success", "slow_provider", "provider_hang", "ocr_hang",
 const deadlineEvidence = [];
 for (const scenario of scenarios) {
   const form = new FormData();
-  form.append("image", new Blob(["sr08b-fixture"], { type: "image/png" }), "fixture.png");
+  form.append("image", new Blob([syntheticPng], { type: "image/png" }), "fixture.png");
   form.append("visitorId", visitorId);
   const startedAt = performance.now();
   const outcome = await jsonRequest("/api/recognize-coordinates", {

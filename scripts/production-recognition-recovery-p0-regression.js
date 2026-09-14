@@ -7,6 +7,7 @@ import vm from "node:vm";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import crypto from "node:crypto";
+import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "../server/recognition/cancellable-ocr.js";
 import * as primaryRouting from "../server/recognition/family-primary-routing.js";
 import * as dmsSourceStructure from "../server/recognition/dms-source-structure.js";
 import * as familyRetryPolicy from "../server/recognition/family-retry-policy.js";
@@ -56,6 +57,7 @@ for (const name of ['noCoordinatesText', 'MGRS_BANDS', 'MGRS_COLUMN_SETS', 'MGRS
 vm.runInContext('let p0QualificationAcquisition = null; let p0QualificationAcquisitionUsed = false; const aliyunBaseURL = "http://127.0.0.1:1/v1";', runtime);
 const structuredText = replay.records.find(record => record.caseId === "indonesia-dms-real-001").approvedAcquisitionLines.join("\n");
 const observedText = replay.realAcquisitionObservations[0].observedFinalRawTextLines.join("\n");
+const syntheticPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 if (process.argv[2] === '--http-candidate') {
   const { default: http } = await import('node:http');
   let acquisitions = 0;
@@ -113,8 +115,8 @@ async function runHttpCandidate(scenario) {
     const [{ port }] = await once(child, 'message', { signal });
     const form = new FormData();
     form.set('visitorId', 'coordinate-regression-p0-contract');
-    // Synthetic marker bytes: no real-image upload, decoding or Provider execution.
-    form.set('image', new Blob([Buffer.from([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' }), 'synthetic-coordinate-image.jpg');
+    // Valid synthetic image bytes: no customer material or real Provider execution.
+    form.set('image', new Blob([syntheticPng], { type: 'image/png' }), 'synthetic-coordinate-image.png');
     const response = await fetch(`http://127.0.0.1:${port}/api/recognize-coordinates`, { method: 'POST',
       headers: { 'x-regression-test': '1', 'x-regression-case-id': 'indonesia-dms-real-001' }, body: form, signal });
     const payload = await response.json();
@@ -135,6 +137,82 @@ async function runHttpCandidate(scenario) {
 }
 const cases = [];
 function test(name, fn) { cases.push({ name, fn }); }
+
+test("local OCR worker rejection is normalized and sanitized", async () => {
+  let terminated = false;
+  await assert.rejects(runCancellableOcrJob({
+    createWorker: async () => ({
+      recognize: async () => { throw new Error("private decoder detail"); },
+      terminate: async () => { terminated = true; }
+    }),
+    image: syntheticPng,
+    timeoutMs: 1000
+  }), error => {
+    assert.equal(error.code, LOCAL_OCR_FAILURE_CODE);
+    assert.equal(error.reason, "worker_error");
+    assert.equal(error.message, "Local OCR failed.");
+    assert.equal(String(error).includes("private decoder detail"), false);
+    return true;
+  });
+  assert.equal(terminated, true);
+});
+
+test("local OCR timeout settles even when worker termination hangs", async () => {
+  const startedAt = Date.now();
+  await assert.rejects(runCancellableOcrJob({
+    createWorker: async () => ({
+      recognize: async () => new Promise(() => {}),
+      terminate: async () => new Promise(() => {})
+    }),
+    image: syntheticPng,
+    timeoutMs: 20,
+    terminationTimeoutMs: 30
+  }), error => {
+    assert.equal(error.code, "RECOGNITION_BUDGET_EXHAUSTED");
+    assert.equal(error.reason, "stage_timeout");
+    return true;
+  });
+  assert.ok(Date.now() - startedAt < 250, "termination cleanup must remain bounded");
+});
+
+test("synchronous OCR termination failures cannot escape or mask the primary outcome", async () => {
+  const successful = await runCancellableOcrJob({
+    createWorker: async () => ({
+      recognize: async () => ({ data: { text: "synthetic" } }),
+      terminate: () => { throw new Error("PRIVATE_TERMINATE_DETAIL"); }
+    }),
+    image: syntheticPng,
+    timeoutMs: 1000
+  });
+  assert.equal(successful.data.text, "synthetic");
+
+  await assert.rejects(runCancellableOcrJob({
+    createWorker: async () => ({
+      recognize: async () => { throw new Error("PRIVATE_RECOGNIZE_DETAIL"); },
+      terminate: () => { throw new Error("PRIVATE_TERMINATE_DETAIL"); }
+    }),
+    image: syntheticPng,
+    timeoutMs: 1000
+  }), error => error.code === LOCAL_OCR_FAILURE_CODE && !String(error).includes("PRIVATE_"));
+
+  await assert.rejects(runCancellableOcrJob({
+    createWorker: async () => ({
+      recognize: async () => new Promise(() => {}),
+      terminate: () => { throw new Error("PRIVATE_TERMINATE_DETAIL"); }
+    }),
+    image: syntheticPng,
+    timeoutMs: 20,
+    terminationTimeoutMs: 30
+  }), error => error.code === "RECOGNITION_BUDGET_EXHAUSTED" && error.reason === "stage_timeout");
+});
+
+test("production route binds retry classification and fail-closed runtime guards", () => {
+  assert.match(serverSource, /DMS_RETRY_ROUTE_CLASSIFICATION[\s\S]*?from "\.\/server\/recognition\/dms-source-structure\.js"/);
+  assert.match(serverSource, /COORDINATE_IMAGE_INVALID/);
+  assert.match(serverSource, /errorHandler: \(\) => \{\}/);
+  assert.match(serverSource, /COORDINATE_POST_PROVIDER_PROCESSING_FAILED/);
+  assert.match(serverSource, /LOCAL_OCR_FAILED/);
+});
 
 const polygon = Object.freeze({
   type: "Polygon",

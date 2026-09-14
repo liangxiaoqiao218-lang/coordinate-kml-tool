@@ -6,9 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { inflateSync } from "node:zlib";
 import Tesseract from "tesseract.js";
 import { applyMiningJudgeabilityGate } from "./server/mining-judgeability.js";
-import { runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
+import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
 import {
   authorizeFamilyRetryDispatch,
   canAuthorizePointAzRetry,
@@ -21,6 +22,7 @@ import { CANDIDATE_SELECTION_DECISION, compareCandidateEvidence } from "./server
 import { buildHandwrittenCandidateEvidence, materializeHandwrittenDmsRows } from "./server/recognition/handwritten-candidate-evidence.js";
 import {
   IMAGE_DMS_SELECTED_ROUTE,
+  DMS_RETRY_ROUTE_CLASSIFICATION,
   buildDmsGroupedPartialMultisiteRecoveryCandidate,
   classifyDmsRetryOwnership,
   createDmsGroupedRetryOrchestrator,
@@ -118,6 +120,274 @@ const upload = multer({
     fileSize: 12 * 1024 * 1024
   }
 });
+
+const COORDINATE_IMAGE_INVALID_CODE = "COORDINATE_IMAGE_INVALID";
+
+let pngCrcTable = null;
+
+function getPngCrc32(buffer) {
+  if (!pngCrcTable) {
+    pngCrcTable = Array.from({ length: 256 }, (_, value) => {
+      let crc = value;
+      for (let bit = 0; bit < 8; bit += 1) {
+        crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+      }
+      return crc >>> 0;
+    });
+  }
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = pngCrcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function hasValidPngStructure(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 45) return false;
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (!buffer.subarray(0, 8).equals(signature)) return false;
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let sawPalette = false;
+  let sawHeader = false;
+  let sawEnd = false;
+  const imageData = [];
+  while (offset + 12 <= buffer.length) {
+    const chunkLength = buffer.readUInt32BE(offset);
+    const typeStart = offset + 4;
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + chunkLength;
+    const chunkEnd = dataEnd + 4;
+    if (chunkEnd > buffer.length) return false;
+    const chunkType = buffer.toString("ascii", typeStart, dataStart);
+    if (getPngCrc32(buffer.subarray(typeStart, dataEnd)) !== buffer.readUInt32BE(dataEnd)) return false;
+    if (!sawHeader) {
+      if (chunkType !== "IHDR" || chunkLength !== 13) return false;
+      width = buffer.readUInt32BE(dataStart);
+      height = buffer.readUInt32BE(dataStart + 4);
+      bitDepth = buffer[dataStart + 8];
+      colorType = buffer[dataStart + 9];
+      const validDepths = {
+        0: [1, 2, 4, 8, 16],
+        2: [8, 16],
+        3: [1, 2, 4, 8],
+        4: [8, 16],
+        6: [8, 16]
+      };
+      if (width <= 0 || height <= 0 || !validDepths[colorType]?.includes(bitDepth)) return false;
+      if (buffer[dataStart + 10] !== 0 || buffer[dataStart + 11] !== 0 || buffer[dataStart + 12] !== 0) return false;
+      sawHeader = true;
+    } else if (chunkType === "IHDR") {
+      return false;
+    } else if (chunkType === "PLTE") {
+      if (chunkLength === 0 || chunkLength % 3 !== 0 || chunkLength > 768 || imageData.length > 0) return false;
+      sawPalette = true;
+    } else if (chunkType === "IDAT") {
+      if (chunkLength > 0) imageData.push(buffer.subarray(dataStart, dataEnd));
+    } else if (chunkType === "IEND") {
+      if (chunkLength !== 0 || chunkEnd !== buffer.length) return false;
+      sawEnd = true;
+      break;
+    }
+    offset = chunkEnd;
+  }
+  if (!sawHeader || !sawEnd || imageData.length === 0 || (colorType === 3 && !sawPalette)) return false;
+  try {
+    const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
+    const rowBytes = Math.ceil((width * channels * bitDepth) / 8);
+    const expectedLength = height * (rowBytes + 1);
+    if (!Number.isSafeInteger(expectedLength) || expectedLength <= 0 || expectedLength > 256 * 1024 * 1024) return false;
+    const decoded = inflateSync(Buffer.concat(imageData), { maxOutputLength: expectedLength });
+    if (decoded.length !== expectedLength) return false;
+    for (let offset = 0; offset < decoded.length; offset += rowBytes + 1) {
+      if (decoded[offset] > 4) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasValidJpegStructure(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 32 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return false;
+  let offset = 2;
+  const quantizationTables = new Set();
+  const huffmanTables = new Set();
+  const scannedComponents = new Set();
+  let frameComponents = null;
+  let frameMode = null;
+  let sawScan = false;
+  jpegSegments: while (offset + 1 < buffer.length) {
+    if (buffer[offset] !== 0xff) return false;
+    while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
+    const marker = buffer[offset++];
+    if (marker === 0xd9) {
+      return sawScan
+        && offset === buffer.length
+        && frameComponents
+        && scannedComponents.size === frameComponents.size;
+    }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 2 > buffer.length) return false;
+    const segmentLength = buffer.readUInt16BE(offset);
+    if (segmentLength < 2 || offset + segmentLength > buffer.length) return false;
+    const segmentEnd = offset + segmentLength;
+    if (marker === 0xdb) {
+      let tableOffset = offset + 2;
+      while (tableOffset < segmentEnd) {
+        const tableInfo = buffer[tableOffset++];
+        const precision = tableInfo >>> 4;
+        const tableId = tableInfo & 0x0f;
+        const tableBytes = precision === 0 ? 64 : precision === 1 ? 128 : 0;
+        if (tableId > 3 || tableBytes === 0 || tableOffset + tableBytes > segmentEnd) return false;
+        for (let valueOffset = tableOffset; valueOffset < tableOffset + tableBytes; valueOffset += precision + 1) {
+          const value = precision === 0 ? buffer[valueOffset] : buffer.readUInt16BE(valueOffset);
+          if (value === 0) return false;
+        }
+        quantizationTables.add(tableId);
+        tableOffset += tableBytes;
+      }
+      if (tableOffset !== segmentEnd) return false;
+    } else if (marker === 0xc4) {
+      let tableOffset = offset + 2;
+      while (tableOffset < segmentEnd) {
+        const tableInfo = buffer[tableOffset++];
+        const tableClass = tableInfo >>> 4;
+        const tableId = tableInfo & 0x0f;
+        if (tableClass > 1 || tableId > 3 || tableOffset + 16 > segmentEnd) return false;
+        let symbolCount = 0;
+        let remainingCodes = 1;
+        for (let index = 0; index < 16; index += 1) {
+          const count = buffer[tableOffset + index];
+          symbolCount += count;
+          remainingCodes = (remainingCodes * 2) - count;
+          if (remainingCodes < 0) return false;
+        }
+        tableOffset += 16;
+        if (symbolCount <= 0 || symbolCount > 256 || tableOffset + symbolCount > segmentEnd) return false;
+        huffmanTables.add(`${tableClass}:${tableId}`);
+        tableOffset += symbolCount;
+      }
+      if (tableOffset !== segmentEnd) return false;
+    } else if (marker === 0xc0 || marker === 0xc2) {
+      if (frameComponents || segmentLength < 11 || buffer[offset + 2] !== 8) return false;
+      const height = buffer.readUInt16BE(offset + 3);
+      const width = buffer.readUInt16BE(offset + 5);
+      const componentCount = buffer[offset + 7];
+      if (width <= 0 || height <= 0 || ![1, 3, 4].includes(componentCount) || segmentLength !== 8 + (3 * componentCount)) return false;
+      frameMode = marker === 0xc0 ? "BASELINE" : "PROGRESSIVE";
+      frameComponents = new Map();
+      let componentOffset = offset + 8;
+      for (let index = 0; index < componentCount; index += 1) {
+        const componentId = buffer[componentOffset];
+        const sampling = buffer[componentOffset + 1];
+        const quantizationTableId = buffer[componentOffset + 2];
+        if (frameComponents.has(componentId) || (sampling >>> 4) === 0 || (sampling & 0x0f) === 0 || quantizationTableId > 3) return false;
+        frameComponents.set(componentId, quantizationTableId);
+        componentOffset += 3;
+      }
+    } else if ([0xc1, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+      // Unsupported JPEG coding modes fail closed until they have an equally
+      // strict, deterministic validation contract.
+      return false;
+    }
+    if (marker === 0xda) {
+      if (!frameComponents) return false;
+      const scanComponentCount = buffer[offset + 2];
+      if (scanComponentCount <= 0 || scanComponentCount > frameComponents.size || segmentLength !== 6 + (2 * scanComponentCount)) return false;
+      let scanComponentOffset = offset + 3;
+      const seenScanComponents = new Set();
+      const scanSelectors = [];
+      for (let index = 0; index < scanComponentCount; index += 1) {
+        const componentId = buffer[scanComponentOffset];
+        const tableSelectors = buffer[scanComponentOffset + 1];
+        const dcTableId = tableSelectors >>> 4;
+        const acTableId = tableSelectors & 0x0f;
+        if (!frameComponents.has(componentId) || seenScanComponents.has(componentId)) return false;
+        seenScanComponents.add(componentId);
+        scanSelectors.push({ componentId, dcTableId, acTableId });
+        scanComponentOffset += 2;
+      }
+      const spectralStart = buffer[scanComponentOffset];
+      const spectralEnd = buffer[scanComponentOffset + 1];
+      const approximation = buffer[scanComponentOffset + 2];
+      const approximationHigh = approximation >>> 4;
+      const approximationLow = approximation & 0x0f;
+      if (frameMode === "BASELINE") {
+        if (scanComponentCount !== frameComponents.size || spectralStart !== 0 || spectralEnd !== 63 || approximation !== 0) return false;
+        if (scanSelectors.some(({ dcTableId, acTableId }) => !huffmanTables.has(`0:${dcTableId}`) || !huffmanTables.has(`1:${acTableId}`))) return false;
+      } else {
+        if (spectralStart > spectralEnd || spectralEnd > 63 || (spectralStart === 0 && spectralEnd !== 0)) return false;
+        if (spectralStart > 0 && scanComponentCount !== 1) return false;
+        if (approximationHigh > 13 || approximationLow > 13) return false;
+        if (spectralStart === 0) {
+          if (scanSelectors.some(({ dcTableId }) => !huffmanTables.has(`0:${dcTableId}`))) return false;
+        } else if (scanSelectors.some(({ acTableId }) => !huffmanTables.has(`1:${acTableId}`))) {
+          return false;
+        }
+      }
+      if ([...frameComponents.values()].some(tableId => !quantizationTables.has(tableId))) return false;
+      const scanStart = segmentEnd;
+      if (scanStart >= buffer.length - 2) return false;
+      let entropyBytes = 0;
+      for (let scanOffset = scanStart; scanOffset < buffer.length - 1; scanOffset += 1) {
+        if (buffer[scanOffset] !== 0xff) {
+          entropyBytes += 1;
+          continue;
+        }
+        const next = buffer[scanOffset + 1];
+        if (next === 0x00 || (next >= 0xd0 && next <= 0xd7)) {
+          entropyBytes += 1;
+          scanOffset += 1;
+          continue;
+        }
+        if (entropyBytes <= 0) return false;
+        sawScan = true;
+        for (const componentId of seenScanComponents) scannedComponents.add(componentId);
+        if (next === 0xd9) {
+          return scanOffset === buffer.length - 2 && scannedComponents.size === frameComponents.size;
+        }
+        offset = scanOffset;
+        continue jpegSegments;
+      }
+      return false;
+    }
+    offset += segmentLength;
+  }
+  return false;
+}
+
+function hasValidBmpStructure(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 54 || buffer.toString("ascii", 0, 2) !== "BM") return false;
+  const fileSize = buffer.readUInt32LE(2);
+  const pixelOffset = buffer.readUInt32LE(10);
+  const dibSize = buffer.readUInt32LE(14);
+  if (fileSize !== buffer.length || dibSize < 40 || pixelOffset < 14 + dibSize || pixelOffset >= buffer.length) return false;
+  const width = buffer.readInt32LE(18);
+  const height = buffer.readInt32LE(22);
+  const planes = buffer.readUInt16LE(26);
+  const bitsPerPixel = buffer.readUInt16LE(28);
+  const compression = buffer.readUInt32LE(30);
+  if (width <= 0 || height === 0 || planes !== 1 || ![1, 4, 8, 16, 24, 32].includes(bitsPerPixel) || ![0, 3].includes(compression)) return false;
+  const rowBytes = Math.floor(((bitsPerPixel * width) + 31) / 32) * 4;
+  const requiredBytes = rowBytes * Math.abs(height);
+  return Number.isSafeInteger(requiredBytes) && requiredBytes > 0 && pixelOffset + requiredBytes <= buffer.length;
+}
+
+function validateCoordinateImageUpload(file) {
+  const mimeType = String(file?.mimetype || "").toLowerCase();
+  const valid = mimeType === "image/png"
+    ? hasValidPngStructure(file?.buffer)
+    : ["image/jpeg", "image/jpg"].includes(mimeType)
+      ? hasValidJpegStructure(file?.buffer)
+      : ["image/bmp", "image/x-ms-bmp"].includes(mimeType)
+        ? hasValidBmpStructure(file?.buffer)
+        : false;
+  return valid
+    ? { valid: true, reason: "VALID_IMAGE_STRUCTURE" }
+    : { valid: false, reason: "INVALID_OR_UNSUPPORTED_IMAGE_STRUCTURE" };
+}
 const aliyunApiKey = process.env.ALIYUN_API_KEY || process.env.DASHSCOPE_API_KEY || "";
 const aliyunBaseURL = process.env.ALIYUN_BASE_URL || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || "qwen-vl-plus";
@@ -7819,7 +8089,8 @@ async function runLocalOcrFallback(imageBuffer, reason = "", {
   try {
     const result = await runCancellableOcrJob({
       createWorker: () => Tesseract.createWorker("eng", 1, {
-        logger: info => console.log(info.status, info.progress)
+        logger: info => console.log(info.status, info.progress),
+        errorHandler: () => {}
       }),
       image: imageBuffer,
       signal: getRecognitionDeadlineSignal(),
@@ -13056,6 +13327,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     return consumeUsage(visitorId, "convert", req, metadata);
   };
   const parserTrace = ["OCR"];
+  let stage1ProviderSucceeded = false;
   let activeFamilyOwner = null;
   const requestRetryOrchestrator = createDmsGroupedRetryOrchestrator({ parserTrace });
   const claimRequestRetry = targetOwner => {
@@ -13095,6 +13367,18 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     if (!req.file) {
       return res.status(400).json({
         error: "后端没有收到图片，请重新选择图片上传。",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+
+    const imageValidation = validateCoordinateImageUpload(req.file);
+    if (!imageValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        reason: "invalid_image",
+        code: COORDINATE_IMAGE_INVALID_CODE,
+        error: "图片格式不支持或文件无效。",
         rawText: "",
         coordinates: ""
       });
@@ -14222,6 +14506,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       imageItems,
       temperature: 0.1
     });
+    stage1ProviderSucceeded = true;
+    if (
+      regressionTestMode.active
+      && String(req.get("x-coordinate-regression-failure") || "").trim() === "POST_PROVIDER_INTERNAL_FAILURE"
+    ) {
+      throw new Error("REGRESSION_POST_PROVIDER_INTERNAL_FAILURE");
+    }
 
     let rawText = response.choices?.[0]?.message?.content || "";
     const stage1HandwrittenCandidateInput = formatHandwrittenDmsRawRows(rawText);
@@ -15261,6 +15552,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       } catch (fallbackError) {
         if (isRecognitionStopError(fallbackError)) throw fallbackError;
+        if (fallbackError?.code === LOCAL_OCR_FAILURE_CODE) throw fallbackError;
         console.error("备用OCR失败", { reason: "LOCAL_OCR_ERROR" });
         if (!warning) {
           warning = "阿里云识别结果较少，请人工核对。";
@@ -15726,6 +16018,33 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         reason: error.reason || "budget_exhausted",
         code: RECOGNITION_BUDGET_CODE,
         error: "Recognition stopped because the remaining request budget was insufficient.",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+    if (stage1ProviderSucceeded && error?.code === LOCAL_OCR_FAILURE_CODE) {
+      console.error("Local OCR failed closed after Provider response", {
+        reason: "LOCAL_OCR_FAILED"
+      });
+      return res.status(422).json({
+        success: false,
+        reason: "local_ocr_failed",
+        code: LOCAL_OCR_FAILURE_CODE,
+        error: "图片无法安全解析，请更换有效图片后重试。",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+    if (stage1ProviderSucceeded) {
+      console.error("Coordinate post-provider processing failed closed", {
+        reason: "POST_PROVIDER_PROCESSING_FAILED",
+        uploadedFileCount: req.file ? 1 : 0
+      });
+      return res.status(422).json({
+        success: false,
+        reason: "post_provider_processing_failed",
+        code: "COORDINATE_POST_PROVIDER_PROCESSING_FAILED",
+        error: "坐标识别结果未能安全验证，请重新上传或人工核对。",
         rawText: "",
         coordinates: ""
       });
@@ -16447,8 +16766,22 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
           coordinates: ""
         });
       }
+      if (fallbackError?.code === LOCAL_OCR_FAILURE_CODE) {
+        console.error("Local OCR fallback failed closed", { reason: "LOCAL_OCR_FAILED" });
+        return res.status(422).json({
+          success: false,
+          reason: "local_ocr_failed",
+          code: LOCAL_OCR_FAILURE_CODE,
+          error: "图片无法安全解析，请更换有效图片后重试。",
+          rawText: "",
+          coordinates: ""
+        });
+      }
       console.error("Coordinate recognition fallback failed", { reason: "FALLBACK_ERROR" });
-      res.status(500).json({
+      res.status(422).json({
+        success: false,
+        reason: "recognition_failed_closed",
+        code: "COORDINATE_RECOGNITION_FAILED_CLOSED",
         error: "坐标识别与备用识别均未完成，请稍后重试。",
         rawText: "",
         coordinates: ""
