@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
+import {inflateSync} from 'node:zlib';
 import vm from 'node:vm';
 import * as routing from '../server/recognition/family-primary-routing.js';
 import * as dmsSourceStructure from '../server/recognition/dms-source-structure.js';
@@ -25,6 +26,7 @@ const replay = JSON.parse(await readFile(new URL('../release-governance/p0-deter
 const projected = replay.records[0].approvedAcquisitionLines.join('\n');
 const unresolved = projected.replace('UTM WGS 1984 ZONA 50S', '');
 const kyrgyz = 'Координаты угловых точек | № points | X | Y\n3 | 13261350 | 4607780\n1 | 13261341 | 4607777\n2 | 13261345 | 4607778';
+const syntheticPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 
 if (process.argv[2] === '--http') {
   const http = await import('node:http');
@@ -42,6 +44,7 @@ if (process.argv[2] === '--http') {
   globalThis.fetch = async url => {
     assert.equal(String(url), 'http://127.0.0.1:1/v1/chat/completions');
     assert.ok(++calls <= 3, 'unexpected retry expansion');
+    if (scenario === 'ocr-failure') throw new Error('MOCK_PROVIDER_UNAVAILABLE');
     const content = scenario === 'kyrgyz' ? kyrgyz : scenario === 'unresolved' ? unresolved : handwritten;
     return new Response(JSON.stringify({choices:[{message:{content}}]}), {status:200,headers:{'content-type':'application/json'}});
   };
@@ -50,6 +53,7 @@ if (process.argv[2] === '--http') {
     this.once('listening', () => process.send({port:this.address().port}));
     return listen.call(this,port,'127.0.0.1',cb);
   };
+  process.on('message',message=>{if(message==='stats')process.send({calls,ocrCalls:Number(globalThis.__coreOcrCalls||0)});});
   await import('../server.js');
   await new Promise(() => {});
 }
@@ -64,7 +68,7 @@ function extract(text, name) {
   }
   throw new Error('function extraction failed: '+name);
 }
-const runtime = vm.createContext({...routing,...dmsSourceStructure,...boundary,Buffer});
+const runtime = vm.createContext({...routing,...dmsSourceStructure,...boundary,Buffer,inflateSync,pngCrcTable:null});
 for (const match of source.matchAll(/^(?:async )?function (\w+)\(/gm)) vm.runInContext(extract(source,match[1]),runtime);
 for (const name of ['noCoordinatesText','MGRS_BANDS','MGRS_COLUMN_SETS','MGRS_ROW_SETS','MOZAMBIQUE_TETE_KNOWN_ROW_TOLERANCE']) {
   vm.runInContext(source.match(new RegExp(`^const ${name} = .+;$`,'m'))[0],runtime);
@@ -171,16 +175,24 @@ test('Madagascar 32 source rows, 32 cells and MultiPolygon remain intact',()=>{
 });
 
 async function httpScenario(scenario, run) {
-  const child=spawn(process.execPath,[fileURLToPath(import.meta.url),'--http',scenario],{cwd:fileURLToPath(new URL('..',import.meta.url)),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],
+  const ocrProbePreload=['ocr-failure','post-provider-failure'].includes(scenario)?`import {registerHooks} from 'node:module';
+registerHooks({load(url,context,nextLoad){
+  const result=nextLoad(url,context);
+  if(!url.replace(/\\\\/g,'/').endsWith('/node_modules/tesseract.js/src/index.js'))return result;
+  return {...result,source:"module.exports={createWorker:async()=>{globalThis.__coreOcrCalls=(globalThis.__coreOcrCalls||0)+1;return {recognize:async()=>{throw new Error('PRIVATE_DECODER_DETAIL')},terminate:async()=>{}}}};"};
+}});`:null;
+  const child=spawn(process.execPath,[...(ocrProbePreload?['--import',`data:text/javascript,${encodeURIComponent(ocrProbePreload)}`]:[]),fileURLToPath(import.meta.url),'--http',scenario],{cwd:fileURLToPath(new URL('..',import.meta.url)),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],
     env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,NODE_ENV:'test',PORT:'0',ENABLE_REGRESSION_TEST_MODE:'true',ALIYUN_API_KEY:'local-mock-only',ALIYUN_BASE_URL:'http://127.0.0.1:1/v1',DOTENV_CONFIG_PATH:'__no_core_test_env__'}});
   child.stdout.resume();child.stderr.resume();const signal=AbortSignal.timeout(25000);
   try{const [{port}]=await once(child,'message',{signal});
-    const post=async(route,body,form=false)=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,{method:'POST',headers:form?{'x-regression-test':'1'}:{'content-type':'application/json'},body:form?body:JSON.stringify(body),signal});return {status:response.status,payload:await response.json()};};
+    const post=async(route,body,form=false)=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,{method:'POST',headers:form?{'x-regression-test':'1',...(scenario==='post-provider-failure'?{'x-coordinate-regression-failure':'POST_PROVIDER_INTERNAL_FAILURE'}:{})}:{'content-type':'application/json'},body:form?body:JSON.stringify(body),signal});return {status:response.status,payload:await response.json()};};
+    post.get=async route=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,{signal});return {status:response.status,payload:await response.json()};};
+    post.stats=async()=>{const pending=once(child,'message',{signal});child.send('stats');const [value]=await pending;return value;};
     await run(post);
   }finally{const ended=once(child,'exit');child.kill();await ended;}
 }
 for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked acquisition preserves authority boundaries: '+scenario,()=>httpScenario(scenario,async post=>{
-  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([new Uint8Array([255,216,255,217])],{type:'image/jpeg'}),'synthetic.jpg');
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'image/png'}),'synthetic.png');
   if(scenario==='kyrgyz')form.set('rawHint','Kyrgyzstan Gauss Kruger № points X Y');
   const {status,payload}=await post('/api/recognize-coordinates',form,true);assert.equal(status,200,JSON.stringify(payload));
   const result=payload.finalizedCoordinateResult;
@@ -227,6 +239,78 @@ for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked a
   complete(result);assert.equal(result.kmlReady,true,JSON.stringify({type:payload.coordinateEngineV2?.coordinate_type,reasons:result.reasonCodes}));
   if(scenario==='kyrgyz')assert.equal(payload.coordinateEngineV2.coordinate_type,'kyrgyzstan_gk');
 }));
+test('HTTP malformed image fails closed before Provider and service remains alive',()=>httpScenario('malformed',async post=>{
+  const truncatedPng=Buffer.alloc(24);Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]).copy(truncatedPng);truncatedPng.write('IHDR',12,'ascii');truncatedPng.writeUInt32BE(1,16);truncatedPng.writeUInt32BE(1,20);
+  const truncatedJpeg=Buffer.from([0xff,0xd8,0xff,0xc0,0x00,0x08,0x08,0x00,0x01,0x00,0x01,0x01]);
+  const crcDamagedPng=Buffer.from(syntheticPng);crcDamagedPng[crcDamagedPng.length-1]^=1;
+  const fakeJpeg=Buffer.from([0xff,0xd8,0xff,0xdb,0x00,0x03,0x00,0xff,0xc4,0x00,0x03,0x00,0xff,0xc0,0x00,0x08,0x08,0x00,0x01,0x00,0x01,0x01,0xff,0xda,0x00,0x02,0x01,0x02,0x03,0x04,0xff,0xd9]);
+  const fakeGif=Buffer.from([0x47,0x49,0x46,0x38,0x39,0x61,1,0,1,0,0,0,0,0x2c,0,0,0,0,1,0,1,0,0,2,1,0,0,0x3b]);
+  const fakeBmp=Buffer.alloc(54);fakeBmp.write('BM',0,'ascii');fakeBmp.writeUInt32LE(54,2);fakeBmp.writeUInt32LE(54,10);fakeBmp.writeUInt32LE(40,14);fakeBmp.writeInt32LE(1,18);fakeBmp.writeInt32LE(1,22);fakeBmp.writeUInt16LE(1,26);fakeBmp.writeUInt16LE(24,28);
+  const fakeWebp=Buffer.alloc(30);fakeWebp.write('RIFF',0,'ascii');fakeWebp.writeUInt32LE(22,4);fakeWebp.write('WEBPVP8 ',8,'ascii');fakeWebp.writeUInt32LE(10,16);fakeWebp.set([0,0,0,0x9d,0x01,0x2a,1,0,1,0],20);
+  const fakeHeif=Buffer.alloc(38);fakeHeif.writeUInt32BE(16,0);fakeHeif.write('ftypmif1',4,'ascii');fakeHeif.writeUInt32BE(13,16);fakeHeif.write('meta',20,'ascii');fakeHeif.writeUInt32BE(9,29);fakeHeif.write('mdat',33,'ascii');
+  const invalidImages=[
+    [Buffer.from('not-an-image'),'image/png','malformed.png'],
+    [truncatedPng,'image/png','truncated.png'],
+    [truncatedJpeg,'image/jpeg','truncated.jpg'],
+    [crcDamagedPng,'image/png','crc-damaged.png'],
+    [fakeJpeg,'image/jpeg','container-only.jpg'],
+    [fakeGif,'image/gif','container-only.gif'],
+    [fakeBmp,'image/bmp','container-only.bmp'],
+    [fakeWebp,'image/webp','container-only.webp'],
+    [fakeHeif,'image/heif','container-only.heif']
+  ];
+  for(const [bytes,type,name] of invalidImages){
+    const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([bytes],{type}),name);
+    const result=await post('/api/recognize-coordinates',form,true);
+    assert.equal(result.status,400);assert.equal(result.payload.success,false);assert.equal(result.payload.code,'COORDINATE_IMAGE_INVALID');
+    assert.equal(result.payload.rawText,'');assert.equal(result.payload.coordinates,'');
+  }
+  assert.equal((await post.stats()).calls,0);
+  const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
+}));
+test('coordinate image preflight accepts only strictly validated container types',()=>{
+  assert.match(source,/mimeType === "image\/png"[\s\S]*?hasValidPngStructure/);
+  assert.match(source,/\["image\/jpeg", "image\/jpg"\][\s\S]*?hasValidJpegStructure/);
+  assert.match(source,/\["image\/bmp", "image\/x-ms-bmp"\][\s\S]*?hasValidBmpStructure/);
+  assert.doesNotMatch(source,/mimeType === "image\/gif"[\s\S]{0,120}hasValidGifStructure/);
+  assert.doesNotMatch(source,/mimeType === "image\/webp"[\s\S]{0,120}hasValidWebpStructure/);
+  assert.doesNotMatch(source,/\["image\/heic", "image\/heif"\][\s\S]{0,120}hasValidHeifStructure/);
+});
+test('frozen non-customer JPEG and PNG fixtures pass the actual strict preflight',async()=>{
+  const fixtures=[
+    ['../regression-samples/OCR_GOLDEN/fixtures/indonesia-utm50s-real-001.jpg','image/jpeg','2f508653305fee7c08470218f9bf94f75b56d26d7b28edcd7d8d68cd8f88eaf6'],
+    ['../regression-samples/production-recognition-recovery-p0/indonesia-utm50s-real-002.jpg','image/jpeg','707e971aef6e5a6744cbd860cf701e41218fe6fb9a609b88e8bd121d03348b5a'],
+    ['../regression-samples/fixtures/马达加斯加坐标.png','image/png','ef023b37d07676437cc24804c70a8681d851974828f1bb232538aa222e36ec5e']
+  ];
+  for(const [relative,mimetype,sha256] of fixtures){
+    const buffer=await readFile(new URL(relative,import.meta.url));
+    assert.equal(createHash('sha256').update(buffer).digest('hex'),sha256);
+    const validation=runtime.validateCoordinateImageUpload({buffer,mimetype});
+    assert.equal(validation.valid,true);assert.equal(validation.reason,'VALID_IMAGE_STRUCTURE');
+  }
+});
+test('HTTP local OCR failure is sanitized fail-closed and service remains alive',()=>httpScenario('ocr-failure',async post=>{
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'image/png'}),'synthetic.png');
+  const result=await post('/api/recognize-coordinates',form,true);
+  assert.equal(result.status,422);assert.equal(result.payload.success,false);assert.equal(result.payload.code,'LOCAL_OCR_FAILED');
+  assert.equal(result.payload.reason,'local_ocr_failed');assert.equal(result.payload.rawText,'');assert.equal(result.payload.coordinates,'');
+  assert.equal(JSON.stringify(result.payload).includes('PRIVATE_DECODER_DETAIL'),false);const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.ocrCalls,1);
+  const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
+}));
+test('HTTP post-Provider internal failure cannot transfer control to local OCR',()=>httpScenario('post-provider-failure',async post=>{
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'image/png'}),'synthetic.png');
+  const result=await post('/api/recognize-coordinates',form,true);
+  assert.equal(result.status,422);assert.equal(result.payload.success,false);assert.equal(result.payload.code,'COORDINATE_POST_PROVIDER_PROCESSING_FAILED');
+  assert.equal(result.payload.reason,'post_provider_processing_failed');assert.equal(result.payload.rawText,'');assert.equal(result.payload.coordinates,'');
+  assert.equal(JSON.stringify(result.payload).includes('REGRESSION_POST_PROVIDER_INTERNAL_FAILURE'),false);
+  const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.ocrCalls,0);
+  const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
+}));
+test('production runtime imports retry classification and sanitizes post-Provider failures',()=>{
+  assert.match(source,/DMS_RETRY_ROUTE_CLASSIFICATION[\s\S]*?from "\.\/server\/recognition\/dms-source-structure\.js"/);
+  assert.match(source,/if \(stage1ProviderSucceeded\)[\s\S]*?COORDINATE_POST_PROVIDER_PROCESSING_FAILED/);
+  assert.doesNotMatch(source,/debugErrorMessage/);
+});
 test('HTTP manual edit, recovery and stale/hash guards',()=>httpScenario('manual',async post=>{
   const start=await post('/api/coordinate-manual-finalize',{coordinateText:'75,41\n75.01,41\n75.01,41.01\n75,41.01',requireConfirmation:true});assert.equal(start.status,200);const r=start.payload.finalizedCoordinateResult;complete(r);assert.equal(r.kmlReady,true);
   const recovered=await post('/api/coordinate-manual-finalize',{coordinateText:cleanPrinted,recoveryIdentity:{resultId:r.resultId,resultRevision:r.resultRevision}});assert.equal(recovered.payload.finalizedCoordinateResult.geometryHash,r.geometryHash);
