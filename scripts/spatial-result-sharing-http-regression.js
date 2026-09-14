@@ -4,6 +4,7 @@ import fs from "node:fs";
 const server = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
 const index = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const page = fs.readFileSync(new URL("../share-result.html", import.meta.url), "utf8");
+const favicon = fs.readFileSync(new URL("../share-cover.svg", import.meta.url), "utf8");
 const client = fs.readFileSync(new URL("../assets/spatial-map/spatial-share-page.js", import.meta.url), "utf8");
 const shareCss = fs.readFileSync(new URL("../assets/spatial-map/spatial-share.css", import.meta.url), "utf8");
 const migration = fs.readFileSync(new URL("../supabase/migrations/20260901013936_spatial_result_shares.sql", import.meta.url), "utf8");
@@ -53,6 +54,10 @@ test("shared routes send noindex", () => assert.match(server, /X-Robots-Tag", "n
 test("robots disallows public share paths", () => assert.match(server, /Disallow: \/s\//));
 test("sitemap excludes public share paths", () => assert.doesNotMatch(server.match(/app\.get\("\/sitemap\.xml"[\s\S]*?\n\}\);/)?.[0] || "", /\/s\//));
 test("page has robots metadata", () => assert.match(page, /name="robots" content="noindex,nofollow,noarchive"/));
+test("shared page declares an existing valid local SVG favicon", () => {
+  assert.match(page, /<link rel="icon" type="image\/svg\+xml" href="\/share-cover\.svg" \/>/);
+  assert.match(favicon, /^\s*<svg\b[\s\S]*<\/svg>\s*$/i);
+});
 test("fresh page fetches snapshot by path id", () => assert.match(client, /fetch\(`\/api\/spatial-shares\/\$\{shareId\}`/));
 test("shared page has no Coordinate Workbench", () => assert.doesNotMatch(page, /Coordinate Workbench|coordinatePage|imageInput/));
 test("shared page has no KML action", () => assert.doesNotMatch(page, /KML|downloadKml|spatialKmlAction/));
@@ -157,6 +162,21 @@ test("migration indexes creation time", () => assert.match(migration, /create in
 test("no public sharing directory or analytics exists", () => assert.doesNotMatch(`${server}\n${page}\n${client}`, /share-directory|shareAnalytics|trackEvent\(/i));
 test("no query-string management secret exists", () => assert.doesNotMatch(`${server}\n${client}`, /[?&](token|secret|capability)=/i));
 
-console.log(`Spatial result sharing HTTP regression: ${passed}/${passed} PASS`);
+const localhostBaseUrl = String(process.env.SPATIAL_SHARE_REGRESSION_BASE_URL || "").replace(/\/$/, "");
+if (!localhostBaseUrl) {
+  console.error("FAIL SHARE-HTTP-LOCALHOST SPATIAL_SHARE_REGRESSION_BASE_URL_REQUIRED");
+  console.log(`Spatial result sharing static checks: ${passed}/${passed} PASS`);
+  process.exitCode = 1;
+} else {
+  assert.match(localhostBaseUrl, /^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/);
+  const response = await fetch(`${localhostBaseUrl}/share-cover.svg`);
+  assert.equal(response.status, 200);
+  assert.match(String(response.headers.get("content-type") || ""), /^image\/svg\+xml(?:;|$)/i);
+  assert.match(await response.text(), /^\s*<svg\b[\s\S]*<\/svg>\s*$/i);
+  passed += 1;
+  console.log(`PASS SHARE-HTTP-${String(passed).padStart(2, "0")} localhost serves the SVG favicon with the correct media type`);
+  console.log(`Spatial result sharing HTTP regression: ${passed}/${passed} PASS`);
+}
+
 console.log("AUTHORITY_MUTATION_COUNT=0");
 console.log("PROVIDER_CALLS=0");
