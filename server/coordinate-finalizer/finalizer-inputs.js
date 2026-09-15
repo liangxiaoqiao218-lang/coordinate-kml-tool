@@ -60,9 +60,13 @@ function verifiedPartialMultisiteRecovery(recognitionResult = {}, structuredResu
       baselineGroupIdentities: provenance.baselineGroupIdentities,
       groupCount: provenance.retryGroupCount,
       groupSizes: provenance.retryGroupSizes,
-      groupIdentities: provenance.retryGroupIdentities
+      groupIdentities: provenance.retryGroupIdentities,
+      weakPartialQualification: provenance.weakPartialQualification,
+      stage1RejectedEvidence: provenance.stage1RejectedEvidence,
+      weakPartialInputEvidence: recognitionResult?.partialMultisiteRecoveryInputEvidence
     },
-    ownerFamily: provenance.ownerFamily
+    ownerFamily: provenance.ownerFamily,
+    weakPartialInputEvidence: recognitionResult?.partialMultisiteRecoveryInputEvidence
   });
   if (rebuilt.accepted !== true) return null;
   const declaredSources = recognitionResult?.sourceCandidates;
@@ -86,6 +90,9 @@ function verifiedPartialMultisiteRecovery(recognitionResult = {}, structuredResu
     || recognitionResult.candidateRole !== "NONAUTHORITATIVE_REVIEW_CANDIDATE"
     || recognitionResult.sourceCandidateSeparate !== true
     || recognitionResult.directCanonicalPromotion !== false
+    || (provenance.recoveryMode === "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16"
+      && JSON.stringify(recognitionResult?.partialMultisiteRecoveryInputEvidence)
+        !== JSON.stringify(rebuilt.weakPartialInputEvidence))
     || !declaredSourcesMatch) return null;
   return Object.freeze({
     provenance: rebuilt.provenance,
@@ -103,7 +110,8 @@ function verifiedPartialMultisiteRecovery(recognitionResult = {}, structuredResu
         candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
         candidateSha256: rebuilt.provenance.retryCandidateSha256
       })
-    })
+    }),
+    inputEvidence: rebuilt.weakPartialInputEvidence
   });
 }
 
@@ -232,6 +240,7 @@ function commonInput({
     sourceCandidateSeparate: partialRecoveryApplies ? true : false,
     directCanonicalPromotion: partialRecoveryApplies ? false : null,
     partialMultisiteRecoveryProvenance: partialRecovery?.provenance || null,
+    partialMultisiteRecoveryInputEvidence: partialRecovery?.inputEvidence || null,
     sourceCandidates: partialRecovery?.sourceCandidates || null,
     warnings: [
       ...(acquisitionDeltaApplies

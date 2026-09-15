@@ -159,12 +159,19 @@ export function getDmsDocumentEvidence(value = "") {
   // structure before the result can enter confirmation.
   const partialMultisiteRecoveryCandidateSignal = dmsStructureCandidateSignal
     && dmsPairLineCount === 8;
+  // This is only a coarse Stage-1 signal. The structure module must separately
+  // prove three ordered groups, two allowlisted boundaries, continuous labels,
+  // and bounded repairable rejects before it can reserve dms_grouped.
+  const weakPartialMultisiteRecoveryCandidateSignal = dmsStructureCandidateSignal
+    && dmsPairLineCount >= 9
+    && dmsPairLineCount <= 30;
   return Object.freeze({ printedTableSignal, projectedTableSignal,
     handwrittenPositiveSignal: explicitHandwrittenSignal || damagedDmsSignal,
     explicitHandwrittenSignal, damagedDmsSignal, printedDmsCandidateSignal,
     nonHandwrittenDmsCandidateSignal, stage1FullMultisiteRiskSignal,
     dmsStructureCandidateSignal, printedDmsStructureSignal,
     stage1FullMultisiteStructureSignal, partialMultisiteRecoveryCandidateSignal,
+    weakPartialMultisiteRecoveryCandidateSignal,
     dmsPairLineCount });
 }
 

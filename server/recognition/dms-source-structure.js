@@ -1,11 +1,13 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { authorizeFamilyRetryDispatch } from "./family-retry-policy.js";
+import { getDmsDocumentEvidence } from "./family-primary-routing.js";
 
 const DMS_COMPONENT_PATTERN = /[-+]?\d{1,3}\s*[°º]\s*\d{1,2}\s*['′’]\s*\d{1,2}(?:[.,]\d+)?\s*["″”]?\s*(?:N|S|E|W|O|NORD|NORTH|SUD|SOUTH|EST|EAST|OUEST|WEST)?/gi;
 
 export const DMS_RETRY_ROUTE_CLASSIFICATION = Object.freeze({
   DMS_GROUPED_ONLY: "DMS_GROUPED_ONLY",
   DMS_GROUPED_PARTIAL_RECOVERY_ONLY: "DMS_GROUPED_PARTIAL_RECOVERY_ONLY",
+  DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY",
   HANDWRITTEN_DMS_ONLY: "HANDWRITTEN_DMS_ONLY",
   FAIL_CLOSED: "FAIL_CLOSED_UNPROVEN_DMS_STRUCTURE",
   NONE: "NO_DMS_RETRY_OWNER"
@@ -26,6 +28,30 @@ export const IMAGE_DMS_SELECTED_ROUTE = Object.freeze({
   POINT_AZ_DMS_TABLE: "POINT_AZ_DMS_TABLE",
   HANDWRITTEN_DMS: "HANDWRITTEN_DMS"
 });
+
+export function buildPartialMultisiteSafeVisionRouting({
+  handwrittenVisionRouting = {},
+  generalVisionRawText = "",
+  handwrittenVisionRawText = "",
+  finalRawText = "",
+  partialMultisiteRecoveryCandidate = null
+} = {}) {
+  if (!partialMultisiteRecoveryCandidate) {
+    return {
+      ...handwrittenVisionRouting,
+      generalVisionRawText,
+      handwrittenVisionRawText,
+      finalRawText
+    };
+  }
+
+  return {
+    ...handwrittenVisionRouting,
+    generalVisionRawText: String(partialMultisiteRecoveryCandidate?.stage1Candidate?.rawText || ""),
+    handwrittenVisionRawText: "",
+    finalRawText: String(partialMultisiteRecoveryCandidate?.rawText || "")
+  };
+}
 
 const IMAGE_DMS_TYPED_ROUTE_ALLOWLIST = new Set([
   IMAGE_DMS_SELECTED_ROUTE.DMS_GROUPED,
@@ -83,6 +109,12 @@ function leadingRowNumber(line) {
 
 function hasContinuousNumberedRows(rows = []) {
   if (!Array.isArray(rows) || rows.length < 3) return false;
+  const labels = rows.map(leadingRowNumber);
+  return labels.every((label, index) => Number.isInteger(label) && label === index + 1);
+}
+
+function hasSequentialLabelsFromOne(rows = []) {
+  if (!Array.isArray(rows) || rows.length === 0) return false;
   const labels = rows.map(leadingRowNumber);
   return labels.every((label, index) => Number.isInteger(label) && label === index + 1);
 }
@@ -494,7 +526,10 @@ export function resolveDmsRetryTrustBoundary({
       && documentEvidence?.stage1FullMultisiteStructureSignal === true,
     partialMultisiteRecoveryCandidateSignal: !explicitHandwrittenSignal
       && !projectedTableSignal
-      && documentEvidence?.partialMultisiteRecoveryCandidateSignal === true
+      && documentEvidence?.partialMultisiteRecoveryCandidateSignal === true,
+    weakPartialMultisiteRecoveryCandidateSignal: !explicitHandwrittenSignal
+      && !projectedTableSignal
+      && documentEvidence?.weakPartialMultisiteRecoveryCandidateSignal === true
   });
 }
 
@@ -642,7 +677,8 @@ export function classifyDmsRetryOwnership({
   explicitHandwrittenSignal = false,
   nonHandwrittenDmsCandidateSignal = false,
   handwrittenShapeRetryCandidate = false,
-  partialMultisiteRecoveryCandidateSignal = false
+  partialMultisiteRecoveryCandidateSignal = false,
+  weakPartialMultisiteRecovery = {}
 } = {}) {
   let classification = DMS_RETRY_ROUTE_CLASSIFICATION.NONE;
   let retryOwner = null;
@@ -656,6 +692,11 @@ export function classifyDmsRetryOwnership({
   } else if (explicitHandwrittenSignal) {
     classification = DMS_RETRY_ROUTE_CLASSIFICATION.HANDWRITTEN_DMS_ONLY;
     retryOwner = "handwritten_dms";
+  } else if (weakPartialMultisiteRecovery?.accepted === true
+    && weakPartialMultisiteRecovery?.failClosed === false
+    && nonHandwrittenDmsCandidateSignal === true) {
+    classification = DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY;
+    retryOwner = "dms_grouped";
   } else if (routePriority?.typedDmsGrouped === true) {
     classification = DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_ONLY;
     retryOwner = "dms_grouped";
@@ -712,6 +753,459 @@ function hasRejectedDmsCandidateLine(text) {
     const line = sourceLine.trim();
     if (!line || isDmsCoordinateSourceRow(line) || boundaryName(line) || isTableHeader(line)) return false;
     return /\d{1,3}\s*[°º]|["'′″”]\s*(?:N|S|E|W|O)\b|^\d{1,4}\s*[.)\-:]\s*/i.test(line);
+  });
+}
+
+const WEAK_PARTIAL_MULTISITE_PARSER_VERSION = "DMS_SOURCE_STRICT_V1";
+const WEAK_PARTIAL_REPAIRABLE_REJECTIONS = Object.freeze([
+  "DMS_PAIR_AXIS_CONFLICT",
+  "DMS_PAIR_HEMISPHERE_UNRESOLVED"
+]);
+const WEAK_PARTIAL_GROUP_MINIMUMS = Object.freeze([4, 2, 2]);
+const WEAK_PARTIAL_GROUP_MAXIMUMS = Object.freeze([8, 4, 4]);
+const WEAK_PARTIAL_QUALIFICATION_SCHEMA = "dms_grouped_weak_partial_qualification_v1";
+const WEAK_PARTIAL_INPUT_EVIDENCE_SCHEMA = "dms_grouped_weak_partial_input_evidence_v2";
+const WEAK_PARTIAL_RUNTIME_ATTESTATION_LIMIT = 4096;
+const weakPartialRuntimeAttestations = new Map();
+const WEAK_PARTIAL_QUALIFICATION_FIELDS = Object.freeze([
+  "schemaVersion",
+  "inputModality",
+  "projectedTableSignal",
+  "independentHandwrittenSignal",
+  "candidateSignal",
+  "accepted",
+  "failClosed",
+  "reason"
+]);
+const WEAK_PARTIAL_REJECTED_EVIDENCE_FIELDS = Object.freeze([
+  "sourceStage",
+  "parserVersion",
+  "candidateLineCount",
+  "validRowCount",
+  "rejectedLineCount",
+  "repairableRejectedLineCount",
+  "unknownRejectedLineCount",
+  "rejectionReasonCounts"
+]);
+const WEAK_PARTIAL_INPUT_EVIDENCE_FIELDS = Object.freeze([
+  "schemaVersion",
+  "sourceStage",
+  "inputModality",
+  "imageInputEvidenceSource",
+  "projectedTableSignal",
+  "independentHandwrittenSignal",
+  "candidateSignal",
+  "stage1SanitizedTextSha256",
+  "runtimeAttestationId"
+]);
+
+function inspectWeakPartialMultisiteRejectedEvidence(text) {
+  let validRowCount = 0;
+  const rejectionReasonCounts = {
+    DMS_PAIR_AXIS_CONFLICT: 0,
+    DMS_PAIR_HEMISPHERE_UNRESOLVED: 0
+  };
+  let unknownRejectedLineCount = 0;
+  for (const sourceLine of sourceLines(text)) {
+    const line = sourceLine.trim();
+    if (!line || boundaryName(line) || isTableHeader(line)) continue;
+    if (isDmsCoordinateSourceRow(line)) {
+      validRowCount += 1;
+      continue;
+    }
+    const dmsComponents = [...line.matchAll(DMS_COMPONENT_PATTERN)];
+    const looksLikeDmsCandidate = dmsComponents.length > 0
+      || /\d{1,3}\s*[°º]|["'′″”]\s*(?:N|S|E|W|O)\b|^\d{1,4}\s*[.)\-:]\s*/i.test(line);
+    if (!looksLikeDmsCandidate) continue;
+    let repairableReason = "";
+    if (dmsComponents.length === 2) {
+      const tokens = dmsComponents.map(match => match[0].trim());
+      const looseComponents = tokens.map(token => {
+        const match = token.match(/^\s*([-+]?\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′’]\s*(\d{1,2}(?:[.,]\d+)?)\s*["″”]?\s*(N|S|E|W|O|NORD|NORTH|SUD|SOUTH|EST|EAST|OUEST|WEST)?\s*$/i);
+        if (!match) return null;
+        const degrees = Math.abs(Number(match[1]));
+        const minutes = Number(match[2]);
+        const seconds = Number(normalizeSeconds(match[3]));
+        if (!Number.isFinite(degrees) || degrees > 180
+          || !Number.isFinite(minutes) || minutes >= 60
+          || !Number.isFinite(seconds) || seconds >= 60) return null;
+        return Object.freeze({ hemisphere: normalizeHemisphere(match[4]) });
+      });
+      const parsedComponents = tokens.map(parseDmsComponent);
+      const parsedRangesValid = parsedComponents.every(component => component
+        && (component.axis !== "latitude" || Math.abs(component.value) <= 90)
+        && (component.axis !== "longitude" || Math.abs(component.value) <= 180));
+      if (looseComponents.every(Boolean) && looseComponents.some(component => !component.hemisphere)) {
+        repairableReason = "DMS_PAIR_HEMISPHERE_UNRESOLVED";
+      } else if (parsedRangesValid && parsedComponents[0].axis === parsedComponents[1].axis) {
+        repairableReason = "DMS_PAIR_AXIS_CONFLICT";
+      }
+    }
+    if (WEAK_PARTIAL_REPAIRABLE_REJECTIONS.includes(repairableReason)) {
+      rejectionReasonCounts[repairableReason] += 1;
+    } else {
+      unknownRejectedLineCount += 1;
+    }
+  }
+  const repairableRejectedLineCount = WEAK_PARTIAL_REPAIRABLE_REJECTIONS
+    .reduce((count, reason) => count + rejectionReasonCounts[reason], 0);
+  const rejectedLineCount = repairableRejectedLineCount + unknownRejectedLineCount;
+  return Object.freeze({
+    sourceStage: "STAGE1",
+    parserVersion: WEAK_PARTIAL_MULTISITE_PARSER_VERSION,
+    candidateLineCount: validRowCount + rejectedLineCount,
+    validRowCount,
+    rejectedLineCount,
+    repairableRejectedLineCount,
+    unknownRejectedLineCount,
+    rejectionReasonCounts: Object.freeze({ ...rejectionReasonCounts })
+  });
+}
+
+function weakPartialMultisiteBoundariesProven(structure) {
+  if (structure?.groupCount !== 3) return false;
+  return structure.groups.slice(1).every(group => [
+    "section_title",
+    "repeated_table_header",
+    "number_restart"
+  ].includes(group.boundaryProvenance)
+    || (group.boundaryProvenance === "blank_line" && structure.hasProvenBlankLineBoundary === true));
+}
+
+function exactObjectKeys(value, fields) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).length === fields.length
+    && fields.every(field => Object.hasOwn(value, field)));
+}
+
+function weakPartialQualificationValid(value) {
+  return exactObjectKeys(value, WEAK_PARTIAL_QUALIFICATION_FIELDS)
+    && value.schemaVersion === WEAK_PARTIAL_QUALIFICATION_SCHEMA
+    && value.inputModality === "IMAGE"
+    && value.projectedTableSignal === false
+    && value.independentHandwrittenSignal === false
+    && value.candidateSignal === true
+    && value.accepted === true
+    && value.failClosed === false
+    && value.reason === "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ELIGIBLE";
+}
+
+function weakPartialRejectedEvidenceValid(value, validRowCount) {
+  if (!exactObjectKeys(value, WEAK_PARTIAL_REJECTED_EVIDENCE_FIELDS)
+    || !exactObjectKeys(value.rejectionReasonCounts, WEAK_PARTIAL_REPAIRABLE_REJECTIONS)) return false;
+  const integerFields = [
+    "candidateLineCount", "validRowCount", "rejectedLineCount",
+    "repairableRejectedLineCount", "unknownRejectedLineCount"
+  ];
+  if (value.sourceStage !== "STAGE1"
+    || value.parserVersion !== WEAK_PARTIAL_MULTISITE_PARSER_VERSION
+    || integerFields.some(field => !Number.isInteger(value[field]) || value[field] < 0)
+    || WEAK_PARTIAL_REPAIRABLE_REJECTIONS.some(reason => (
+      !Number.isInteger(value.rejectionReasonCounts[reason])
+      || value.rejectionReasonCounts[reason] < 0
+    ))) return false;
+  const repairableCount = WEAK_PARTIAL_REPAIRABLE_REJECTIONS
+    .reduce((count, reason) => count + value.rejectionReasonCounts[reason], 0);
+  return value.validRowCount === validRowCount
+    && value.candidateLineCount === value.validRowCount + value.rejectedLineCount
+    && value.rejectedLineCount === value.repairableRejectedLineCount + value.unknownRejectedLineCount
+    && value.repairableRejectedLineCount === repairableCount
+    && value.unknownRejectedLineCount === 0
+    && value.repairableRejectedLineCount >= 1
+    && value.repairableRejectedLineCount <= Math.min(16, validRowCount);
+}
+
+function weakPartialQualificationMatches(left, right) {
+  return weakPartialQualificationValid(left)
+    && weakPartialQualificationValid(right)
+    && WEAK_PARTIAL_QUALIFICATION_FIELDS.every(field => left[field] === right[field]);
+}
+
+function weakPartialRejectedEvidenceMatches(left, right, validRowCount) {
+  return weakPartialRejectedEvidenceValid(left, validRowCount)
+    && weakPartialRejectedEvidenceValid(right, validRowCount)
+    && WEAK_PARTIAL_REJECTED_EVIDENCE_FIELDS
+      .filter(field => field !== "rejectionReasonCounts")
+      .every(field => left[field] === right[field])
+    && WEAK_PARTIAL_REPAIRABLE_REJECTIONS.every(reason => (
+      left.rejectionReasonCounts[reason] === right.rejectionReasonCounts[reason]
+    ));
+}
+
+function createWeakPartialQualification() {
+  return Object.freeze({
+    schemaVersion: WEAK_PARTIAL_QUALIFICATION_SCHEMA,
+    inputModality: "IMAGE",
+    projectedTableSignal: false,
+    independentHandwrittenSignal: false,
+    candidateSignal: true,
+    accepted: true,
+    failClosed: false,
+    reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ELIGIBLE"
+  });
+}
+
+function createWeakPartialInputEvidence({
+  isImageInput = false,
+  structureText = "",
+  explicitHandwrittenSignal = false,
+  imageInputBuffer = null,
+  rejectedEvidence = null
+} = {}) {
+  const documentEvidence = getDmsDocumentEvidence(structureText);
+  const sanitizedText = sanitizeWeakPartialMultisiteStage1Text(structureText);
+  let runtimeAttestationId = "";
+  if (isImageInput === true
+    && Buffer.isBuffer(imageInputBuffer)
+    && imageInputBuffer.length > 0
+    && hasRejectedDmsCandidateLine(structureText)
+    && weakPartialRejectedEvidenceValid(rejectedEvidence, extractDmsSourceStructure(structureText).rowCount)) {
+    runtimeAttestationId = randomBytes(24).toString("hex");
+    weakPartialRuntimeAttestations.set(runtimeAttestationId, {
+      imageSha256: createHash("sha256").update(imageInputBuffer).digest("hex"),
+      originalStage1TextSha256: createHash("sha256").update(String(structureText)).digest("hex"),
+      sanitizedStage1TextSha256: createHash("sha256").update(sanitizedText).digest("hex"),
+      rejectedEvidenceSha256: createHash("sha256").update(JSON.stringify(rejectedEvidence)).digest("hex"),
+      state: "ISSUED",
+      boundRetryCandidateSha256: null
+    });
+    while (weakPartialRuntimeAttestations.size > WEAK_PARTIAL_RUNTIME_ATTESTATION_LIMIT) {
+      weakPartialRuntimeAttestations.delete(weakPartialRuntimeAttestations.keys().next().value);
+    }
+  }
+  return Object.freeze({
+    schemaVersion: WEAK_PARTIAL_INPUT_EVIDENCE_SCHEMA,
+    sourceStage: "STAGE1",
+    inputModality: isImageInput === true ? "IMAGE" : "UNPROVEN_INPUT_MODALITY",
+    imageInputEvidenceSource: isImageInput === true
+      ? "REQUEST_FILE_PRESENT"
+      : "REQUEST_FILE_NOT_PROVEN",
+    projectedTableSignal: documentEvidence.projectedTableSignal === true,
+    independentHandwrittenSignal: explicitHandwrittenSignal === true,
+    candidateSignal: documentEvidence.weakPartialMultisiteRecoveryCandidateSignal === true,
+    stage1SanitizedTextSha256: createHash("sha256").update(sanitizedText).digest("hex"),
+    runtimeAttestationId
+  });
+}
+
+function weakPartialInputEvidenceValid(value, stage1RawText, rejectedEvidence, imageInputBuffer = null) {
+  if (!exactObjectKeys(value, WEAK_PARTIAL_INPUT_EVIDENCE_FIELDS)) return false;
+  const sanitizedText = sanitizeWeakPartialMultisiteStage1Text(stage1RawText);
+  const derivedDocumentEvidence = getDmsDocumentEvidence(stage1RawText);
+  const attestation = weakPartialRuntimeAttestations.get(String(value.runtimeAttestationId || ""));
+  const rejectedEvidenceSha256 = createHash("sha256").update(JSON.stringify(rejectedEvidence || null)).digest("hex");
+  const suppliedImageSha256 = Buffer.isBuffer(imageInputBuffer) && imageInputBuffer.length > 0
+    ? createHash("sha256").update(imageInputBuffer).digest("hex")
+    : null;
+  const imageIdentityValid = suppliedImageSha256
+    ? attestation?.imageSha256 === suppliedImageSha256
+    : attestation?.state === "BOUND";
+  return value.schemaVersion === WEAK_PARTIAL_INPUT_EVIDENCE_SCHEMA
+    && value.sourceStage === "STAGE1"
+    && value.inputModality === "IMAGE"
+    && value.imageInputEvidenceSource === "REQUEST_FILE_PRESENT"
+    && value.projectedTableSignal === false
+    && value.independentHandwrittenSignal === false
+    && value.candidateSignal === true
+    && derivedDocumentEvidence.projectedTableSignal !== true
+    && derivedDocumentEvidence.weakPartialMultisiteRecoveryCandidateSignal === true
+    && /^[a-f0-9]{48}$/.test(value.runtimeAttestationId)
+    && Boolean(attestation)
+    && imageIdentityValid
+    && value.stage1SanitizedTextSha256 === createHash("sha256").update(sanitizedText).digest("hex")
+    && attestation.sanitizedStage1TextSha256 === value.stage1SanitizedTextSha256
+    && attestation.rejectedEvidenceSha256 === rejectedEvidenceSha256
+    && (!hasRejectedDmsCandidateLine(stage1RawText)
+      || attestation.originalStage1TextSha256 === createHash("sha256").update(String(stage1RawText)).digest("hex"));
+}
+
+function weakPartialInputEvidenceMatches(
+  left,
+  right,
+  stage1RawText,
+  rejectedEvidence,
+  imageInputBuffer = null
+) {
+  return weakPartialInputEvidenceValid(left, stage1RawText, rejectedEvidence, imageInputBuffer)
+    && weakPartialInputEvidenceValid(right, stage1RawText, rejectedEvidence, imageInputBuffer)
+    && WEAK_PARTIAL_INPUT_EVIDENCE_FIELDS.every(field => left[field] === right[field]);
+}
+
+function bindOrValidateWeakPartialRuntimeAttestation({
+  inputEvidence = {},
+  imageInputBuffer = null,
+  stage1RawText = "",
+  rejectedEvidence = null,
+  retryCandidate = null
+} = {}) {
+  const attestation = weakPartialRuntimeAttestations.get(String(inputEvidence?.runtimeAttestationId || ""));
+  if (!attestation || !retryCandidate) return false;
+  const retryCandidateSha256 = createHash("sha256")
+    .update(JSON.stringify(retryCandidate))
+    .digest("hex");
+  if (hasRejectedDmsCandidateLine(stage1RawText)) {
+    if (!Buffer.isBuffer(imageInputBuffer) || imageInputBuffer.length === 0
+      || attestation.state !== "ISSUED"
+      || attestation.imageSha256 !== createHash("sha256").update(imageInputBuffer).digest("hex")
+      || attestation.originalStage1TextSha256
+        !== createHash("sha256").update(String(stage1RawText)).digest("hex")
+      || attestation.rejectedEvidenceSha256
+        !== createHash("sha256").update(JSON.stringify(rejectedEvidence || null)).digest("hex")) {
+      return false;
+    }
+    attestation.state = "BOUND";
+    attestation.boundRetryCandidateSha256 = retryCandidateSha256;
+    return true;
+  }
+  return attestation.state === "BOUND"
+    && attestation.boundRetryCandidateSha256 === retryCandidateSha256;
+}
+
+function weakPartialInputEvidenceSha256(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+export function sanitizeWeakPartialMultisiteStage1Text(text = "") {
+  return sourceLines(text)
+    .filter(sourceLine => {
+      const line = sourceLine.trim();
+      return !line || Boolean(boundaryName(line)) || isTableHeader(line) || isDmsCoordinateSourceRow(line);
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function evaluateSanitizedWeakPartialMultisiteRecovery({
+  structureText = "",
+  qualification = {},
+  rejectedEvidence = {},
+  inputEvidence = {},
+  imageInputBuffer = null
+} = {}) {
+  const structure = extractDmsSourceStructure(structureText);
+  const groupSizes = Object.freeze(structure.groups.map(group => group.rows.length));
+  const base = { rowCount: structure.rowCount, groupCount: structure.groupCount, groupSizes, rejectedEvidence };
+  const derivedDocumentEvidence = getDmsDocumentEvidence(structureText);
+  if (!weakPartialQualificationValid(qualification)
+    || !weakPartialInputEvidenceValid(inputEvidence, structureText, rejectedEvidence, imageInputBuffer)
+    || qualification.inputModality !== inputEvidence.inputModality
+    || qualification.projectedTableSignal !== inputEvidence.projectedTableSignal
+    || qualification.independentHandwrittenSignal !== inputEvidence.independentHandwrittenSignal
+    || qualification.candidateSignal !== inputEvidence.candidateSignal
+    || derivedDocumentEvidence.projectedTableSignal === true
+    || derivedDocumentEvidence.weakPartialMultisiteRecoveryCandidateSignal !== true
+    || hasRejectedDmsCandidateLine(structureText)) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_QUALIFICATION_INVALID" });
+  }
+  if (structure.rowCount < 9 || structure.rowCount > 15 || structure.groupCount !== 3) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_GROUP_SHAPE_INVALID" });
+  }
+  if (!WEAK_PARTIAL_GROUP_MINIMUMS.every((minimum, index) => groupSizes[index] >= minimum)
+    || !WEAK_PARTIAL_GROUP_MAXIMUMS.every((maximum, index) => groupSizes[index] <= maximum)) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_GROUP_SIZE_INVALID" });
+  }
+  if (!weakPartialMultisiteBoundariesProven(structure)) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_BOUNDARY_UNPROVEN" });
+  }
+  if (!structure.groups.every(group => hasSequentialLabelsFromOne(group.rows))) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_LABEL_SEQUENCE_INVALID" });
+  }
+  if (!weakPartialRejectedEvidenceValid(rejectedEvidence, structure.rowCount)) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_REJECTED_EVIDENCE_INVALID" });
+  }
+  return Object.freeze({
+    ...base,
+    qualification: createWeakPartialQualification(),
+    inputEvidence: Object.freeze({ ...inputEvidence }),
+    accepted: true,
+    failClosed: false,
+    reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ELIGIBLE"
+  });
+}
+
+export function validateWeakPartialMultisiteLifecycleEvidence({
+  stage1RawText = "",
+  qualification = {},
+  rejectedEvidence = {},
+  inputEvidence = {}
+} = {}) {
+  const evaluation = evaluateSanitizedWeakPartialMultisiteRecovery({
+    structureText: stage1RawText,
+    qualification,
+    rejectedEvidence,
+    inputEvidence
+  });
+  return Object.freeze({
+    valid: evaluation.accepted === true && evaluation.failClosed === false,
+    reason: evaluation.accepted === true
+      ? "DMS_GROUPED_WEAK_PARTIAL_LIFECYCLE_EVIDENCE_VALID"
+      : evaluation.reason
+  });
+}
+
+export function evaluateDmsWeakPartialMultisiteRecovery({
+  isImageInput = false,
+  projectedTableSignal = false,
+  explicitHandwrittenSignal = false,
+  candidateSignal = false,
+  structureText = "",
+  imageInputBuffer = null,
+  weakPartialInputEvidence = null
+} = {}) {
+  const structure = extractDmsSourceStructure(structureText);
+  const rejectedEvidence = inspectWeakPartialMultisiteRejectedEvidence(structureText);
+  const derivedDocumentEvidence = getDmsDocumentEvidence(structureText);
+  const groupSizes = Object.freeze(structure.groups.map(group => group.rows.length));
+  const base = {
+    rowCount: structure.rowCount,
+    groupCount: structure.groupCount,
+    groupSizes,
+    rejectedEvidence
+  };
+  if (!isImageInput || projectedTableSignal || explicitHandwrittenSignal || candidateSignal !== true
+    || derivedDocumentEvidence.projectedTableSignal === true
+    || derivedDocumentEvidence.weakPartialMultisiteRecoveryCandidateSignal !== true) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_INPUT_NOT_ELIGIBLE" });
+  }
+  if (structure.rowCount < 9 || structure.rowCount > 15 || structure.groupCount !== 3) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_GROUP_SHAPE_INVALID" });
+  }
+  if (!WEAK_PARTIAL_GROUP_MINIMUMS.every((minimum, index) => groupSizes[index] >= minimum)
+    || !WEAK_PARTIAL_GROUP_MAXIMUMS.every((maximum, index) => groupSizes[index] <= maximum)) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_GROUP_SIZE_INVALID" });
+  }
+  if (!weakPartialMultisiteBoundariesProven(structure)) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_BOUNDARY_UNPROVEN" });
+  }
+  if (!structure.groups.every(group => hasSequentialLabelsFromOne(group.rows))) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_LABEL_SEQUENCE_INVALID" });
+  }
+  const maximumRepairableRejects = Math.min(16, structure.rowCount);
+  if (rejectedEvidence.unknownRejectedLineCount !== 0) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_UNKNOWN_REJECTION" });
+  }
+  if (rejectedEvidence.repairableRejectedLineCount < 1
+    || rejectedEvidence.repairableRejectedLineCount > maximumRepairableRejects) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_REJECTION_COUNT_INVALID" });
+  }
+  const inputEvidence = weakPartialInputEvidence || createWeakPartialInputEvidence({
+    isImageInput,
+    structureText,
+    explicitHandwrittenSignal,
+    imageInputBuffer,
+    rejectedEvidence
+  });
+  if (!weakPartialInputEvidenceValid(inputEvidence, structureText, rejectedEvidence, imageInputBuffer)) {
+    return Object.freeze({ ...base, accepted: false, failClosed: true, reason: "DMS_GROUPED_WEAK_PARTIAL_INPUT_ATTESTATION_INVALID" });
+  }
+  return Object.freeze({
+    ...base,
+    qualification: createWeakPartialQualification(),
+    inputEvidence,
+    accepted: true,
+    failClosed: false,
+    reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ELIGIBLE"
   });
 }
 
@@ -847,7 +1341,11 @@ export function evaluateDmsGroupedRetryEligibility({
   lonLatOrderLines = 0,
   familyRetryAllowed = false,
   typedRouteEligible = false,
-  partialMultisiteRecoveryEligible = false
+  partialMultisiteRecoveryEligible = false,
+  projectedTableSignal = false,
+  explicitHandwrittenSignal = false,
+  weakPartialMultisiteRecovery = {},
+  imageInputBuffer = null
 } = {}) {
   const structure = extractDmsSourceStructure(rawText);
   const explicitEvidence = hasExplicitDmsMultiRegionEvidence(rawText, dmsGroupedInfo);
@@ -864,7 +1362,50 @@ export function evaluateDmsGroupedRetryEligibility({
       reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_STRUCTURE_UNPROVEN"
     });
   }
-  const needsRepair = partialRecoveryRequired || typedVerificationRequired || (explicitEvidence && (
+  const weakPartialRecoveryClaimed = weakPartialMultisiteRecovery?.claimed === true;
+  const recomputedWeakPartialRecovery = weakPartialRecoveryClaimed
+    ? evaluateDmsWeakPartialMultisiteRecovery({
+        isImageInput,
+        projectedTableSignal,
+        explicitHandwrittenSignal,
+        candidateSignal: true,
+        structureText: rawText,
+        weakPartialInputEvidence: weakPartialMultisiteRecovery?.inputEvidence,
+        imageInputBuffer
+      })
+    : Object.freeze({ accepted: false });
+  const weakGroupSizesBound = Array.isArray(weakPartialMultisiteRecovery?.groupSizes)
+    && Array.isArray(recomputedWeakPartialRecovery?.groupSizes)
+    && weakPartialMultisiteRecovery.groupSizes.length === recomputedWeakPartialRecovery.groupSizes.length
+    && weakPartialMultisiteRecovery.groupSizes.every((size, index) => size === recomputedWeakPartialRecovery.groupSizes[index]);
+  const weakRejectedEvidenceBound = weakPartialMultisiteRecovery?.rejectedEvidence
+    && recomputedWeakPartialRecovery?.rejectedEvidence
+    && [
+      "sourceStage", "parserVersion", "candidateLineCount", "validRowCount",
+      "rejectedLineCount", "repairableRejectedLineCount", "unknownRejectedLineCount"
+    ].every(field => weakPartialMultisiteRecovery.rejectedEvidence[field]
+      === recomputedWeakPartialRecovery.rejectedEvidence[field])
+    && WEAK_PARTIAL_REPAIRABLE_REJECTIONS.every(reason => (
+      weakPartialMultisiteRecovery.rejectedEvidence.rejectionReasonCounts?.[reason]
+        === recomputedWeakPartialRecovery.rejectedEvidence.rejectionReasonCounts?.[reason]
+    ));
+  const weakPartialRecoveryRequired = weakPartialRecoveryClaimed
+    && weakPartialMultisiteRecovery?.accepted === true
+    && weakPartialMultisiteRecovery?.failClosed === false
+    && recomputedWeakPartialRecovery.accepted === true
+    && recomputedWeakPartialRecovery.failClosed === false
+    && weakPartialMultisiteRecovery.rowCount === recomputedWeakPartialRecovery.rowCount
+    && weakPartialMultisiteRecovery.groupCount === recomputedWeakPartialRecovery.groupCount
+    && weakGroupSizesBound
+    && weakRejectedEvidenceBound;
+  if (weakPartialRecoveryClaimed && !weakPartialRecoveryRequired) {
+    return Object.freeze({
+      allowed: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_STRUCTURE_UNPROVEN"
+    });
+  }
+  const needsRepair = weakPartialRecoveryRequired || partialRecoveryRequired || typedVerificationRequired || (explicitEvidence && (
     !dmsGroupedInfo?.output
     || (Number(groupedRowCount) >= 4
       && Number(lonLatOrderLines) >= Math.max(2, Math.ceil(Number(groupedRowCount) * 0.5)))
@@ -878,9 +1419,11 @@ export function evaluateDmsGroupedRetryEligibility({
   return Object.freeze({
     allowed: true,
     failClosed: false,
-    reason: partialRecoveryRequired
-      ? "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_AUTHORIZED"
-      : "DMS_GROUPED_RETRY_AUTHORIZED"
+    reason: weakPartialRecoveryRequired
+      ? "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_AUTHORIZED"
+      : partialRecoveryRequired
+        ? "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_AUTHORIZED"
+        : "DMS_GROUPED_RETRY_AUTHORIZED"
   });
 }
 
@@ -889,6 +1432,19 @@ function pointsEquivalent(left, right) {
   if (left.latitudeHemisphere !== right.latitudeHemisphere
     || left.longitudeHemisphere !== right.longitudeHemisphere) return false;
   if (left.label && normalizeLabel(left.label) !== normalizeLabel(right.label)) return false;
+  return closeEnough(right.latitude, left.latitude, left.latitudeTolerance)
+    && closeEnough(right.longitude, left.longitude, left.longitudeTolerance);
+}
+
+function weakPartialPointsEquivalent(left, right) {
+  return pointsEquivalent(left, right)
+    && normalizeLabel(left?.label) === normalizeLabel(right?.label);
+}
+
+function pointsShareCoordinateIdentity(left, right) {
+  if (!left || !right || left.axisOrder !== right.axisOrder) return false;
+  if (left.latitudeHemisphere !== right.latitudeHemisphere
+    || left.longitudeHemisphere !== right.longitudeHemisphere) return false;
   return closeEnough(right.latitude, left.latitude, left.latitudeTolerance)
     && closeEnough(right.longitude, left.longitude, left.longitudeTolerance);
 }
@@ -925,7 +1481,16 @@ export function normalizedCoordinatesFromDmsStructure(structureText = "") {
 export function evaluateDmsGroupedAcquisitionExpansion({
   baselineText = "",
   retryText = "",
-  allowPartialMultisiteRecovery = false
+  allowPartialMultisiteRecovery = false,
+  allowWeakPartialMultisiteRecovery = false,
+  isImageInput = false,
+  projectedTableSignal = false,
+  explicitHandwrittenSignal = false,
+  weakPartialCandidateSignal = false,
+  weakPartialQualification = null,
+  weakPartialRejectedEvidence = null,
+  weakPartialInputEvidence = null,
+  imageInputBuffer = null
 } = {}) {
   const baseline = extractDmsSourceStructure(baselineText);
   const retry = extractDmsSourceStructure(retryText);
@@ -935,15 +1500,37 @@ export function evaluateDmsGroupedAcquisitionExpansion({
   const partialMultisiteRecovery = allowPartialMultisiteRecovery === true
     && baseline.rowCount === 8
     && retry.rowCount === 16;
+  const weakPartialEvaluation = allowWeakPartialMultisiteRecovery === true
+    ? (hasRejectedDmsCandidateLine(baselineText)
+      ? evaluateDmsWeakPartialMultisiteRecovery({
+          isImageInput,
+          projectedTableSignal,
+          explicitHandwrittenSignal,
+          candidateSignal: weakPartialCandidateSignal,
+          structureText: baselineText,
+          imageInputBuffer,
+          weakPartialInputEvidence
+        })
+      : evaluateSanitizedWeakPartialMultisiteRecovery({
+          structureText: baselineText,
+          qualification: weakPartialQualification,
+          rejectedEvidence: weakPartialRejectedEvidence,
+          inputEvidence: weakPartialInputEvidence,
+          imageInputBuffer
+        }))
+    : Object.freeze({ accepted: false });
+  const weakPartialMultisiteRecovery = weakPartialEvaluation.accepted === true
+    && weakPartialEvaluation.failClosed === false
+    && retry.rowCount === 16;
   const establishedAcquisitionExpansion = baseline.rowCount === 13 && retry.rowCount === 16;
-  if (!partialMultisiteRecovery && !establishedAcquisitionExpansion) {
+  if (!partialMultisiteRecovery && !weakPartialMultisiteRecovery && !establishedAcquisitionExpansion) {
     return Object.freeze({ accepted: false, reason: "UNSUPPORTED_ACQUISITION_DELTA_SIZE" });
   }
   if (!retry.documentHasStrongMultiRegionEvidence || !retry.allBoundariesProven
     || !hasExplicitDmsMultiRegionEvidence(retryText)) {
     return Object.freeze({ accepted: false, reason: "RETRY_BOUNDARY_EVIDENCE_UNPROVEN" });
   }
-  if (!partialMultisiteRecovery && (baseline.groupCount !== 3
+  if (!partialMultisiteRecovery && !weakPartialMultisiteRecovery && (baseline.groupCount !== 3
     || !baseline.documentHasStrongMultiRegionEvidence || !baseline.allBoundariesProven
     || !hasExplicitDmsMultiRegionEvidence(baselineText))) {
     return Object.freeze({ accepted: false, reason: "THREE_GROUP_BOUNDARY_CONTRACT_REQUIRED" });
@@ -959,15 +1546,78 @@ export function evaluateDmsGroupedAcquisitionExpansion({
     || new Set(identities).size !== identities.length) {
     return Object.freeze({ accepted: false, reason: "RETRY_GROUP_IDENTITY_INVALID" });
   }
-  if (!partialMultisiteRecovery && (baselineIdentities.some(identity => !identity)
+  if (!partialMultisiteRecovery && !weakPartialMultisiteRecovery && (baselineIdentities.some(identity => !identity)
     || new Set(baselineIdentities).size !== baselineIdentities.length)) {
     return Object.freeze({ accepted: false, reason: "RETRY_GROUP_IDENTITY_INVALID" });
   }
-  if (!partialMultisiteRecovery && baselineIdentities.some((identity, index) => identity !== identities[index])) {
+  if (!partialMultisiteRecovery && !weakPartialMultisiteRecovery
+    && baselineIdentities.some((identity, index) => identity !== identities[index])) {
     return Object.freeze({ accepted: false, reason: "BASELINE_GROUP_IDENTITY_OR_ORDER_MISMATCH" });
   }
   if (!groupsHaveContinuousLabels(retry)) {
     return Object.freeze({ accepted: false, reason: "RETRY_LABEL_SEQUENCE_INVALID" });
+  }
+  if (hasRejectedDmsCandidateLine(retryText)) {
+    return Object.freeze({ accepted: false, reason: "RETRY_REJECTED_DMS_ROW_PRESENT" });
+  }
+  if (weakPartialMultisiteRecovery) {
+    const nonEmptyBaselineIdentities = baselineIdentities.filter(Boolean);
+    if (nonEmptyBaselineIdentities.length !== 0
+      && (nonEmptyBaselineIdentities.length !== baselineIdentities.length
+        || new Set(baselineIdentities).size !== baselineIdentities.length
+        || baselineIdentities.some((identity, index) => identity !== identities[index]))) {
+      return Object.freeze({ accepted: false, reason: "BASELINE_GROUP_IDENTITY_OR_ORDER_MISMATCH" });
+    }
+    const allRetryPoints = retry.groups.flatMap(group => group.rows.map(parseDmsSourceCoordinateRow));
+    if (allRetryPoints.some((point, index) => allRetryPoints
+      .slice(index + 1)
+      .some(other => pointsShareCoordinateIdentity(point, other)))) {
+      return Object.freeze({ accepted: false, reason: "WEAK_PARTIAL_RETRY_DUPLICATE_POINT" });
+    }
+    for (let groupIndex = 0; groupIndex < baseline.groups.length; groupIndex += 1) {
+      const baselinePoints = baseline.groups[groupIndex].rows.map(parseDmsSourceCoordinateRow);
+      const retryPoints = retry.groups[groupIndex].rows.map(parseDmsSourceCoordinateRow);
+      if (baselinePoints.some(point => !point) || retryPoints.some(point => !point)) {
+        return Object.freeze({ accepted: false, reason: "UNPARSEABLE_DMS_ROW" });
+      }
+      if (baselinePoints.length > retryPoints.length) {
+        return Object.freeze({ accepted: false, reason: "BASELINE_GROUP_ROW_REMOVED" });
+      }
+      for (let pointIndex = 0; pointIndex < baselinePoints.length; pointIndex += 1) {
+        const baselinePoint = baselinePoints[pointIndex];
+        const matches = retryPoints.filter(retryPoint => weakPartialPointsEquivalent(baselinePoint, retryPoint));
+        if (matches.length !== 1 || !weakPartialPointsEquivalent(baselinePoint, retryPoints[pointIndex])) {
+          return Object.freeze({
+            accepted: false,
+            reason: matches.length > 1
+              ? "WEAK_PARTIAL_BASELINE_POINT_DUPLICATED"
+              : "WEAK_PARTIAL_BASELINE_POINT_CHANGED_MISSING_REORDERED_OR_CROSS_GROUP"
+          });
+        }
+      }
+    }
+    const normalized = normalizedCoordinatesFromDmsStructure(retryText);
+    if (!normalized.accepted) return normalized;
+    return Object.freeze({
+      accepted: true,
+      reason: "DMS_GROUPED_WEAK_PARTIAL_MULTISITE_RECOVERY_REVIEW_REQUIRED",
+      recoveryMode: "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16",
+      baselineRowCount: baseline.rowCount,
+      retryRowCount: retry.rowCount,
+      addedRowCount: retry.rowCount - baseline.rowCount,
+      baselineRowsPreserved: true,
+      groupLocalBaselineRowsPreserved: true,
+      baselineGroupCount: baseline.groupCount,
+      baselineGroupSizes: Object.freeze(baseline.groups.map(group => group.rows.length)),
+      baselineGroupIdentities: Object.freeze([...baselineIdentities]),
+      groupCount: retry.groupCount,
+      groupSizes: normalized.groupSizes,
+      groupIdentities: normalized.groupIdentities,
+      weakPartialQualification: weakPartialEvaluation.qualification,
+      weakPartialInputEvidence: weakPartialEvaluation.inputEvidence,
+      stage1RejectedEvidence: weakPartialEvaluation.rejectedEvidence,
+      normalizedCoordinates: normalized.output
+    });
   }
   if (partialMultisiteRecovery) {
     const baselineRows = baseline.groups[0]?.rows || [];
@@ -1052,7 +1702,10 @@ export function buildDmsGroupedPartialMultisiteRecoveryCandidate({
   retryRawText = "",
   retryCoordinates = "",
   expansion = {},
-  ownerFamily = ""
+  ownerFamily = "",
+  weakPartialInputEvidence = null,
+  allowUnsanitizedWeakPartialStage1 = false,
+  imageInputBuffer = null
 } = {}) {
   if (ownerFamily !== "dms_grouped"
     || ![stage1RawText, stage1Coordinates, retryRawText, retryCoordinates]
@@ -1063,7 +1716,21 @@ export function buildDmsGroupedPartialMultisiteRecoveryCandidate({
       reason: "DMS_GROUPED_PARTIAL_MULTISITE_RECOVERY_CANDIDATE_INVALID"
     });
   }
-  if (hasRejectedDmsCandidateLine(stage1RawText) || hasRejectedDmsCandidateLine(retryRawText)) {
+  const declaredRecoveryMode = String(expansion?.recoveryMode || "");
+  const weakPartialRecovery = declaredRecoveryMode === "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16";
+  const boundWeakPartialInputEvidence = weakPartialInputEvidence
+    ?? expansion?.weakPartialInputEvidence
+    ?? null;
+  if (weakPartialRecovery && hasRejectedDmsCandidateLine(stage1RawText)
+    && allowUnsanitizedWeakPartialStage1 !== true) {
+    return Object.freeze({
+      accepted: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_WEAK_PARTIAL_REJECTED_RAW_EVIDENCE_FORBIDDEN"
+    });
+  }
+  if ((!weakPartialRecovery && hasRejectedDmsCandidateLine(stage1RawText))
+    || hasRejectedDmsCandidateLine(retryRawText)) {
     return Object.freeze({
       accepted: false,
       failClosed: true,
@@ -1073,10 +1740,23 @@ export function buildDmsGroupedPartialMultisiteRecoveryCandidate({
   const recomputedExpansion = evaluateDmsGroupedAcquisitionExpansion({
     baselineText: stage1RawText,
     retryText: retryRawText,
-    allowPartialMultisiteRecovery: true
+    allowPartialMultisiteRecovery: true,
+    allowWeakPartialMultisiteRecovery: true,
+    isImageInput: boundWeakPartialInputEvidence?.inputModality === "IMAGE"
+      && boundWeakPartialInputEvidence?.imageInputEvidenceSource === "REQUEST_FILE_PRESENT",
+    projectedTableSignal: getDmsDocumentEvidence(stage1RawText).projectedTableSignal,
+    explicitHandwrittenSignal: boundWeakPartialInputEvidence?.independentHandwrittenSignal,
+    weakPartialCandidateSignal: getDmsDocumentEvidence(stage1RawText).weakPartialMultisiteRecoveryCandidateSignal,
+    weakPartialQualification: expansion?.weakPartialQualification,
+    weakPartialRejectedEvidence: expansion?.stage1RejectedEvidence,
+    weakPartialInputEvidence: boundWeakPartialInputEvidence,
+    imageInputBuffer
   });
   if (recomputedExpansion.accepted !== true
-    || recomputedExpansion.recoveryMode !== "STAGE1_PARTIAL_MULTISITE_8_TO_16") {
+    || ![
+      "STAGE1_PARTIAL_MULTISITE_8_TO_16",
+      "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16"
+    ].includes(recomputedExpansion.recoveryMode)) {
     return Object.freeze({
       accepted: false,
       failClosed: true,
@@ -1099,7 +1779,25 @@ export function buildDmsGroupedPartialMultisiteRecoveryCandidate({
     && sameArray(expansion?.baselineGroupSizes, recomputedExpansion.baselineGroupSizes)
     && sameArray(expansion?.baselineGroupIdentities, recomputedExpansion.baselineGroupIdentities)
     && sameArray(expansion?.groupSizes, recomputedExpansion.groupSizes)
-    && sameArray(expansion?.groupIdentities, recomputedExpansion.groupIdentities);
+    && sameArray(expansion?.groupIdentities, recomputedExpansion.groupIdentities)
+    && (!weakPartialRecovery || (
+      weakPartialQualificationMatches(
+        expansion?.weakPartialQualification,
+        recomputedExpansion.weakPartialQualification
+      )
+      && weakPartialRejectedEvidenceMatches(
+        expansion?.stage1RejectedEvidence,
+        recomputedExpansion.stage1RejectedEvidence,
+        recomputedExpansion.baselineRowCount
+      )
+      && weakPartialInputEvidenceMatches(
+        boundWeakPartialInputEvidence,
+        recomputedExpansion.weakPartialInputEvidence,
+        stage1RawText,
+        recomputedExpansion.stage1RejectedEvidence,
+        imageInputBuffer
+      )
+    ));
   if (!expansionBoundToContent) {
     return Object.freeze({
       accepted: false,
@@ -1129,8 +1827,24 @@ export function buildDmsGroupedPartialMultisiteRecoveryCandidate({
       reason: "DMS_GROUPED_PARTIAL_MULTISITE_RETRY_POINTWISE_MISMATCH"
     });
   }
-  const stage1Candidate = Object.freeze({ rawText: stage1RawText, coordinates: stage1Coordinates });
+  const retainedStage1RawText = weakPartialRecovery
+    ? sanitizeWeakPartialMultisiteStage1Text(stage1RawText)
+    : stage1RawText;
+  const stage1Candidate = Object.freeze({ rawText: retainedStage1RawText, coordinates: stage1Coordinates });
   const retryCandidate = Object.freeze({ rawText: retryRawText, coordinates: retryCoordinates });
+  if (weakPartialRecovery && !bindOrValidateWeakPartialRuntimeAttestation({
+    inputEvidence: boundWeakPartialInputEvidence,
+    imageInputBuffer,
+    stage1RawText,
+    rejectedEvidence: recomputedExpansion.stage1RejectedEvidence,
+    retryCandidate
+  })) {
+    return Object.freeze({
+      accepted: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_WEAK_PARTIAL_RUNTIME_ATTESTATION_REPLAY_OR_BINDING_INVALID"
+    });
+  }
   const provenance = Object.freeze({
     schemaVersion: "dms_grouped_partial_multisite_recovery_v1",
     ownerFamily,
@@ -1154,6 +1868,23 @@ export function buildDmsGroupedPartialMultisiteRecoveryCandidate({
     retryGroupCount: recomputedExpansion.groupCount,
     retryGroupSizes: Object.freeze([...recomputedExpansion.groupSizes]),
     retryGroupIdentities: Object.freeze([...recomputedExpansion.groupIdentities]),
+    ...(recomputedExpansion.recoveryMode === "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16"
+      ? {
+        weakPartialQualification: Object.freeze({ ...recomputedExpansion.weakPartialQualification }),
+        weakPartialInputEvidenceSha256: weakPartialInputEvidenceSha256(
+          recomputedExpansion.weakPartialInputEvidence
+        ),
+        stage1RejectedEvidence: Object.freeze({
+          ...recomputedExpansion.stage1RejectedEvidence,
+          rejectionReasonCounts: Object.freeze(Object.fromEntries(
+            WEAK_PARTIAL_REPAIRABLE_REJECTIONS.map(reason => [
+              reason,
+              recomputedExpansion.stage1RejectedEvidence.rejectionReasonCounts[reason]
+            ])
+          ))
+        })
+      }
+      : {}),
     stage1CandidateSha256: createHash("sha256").update(JSON.stringify(stage1Candidate)).digest("hex"),
     retryCandidateSha256: createHash("sha256").update(JSON.stringify(retryCandidate)).digest("hex")
   });
@@ -1171,6 +1902,9 @@ export function buildDmsGroupedPartialMultisiteRecoveryCandidate({
     stage1Candidate,
     rawText: retryCandidate.rawText,
     normalizedCoordinates: retryCandidate.coordinates,
+    weakPartialInputEvidence: weakPartialRecovery
+      ? Object.freeze({ ...recomputedExpansion.weakPartialInputEvidence })
+      : null,
     provenance
   });
 }
@@ -1182,17 +1916,33 @@ export function partialMultisiteRecoveryProvenanceMatches(declared = {}, recompu
     "groupLocalBaselineRowsPreserved", "pointwiseBaselineEquivalenceProven",
     "pointwiseAcquisitionDeltaProven", "strongBoundariesProven", "labelsContinuous",
     "sourceCandidateSeparate", "directCanonicalPromotion", "baselineGroupCount",
-    "retryGroupCount", "stage1CandidateSha256", "retryCandidateSha256"
+    "retryGroupCount", "stage1CandidateSha256", "retryCandidateSha256",
+    "weakPartialInputEvidenceSha256"
   ];
   const arrayFields = [
     "baselineGroupSizes", "baselineGroupIdentities", "retryGroupSizes", "retryGroupIdentities"
   ];
+  const rejectedEvidenceMatches = (declared?.stage1RejectedEvidence == null
+    && recomputed?.stage1RejectedEvidence == null)
+    || weakPartialRejectedEvidenceMatches(
+      declared?.stage1RejectedEvidence,
+      recomputed?.stage1RejectedEvidence,
+      recomputed?.baselineRowCount
+    );
+  const qualificationMatches = (declared?.weakPartialQualification == null
+    && recomputed?.weakPartialQualification == null)
+    || weakPartialQualificationMatches(
+      declared?.weakPartialQualification,
+      recomputed?.weakPartialQualification
+    );
   return declared && typeof declared === "object" && !Array.isArray(declared)
     && scalarFields.every(field => declared[field] === recomputed[field])
     && arrayFields.every(field => Array.isArray(declared[field])
       && Array.isArray(recomputed[field])
       && declared[field].length === recomputed[field].length
-      && declared[field].every((value, index) => value === recomputed[field][index]));
+      && declared[field].every((value, index) => value === recomputed[field][index]))
+    && rejectedEvidenceMatches
+    && qualificationMatches;
 }
 
 export function buildDmsGroupedRetryFailClosedPatch(reason, parserTrace = []) {

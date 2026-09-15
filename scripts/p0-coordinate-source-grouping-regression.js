@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildDmsGroupedRetryFailClosedPatch,
   buildDmsGroupedPartialMultisiteRecoveryCandidate,
+  buildPartialMultisiteSafeVisionRouting,
   classifyDmsRetryOwnership,
   createDmsGroupedRetryOrchestrator,
   DMS_RETRY_ROUTE_CLASSIFICATION,
@@ -14,6 +15,7 @@ import {
   evaluateDmsGroupedRoutePriority,
   evaluateDmsGroupedRetryCoverage,
   evaluateDmsGroupedRetryEligibility,
+  evaluateDmsWeakPartialMultisiteRecovery,
   evaluateDmsNormalizedPointwiseEquivalence,
   evaluateImageDmsAcquisitionCompleteness,
   evaluateStage1FullMultisitePromotion,
@@ -143,6 +145,22 @@ const stage1FourFourFourOneText = [
   "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 12), "",
   "SITES4", "POINT | LATITUDE | LONGITUDE", dmsRows[12]
 ].join("\n");
+const weakPartialBaselineRows = [
+  ...dmsRows.slice(0, 4),
+  ...dmsRows.slice(8, 12),
+  ...dmsRows.slice(12, 15)
+];
+const weakPartialStage1Text = [
+  "Recognition hint: handwritten DMS",
+  "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 4),
+  `5. 12°00'00.0"N, 9°00'00.0"N`, "",
+  "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 12),
+  `5. 11°59'00.0"N, 9°01'00.0"N`, "",
+  "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(12, 15),
+  `4. 11°58'00.0"N, 9°02'00.0"N`
+].join("\n");
+const weakPartialStage1Coordinates = productionNormalizedRowsFromDms(weakPartialBaselineRows).join("\n");
+const syntheticWeakPartialImageBuffer = Buffer.from("synthetic-weak-partial-image-v1");
 const acquisitionTopologyProvenance = Object.freeze({
   groupLocalBaselineRowsPreserved: true,
   baselineGroupCount: 3,
@@ -1927,6 +1945,236 @@ dynamicCase("partial recovery ownership fails closed when the eight-row single-g
   }
 });
 
+dynamicCase("weak partial 11-row three-group evidence reserves only dms_grouped", () => {
+  const evidence = getDmsDocumentEvidence(weakPartialStage1Text);
+  const trust = resolveDmsRetryTrustBoundary({ documentEvidence: evidence });
+  const weak = evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    projectedTableSignal: evidence.projectedTableSignal,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    candidateSignal: trust.weakPartialMultisiteRecoveryCandidateSignal,
+    structureText: weakPartialStage1Text,
+    imageInputBuffer: syntheticWeakPartialImageBuffer
+  });
+  assert.equal(evidence.explicitHandwrittenSignal, true);
+  assert.equal(trust.explicitHandwrittenSignal, false);
+  assert.equal(weak.accepted, true);
+  assert.equal(weak.failClosed, false);
+  assert.deepEqual(weak.groupSizes, [4, 4, 3]);
+  assert.deepEqual(weak.rejectedEvidence, {
+    sourceStage: "STAGE1",
+    parserVersion: "DMS_SOURCE_STRICT_V1",
+    candidateLineCount: 14,
+    validRowCount: 11,
+    rejectedLineCount: 3,
+    repairableRejectedLineCount: 3,
+    unknownRejectedLineCount: 0,
+    rejectionReasonCounts: {
+      DMS_PAIR_AXIS_CONFLICT: 3,
+      DMS_PAIR_HEMISPHERE_UNRESOLVED: 0
+    }
+  });
+  const ownership = classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: evaluateDmsGroupedRoutePriority({
+      isImageInput: true,
+      printedTableSignal: trust.printedDmsCandidateSignal,
+      explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+      structureText: weakPartialStage1Text
+    }),
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    nonHandwrittenDmsCandidateSignal: trust.nonHandwrittenDmsCandidateSignal,
+    handwrittenShapeRetryCandidate: false,
+    weakPartialMultisiteRecovery: weak
+  });
+  assert.equal(ownership.classification, DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY);
+  assert.equal(ownership.retryOwner, "dms_grouped");
+  assert.equal(ownership.failClosed, false);
+  const eligibility = evaluateDmsGroupedRetryEligibility({
+    rawText: weakPartialStage1Text,
+    isImageInput: true,
+    familyRetryAllowed: true,
+    imageInputBuffer: syntheticWeakPartialImageBuffer,
+    weakPartialMultisiteRecovery: { ...weak, claimed: true }
+  });
+  assert.deepEqual(eligibility, {
+    allowed: true,
+    failClosed: false,
+    reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_AUTHORIZED"
+  });
+  const orchestrator = createDmsGroupedRetryOrchestrator({ parserTrace: [] });
+  assert.equal(orchestrator.reserve(ownership.retryOwner), true);
+  for (const owner of ["handwritten_dms", "generic_ocr", "wgs84_table"]) {
+    assert.equal(orchestrator.claim(owner), false);
+  }
+  assert.equal(orchestrator.claim("dms_grouped"), true);
+});
+
+dynamicCase("weak partial recovery eligibility is bounded and fails closed after owner claim", () => {
+  const minimumShape = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 4), `5. 12°00'00.0"N, 9°00'00.0"N`, "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 10), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(12, 15)
+  ].join("\n");
+  const minimumEvaluation = evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    candidateSignal: true,
+    structureText: minimumShape,
+    imageInputBuffer: syntheticWeakPartialImageBuffer
+  });
+  assert.equal(minimumEvaluation.accepted, true);
+  assert.deepEqual(minimumEvaluation.groupSizes, [4, 2, 3]);
+  const missingHemisphereEvaluation = evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    candidateSignal: true,
+    structureText: minimumShape.replace(`12°00'00.0"N, 9°00'00.0"N`, `12°00'00.0", 9°00'00.0"`),
+    imageInputBuffer: syntheticWeakPartialImageBuffer
+  });
+  assert.equal(missingHemisphereEvaluation.accepted, true);
+  assert.equal(missingHemisphereEvaluation.rejectedEvidence.rejectionReasonCounts.DMS_PAIR_HEMISPHERE_UNRESOLVED, 1);
+  const cleanThreeGroupEleven = weakPartialStage1Text.split("\n")
+    .filter(line => !/9°0[012]'00\.0"N/.test(line))
+    .join("\n");
+  const selfConsistentButUnattestedInputEvidence = {
+    schemaVersion: "dms_grouped_weak_partial_input_evidence_v2",
+    sourceStage: "STAGE1",
+    inputModality: "IMAGE",
+    imageInputEvidenceSource: "REQUEST_FILE_PRESENT",
+    projectedTableSignal: false,
+    independentHandwrittenSignal: false,
+    candidateSignal: true,
+    stage1SanitizedTextSha256: createHash("sha256").update(cleanThreeGroupEleven).digest("hex"),
+    runtimeAttestationId: "f".repeat(48)
+  };
+  const selfConsistentButUnattestedExpansion = evaluateDmsGroupedAcquisitionExpansion({
+    baselineText: cleanThreeGroupEleven,
+    retryText: structuredText,
+    allowWeakPartialMultisiteRecovery: true,
+    isImageInput: true,
+    projectedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    weakPartialCandidateSignal: true,
+    weakPartialQualification: {
+      schemaVersion: "dms_grouped_weak_partial_qualification_v1",
+      inputModality: "IMAGE",
+      projectedTableSignal: false,
+      independentHandwrittenSignal: false,
+      candidateSignal: true,
+      accepted: true,
+      failClosed: false,
+      reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ELIGIBLE"
+    },
+    weakPartialRejectedEvidence: {
+      sourceStage: "STAGE1",
+      parserVersion: "DMS_SOURCE_STRICT_V1",
+      candidateLineCount: 12,
+      validRowCount: 11,
+      rejectedLineCount: 1,
+      repairableRejectedLineCount: 1,
+      unknownRejectedLineCount: 0,
+      rejectionReasonCounts: {
+        DMS_PAIR_AXIS_CONFLICT: 1,
+        DMS_PAIR_HEMISPHERE_UNRESOLVED: 0
+      }
+    },
+    weakPartialInputEvidence: selfConsistentButUnattestedInputEvidence
+  });
+  assert.equal(selfConsistentButUnattestedExpansion.accepted, false);
+  const unknownRejected = `${cleanThreeGroupEleven}\n4. 11°58'00.0"N`;
+  const invalidRangeRejected = `${cleanThreeGroupEleven}\n4. 11°99'00.0"N, 9°02'00.0"E`;
+  const tooManyRepairableRejects = `${cleanThreeGroupEleven}\n${Array.from({ length: 12 }, (_, index) => `${index + 4}. 11°58'00.0"N, 9°02'00.0"N`).join("\n")}`;
+  const groupBelowMinimum = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 3), `4. 12°00'00.0"N, 9°00'00.0"N`, "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 12), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(12, 16)
+  ].join("\n");
+  const groupAboveMaximum = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(0, 8), `9. 12°00'00.0"N, 9°00'00.0"N`, "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(8, 13), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...dmsRows.slice(14, 16)
+  ].join("\n");
+  const invalidInputs = [
+    { text: dmsRows.slice(0, 11).map((row, index) => row.replace(/^\d+\./, `${index + 1}.`)).join("\n"), reason: "DMS_GROUPED_WEAK_PARTIAL_GROUP_SHAPE_INVALID" },
+    { text: cleanThreeGroupEleven, reason: "DMS_GROUPED_WEAK_PARTIAL_REJECTION_COUNT_INVALID" },
+    { text: stage1FourFourFourOneText, reason: "DMS_GROUPED_WEAK_PARTIAL_GROUP_SHAPE_INVALID" },
+    { text: weakPartialStage1Text.replace(dmsRows[14], dmsRows[14].replace(/^3\./, "4.")), reason: "DMS_GROUPED_WEAK_PARTIAL_LABEL_SEQUENCE_INVALID" },
+    { text: unknownRejected, reason: "DMS_GROUPED_WEAK_PARTIAL_UNKNOWN_REJECTION" },
+    { text: invalidRangeRejected, reason: "DMS_GROUPED_WEAK_PARTIAL_UNKNOWN_REJECTION" },
+    { text: tooManyRepairableRejects, reason: "DMS_GROUPED_WEAK_PARTIAL_REJECTION_COUNT_INVALID" },
+    { text: groupBelowMinimum, reason: "DMS_GROUPED_WEAK_PARTIAL_GROUP_SIZE_INVALID" },
+    { text: groupAboveMaximum, reason: "DMS_GROUPED_WEAK_PARTIAL_GROUP_SIZE_INVALID" }
+  ];
+  for (const entry of invalidInputs) {
+    const weak = evaluateDmsWeakPartialMultisiteRecovery({
+      isImageInput: true,
+      candidateSignal: true,
+      structureText: entry.text,
+      imageInputBuffer: syntheticWeakPartialImageBuffer
+    });
+    assert.equal(weak.accepted, false);
+    assert.equal(weak.failClosed, true);
+    assert.equal(weak.reason, entry.reason);
+    assert.deepEqual(evaluateDmsGroupedRetryEligibility({
+      rawText: entry.text,
+      isImageInput: true,
+      familyRetryAllowed: true,
+      weakPartialMultisiteRecovery: { ...weak, claimed: true }
+    }), {
+      allowed: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_STRUCTURE_UNPROVEN"
+    });
+  }
+  for (const flags of [
+    { isImageInput: false },
+    { isImageInput: true, projectedTableSignal: true },
+    { isImageInput: true, explicitHandwrittenSignal: true }
+  ]) {
+    const weak = evaluateDmsWeakPartialMultisiteRecovery({
+      ...flags,
+      candidateSignal: true,
+      structureText: weakPartialStage1Text,
+      imageInputBuffer: syntheticWeakPartialImageBuffer
+    });
+    assert.equal(weak.accepted, false);
+    assert.equal(weak.reason, "DMS_GROUPED_WEAK_PARTIAL_INPUT_NOT_ELIGIBLE");
+  }
+  const validWeak = evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    candidateSignal: true,
+    structureText: weakPartialStage1Text,
+    imageInputBuffer: syntheticWeakPartialImageBuffer
+  });
+  assert.deepEqual(evaluateDmsGroupedRetryEligibility({
+    rawText: weakPartialStage1Text,
+    isImageInput: true,
+    familyRetryAllowed: false,
+    imageInputBuffer: syntheticWeakPartialImageBuffer,
+    weakPartialMultisiteRecovery: { ...validWeak, claimed: true }
+  }), {
+    allowed: false,
+    failClosed: true,
+    reason: "DMS_GROUPED_RETRY_BUDGET_BLOCKED"
+  });
+  for (const signal of [
+    { projectedTableSignal: true },
+    { explicitHandwrittenSignal: true }
+  ]) {
+    assert.deepEqual(evaluateDmsGroupedRetryEligibility({
+      rawText: weakPartialStage1Text,
+      isImageInput: true,
+      familyRetryAllowed: true,
+      imageInputBuffer: syntheticWeakPartialImageBuffer,
+      weakPartialMultisiteRecovery: { ...validWeak, claimed: true },
+      ...signal
+    }), {
+      allowed: false,
+      failClosed: true,
+      reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_STRUCTURE_UNPROVEN"
+    });
+  }
+});
+
 dynamicCase("independent trusted handwritten evidence preserves the genuine handwritten reread", () => {
   const providerText = `Recognition hint: handwritten DMS\n${dmsRows.slice(0, 4).join("\n")}`;
   const evidence = getDmsDocumentEvidence(providerText);
@@ -2318,6 +2566,7 @@ dynamicCase("Stage-1 eight-row partial multi-site recovery accepts only preserve
   assert.equal(candidate.provenance.recoverySource, "dms_grouped");
   assert.equal(candidate.provenance.pointwiseBaselineEquivalenceProven, true);
   assert.equal(candidate.provenance.pointwiseAcquisitionDeltaProven, true);
+  assert.equal(Object.hasOwn(candidate.provenance, "stage1RejectedEvidence"), false);
   assert.notEqual(candidate.provenance.stage1CandidateSha256, candidate.provenance.retryCandidateSha256);
   const safety = evaluateStage1FullMultisiteSafety({
     isImageInput: true,
@@ -2338,6 +2587,359 @@ dynamicCase("Stage-1 eight-row partial multi-site recovery accepts only preserve
     stage1Safety: safety,
     imageDmsSourceCompleteness: completeness
   }).allowed, true);
+});
+
+dynamicCase("weak partial 11-to-16 recovery is bound to ordered baseline content and remains non-authoritative", () => {
+  const attestedStage1 = evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    projectedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    candidateSignal: true,
+    structureText: weakPartialStage1Text,
+    imageInputBuffer: syntheticWeakPartialImageBuffer
+  });
+  assert.equal(attestedStage1.accepted, true);
+  assert.equal(evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    candidateSignal: true,
+    structureText: weakPartialStage1Text,
+    imageInputBuffer: Buffer.from("synthetic-weak-partial-image-B"),
+    weakPartialInputEvidence: attestedStage1.inputEvidence
+  }).reason, "DMS_GROUPED_WEAK_PARTIAL_INPUT_ATTESTATION_INVALID");
+  assert.equal(evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    candidateSignal: true,
+    structureText: weakPartialStage1Text,
+    weakPartialInputEvidence: attestedStage1.inputEvidence
+  }).reason, "DMS_GROUPED_WEAK_PARTIAL_INPUT_ATTESTATION_INVALID");
+  const expansion = evaluateDmsGroupedAcquisitionExpansion({
+    baselineText: weakPartialStage1Text,
+    retryText: structuredText,
+    allowWeakPartialMultisiteRecovery: true,
+    isImageInput: true,
+    projectedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    weakPartialCandidateSignal: true,
+    weakPartialInputEvidence: attestedStage1.inputEvidence,
+    imageInputBuffer: syntheticWeakPartialImageBuffer
+  });
+  assert.equal(expansion.accepted, true);
+  assert.equal(expansion.recoveryMode, "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16");
+  assert.equal(expansion.baselineRowCount, 11);
+  assert.equal(expansion.retryRowCount, 16);
+  assert.equal(expansion.addedRowCount, 5);
+  assert.deepEqual(expansion.baselineGroupSizes, [4, 4, 3]);
+  assert.deepEqual(expansion.groupSizes, [8, 4, 4]);
+  assert.equal(expansion.stage1RejectedEvidence.rejectedLineCount, 3);
+  assert.equal(expansion.weakPartialQualification.inputModality, "IMAGE");
+  assert.equal(expansion.weakPartialQualification.projectedTableSignal, false);
+  assert.equal(expansion.weakPartialQualification.independentHandwrittenSignal, false);
+  for (const invalidIdentity of [
+    {},
+    { isImageInput: false, projectedTableSignal: false, explicitHandwrittenSignal: false, weakPartialCandidateSignal: true },
+    { isImageInput: true, projectedTableSignal: true, explicitHandwrittenSignal: false, weakPartialCandidateSignal: true },
+    { isImageInput: true, projectedTableSignal: false, explicitHandwrittenSignal: true, weakPartialCandidateSignal: true },
+    { isImageInput: true, projectedTableSignal: false, explicitHandwrittenSignal: false, weakPartialCandidateSignal: false }
+  ]) {
+    const rejected = evaluateDmsGroupedAcquisitionExpansion({
+      baselineText: weakPartialStage1Text,
+      retryText: structuredText,
+      allowWeakPartialMultisiteRecovery: true,
+      ...invalidIdentity
+    });
+    assert.equal(rejected.accepted, false);
+  }
+  const projectedWeakPartialText = [
+    "POINT | X | Y",
+    "P1 | 500001 | 1200001",
+    "P2 | 500002 | 1200002",
+    "P3 | 500003 | 1200003",
+    weakPartialStage1Text
+  ].join("\n");
+  assert.equal(getDmsDocumentEvidence(projectedWeakPartialText).projectedTableSignal, true);
+  const projectedMasquerade = evaluateDmsGroupedAcquisitionExpansion({
+    baselineText: projectedWeakPartialText,
+    retryText: structuredText,
+    allowWeakPartialMultisiteRecovery: true,
+    isImageInput: true,
+    projectedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    weakPartialCandidateSignal: true
+  });
+  assert.equal(projectedMasquerade.accepted, false);
+  const candidate = buildDmsGroupedPartialMultisiteRecoveryCandidate({
+    stage1RawText: weakPartialStage1Text,
+    stage1Coordinates: weakPartialStage1Coordinates,
+    retryRawText: structuredText,
+    retryCoordinates: expansion.normalizedCoordinates,
+    expansion,
+    ownerFamily: "dms_grouped",
+    imageInputBuffer: syntheticWeakPartialImageBuffer,
+    allowUnsanitizedWeakPartialStage1: true
+  });
+  assert.equal(candidate.accepted, true);
+  assert.equal(candidate.failClosed, false);
+  assert.equal(candidate.provenance.recoveryMode, "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16");
+  assert.equal(candidate.provenance.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+  assert.equal(candidate.provenance.sourceCandidateSeparate, true);
+  assert.equal(candidate.provenance.directCanonicalPromotion, false);
+  assert.deepEqual(candidate.provenance.stage1RejectedEvidence, expansion.stage1RejectedEvidence);
+  assert.deepEqual(candidate.provenance.weakPartialQualification, expansion.weakPartialQualification);
+  assert.notEqual(candidate.stage1Candidate.rawText, weakPartialStage1Text);
+  assert.equal(candidate.stage1Candidate.rawText.includes("Recognition hint: handwritten DMS"), false);
+  assert.equal(candidate.stage1Candidate.rawText.includes(`9°00'00.0"N`), false);
+  assert.equal(candidate.stage1Candidate.rawText.includes(`9°01'00.0"N`), false);
+  assert.equal(candidate.stage1Candidate.rawText.includes(`9°02'00.0"N`), false);
+  assert.notEqual(candidate.provenance.stage1CandidateSha256, candidate.provenance.retryCandidateSha256);
+  const replayRetryText = structuredText.replace(dmsRows[4], dmsRows[4].replace("36.9", "38.9"));
+  const replayExpansion = evaluateDmsGroupedAcquisitionExpansion({
+    baselineText: weakPartialStage1Text,
+    retryText: replayRetryText,
+    allowWeakPartialMultisiteRecovery: true,
+    isImageInput: true,
+    projectedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    weakPartialCandidateSignal: true,
+    weakPartialInputEvidence: attestedStage1.inputEvidence,
+    imageInputBuffer: syntheticWeakPartialImageBuffer
+  });
+  assert.equal(replayExpansion.accepted, true);
+  assert.equal(buildDmsGroupedPartialMultisiteRecoveryCandidate({
+    stage1RawText: weakPartialStage1Text,
+    stage1Coordinates: weakPartialStage1Coordinates,
+    retryRawText: replayRetryText,
+    retryCoordinates: replayExpansion.normalizedCoordinates,
+    expansion: replayExpansion,
+    ownerFamily: "dms_grouped",
+    imageInputBuffer: syntheticWeakPartialImageBuffer,
+    allowUnsanitizedWeakPartialStage1: true
+  }).reason, "DMS_GROUPED_WEAK_PARTIAL_RUNTIME_ATTESTATION_REPLAY_OR_BINDING_INVALID");
+  assert.equal(buildDmsGroupedPartialMultisiteRecoveryCandidate({
+    stage1RawText: weakPartialStage1Text,
+    stage1Coordinates: weakPartialStage1Coordinates,
+    retryRawText: structuredText,
+    retryCoordinates: expansion.normalizedCoordinates,
+    expansion,
+    ownerFamily: "dms_grouped"
+  }).reason, "DMS_GROUPED_WEAK_PARTIAL_REJECTED_RAW_EVIDENCE_FORBIDDEN");
+  const recognitionCandidate = {
+    rawText: candidate.rawText,
+    coordinates: candidate.normalizedCoordinates,
+    candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+    sourceCandidateSeparate: true,
+    directCanonicalPromotion: false,
+    stage1Candidate: candidate.stage1Candidate,
+    partialMultisiteRecoveryCandidate: {
+      rawText: candidate.rawText,
+      coordinates: candidate.normalizedCoordinates,
+      candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+      provenance: candidate.provenance
+    },
+    sourceCandidates: {
+      stage1: {
+        ...candidate.stage1Candidate,
+        rowCount: candidate.provenance.baselineRowCount,
+        candidateRole: "STAGE1_ACQUISITION_CANDIDATE",
+        candidateSha256: candidate.provenance.stage1CandidateSha256
+      },
+      structuredReread: {
+        rawText: candidate.rawText,
+        coordinates: candidate.normalizedCoordinates,
+        rowCount: candidate.provenance.retryRowCount,
+        candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+        candidateSha256: candidate.provenance.retryCandidateSha256
+      }
+    },
+    partialMultisiteRecoveryProvenance: candidate.provenance,
+    partialMultisiteRecoveryInputEvidence: candidate.weakPartialInputEvidence
+  };
+  const sourceRepresentation = buildSourceCoordinateRepresentation(recognitionCandidate, {
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    groups: [
+      { group_id: "group_1", points: pointsFromDms(dmsRows.slice(0, 8)) },
+      { group_id: "group_2", points: pointsFromDms(dmsRows.slice(8, 12)) },
+      { group_id: "group_3", points: pointsFromDms(dmsRows.slice(12)) }
+    ]
+  });
+  assert.equal(sourceRepresentation.partialMultisiteRecoveryProvenance.recoveryMode,
+    "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16");
+  assert.equal(sourceRepresentation.partialMultisiteRecoveryProvenance.stage1RejectedEvidence.rejectedLineCount, 3);
+  assert.deepEqual(sourceRepresentation.partialMultisiteRecoveryInputEvidence, candidate.weakPartialInputEvidence);
+  assert.equal(sourceRepresentation.sourceCandidates.stage1.rawText, candidate.stage1Candidate.rawText);
+  assert.equal(sourceRepresentation.sourceCandidates.stage1.rawText.includes(`9°00'00.0"N`), false);
+
+  const rejectedRawSentinels = [
+    `5. 12°00'00.0"N, 9°00'00.0"N`,
+    `5. 11°59'00.0"N, 9°01'00.0"N`,
+    `4. 11°58'00.0"N, 9°02'00.0"N`
+  ];
+  const safeVisionRouting = buildPartialMultisiteSafeVisionRouting({
+    handwrittenVisionRouting: { retrySuccess: false },
+    generalVisionRawText: weakPartialStage1Text,
+    handwrittenVisionRawText: weakPartialStage1Text,
+    finalRawText: weakPartialStage1Text,
+    partialMultisiteRecoveryCandidate: candidate
+  });
+  const verificationResponse = buildCoordinateVerificationResponse({
+    ...recognitionCandidate,
+    handwrittenVisionRouting: safeVisionRouting
+  }, {
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    groups: [
+      { group_id: "group_1", geometry: "polygon", requires_review: true, kml_ready: false, points: pointsFromDms(dmsRows.slice(0, 8)) },
+      { group_id: "group_2", geometry: "polygon", requires_review: true, kml_ready: false, points: pointsFromDms(dmsRows.slice(8, 12)) },
+      { group_id: "group_3", geometry: "polygon", requires_review: true, kml_ready: false, points: pointsFromDms(dmsRows.slice(12)) }
+    ]
+  });
+  const serializedVerificationResponse = JSON.stringify(verificationResponse);
+  assert.equal(safeVisionRouting.generalVisionRawText, candidate.stage1Candidate.rawText);
+  assert.equal(safeVisionRouting.handwrittenVisionRawText, "");
+  assert.equal(safeVisionRouting.finalRawText, candidate.rawText);
+  for (const rejectedRawSentinel of rejectedRawSentinels) {
+    assert.equal(serializedVerificationResponse.includes(rejectedRawSentinel), false);
+    assert.equal(verificationResponse.evidence.items.some(item => String(item.raw_text || "").includes(rejectedRawSentinel)), false);
+    assert.equal(verificationResponse.verification.conflicts.some(conflict => JSON.stringify(conflict).includes(rejectedRawSentinel)), false);
+  }
+  assert.equal(verificationResponse.partialMultisiteRecoveryProvenance.stage1RejectedEvidence.rejectedLineCount, 3);
+  assert.deepEqual(
+    verificationResponse.partialMultisiteRecoveryProvenance.stage1RejectedEvidence.rejectionReasonCounts,
+    candidate.provenance.stage1RejectedEvidence.rejectionReasonCounts
+  );
+
+  for (const forgedQualification of [
+    { ...candidate.provenance.weakPartialQualification, inputModality: "MANUAL" },
+    { ...candidate.provenance.weakPartialQualification, projectedTableSignal: true },
+    { ...candidate.provenance.weakPartialQualification, independentHandwrittenSignal: true },
+    { ...candidate.provenance.weakPartialQualification, candidateSignal: false },
+    null,
+    "IMAGE"
+  ]) {
+    const forgedProvenance = {
+      ...candidate.provenance,
+      weakPartialQualification: forgedQualification
+    };
+    const forgedRepresentation = buildSourceCoordinateRepresentation({
+      ...recognitionCandidate,
+      partialMultisiteRecoveryCandidate: {
+        ...recognitionCandidate.partialMultisiteRecoveryCandidate,
+        provenance: forgedProvenance
+      },
+      partialMultisiteRecoveryProvenance: forgedProvenance
+    }, {
+      coordinate_type: "standard_dms_table",
+      precision_mode: "dms-coordinates",
+      groups: [
+        { group_id: "group_1", points: pointsFromDms(dmsRows.slice(0, 8)) },
+        { group_id: "group_2", points: pointsFromDms(dmsRows.slice(8, 12)) },
+        { group_id: "group_3", points: pointsFromDms(dmsRows.slice(12)) }
+      ]
+    });
+    assert.equal(forgedRepresentation.partialMultisiteRecoveryProvenance, null);
+    assert.equal(forgedRepresentation.sourceCandidates, null);
+  }
+
+  for (const forgedInputEvidence of [
+    null,
+    "IMAGE",
+    { ...candidate.weakPartialInputEvidence, inputModality: "MANUAL" },
+    { ...candidate.weakPartialInputEvidence, projectedTableSignal: true },
+    { ...candidate.weakPartialInputEvidence, independentHandwrittenSignal: true },
+    { ...candidate.weakPartialInputEvidence, stage1SanitizedTextSha256: "0".repeat(64) },
+    { ...candidate.weakPartialInputEvidence, runtimeAttestationId: "f".repeat(48) }
+  ]) {
+    const forgedRepresentation = buildSourceCoordinateRepresentation({
+      ...recognitionCandidate,
+      partialMultisiteRecoveryInputEvidence: forgedInputEvidence
+    }, {
+      coordinate_type: "standard_dms_table",
+      precision_mode: "dms-coordinates",
+      groups: [
+        { group_id: "group_1", points: pointsFromDms(dmsRows.slice(0, 8)) },
+        { group_id: "group_2", points: pointsFromDms(dmsRows.slice(8, 12)) },
+        { group_id: "group_3", points: pointsFromDms(dmsRows.slice(12)) }
+      ]
+    });
+    assert.equal(forgedRepresentation.partialMultisiteRecoveryProvenance, null);
+    assert.equal(forgedRepresentation.sourceCandidates, null);
+  }
+
+  const leakedRejectedRawText = `${candidate.stage1Candidate.rawText}\n5. 9°00'00.0"N, 19°00'00.0"N`;
+  const leakedRepresentation = buildSourceCoordinateRepresentation({
+    ...recognitionCandidate,
+    stage1Candidate: {
+      ...candidate.stage1Candidate,
+      rawText: leakedRejectedRawText
+    },
+    sourceCandidates: {
+      ...recognitionCandidate.sourceCandidates,
+      stage1: {
+        ...recognitionCandidate.sourceCandidates.stage1,
+        rawText: leakedRejectedRawText
+      }
+    }
+  }, {
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    groups: [
+      { group_id: "group_1", points: pointsFromDms(dmsRows.slice(0, 8)) },
+      { group_id: "group_2", points: pointsFromDms(dmsRows.slice(8, 12)) },
+      { group_id: "group_3", points: pointsFromDms(dmsRows.slice(12)) }
+    ]
+  });
+  assert.equal(leakedRepresentation.partialMultisiteRecoveryProvenance, null);
+  assert.equal(leakedRepresentation.sourceCandidates, null);
+});
+
+dynamicCase("weak partial reread rejects incomplete malformed duplicate changed reordered and cross-group results", () => {
+  const attestedStage1 = evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    candidateSignal: true,
+    structureText: weakPartialStage1Text,
+    imageInputBuffer: syntheticWeakPartialImageBuffer
+  });
+  assert.equal(attestedStage1.accepted, true);
+  const evaluate = retryText => evaluateDmsGroupedAcquisitionExpansion({
+    baselineText: weakPartialStage1Text,
+    retryText,
+    allowWeakPartialMultisiteRecovery: true,
+    isImageInput: true,
+    projectedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    weakPartialCandidateSignal: true,
+    weakPartialInputEvidence: attestedStage1.inputEvidence,
+    imageInputBuffer: syntheticWeakPartialImageBuffer
+  });
+  assert.equal(evaluate(structuredText.replace(dmsRows[15], "")).accepted, false);
+  assert.equal(evaluate(structuredText.replace(dmsRows[0], dmsRows[0].replace("36.9", "37.9"))).reason,
+    "WEAK_PARTIAL_BASELINE_POINT_CHANGED_MISSING_REORDERED_OR_CROSS_GROUP");
+  const reordered = structuredText.replace(
+    `${dmsRows[0]}\n${dmsRows[1]}`,
+    `${dmsRows[1]}\n${dmsRows[0]}`
+  );
+  assert.equal(evaluate(reordered).reason, "RETRY_LABEL_SEQUENCE_INVALID");
+  const relabeledBaselinePoint = structuredText.replace(dmsRows[0], dmsRows[0].replace(/^1\./, "01."));
+  assert.equal(evaluate(relabeledBaselinePoint).reason,
+    "WEAK_PARTIAL_BASELINE_POINT_CHANGED_MISSING_REORDERED_OR_CROSS_GROUP");
+  const duplicate = structuredText.replace(dmsRows[4], dmsRows[0].replace(/^1\./, "5."));
+  assert.equal(evaluate(duplicate).reason, "WEAK_PARTIAL_RETRY_DUPLICATE_POINT");
+  const crossGroup = structuredText.replace(dmsRows[12], dmsRows[0]);
+  assert.equal(evaluate(crossGroup).reason, "WEAK_PARTIAL_RETRY_DUPLICATE_POINT");
+  const residualReject = `${structuredText}\n5. 11°58'00.0"N, 9°02'00.0"N`;
+  assert.equal(evaluate(residualReject).reason, "RETRY_REJECTED_DMS_ROW_PRESENT");
+  const malformedCoordinates = buildDmsGroupedPartialMultisiteRecoveryCandidate({
+    stage1RawText: weakPartialStage1Text,
+    stage1Coordinates: `${weakPartialStage1Coordinates}\nNOT_A_COORDINATE`,
+    retryRawText: structuredText,
+    retryCoordinates: evaluate(structuredText).normalizedCoordinates,
+    expansion: evaluate(structuredText),
+    ownerFamily: "dms_grouped",
+    imageInputBuffer: syntheticWeakPartialImageBuffer,
+    allowUnsanitizedWeakPartialStage1: true
+  });
+  assert.equal(malformedCoordinates.reason, "DMS_GROUPED_PARTIAL_MULTISITE_STAGE1_POINTWISE_MISMATCH");
 });
 
 dynamicCase("partial recovery candidate cannot masquerade as Stage-1 Direct-16", () => {
@@ -2751,14 +3353,32 @@ staticAssertion("server freezes sanitized retry ownership before any Stage-2 Pro
 staticAssertion("partial multi-site recovery is wired to one grouped retry and re-enters the full safety gate", () => {
   assert.match(server, /partialMultisiteRecoveryEligible:\s*dmsRetryOwnership\.classification[\s\S]{0,100}DMS_GROUPED_PARTIAL_RECOVERY_ONLY/);
   assert.match(server, /allowPartialMultisiteRecovery:\s*dmsRetryOwnership\.classification[\s\S]{0,100}DMS_GROUPED_PARTIAL_RECOVERY_ONLY/);
-  const start = server.indexOf('recoveryMode === "STAGE1_PARTIAL_MULTISITE_8_TO_16"');
+  const start = server.indexOf('"STAGE1_PARTIAL_MULTISITE_8_TO_16",', server.indexOf("dmsGroupedExpansionCoverage.accepted"));
   const end = server.indexOf('} else if (dmsGroupedExpansionCoverage.accepted === true)', start);
   const partialRecovery = server.slice(start, end);
   assert.match(partialRecovery, /buildDmsGroupedPartialMultisiteRecoveryCandidate\(\{/);
   assert.match(partialRecovery, /stage1RawText:\s*rawText/);
-  assert.match(partialRecovery, /stage1Coordinates:\s*coordinates/);
+  assert.match(partialRecovery, /stage1Coordinates:\s*dmsGroupedStage1Coordinates/);
   assert.match(partialRecovery, /stage1FullMultisiteSafety = evaluateStage1FullMultisiteSafety\(\{[\s\S]*riskSignal:\s*true/);
   assert.match(server, /DMS_GROUPED:partial_multisite_recovery_review_required/);
+});
+staticAssertion("weak partial multi-site recovery has a separate owner and clears Stage-1 authority before reread", () => {
+  assert.match(server, /evaluateDmsWeakPartialMultisiteRecovery\(\{/);
+  assert.match(server, /candidateSignal:\s*dmsRetryTrustBoundary\.weakPartialMultisiteRecoveryCandidateSignal/);
+  assert.match(server, /DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY/);
+  const clearStart = server.indexOf("DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY");
+  const retryStart = server.indexOf("const dmsGroupedRetryEligibility", clearStart);
+  const path = server.slice(clearStart, retryStart);
+  assert.match(path, /coordinates\s*=\s*""/);
+  assert.match(path, /dmsGroupedAccepted\s*=\s*false/);
+  assert.match(path, /dmsAccepted\s*=\s*false/);
+  assert.match(path, /getChatCoordinatesInfo\(""\)/);
+  assert.match(path, /getWgs84TableCoordinatesInfo\(""\)/);
+  assert.match(server, /const dmsGroupedRetryEligibility = evaluateDmsGroupedRetryEligibility\(\{[\s\S]{0,800}imageInputBuffer:\s*req\.file\?\.buffer/);
+  assert.match(server, /allowWeakPartialMultisiteRecovery:\s*dmsRetryOwnership\.classification[\s\S]{0,140}DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY/);
+  assert.match(server, /const dmsGroupedExpansionCoverage = evaluateDmsGroupedAcquisitionExpansion\(\{[\s\S]{0,1100}imageInputBuffer:\s*req\.file\?\.buffer/);
+  assert.match(server, /const partialRecoveryCandidate = buildDmsGroupedPartialMultisiteRecoveryCandidate\(\{[\s\S]{0,700}imageInputBuffer:\s*req\.file\?\.buffer/);
+  assert.match(server, /DMS_GROUPED:weak_partial_multisite_recovery_review_required/);
 });
 staticAssertion("partial recovery response preserves separate non-authoritative candidates and cannot claim Direct-16 identity", () => {
   assert.match(server, /partialMultisiteRecoveryCandidate:[\s\S]{0,500}candidateRole:\s*"NONAUTHORITATIVE_REVIEW_CANDIDATE"/);
@@ -2766,6 +3386,8 @@ staticAssertion("partial recovery response preserves separate non-authoritative 
   assert.match(server, /candidateRole:\s*dmsGroupedPartialMultisiteRecovery[\s\S]{0,180}"NONAUTHORITATIVE_REVIEW_CANDIDATE"[\s\S]{0,180}"CURRENT_RECOGNITION_CANDIDATE"/);
   assert.match(server, /evidenceSource:\s*dmsGroupedPartialMultisiteRecovery\s*\?\s*"dms_grouped"\s*:\s*"stage1"/);
   assert.match(server, /directCanonicalPromotion:\s*dmsGroupedPartialMultisiteRecovery\s*\?\s*false\s*:\s*null/);
+  assert.match(server, /partialMultisiteRecoveryInputEvidence:\s*dmsGroupedPartialMultisiteRecovery[\s\S]{0,160}weakPartialInputEvidence/);
+  assert.match(server, /handwrittenVisionRouting:\s*buildPartialMultisiteSafeVisionRouting\(\{[\s\S]{0,260}partialMultisiteRecoveryCandidate:\s*dmsGroupedPartialMultisiteRecovery/);
 });
 staticAssertion("handwritten Stage-2 routing requires explicit handwritten evidence and shape", () => {
   const start = server.indexOf("function getHandwrittenDmsVisionRoutingEvidence");
