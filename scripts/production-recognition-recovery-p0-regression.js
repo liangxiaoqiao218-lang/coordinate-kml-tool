@@ -741,6 +741,96 @@ test("ordinary eight-point single-site DMS remains outside partial recovery with
   assert.equal(ownership.retryOwner, null);
 });
 
+test("weak partial three-group evidence gets one dms_grouped-only recovery and never handwritten identity", () => {
+  const rows = Array.from({ length: 16 }, (_, index) => {
+    const local = index < 8 ? index + 1 : index < 12 ? index - 7 : index - 11;
+    return `${local}. 10°00'${String(index + 1).padStart(2, "0")}.0"N, 20°00'${String(index + 1).padStart(2, "0")}.0"E`;
+  });
+  const stage1 = [
+    "Recognition hint: handwritten DMS",
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...rows.slice(0, 4), `5. 10°00'30.0"N, 20°00'30.0"N`, "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...rows.slice(8, 12), `5. 10°00'31.0"N, 20°00'31.0"N`, "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...rows.slice(12, 15), `4. 10°00'32.0"N, 20°00'32.0"N`
+  ].join("\n");
+  const retry = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...rows.slice(0, 8), "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...rows.slice(8, 12), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...rows.slice(12)
+  ].join("\n");
+  const evidence = primaryRouting.getDmsDocumentEvidence(stage1);
+  const trust = dmsSourceStructure.resolveDmsRetryTrustBoundary({ documentEvidence: evidence });
+  const weakImageBuffer = Buffer.from("synthetic-weak-partial-image-v1");
+  const weak = dmsSourceStructure.evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    projectedTableSignal: evidence.projectedTableSignal,
+    explicitHandwrittenSignal: trust.explicitHandwrittenSignal,
+    candidateSignal: trust.weakPartialMultisiteRecoveryCandidateSignal,
+    structureText: stage1,
+    imageInputBuffer: weakImageBuffer
+  });
+  assert.equal(evidence.explicitHandwrittenSignal, true);
+  assert.equal(trust.explicitHandwrittenSignal, false);
+  assert.equal(runtime.getHandwrittenDmsVisionRoutingEvidence(stage1, stage1).shouldRetry, false);
+  assert.equal(weak.accepted, true);
+  assert.deepEqual(weak.groupSizes, [4, 4, 3]);
+  const ownership = dmsSourceStructure.classifyDmsRetryOwnership({
+    isImageInput: true,
+    routePriority: dmsSourceStructure.evaluateDmsGroupedRoutePriority({ isImageInput: true, structureText: stage1 }),
+    nonHandwrittenDmsCandidateSignal: trust.nonHandwrittenDmsCandidateSignal,
+    handwrittenShapeRetryCandidate: true,
+    weakPartialMultisiteRecovery: weak
+  });
+  assert.equal(ownership.classification, dmsSourceStructure.DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY);
+  assert.equal(ownership.retryOwner, "dms_grouped");
+  const eligibility = dmsSourceStructure.evaluateDmsGroupedRetryEligibility({
+    rawText: stage1,
+    isImageInput: true,
+    familyRetryAllowed: true,
+    imageInputBuffer: weakImageBuffer,
+    weakPartialMultisiteRecovery: { ...weak, claimed: true }
+  });
+  assert.equal(eligibility.allowed, true);
+  const expansion = dmsSourceStructure.evaluateDmsGroupedAcquisitionExpansion({
+    baselineText: stage1,
+    retryText: retry,
+    allowWeakPartialMultisiteRecovery: true,
+    isImageInput: true,
+    projectedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    weakPartialCandidateSignal: true,
+    weakPartialInputEvidence: weak.inputEvidence,
+    imageInputBuffer: weakImageBuffer
+  });
+  assert.equal(expansion.accepted, true);
+  assert.equal(expansion.recoveryMode, "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16");
+  assert.deepEqual(expansion.groupSizes, [8, 4, 4]);
+  assert.equal(expansion.stage1RejectedEvidence.rejectedLineCount, 3);
+});
+
+test("weak partial owner claim fails closed when recomputed structure is invalid", () => {
+  const invalidWeak = { accepted: false, failClosed: true };
+  assert.deepEqual(dmsSourceStructure.evaluateDmsGroupedRetryEligibility({
+    rawText: "1. 10°00'01.0\"N, 20°00'01.0\"E",
+    isImageInput: true,
+    familyRetryAllowed: true,
+    weakPartialMultisiteRecovery: { ...invalidWeak, claimed: true }
+  }), {
+    allowed: false,
+    failClosed: true,
+    reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_STRUCTURE_UNPROVEN"
+  });
+  assert.deepEqual(dmsSourceStructure.evaluateDmsGroupedRetryEligibility({
+    rawText: "1. 10°00'01.0\"N, 20°00'01.0\"E",
+    isImageInput: true,
+    familyRetryAllowed: false,
+    weakPartialMultisiteRecovery: { accepted: true, failClosed: false, claimed: true }
+  }), {
+    allowed: false,
+    failClosed: true,
+    reason: "DMS_GROUPED_WEAK_PARTIAL_RECOVERY_STRUCTURE_UNPROVEN"
+  });
+});
+
 test("eight-to-sixteen recovery requires exact baseline preservation and ordered 8 4 4", () => {
   const rows = Array.from({ length: 16 }, (_, index) => {
     const local = index < 8 ? index + 1 : index < 12 ? index - 7 : index - 11;

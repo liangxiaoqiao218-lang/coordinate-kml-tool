@@ -28,12 +28,14 @@ import {
   IMAGE_DMS_SELECTED_ROUTE,
   DMS_RETRY_ROUTE_CLASSIFICATION,
   buildDmsGroupedPartialMultisiteRecoveryCandidate,
+  buildPartialMultisiteSafeVisionRouting,
   classifyDmsRetryOwnership,
   createDmsGroupedRetryOrchestrator,
   evaluateDmsGroupedAcquisitionExpansion,
   evaluateDmsGroupedRoutePriority,
   evaluateDmsGroupedRetryCoverage,
   evaluateDmsGroupedRetryEligibility,
+  evaluateDmsWeakPartialMultisiteRecovery,
   evaluateImageDmsAcquisitionCompleteness,
   evaluateStage1FullMultisitePromotion,
   evaluateStage1FullMultisiteSafety,
@@ -14512,6 +14514,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       explicitHandwrittenSignal: dmsRetryTrustBoundary.explicitHandwrittenSignal,
       structureText: rawText
     });
+    const weakPartialMultisiteRecovery = evaluateDmsWeakPartialMultisiteRecovery({
+      isImageInput: Boolean(req.file),
+      projectedTableSignal: initialDmsDocumentEvidence.projectedTableSignal,
+      explicitHandwrittenSignal: dmsRetryTrustBoundary.explicitHandwrittenSignal,
+      candidateSignal: dmsRetryTrustBoundary.weakPartialMultisiteRecoveryCandidateSignal,
+      structureText: rawText,
+      imageInputBuffer: req.file?.buffer
+    });
     let stage1FullMultisiteSafety = evaluateStage1FullMultisiteSafety({
       isImageInput: Boolean(req.file),
       riskSignal: dmsRetryTrustBoundary.stage1FullMultisiteRiskSignal,
@@ -14531,7 +14541,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       explicitHandwrittenSignal: dmsRetryTrustBoundary.explicitHandwrittenSignal,
       nonHandwrittenDmsCandidateSignal: dmsRetryTrustBoundary.nonHandwrittenDmsCandidateSignal,
       handwrittenShapeRetryCandidate: handwrittenVisionRouting.shapeRetryCandidate,
-      partialMultisiteRecoveryCandidateSignal: dmsRetryTrustBoundary.partialMultisiteRecoveryCandidateSignal
+      partialMultisiteRecoveryCandidateSignal: dmsRetryTrustBoundary.partialMultisiteRecoveryCandidateSignal,
+      weakPartialMultisiteRecovery
     });
     parserTrace.push(`DMS_RETRY_ROUTE:${dmsRetryOwnership.classification}`);
     let preliminaryDmsRetryFailClosedPatch = null;
@@ -14669,6 +14680,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let imageDmsAcquisitionCompleteness = null;
     let imageDmsFailClosedPatch = null;
     const canonicalDmsCoordinates = coordinates;
+    const dmsGroupedStage1Coordinates = coordinates;
     const canonicalDmsGrouping = reconstructDmsGroupsFromNormalizedCoordinates({
       structureText: rawText,
       normalizedCoordinates: canonicalDmsCoordinates
@@ -14692,6 +14704,20 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     if (preliminaryDmsRetryFailClosedPatch) {
       applyDmsGroupedRetryFailurePatch(preliminaryDmsRetryFailClosedPatch);
     }
+    if (!dmsGroupedRetryBoundaryFailure
+      && dmsRetryOwnership.classification
+        === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY) {
+      // The weak Stage-1 acquisition is evidence only. Preserve its content in
+      // dmsGroupedStage1Coordinates, but remove every authority-bearing view
+      // before the single structured reread is dispatched.
+      coordinates = "";
+      dmsGroupedInfo = { ...dmsGroupedInfo, output: "" };
+      dmsGroupedAccepted = false;
+      dmsAccepted = false;
+      chatCoordinates = getChatCoordinatesInfo("");
+      wgs84TableCoordinates = getWgs84TableCoordinatesInfo("");
+      parserTrace.push("DMS_GROUPED:weak_partial_stage1_nonauthoritative");
+    }
     const claimDownstreamFamilyRetry = targetOwner => {
       return claimRequestRetry(targetOwner);
     };
@@ -14709,7 +14735,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       typedRouteEligible: dmsRetryOwnership.classification
         === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_ONLY,
       partialMultisiteRecoveryEligible: dmsRetryOwnership.classification
-        === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_PARTIAL_RECOVERY_ONLY
+        === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_PARTIAL_RECOVERY_ONLY,
+      projectedTableSignal: initialDmsDocumentEvidence.projectedTableSignal,
+      explicitHandwrittenSignal: dmsRetryTrustBoundary.explicitHandwrittenSignal,
+      imageInputBuffer: req.file?.buffer,
+      weakPartialMultisiteRecovery: {
+        ...weakPartialMultisiteRecovery,
+        claimed: dmsRetryOwnership.classification
+          === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY
+      }
     });
     if (!dmsGroupedRetryBoundaryFailure && dmsGroupedRetryEligibility.failClosed) {
       applyDmsGroupedRetryFailClosed(dmsGroupedRetryEligibility.reason);
@@ -14749,7 +14783,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           baselineText: rawText,
           retryText: dmsGroupedRetryRawText,
           allowPartialMultisiteRecovery: dmsRetryOwnership.classification
-            === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_PARTIAL_RECOVERY_ONLY
+            === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_PARTIAL_RECOVERY_ONLY,
+          allowWeakPartialMultisiteRecovery: dmsRetryOwnership.classification
+            === DMS_RETRY_ROUTE_CLASSIFICATION.DMS_GROUPED_WEAK_PARTIAL_RECOVERY_ONLY,
+          isImageInput: Boolean(req.file),
+          projectedTableSignal: initialDmsDocumentEvidence.projectedTableSignal,
+          explicitHandwrittenSignal: dmsRetryTrustBoundary.explicitHandwrittenSignal,
+          weakPartialCandidateSignal: dmsRetryTrustBoundary.weakPartialMultisiteRecoveryCandidateSignal,
+          weakPartialInputEvidence: weakPartialMultisiteRecovery.inputEvidence,
+          imageInputBuffer: req.file?.buffer
         });
 
         const retryCanonicalGrouping = reconstructDmsGroupsFromNormalizedCoordinates({
@@ -14769,14 +14811,21 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             coverage: dmsGroupedRetryCoverage.reason
           });
         } else if (dmsGroupedExpansionCoverage.accepted === true
-          && dmsGroupedExpansionCoverage.recoveryMode === "STAGE1_PARTIAL_MULTISITE_8_TO_16") {
+          && [
+            "STAGE1_PARTIAL_MULTISITE_8_TO_16",
+            "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16"
+          ].includes(dmsGroupedExpansionCoverage.recoveryMode)) {
           const partialRecoveryCandidate = buildDmsGroupedPartialMultisiteRecoveryCandidate({
             stage1RawText: rawText,
-            stage1Coordinates: coordinates,
+            stage1Coordinates: dmsGroupedStage1Coordinates,
             retryRawText: dmsGroupedRetryRawText,
             retryCoordinates: dmsGroupedExpansionCoverage.normalizedCoordinates,
             expansion: dmsGroupedExpansionCoverage,
-            ownerFamily: dmsGroupedRetryOwner
+            ownerFamily: dmsGroupedRetryOwner,
+            weakPartialInputEvidence: dmsGroupedExpansionCoverage.weakPartialInputEvidence,
+            imageInputBuffer: req.file?.buffer,
+            allowUnsanitizedWeakPartialStage1: dmsGroupedExpansionCoverage.recoveryMode
+              === "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16"
           });
           if (partialRecoveryCandidate.accepted !== true || partialRecoveryCandidate.failClosed !== false) {
             applyDmsGroupedRetryFailClosed(partialRecoveryCandidate.reason);
@@ -14799,8 +14848,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             || stage1FullMultisiteSafety.failClosed !== false) {
             applyDmsGroupedRetryFailClosed(stage1FullMultisiteSafety.reason);
           } else {
-            parserTrace.push("DMS_GROUPED:partial_multisite_recovery_review_required");
-            usedModel = `${aliyunVisionModel}+dms-grouped-partial-multisite-candidate`;
+            const weakPartialRecovery = dmsGroupedExpansionCoverage.recoveryMode
+              === "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16";
+            parserTrace.push(weakPartialRecovery
+              ? "DMS_GROUPED:weak_partial_multisite_recovery_review_required"
+              : "DMS_GROUPED:partial_multisite_recovery_review_required");
+            usedModel = weakPartialRecovery
+              ? `${aliyunVisionModel}+dms-grouped-weak-partial-multisite-candidate`
+              : `${aliyunVisionModel}+dms-grouped-partial-multisite-candidate`;
           }
         } else if (dmsGroupedExpansionCoverage.accepted === true) {
           const stage1Candidate = Object.freeze({ rawText, coordinates });
@@ -15680,12 +15735,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       chatCoordinates,
       kyrgyzGk,
       bftmLongTable,
-      handwrittenVisionRouting: {
-        ...handwrittenVisionRouting,
+      handwrittenVisionRouting: buildPartialMultisiteSafeVisionRouting({
+        handwrittenVisionRouting,
         generalVisionRawText,
         handwrittenVisionRawText,
-        finalRawText: rawText
-      },
+        finalRawText: rawText,
+        partialMultisiteRecoveryCandidate: dmsGroupedPartialMultisiteRecovery
+      }),
       imageDmsSourceCompleteness: imageDmsAcquisitionCompleteness,
       explicitAuthorityRejected: imageDmsFailClosedPatch?.explicitAuthorityRejected === true,
       parserTrace,
@@ -15702,6 +15758,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
         provenance: dmsGroupedPartialMultisiteRecovery.provenance
       } : null,
+      partialMultisiteRecoveryInputEvidence: dmsGroupedPartialMultisiteRecovery
+        ? dmsGroupedPartialMultisiteRecovery.weakPartialInputEvidence
+        : null,
       sourceCandidates: dmsGroupedPartialMultisiteRecovery ? {
         stage1: Object.freeze({
           rawText: dmsGroupedPartialMultisiteRecovery.stage1Candidate.rawText,

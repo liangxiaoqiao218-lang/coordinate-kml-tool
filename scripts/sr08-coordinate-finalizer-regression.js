@@ -28,6 +28,7 @@ import { FinalizedResultSpatialGeometryAdapter } from "../server/spatial/adapter
 import {
   buildDmsGroupedPartialMultisiteRecoveryCandidate,
   evaluateDmsGroupedAcquisitionExpansion,
+  evaluateDmsWeakPartialMultisiteRecovery,
   parseDmsSourceCoordinateRow
 } from "../server/recognition/dms-source-structure.js";
 
@@ -488,6 +489,249 @@ test("I01B", "8-to-16 recovery identity survives Finalizer and Confirmation and 
   assert.equal(driftedRows.geometry, null);
   assert.equal(driftedRows.kmlAuthorityBlocked, true);
   assert.equal(driftedRows.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+});
+
+test("I01C", "weak partial recovery provenance survives Finalizer and Confirmation without becoming Direct-16", () => {
+  const rows = Array.from({ length: 16 }, (_, index) => {
+    const label = index < 8 ? index + 1 : index < 12 ? index - 7 : index - 11;
+    return `${label}. 10°00'${String(index + 1).padStart(2, "0")}.0"N, 20°00'${String(index + 1).padStart(2, "0")}.0"E`;
+  });
+  const baselineRows = [...rows.slice(0, 4), ...rows.slice(8, 12), ...rows.slice(12, 15)];
+  const baselineText = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...rows.slice(0, 4), `5. 10°00'30.0"N, 20°00'30.0"N`, "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...rows.slice(8, 12), `5. 10°00'31.0"N, 20°00'31.0"N`, "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...rows.slice(12, 15), `4. 10°00'32.0"N, 20°00'32.0"N`
+  ].join("\n");
+  const retryText = [
+    "SITES1", "POINT | LATITUDE | LONGITUDE", ...rows.slice(0, 8), "",
+    "SITES2", "POINT | LATITUDE | LONGITUDE", ...rows.slice(8, 12), "",
+    "SITES3", "POINT | LATITUDE | LONGITUDE", ...rows.slice(12)
+  ].join("\n");
+  const weakImageBuffer = Buffer.from("synthetic-weak-partial-image-v1");
+  const weakEvidence = evaluateDmsWeakPartialMultisiteRecovery({
+    isImageInput: true,
+    candidateSignal: true,
+    structureText: baselineText,
+    imageInputBuffer: weakImageBuffer
+  });
+  assert.equal(weakEvidence.accepted, true);
+  const expansion = evaluateDmsGroupedAcquisitionExpansion({
+    baselineText,
+    retryText,
+    allowWeakPartialMultisiteRecovery: true,
+    isImageInput: true,
+    projectedTableSignal: false,
+    explicitHandwrittenSignal: false,
+    weakPartialCandidateSignal: true,
+    weakPartialInputEvidence: weakEvidence.inputEvidence,
+    imageInputBuffer: weakImageBuffer
+  });
+  assert.equal(expansion.accepted, true);
+  const baselineCoordinates = baselineRows.map(row => {
+    const point = parseDmsSourceCoordinateRow(row);
+    return `${point.longitude},${point.latitude}`;
+  }).join("\n");
+  const built = buildDmsGroupedPartialMultisiteRecoveryCandidate({
+    stage1RawText: baselineText,
+    stage1Coordinates: baselineCoordinates,
+    retryRawText: retryText,
+    retryCoordinates: expansion.normalizedCoordinates,
+    expansion,
+    ownerFamily: "dms_grouped",
+    imageInputBuffer: weakImageBuffer,
+    allowUnsanitizedWeakPartialStage1: true
+  });
+  assert.equal(built.accepted, true);
+  assert.equal(built.provenance.recoveryMode, "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16");
+  assert.equal(built.provenance.stage1RejectedEvidence.rejectedLineCount, 3);
+  const groups = [rows.slice(0, 8), rows.slice(8, 12), rows.slice(12)].map((groupRows, index) => ({
+    group_id: `group_${index + 1}`,
+    group_name: `SITES${index + 1}`,
+    geometry: "polygon",
+    requires_review: true,
+    kml_ready: false,
+    points: groupRows.map(row => {
+      const point = parseDmsSourceCoordinateRow(row);
+      return { label: point.label, lon: point.longitude, lat: point.latitude };
+    })
+  }));
+  const recognitionResult = {
+    stage1Candidate: built.stage1Candidate,
+    candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+    sourceCandidateSeparate: true,
+    directCanonicalPromotion: false,
+    partialMultisiteRecoveryCandidate: {
+      rawText: built.rawText,
+      coordinates: built.normalizedCoordinates,
+      candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+      provenance: built.provenance
+    },
+    partialMultisiteRecoveryProvenance: built.provenance,
+    partialMultisiteRecoveryInputEvidence: built.weakPartialInputEvidence,
+    sourceCandidates: {
+      stage1: {
+        ...built.stage1Candidate,
+        rowCount: built.provenance.baselineRowCount,
+        candidateRole: "STAGE1_ACQUISITION_CANDIDATE",
+        candidateSha256: built.provenance.stage1CandidateSha256
+      },
+      structuredReread: {
+        rawText: built.rawText,
+        coordinates: built.normalizedCoordinates,
+        rowCount: built.provenance.retryRowCount,
+        candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
+        candidateSha256: built.provenance.retryCandidateSha256
+      }
+    }
+  };
+  const coordinateEngineV2 = {
+    coordinate_type: "standard_dms_table",
+    precision_mode: "dms-coordinates",
+    requires_review: true,
+    partial_multisite_recovery_provenance: built.provenance,
+    groups
+  };
+  const pending = finalizeCoordinateResult(createLegacyFinalizerInput({
+    recognitionResult,
+    coordinateEngineV2,
+    verification: { status: "REVIEW", warnings: [] },
+    revision: { resultId: "weak-partial-recovery-1", resultRevision: 1 }
+  }), { clock });
+  assert.equal(pending.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+  assert.equal(pending.directCanonicalPromotion, false);
+  assert.equal(pending.partialMultisiteRecoveryProvenance.recoveryMode, "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16");
+  assert.equal(pending.partialMultisiteRecoveryProvenance.stage1RejectedEvidence.rejectedLineCount, 3);
+  assert.deepEqual(pending.partialMultisiteRecoveryInputEvidence, built.weakPartialInputEvidence);
+  const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
+  runtime.register(pending);
+  const confirmed = runtime.confirm({
+    resultId: pending.resultId,
+    resultRevision: pending.resultRevision,
+    geometryHash: pending.geometryHash,
+    action: "accept"
+  }).finalizedCoordinateResult;
+  assert.equal(confirmed.candidateRole, "NONAUTHORITATIVE_REVIEW_CANDIDATE");
+  assert.equal(confirmed.sourceCandidateSeparate, true);
+  assert.equal(confirmed.directCanonicalPromotion, false);
+  assert.equal(confirmed.partialMultisiteRecoveryProvenance.recoveryMode, "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16");
+  assert.deepEqual(confirmed.partialMultisiteRecoveryInputEvidence, built.weakPartialInputEvidence);
+  assert.equal(confirmed.sourceCandidates.stage1.rawText, built.stage1Candidate.rawText);
+  assert.equal(confirmed.sourceCandidates.stage1.rawText.includes(`10°00'30.0"N`), false);
+  assert.equal(confirmed.sourceCandidates.stage1.rawText.includes(`10°00'31.0"N`), false);
+  assert.equal(confirmed.sourceCandidates.stage1.rawText.includes(`10°00'32.0"N`), false);
+  assert.equal(confirmed.sourceCandidates.structuredReread.rawText, retryText);
+
+  const forged = finalizeCoordinateResult(createLegacyFinalizerInput({
+    recognitionResult: {
+      ...recognitionResult,
+      partialMultisiteRecoveryProvenance: {
+        ...built.provenance,
+        stage1RejectedEvidence: {
+          ...built.provenance.stage1RejectedEvidence,
+          rejectedLineCount: 0
+        }
+      }
+    },
+    coordinateEngineV2,
+    verification: { status: "PASS", warnings: [] },
+    revision: { resultId: "weak-partial-recovery-forged", resultRevision: 1 }
+  }), { clock });
+  assert.equal(forged.geometry, null);
+  assert.equal(forged.kmlAuthorityBlocked, true);
+  assert.equal(forged.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+
+  const unattested = finalizeCoordinateResult(createLegacyFinalizerInput({
+    recognitionResult: {
+      ...recognitionResult,
+      partialMultisiteRecoveryInputEvidence: {
+        ...built.weakPartialInputEvidence,
+        runtimeAttestationId: "f".repeat(48)
+      }
+    },
+    coordinateEngineV2,
+    verification: { status: "PASS", warnings: [] },
+    revision: { resultId: "weak-partial-recovery-unattested", resultRevision: 1 }
+  }), { clock });
+  assert.equal(unattested.geometry, null);
+  assert.equal(unattested.kmlAuthorityBlocked, true);
+  assert.equal(unattested.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+
+  for (const forgedQualification of [
+    { ...built.provenance.weakPartialQualification, inputModality: "MANUAL" },
+    { ...built.provenance.weakPartialQualification, projectedTableSignal: true },
+    { ...built.provenance.weakPartialQualification, independentHandwrittenSignal: true },
+    { ...built.provenance.weakPartialQualification, candidateSignal: false },
+    null,
+    "IMAGE"
+  ]) {
+    const forgedProvenance = {
+      ...built.provenance,
+      weakPartialQualification: forgedQualification
+    };
+    const blocked = finalizeCoordinateResult(createLegacyFinalizerInput({
+      recognitionResult: {
+        ...recognitionResult,
+        partialMultisiteRecoveryCandidate: {
+          ...recognitionResult.partialMultisiteRecoveryCandidate,
+          provenance: forgedProvenance
+        },
+        partialMultisiteRecoveryProvenance: forgedProvenance
+      },
+      coordinateEngineV2: {
+        ...coordinateEngineV2,
+        partial_multisite_recovery_provenance: forgedProvenance
+      },
+      verification: { status: "PASS", warnings: [] },
+      revision: { resultId: `weak-partial-qualification-${String(forgedQualification?.inputModality || forgedQualification)}`, resultRevision: 1 }
+    }), { clock });
+    assert.equal(blocked.geometry, null);
+    assert.equal(blocked.kmlAuthorityBlocked, true);
+    assert.equal(blocked.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+    assert.equal(blocked.partialMultisiteRecoveryProvenance, null);
+  }
+
+  const rejectedRawLeak = `${built.stage1Candidate.rawText}\n5. 10°00'30.0"N, 20°00'30.0"N`;
+  const leakedRecognition = {
+    ...recognitionResult,
+    stage1Candidate: {
+      ...recognitionResult.stage1Candidate,
+      rawText: rejectedRawLeak
+    },
+    sourceCandidates: {
+      ...recognitionResult.sourceCandidates,
+      stage1: {
+        ...recognitionResult.sourceCandidates.stage1,
+        rawText: rejectedRawLeak
+      }
+    }
+  };
+  const leaked = finalizeCoordinateResult(createLegacyFinalizerInput({
+    recognitionResult: leakedRecognition,
+    coordinateEngineV2,
+    verification: { status: "PASS", warnings: [] },
+    revision: { resultId: "weak-partial-rejected-raw-leak", resultRevision: 1 }
+  }), { clock });
+  assert.equal(leaked.geometry, null);
+  assert.equal(leaked.kmlAuthorityBlocked, true);
+  assert.equal(leaked.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+  assert.equal(leaked.sourceCandidates, null);
+
+  const defensiveLeak = finalizeCoordinateResult({
+    ...pending,
+    resultId: "weak-partial-defensive-rejected-raw-leak",
+    resultRevision: 1,
+    sourceCandidates: {
+      ...pending.sourceCandidates,
+      stage1: {
+        ...pending.sourceCandidates.stage1,
+        rawText: rejectedRawLeak
+      }
+    }
+  }, { clock });
+  assert.equal(defensiveLeak.geometry, null);
+  assert.equal(defensiveLeak.kmlAuthorityBlocked, true);
+  assert.equal(defensiveLeak.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+  assert.equal(defensiveLeak.sourceCandidates, null);
 });
 
 test("I02", "V3 remains fail closed without authority decision", () => {

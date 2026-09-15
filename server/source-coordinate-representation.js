@@ -291,9 +291,13 @@ function partialMultisiteRecoveryCandidate(recognitionResult = {}) {
       baselineGroupIdentities: provenance.baselineGroupIdentities,
       groupCount: provenance.retryGroupCount,
       groupSizes: provenance.retryGroupSizes,
-      groupIdentities: provenance.retryGroupIdentities
+      groupIdentities: provenance.retryGroupIdentities,
+      weakPartialQualification: provenance.weakPartialQualification,
+      stage1RejectedEvidence: provenance.stage1RejectedEvidence,
+      weakPartialInputEvidence: recognitionResult?.partialMultisiteRecoveryInputEvidence
     },
-    ownerFamily: provenance.ownerFamily
+    ownerFamily: provenance.ownerFamily,
+    weakPartialInputEvidence: recognitionResult?.partialMultisiteRecoveryInputEvidence
   });
   if (rebuilt.accepted !== true) return null;
   const provenanceDeclarations = [provenance, recognitionResult?.partialMultisiteRecoveryProvenance]
@@ -319,12 +323,16 @@ function partialMultisiteRecoveryCandidate(recognitionResult = {}) {
     || recognitionResult.candidateRole !== "NONAUTHORITATIVE_REVIEW_CANDIDATE"
     || recognitionResult.sourceCandidateSeparate !== true
     || recognitionResult.directCanonicalPromotion !== false
+    || (provenance.recoveryMode === "STAGE1_WEAK_PARTIAL_MULTISITE_TO_16"
+      && JSON.stringify(recognitionResult?.partialMultisiteRecoveryInputEvidence)
+        !== JSON.stringify(rebuilt.weakPartialInputEvidence))
     || !declaredSourcesMatch) return null;
   return Object.freeze({
     ...candidate,
     candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
     provenance: rebuilt.provenance,
-    stage1Candidate: rebuilt.stage1Candidate
+    stage1Candidate: rebuilt.stage1Candidate,
+    weakPartialInputEvidence: rebuilt.weakPartialInputEvidence
   });
 }
 
@@ -377,13 +385,22 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
     partialMultisiteRecoveryProvenance: partialRecoveryCandidate
       ? Object.freeze({ ...partialRecoveryCandidate.provenance })
       : null,
+    partialMultisiteRecoveryInputEvidence: partialRecoveryCandidate?.weakPartialInputEvidence
+      ? Object.freeze({ ...partialRecoveryCandidate.weakPartialInputEvidence })
+      : null,
     sourceCandidateSeparate: reviewCandidate ? true : false,
     directCanonicalPromotion: reviewCandidate ? false : null,
     sourceCandidates: reviewCandidate ? Object.freeze({
       stage1: Object.freeze({
-        rawText: String(stage1Candidate?.rawText || ""),
-        coordinates: String(stage1Candidate?.coordinates || ""),
-        rowCount: extractDmsSourceStructure(stage1Candidate?.rawText || stage1Candidate?.coordinates || "").rowCount,
+        rawText: String(reviewCandidate.stage1Candidate?.rawText || stage1Candidate?.rawText || ""),
+        coordinates: String(reviewCandidate.stage1Candidate?.coordinates || stage1Candidate?.coordinates || ""),
+        rowCount: extractDmsSourceStructure(
+          reviewCandidate.stage1Candidate?.rawText
+          || stage1Candidate?.rawText
+          || reviewCandidate.stage1Candidate?.coordinates
+          || stage1Candidate?.coordinates
+          || ""
+        ).rowCount,
         candidateRole: "STAGE1_ACQUISITION_CANDIDATE",
         candidateSha256: reviewCandidate.provenance.stage1CandidateSha256
       }),
