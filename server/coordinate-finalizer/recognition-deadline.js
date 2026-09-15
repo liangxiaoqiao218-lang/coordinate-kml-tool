@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
 
 export const RECOGNITION_DEADLINE_CODE = "RECOGNITION_DEADLINE_EXCEEDED";
 export const RECOGNITION_BUDGET_CODE = "RECOGNITION_BUDGET_EXHAUSTED";
@@ -7,6 +8,10 @@ export const MAX_RECOGNITION_HARD_DEADLINE_MS = 59_000;
 export const DEFAULT_RECOGNITION_RESPONSE_RESERVE_MS = 2_500;
 export const DEFAULT_LOW_VALUE_FALLBACK_CUTOFF_MS = 45_000;
 export const DEFAULT_MIN_RECOGNITION_STAGE_MS = 500;
+export const RECOGNITION_BUDGET_PHASE = Object.freeze({
+  INGRESS_PREFLIGHT: "INGRESS_PREFLIGHT_BUDGET",
+  EXECUTION: "RECOGNITION_EXECUTION_BUDGET"
+});
 export const RECOGNITION_STAGE_RESULTS = Object.freeze(new Set([
   "success",
   "failed",
@@ -16,6 +21,110 @@ export const RECOGNITION_STAGE_RESULTS = Object.freeze(new Set([
   "budget_exhausted",
   "not_started"
 ]));
+
+const SANITIZED_STAGE_NAMES = Object.freeze(new Set([
+  "upload",
+  "image_safety",
+  "permissions",
+  "usage_eligibility",
+  "pre_route",
+  "generic_provider",
+  "family_retry",
+  "local_ocr",
+  "handwritten_retry",
+  "wgs84_retry",
+  "mgrs_retry",
+  "kyrgyz_retry",
+  "cadastral_retry",
+  "cadastral_layout",
+  "cadastral_grid",
+  "cote_divoire_retry",
+  "parser",
+  "crs",
+  "geometry",
+  "verification",
+  "finalizer",
+  "usage_commit",
+  "response"
+]));
+const SANITIZED_STAGE_REASONS = Object.freeze(new Set([
+  "request_aborted",
+  "response_already_sent",
+  "soft_fallback_cutoff",
+  "insufficient_remaining_budget",
+  "provider_admission_budget_insufficient",
+  "stage_timeout",
+  "not_started"
+]));
+const SANITIZED_RESPONSE_CODES = Object.freeze(new Set([
+  "OK",
+  RECOGNITION_DEADLINE_CODE,
+  RECOGNITION_BUDGET_CODE,
+  "COORDINATE_IMAGE_INVALID",
+  "COORDINATE_POST_PROVIDER_PROCESSING_FAILED",
+  "COORDINATE_RECOGNITION_FAILED_CLOSED",
+  "CONVERT_QUOTA_EXHAUSTED",
+  "CONVERT_QUOTA_CONSUME_FAILED",
+  "USAGE_COMMIT_OUTCOME_UNKNOWN",
+  "limit_exceeded",
+  "invalid_image",
+  "missing_user",
+  "regression_test_forbidden",
+  "recognition_failed_closed",
+  "post_provider_processing_failed",
+  "local_ocr_failed",
+  "timeout"
+]));
+const PROVIDER_COMPLETION_STATES = Object.freeze(new Set([
+  "NOT_STARTED",
+  "SUCCEEDED",
+  "FAILED",
+  "TIMED_OUT",
+  "ABORTED"
+]));
+const PROVIDER_COST_STATES = Object.freeze(new Set([
+  "NOT_INCURRED",
+  "POSSIBLY_INCURRED",
+  "USAGE_REPORTED"
+]));
+const USAGE_COMMIT_STATES = Object.freeze(new Set([
+  "NOT_STARTED",
+  "PREPARING",
+  "PREPARED",
+  "COMMITTING",
+  "COMMITTED",
+  "FAILED"
+]));
+const RECOGNITION_BUDGET_PHASES = Object.freeze(new Set(Object.values(RECOGNITION_BUDGET_PHASE)));
+
+function sanitizeEnum(value, allowed, sentinel) {
+  return allowed.has(value) ? value : sentinel;
+}
+
+function sanitizeRuntimeCommit(value) {
+  const normalized = String(value || "").trim();
+  return /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(normalized)
+    ? normalized.toLowerCase()
+    : "UNLISTED_RUNTIME_COMMIT";
+}
+
+function sanitizeRuntimeBranch(value) {
+  const normalized = String(value || "").trim();
+  return /^[a-z0-9][a-z0-9._/-]{0,119}$/i.test(normalized)
+    ? normalized
+    : "UNLISTED_RUNTIME_BRANCH";
+}
+
+function getUploadSizeBucket(size) {
+  const bytes = Number(size);
+  if (!Number.isFinite(bytes) || bytes < 0) return "UNLISTED_UPLOAD_SIZE_BUCKET";
+  if (bytes === 0) return "EMPTY";
+  if (bytes <= 256 * 1024) return "LE_256_KIB";
+  if (bytes <= 1024 * 1024) return "LE_1_MIB";
+  if (bytes <= 4 * 1024 * 1024) return "LE_4_MIB";
+  if (bytes <= 12 * 1024 * 1024) return "LE_12_MIB";
+  return "GT_12_MIB";
+}
 
 const recognitionDeadlineStorage = new AsyncLocalStorage();
 
@@ -65,7 +174,7 @@ export class RecognitionBudget {
     lowValueFallbackCutoffMs = DEFAULT_LOW_VALUE_FALLBACK_CUTOFF_MS,
     now = () => Date.now(),
     trace = true,
-    requestId = `recognition_${startedAt}_${Math.random().toString(36).slice(2, 10)}`,
+    requestId = randomUUID(),
     caseId = null
   } = {}) {
     this.signal = signal || null;
@@ -73,7 +182,8 @@ export class RecognitionBudget {
     this.deadlineMs = deadlineMs;
     this.hardDeadlineAt = startedAt + deadlineMs;
     this.responseReserveMs = responseReserveMs;
-    this.softFallbackCutoffAt = startedAt + Math.min(lowValueFallbackCutoffMs, deadlineMs);
+    this.lowValueFallbackCutoffMs = Math.min(lowValueFallbackCutoffMs, deadlineMs);
+    this.softFallbackCutoffAt = startedAt + this.lowValueFallbackCutoffMs;
     this.now = now;
     this.traceEnabled = trace;
     this.requestId = requestId;
@@ -84,6 +194,21 @@ export class RecognitionBudget {
     this.responseHttpStatus = null;
     this.responseCode = null;
     this.handlerCompletedAt = null;
+    this.budgetPhase = RECOGNITION_BUDGET_PHASE.INGRESS_PREFLIGHT;
+    this.executionStartedAt = null;
+    this.preflightCompletedAt = null;
+    this.postProviderReserveMs = DEFAULT_MIN_RECOGNITION_STAGE_MS * 3;
+    this.runtimeCommit = "UNLISTED_RUNTIME_COMMIT";
+    this.runtimeBranch = "UNLISTED_RUNTIME_BRANCH";
+    this.uploadSizeBucket = "UNLISTED_UPLOAD_SIZE_BUCKET";
+    this.providerAttempted = false;
+    this.providerAttemptCount = 0;
+    this.providerCompletionState = "NOT_STARTED";
+    this.providerUsageObserved = false;
+    this.providerCostState = "NOT_INCURRED";
+    this.userUsageConsumed = false;
+    this.usageCommitState = "NOT_STARTED";
+    this.initialUploadStage = null;
   }
 
   elapsedMs() {
@@ -108,6 +233,88 @@ export class RecognitionBudget {
     const cap = Math.max(0, Number(stageCapMs) || 0);
     const usableRemaining = Math.max(0, this.remainingMs() - this.responseReserveMs);
     return Math.min(cap, usableRemaining);
+  }
+
+  setIngressMetadata({ runtimeCommit = null, runtimeBranch = null, uploadSize = null } = {}) {
+    this.runtimeCommit = sanitizeRuntimeCommit(runtimeCommit);
+    this.runtimeBranch = sanitizeRuntimeBranch(runtimeBranch);
+    this.uploadSizeBucket = getUploadSizeBucket(uploadSize);
+  }
+
+  startIngressUpload() {
+    if (!this.initialUploadStage) this.initialUploadStage = this.stageStarted("upload");
+    return this.initialUploadStage;
+  }
+
+  completeIngressUpload({ result = "success" } = {}) {
+    this.stageCompleted(this.initialUploadStage, { result });
+  }
+
+  beginExecutionPhase() {
+    if (this.budgetPhase === RECOGNITION_BUDGET_PHASE.EXECUTION) return false;
+    this.preflightCompletedAt = this.elapsedMs();
+    this.executionStartedAt = this.now();
+    this.softFallbackCutoffAt = Math.min(
+      this.hardDeadlineAt,
+      this.executionStartedAt + this.lowValueFallbackCutoffMs
+    );
+    this.budgetPhase = RECOGNITION_BUDGET_PHASE.EXECUTION;
+    return true;
+  }
+
+  assertCanStartProvider({
+    stageName = "generic_provider",
+    minRequiredMs = DEFAULT_MIN_RECOGNITION_STAGE_MS,
+    lowValue = false
+  } = {}) {
+    const providerAndPostProcessingMinimum = Math.max(DEFAULT_MIN_RECOGNITION_STAGE_MS, Number(minRequiredMs) || 0)
+      + this.postProviderReserveMs;
+    try {
+      return this.assertCanContinue({
+        stageName,
+        minRequiredMs: providerAndPostProcessingMinimum,
+        lowValue
+      });
+    } catch (error) {
+      if (error?.code === RECOGNITION_BUDGET_CODE && error?.reason === "insufficient_remaining_budget") {
+        error.reason = "provider_admission_budget_insufficient";
+        const lastEvent = this.events.at(-1);
+        if (lastEvent?.skippedReason === "insufficient_remaining_budget") {
+          lastEvent.skippedReason = "provider_admission_budget_insufficient";
+        }
+      }
+      throw error;
+    }
+  }
+
+  effectiveProviderTimeout(stageCapMs) {
+    const cap = Math.max(0, Number(stageCapMs) || 0);
+    const usableRemaining = Math.max(
+      0,
+      this.remainingMs() - this.responseReserveMs - this.postProviderReserveMs
+    );
+    return Math.min(cap, usableRemaining);
+  }
+
+  markProviderAttempted() {
+    this.providerAttempted = true;
+    this.providerAttemptCount += 1;
+    this.providerCompletionState = "NOT_STARTED";
+    this.providerCostState = "POSSIBLY_INCURRED";
+  }
+
+  markProviderCompleted({ state = "FAILED", usageObserved = false } = {}) {
+    this.providerCompletionState = sanitizeEnum(state, PROVIDER_COMPLETION_STATES, "FAILED");
+    this.providerUsageObserved = this.providerUsageObserved || usageObserved === true;
+    this.providerCostState = this.providerUsageObserved ? "USAGE_REPORTED" : "POSSIBLY_INCURRED";
+  }
+
+  markUserUsageConsumed(consumed = true) {
+    this.userUsageConsumed = consumed === true;
+  }
+
+  markUsageCommitState(state) {
+    this.usageCommitState = sanitizeEnum(state, USAGE_COMMIT_STATES, "FAILED");
   }
 
   assertCanContinue({
@@ -168,10 +375,11 @@ export class RecognitionBudget {
       abortObserved: this.isAborted(),
       skippedReason: null,
       responseSent: this.responseSentAt !== null,
-      handlerCompleted: false
+      handlerCompleted: false,
+      budgetPhase: this.budgetPhase
     };
     this.events.push(event);
-    if (this.traceEnabled) console.log("[RecognitionStage]", event);
+    if (this.traceEnabled) console.log("[RecognitionStage]", this.sanitizeLedgerStage(event));
     return event;
   }
 
@@ -183,7 +391,7 @@ export class RecognitionBudget {
     event.abortObserved = Boolean(abortObserved);
     event.skippedReason = skippedReason || null;
     event.responseSent = this.responseSentAt !== null;
-    if (this.traceEnabled) console.log("[RecognitionStage]", event);
+    if (this.traceEnabled) console.log("[RecognitionStage]", this.sanitizeLedgerStage(event));
   }
 
   recordSkippedStage(stageName, skippedReason, result = "skipped") {
@@ -204,10 +412,11 @@ export class RecognitionBudget {
       abortObserved: this.isAborted(),
       skippedReason: skippedReason || "not_started",
       responseSent: this.responseSentAt !== null,
-      handlerCompleted: false
+      handlerCompleted: false,
+      budgetPhase: this.budgetPhase
     };
     this.events.push(event);
-    if (this.traceEnabled) console.log("[RecognitionStage]", event);
+    if (this.traceEnabled) console.log("[RecognitionStage]", this.sanitizeLedgerStage(event));
     return event;
   }
 
@@ -215,7 +424,10 @@ export class RecognitionBudget {
     if (this.responseSentAt !== null) return;
     this.responseSentAt = this.elapsedMs();
     this.responseHttpStatus = Number.isInteger(Number(httpStatus)) ? Number(httpStatus) : null;
-    this.responseCode = responseCode ? String(responseCode).slice(0, 120) : null;
+    const normalizedResponseCode = responseCode ? String(responseCode).slice(0, 120) : null;
+    this.responseCode = normalizedResponseCode === null
+      ? null
+      : sanitizeEnum(normalizedResponseCode, SANITIZED_RESPONSE_CODES, "UNLISTED_RESPONSE_CODE");
     const event = {
       id: this.nextStageId++,
       requestId: this.requestId,
@@ -231,46 +443,64 @@ export class RecognitionBudget {
       abortObserved: this.isAborted(),
       skippedReason: null,
       responseSent: true,
-      handlerCompleted: false
+      handlerCompleted: false,
+      budgetPhase: this.budgetPhase
     };
     this.events.push(event);
-    if (this.traceEnabled) console.log("[RecognitionStage]", event);
+    if (this.traceEnabled) console.log("[RecognitionStage]", this.sanitizeLedgerStage(event));
+  }
+
+  sanitizeLedgerStage(event) {
+    const traceStage = this.sanitizeStageEvent(event);
+    return Object.freeze({
+      stageName: traceStage.stageName,
+      budgetPhase: traceStage.budgetPhase,
+      durationMs: traceStage.durationMs,
+      remainingBudgetAtStartMs: traceStage.remainingBudgetAtStartMs,
+      remainingBudgetAtEndMs: traceStage.remainingBudgetAtEndMs,
+      result: traceStage.result,
+      reasonCode: traceStage.skippedReason
+    });
+  }
+
+  sanitizeStageEvent(event) {
+    const stageName = sanitizeEnum(event?.stageName, SANITIZED_STAGE_NAMES, "UNLISTED_STAGE");
+    const result = sanitizeEnum(event?.result, RECOGNITION_STAGE_RESULTS, "failed");
+    return Object.freeze({
+      stageName,
+      budgetPhase: sanitizeEnum(
+        event?.budgetPhase,
+        RECOGNITION_BUDGET_PHASES,
+        "UNLISTED_BUDGET_PHASE"
+      ),
+      attempt: Number.isInteger(event?.attempt) && event.attempt > 0 ? event.attempt : 1,
+      stageStartElapsedMs: Number.isFinite(event?.stageStartElapsedMs) ? event.stageStartElapsedMs : null,
+      stageEndElapsedMs: Number.isFinite(event?.stageEndElapsedMs) ? event.stageEndElapsedMs : null,
+      durationMs: Number.isFinite(event?.stageStartElapsedMs) && Number.isFinite(event?.stageEndElapsedMs)
+        ? Math.max(0, event.stageEndElapsedMs - event.stageStartElapsedMs)
+        : null,
+      configuredTimeoutMs: Number.isFinite(event?.configuredTimeoutMs) ? event.configuredTimeoutMs : null,
+      effectiveTimeoutMs: Number.isFinite(event?.effectiveTimeoutMs) ? event.effectiveTimeoutMs : null,
+      remainingBudgetAtStartMs: Number.isFinite(event?.remainingBudgetAtStartMs) ? event.remainingBudgetAtStartMs : null,
+      remainingBudgetAtEndMs: Number.isFinite(event?.remainingBudgetAtEndMs) ? event.remainingBudgetAtEndMs : null,
+      result,
+      abortObserved: event?.abortObserved === true,
+      skippedReason: event?.skippedReason
+        ? sanitizeEnum(event.skippedReason, SANITIZED_STAGE_REASONS, "UNLISTED_STAGE_REASON")
+        : null
+    });
   }
 
   markHandlerCompleted() {
     if (this.handlerCompletedAt === null) this.handlerCompletedAt = this.elapsedMs();
     for (const event of this.events) event.handlerCompleted = true;
-    if (this.traceEnabled) {
-      console.log("[RecognitionHandler]", {
-        requestId: this.requestId,
-        responseSent: this.responseSentAt !== null,
-        responseSentElapsedMs: this.responseSentAt,
-        handlerCompleted: true,
-        handlerCompletedElapsedMs: this.handlerCompletedAt,
-        abortObserved: this.isAborted()
-      });
-    }
+    if (this.traceEnabled) console.log("[RecognitionLedger]", this.toSanitizedLedger());
   }
 
   toSanitizedTrace() {
     const responseElapsedMs = this.responseSentAt;
     const handlerCompletedElapsedMs = this.handlerCompletedAt;
-    const stages = this.events.map(event => Object.freeze({
-      stageName: String(event.stageName || "unknown").slice(0, 80),
-      attempt: Number.isInteger(event.attempt) && event.attempt > 0 ? event.attempt : 1,
-      stageStartElapsedMs: Number.isFinite(event.stageStartElapsedMs) ? event.stageStartElapsedMs : null,
-      stageEndElapsedMs: Number.isFinite(event.stageEndElapsedMs) ? event.stageEndElapsedMs : null,
-      durationMs: Number.isFinite(event.stageStartElapsedMs) && Number.isFinite(event.stageEndElapsedMs)
-        ? Math.max(0, event.stageEndElapsedMs - event.stageStartElapsedMs)
-        : null,
-      configuredTimeoutMs: Number.isFinite(event.configuredTimeoutMs) ? event.configuredTimeoutMs : null,
-      effectiveTimeoutMs: Number.isFinite(event.effectiveTimeoutMs) ? event.effectiveTimeoutMs : null,
-      remainingBudgetAtStartMs: Number.isFinite(event.remainingBudgetAtStartMs) ? event.remainingBudgetAtStartMs : null,
-      remainingBudgetAtEndMs: Number.isFinite(event.remainingBudgetAtEndMs) ? event.remainingBudgetAtEndMs : null,
-      result: RECOGNITION_STAGE_RESULTS.has(event.result) ? event.result : "failed",
-      abortObserved: event.abortObserved === true,
-      skippedReason: event.skippedReason ? String(event.skippedReason).slice(0, 120) : null
-    }));
+    const stages = this.events.map(event => this.sanitizeStageEvent(event));
     const postResponseStageCount = responseElapsedMs === null
       ? 0
       : stages.filter(stage => stage.stageName !== "response"
@@ -297,6 +527,45 @@ export class RecognitionBudget {
       postDeadlineWorkStatus: handlerCompletedElapsedMs !== null && postResponseStageCount === 0
         ? "PROVEN_NONE"
         : "UNPROVEN"
+    });
+  }
+
+  toSanitizedLedger() {
+    const executionElapsedMs = this.executionStartedAt === null
+      ? null
+      : Math.max(0, this.now() - this.executionStartedAt);
+    return Object.freeze({
+      schemaVersion: "recognition_stage_ledger_v2",
+      requestId: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(this.requestId)
+        ? this.requestId
+        : "UNLISTED_REQUEST_ID",
+      runtimeCommit: this.runtimeCommit,
+      runtimeBranch: this.runtimeBranch,
+      uploadSizeBucket: this.uploadSizeBucket,
+      budgetPhase: sanitizeEnum(this.budgetPhase, RECOGNITION_BUDGET_PHASES, "UNLISTED_BUDGET_PHASE"),
+      preflightDurationMs: Number.isFinite(this.preflightCompletedAt) ? this.preflightCompletedAt : null,
+      executionElapsedMs,
+      overallElapsedMs: this.elapsedMs(),
+      stages: this.events.map(event => this.sanitizeLedgerStage(event)),
+      providerAttempted: this.providerAttempted,
+      providerCompletionState: sanitizeEnum(
+        this.providerCompletionState,
+        PROVIDER_COMPLETION_STATES,
+        "FAILED"
+      ),
+      providerCostState: sanitizeEnum(this.providerCostState, PROVIDER_COST_STATES, "NOT_INCURRED"),
+      userUsageConsumed: this.userUsageConsumed,
+      usageCommitState: sanitizeEnum(this.usageCommitState, USAGE_COMMIT_STATES, "FAILED"),
+      httpStatus: Number.isInteger(this.responseHttpStatus)
+        && this.responseHttpStatus >= 100
+        && this.responseHttpStatus <= 599
+        ? this.responseHttpStatus
+        : null,
+      responseCode: sanitizeEnum(
+        this.responseCode,
+        SANITIZED_RESPONSE_CODES,
+        this.responseCode === null ? null : "UNLISTED_RESPONSE_CODE"
+      )
     });
   }
 }
@@ -341,7 +610,12 @@ export function recognitionDeadlineMiddleware({ deadlineMs = getRecognitionHardD
     const deadlineAt = startedAt + deadlineMs;
     const rawCaseId = String(req.get?.("x-regression-case-id") || "").trim();
     const caseId = /^[a-z0-9][a-z0-9_-]{0,119}$/i.test(rawCaseId) ? rawCaseId : null;
-    const budget = new RecognitionBudget({ signal: controller.signal, startedAt, deadlineMs, caseId });
+    const suppliedRequestId = String(req.get?.("x-recognition-request-id") || "").trim();
+    const requestId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suppliedRequestId)
+      ? suppliedRequestId.toLowerCase()
+      : randomUUID();
+    const budget = new RecognitionBudget({ signal: controller.signal, startedAt, deadlineMs, caseId, requestId });
+    budget.startIngressUpload();
     res.setHeader?.("X-Recognition-Request-Id", budget.requestId);
     let deadlineResponseSent = false;
     const originalJson = res.json.bind(res);
@@ -349,7 +623,10 @@ export function recognitionDeadlineMiddleware({ deadlineMs = getRecognitionHardD
       if (deadlineResponseSent && res.headersSent) return res;
       budget.markResponseSent({
         httpStatus: res.statusCode,
-        responseCode: body?.code || body?.error_code || body?.reason || null
+        responseCode: body?.code
+          || body?.error_code
+          || body?.reason
+          || (res.statusCode >= 200 && res.statusCode < 400 ? "OK" : null)
       });
       return originalJson(body);
     };
@@ -357,13 +634,32 @@ export function recognitionDeadlineMiddleware({ deadlineMs = getRecognitionHardD
       controller.abort(new Error(RECOGNITION_DEADLINE_CODE));
       if (!res.headersSent) {
         deadlineResponseSent = true;
-        budget.markResponseSent({ httpStatus: 504, responseCode: RECOGNITION_DEADLINE_CODE });
+        const commitOutcomeUnknown = ["PREPARING", "PREPARED", "COMMITTING"].includes(budget.usageCommitState);
+        budget.markResponseSent({
+          httpStatus: 504,
+          responseCode: commitOutcomeUnknown ? "USAGE_COMMIT_OUTCOME_UNKNOWN" : RECOGNITION_DEADLINE_CODE
+        });
         res.status(504);
-        originalJson({
+        originalJson(commitOutcomeUnknown ? {
+          success: false,
+          reason: "usage_commit_outcome_unknown",
+          code: "USAGE_COMMIT_OUTCOME_UNKNOWN",
+          error: "本次识别已完成，扣次状态仍在确认中。请使用本次请求编号恢复结果，不要重新上传图片。",
+          requestId: budget.requestId,
+          usageConsumed: null,
+          recoveryRequired: true,
+          retryAllowed: false,
+          deadlineMs,
+          elapsedMs: Date.now() - startedAt,
+          terminationReason: "request_hard_deadline_during_usage_commit"
+        } : {
           success: false,
           reason: "timeout",
           code: RECOGNITION_DEADLINE_CODE,
-          error: "Coordinate recognition exceeded the request deadline.",
+          error: "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。",
+          requestId: budget.requestId,
+          usageConsumed: false,
+          retryAllowed: true,
           deadlineMs,
           elapsedMs: Date.now() - startedAt,
           terminationReason: "request_hard_deadline",
