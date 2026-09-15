@@ -8,6 +8,7 @@ import {inflateSync} from 'node:zlib';
 import vm from 'node:vm';
 import * as routing from '../server/recognition/family-primary-routing.js';
 import * as dmsSourceStructure from '../server/recognition/dms-source-structure.js';
+import * as imageSafety from '../server/recognition/coordinate-image-safety.js';
 import * as boundary from '../server/structured-coordinate-boundary.js';
 import * as finalizer from '../server/coordinate-finalizer/index.js';
 import {convertKyrgyzGkToWgs84} from '../server/projection/kyrgyz-gk.js';
@@ -27,6 +28,22 @@ const projected = replay.records[0].approvedAcquisitionLines.join('\n');
 const unresolved = projected.replace('UTM WGS 1984 ZONA 50S', '');
 const kyrgyz = 'Координаты угловых точек | № points | X | Y\n3 | 13261350 | 4607780\n1 | 13261341 | 4607777\n2 | 13261345 | 4607778';
 const syntheticPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+const frozenJpeg = await readFile(new URL('../regression-samples/OCR_GOLDEN/fixtures/indonesia-utm50s-real-001.jpg', import.meta.url));
+const syntheticRecoveryRows = Array.from({length:16},(_,index)=>{
+  const label=index<8?index+1:index<12?index-7:index-11;
+  const seconds=String(index+1).padStart(2,'0');
+  return `${label}. 10°00'${seconds}.0\"N, 20°00'${seconds}.0\"E`;
+});
+const syntheticGroupedMultisite = [
+  'SITES1','POINT | LATITUDE | LONGITUDE',...syntheticRecoveryRows.slice(0,8),'',
+  'SITES2','POINT | LATITUDE | LONGITUDE',...syntheticRecoveryRows.slice(8,12),'',
+  'SITES3','POINT | LATITUDE | LONGITUDE',...syntheticRecoveryRows.slice(12)
+].join('\n');
+const syntheticStage1Thirteen = [
+  'SITES1','POINT | LATITUDE | LONGITUDE',...syntheticRecoveryRows.slice(0,8).filter((_,index)=>![3,7].includes(index)),'',
+  'SITES2','POINT | LATITUDE | LONGITUDE',...syntheticRecoveryRows.slice(8,12),'',
+  'SITES3','POINT | LATITUDE | LONGITUDE',...syntheticRecoveryRows.slice(12).filter((_,index)=>index!==3)
+].join('\n');
 
 if (process.argv[2] === '--http') {
   const http = await import('node:http');
@@ -41,11 +58,41 @@ if (process.argv[2] === '--http') {
       }));
     }
   }
-  globalThis.fetch = async url => {
+  let lastProviderImageBytes = 0;
+  let lastProviderImageCanonical = false;
+  let providerImageChecks = 0;
+  const providerPromptKinds = [];
+  let structureProbeCalls = 0;
+  let structureImageCanonical = false;
+  globalThis.__coreExpectedCanonicalImageBase64 = frozenJpeg.toString('base64');
+  globalThis.__coreStructureProbe = image => {
+    structureProbeCalls += 1;
+    structureImageCanonical = Buffer.isBuffer(image) && image.equals(frozenJpeg);
+  };
+  globalThis.fetch = async (url, options = {}) => {
     assert.equal(String(url), 'http://127.0.0.1:1/v1/chat/completions');
     assert.ok(++calls <= 3, 'unexpected retry expansion');
-    if (scenario === 'ocr-failure') throw new Error('MOCK_PROVIDER_UNAVAILABLE');
-    const content = scenario === 'kyrgyz' ? kyrgyz : scenario === 'unresolved' ? unresolved : handwritten;
+    const request = JSON.parse(String(options.body || '{}'));
+    const prompt = request.messages?.[0]?.content?.find(item => item?.type === 'text')?.text || '';
+    providerPromptKinds.push(prompt.startsWith('Read ONLY the separate coordinate tables or coordinate sections')?'DMS_GROUPED':'STAGE_1');
+    const imageUrl = request.messages?.[0]?.content?.find(item => item?.type === 'image_url')?.image_url?.url || '';
+    const match = imageUrl.match(/^data:image\/jpeg;base64,(.+)$/);
+    if (scenario.startsWith('jpeg-')) {
+      assert.ok(match, 'canonical JPEG must be the Provider input');
+      const providerBytes = Buffer.from(match[1], 'base64');
+      lastProviderImageBytes = providerBytes.length;
+      lastProviderImageCanonical = providerBytes.equals(frozenJpeg) && imageSafety.hasValidJpegStructure(providerBytes);
+      providerImageChecks += 1;
+      assert.equal(lastProviderImageCanonical,true,'every Provider or reread call must use canonical bytes');
+    }
+    if (scenario === 'ocr-failure' || scenario === 'jpeg-ocr-canonical') throw new Error('MOCK_PROVIDER_UNAVAILABLE');
+    const content = scenario === 'kyrgyz'
+      ? kyrgyz
+      : scenario === 'unresolved'
+        ? unresolved
+        : scenario === 'jpeg-grouped-reread'
+          ? (calls === 1 ? syntheticStage1Thirteen : syntheticGroupedMultisite)
+          : handwritten;
     return new Response(JSON.stringify({choices:[{message:{content}}]}), {status:200,headers:{'content-type':'application/json'}});
   };
   const listen = http.Server.prototype.listen;
@@ -53,7 +100,17 @@ if (process.argv[2] === '--http') {
     this.once('listening', () => process.send({port:this.address().port}));
     return listen.call(this,port,'127.0.0.1',cb);
   };
-  process.on('message',message=>{if(message==='stats')process.send({calls,ocrCalls:Number(globalThis.__coreOcrCalls||0)});});
+  process.on('message',message=>{if(message==='stats')process.send({
+    calls,
+    ocrCalls:Number(globalThis.__coreOcrCalls||0),
+    ocrImageCanonical:globalThis.__coreOcrImageCanonical===true,
+    lastProviderImageBytes,
+    lastProviderImageCanonical,
+    providerImageChecks,
+    providerPromptKinds,
+    structureProbeCalls,
+    structureImageCanonical
+  });});
   await import('../server.js');
   await new Promise(() => {});
 }
@@ -68,7 +125,16 @@ function extract(text, name) {
   }
   throw new Error('function extraction failed: '+name);
 }
-const runtime = vm.createContext({...routing,...dmsSourceStructure,...boundary,Buffer,inflateSync,pngCrcTable:null});
+const runtime = vm.createContext({
+  ...routing,
+  ...dmsSourceStructure,
+  ...boundary,
+  Buffer,
+  inflateSync,
+  pngCrcTable:null,
+  canonicalizeCoordinateImageUpload:imageSafety.canonicalizeCoordinateImageUpload,
+  hasValidCanonicalJpegStructure:imageSafety.hasValidJpegStructure
+});
 for (const match of source.matchAll(/^(?:async )?function (\w+)\(/gm)) vm.runInContext(extract(source,match[1]),runtime);
 for (const name of ['noCoordinatesText','MGRS_BANDS','MGRS_COLUMN_SETS','MGRS_ROW_SETS','MOZAMBIQUE_TETE_KNOWN_ROW_TOLERANCE']) {
   vm.runInContext(source.match(new RegExp(`^const ${name} = .+;$`,'m'))[0],runtime);
@@ -175,13 +241,23 @@ test('Madagascar 32 source rows, 32 cells and MultiPolygon remain intact',()=>{
 });
 
 async function httpScenario(scenario, run) {
-  const ocrProbePreload=['ocr-failure','post-provider-failure'].includes(scenario)?`import {registerHooks} from 'node:module';
+  const needsOcrProbe=['ocr-failure','post-provider-failure','jpeg-ocr-canonical'].includes(scenario);
+  const needsStructureProbe=scenario.startsWith('jpeg-');
+  const consumerProbePreload=(needsOcrProbe||needsStructureProbe)?`import {registerHooks} from 'node:module';
 registerHooks({load(url,context,nextLoad){
   const result=nextLoad(url,context);
-  if(!url.replace(/\\\\/g,'/').endsWith('/node_modules/tesseract.js/src/index.js'))return result;
-  return {...result,source:"module.exports={createWorker:async()=>{globalThis.__coreOcrCalls=(globalThis.__coreOcrCalls||0)+1;return {recognize:async()=>{throw new Error('PRIVATE_DECODER_DETAIL')},terminate:async()=>{}}}};"};
+  const normalized=url.replace(/\\\\/g,'/');
+  if(${needsStructureProbe}&&normalized.endsWith('/server/recognition/family-primary-routing.js')){
+    const source=String(result.source).replace(
+      'export function detectUploadTableStructure(buffer, mimeType = \"\") {',
+      'export function detectUploadTableStructure(buffer, mimeType = \"\") { globalThis.__coreStructureProbe?.(buffer,mimeType);'
+    );
+    return {...result,source};
+  }
+  if(!${needsOcrProbe}||!normalized.endsWith('/node_modules/tesseract.js/src/index.js'))return result;
+  return {...result,source:"module.exports={createWorker:async()=>{globalThis.__coreOcrCalls=(globalThis.__coreOcrCalls||0)+1;return {recognize:async image=>{const expected=Buffer.from(globalThis.__coreExpectedCanonicalImageBase64||'', 'base64');globalThis.__coreOcrImageCanonical=Buffer.isBuffer(image)&&image.equals(expected);throw new Error('PRIVATE_DECODER_DETAIL')},terminate:async()=>{}}}};"};
 }});`:null;
-  const child=spawn(process.execPath,[...(ocrProbePreload?['--import',`data:text/javascript,${encodeURIComponent(ocrProbePreload)}`]:[]),fileURLToPath(import.meta.url),'--http',scenario],{cwd:fileURLToPath(new URL('..',import.meta.url)),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],
+  const child=spawn(process.execPath,[...(consumerProbePreload?['--import',`data:text/javascript,${encodeURIComponent(consumerProbePreload)}`]:[]),fileURLToPath(import.meta.url),'--http',scenario],{cwd:fileURLToPath(new URL('..',import.meta.url)),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],
     env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,NODE_ENV:'test',PORT:'0',ENABLE_REGRESSION_TEST_MODE:'true',ALIYUN_API_KEY:'local-mock-only',ALIYUN_BASE_URL:'http://127.0.0.1:1/v1',DOTENV_CONFIG_PATH:'__no_core_test_env__'}});
   child.stdout.resume();child.stderr.resume();const signal=AbortSignal.timeout(25000);
   try{const [{port}]=await once(child,'message',{signal});
@@ -285,10 +361,49 @@ test('frozen non-customer JPEG and PNG fixtures pass the actual strict preflight
   for(const [relative,mimetype,sha256] of fixtures){
     const buffer=await readFile(new URL(relative,import.meta.url));
     assert.equal(createHash('sha256').update(buffer).digest('hex'),sha256);
+    const canonicalization=imageSafety.canonicalizeCoordinateImageUpload({buffer,mimetype,size:buffer.length});
+    assert.equal(canonicalization.valid,true);assert.equal(canonicalization.file.buffer,buffer);
     const validation=runtime.validateCoordinateImageUpload({buffer,mimetype});
     assert.equal(validation.valid,true);assert.equal(validation.reason,'VALID_IMAGE_STRUCTURE');
   }
 });
+test('HTTP JPEG tail canonicalization reaches only the canonical bytes and keeps service alive',()=>httpScenario('jpeg-trailing',async post=>{
+  const untrustedTail=Buffer.alloc(3754,0xa5);
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([frozenJpeg,untrustedTail],{type:'image/jpeg'}),'synthetic-trailing.jpg');
+  const result=await post('/api/recognize-coordinates',form,true);
+  assert.equal(result.status,200,JSON.stringify(result.payload));
+  const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.lastProviderImageBytes,frozenJpeg.length);assert.equal(stats.lastProviderImageCanonical,true);
+  assert.equal(stats.providerImageChecks,1);assert.equal(stats.structureProbeCalls,1);assert.equal(stats.structureImageCanonical,true);
+  const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
+}));
+test('HTTP dms_grouped reread and upload structure detector receive only canonical bytes',()=>httpScenario('jpeg-grouped-reread',async post=>{
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([frozenJpeg,Buffer.alloc(3754,0xa5)],{type:'image/jpeg'}),'synthetic-trailing.jpg');
+  const result=await post('/api/recognize-coordinates',form,true);
+  assert.equal(result.status,200,JSON.stringify(result.payload));
+  const stats=await post.stats();assert.equal(stats.calls,2,JSON.stringify({stats,parserTrace:result.payload.parserTrace}));assert.equal(stats.providerImageChecks,2);
+  assert.equal(stats.lastProviderImageCanonical,true);assert.equal(stats.structureProbeCalls,1);assert.equal(stats.structureImageCanonical,true);
+  assert.deepEqual(stats.providerPromptKinds,['STAGE_1','DMS_GROUPED']);
+  const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
+}));
+test('HTTP local OCR receives only canonical bytes after bounded JPEG tail removal',()=>httpScenario('jpeg-ocr-canonical',async post=>{
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([frozenJpeg,Buffer.alloc(3754,0xa5)],{type:'image/jpeg'}),'synthetic-trailing.jpg');
+  const result=await post('/api/recognize-coordinates',form,true);
+  assert.equal(result.status,422);assert.equal(result.payload.code,'LOCAL_OCR_FAILED');
+  const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.providerImageChecks,1);
+  assert.equal(stats.ocrCalls,1);assert.equal(stats.ocrImageCanonical,true);
+  assert.equal(stats.structureProbeCalls,1);assert.equal(stats.structureImageCanonical,true);
+  const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
+}));
+test('HTTP over-limit JPEG tail fails closed before Provider and service remains alive',()=>httpScenario('jpeg-tail-over-limit',async post=>{
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([
+    frozenJpeg,Buffer.alloc(imageSafety.COORDINATE_IMAGE_SAFETY_LIMITS.maxTrailingBytes+1,0xa5)
+  ],{type:'image/jpeg'}),'synthetic-over-limit.jpg');
+  const result=await post('/api/recognize-coordinates',form,true);
+  assert.equal(result.status,400);assert.equal(result.payload.success,false);assert.equal(result.payload.code,'COORDINATE_IMAGE_INVALID');
+  assert.equal(result.payload.safetyReason,'JPEG_TRAILING_DATA_LIMIT_EXCEEDED');assert.equal(result.payload.rawText,'');assert.equal(result.payload.coordinates,'');
+  const stats=await post.stats();assert.equal(stats.calls,0);assert.equal(stats.providerImageChecks,0);assert.equal(stats.structureProbeCalls,0);
+  const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
+}));
 test('HTTP local OCR failure is sanitized fail-closed and service remains alive',()=>httpScenario('ocr-failure',async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'image/png'}),'synthetic.png');
   const result=await post('/api/recognize-coordinates',form,true);
