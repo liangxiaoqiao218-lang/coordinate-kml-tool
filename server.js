@@ -15,6 +15,19 @@ import {
   hasValidJpegStructure as hasValidCanonicalJpegStructure
 } from "./server/recognition/coordinate-image-safety.js";
 import {
+  COORDINATE_USAGE_COMMIT_RESULT,
+  COORDINATE_USAGE_COMMIT_STATE,
+  COORDINATE_USAGE_ERROR_CODE,
+  COORDINATE_USAGE_SESSION_COOKIE,
+  CoordinateUsageAtomicityService,
+  buildUnchargedCoordinateFailureResponse,
+  createCoordinateUsageCommitController,
+  createCoordinateUsageSessionToken,
+  hashCoordinateUsageSession,
+  isRecognitionRequestId,
+  parseCoordinateUsageSealKey
+} from "./server/coordinate-usage-atomicity.js";
+import {
   authorizeFamilyRetryDispatch,
   canAuthorizePointAzRetry,
   hasPointAzHeadingEvidence,
@@ -258,6 +271,10 @@ const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "
 const supabase = supabaseUrl && supabaseServiceRoleKey
   ? createClient(supabaseUrl, supabaseServiceRoleKey)
   : null;
+const coordinateUsageAtomicity = new CoordinateUsageAtomicityService({
+  supabase,
+  sealKey: parseCoordinateUsageSealKey(process.env.COORDINATE_USAGE_SEAL_KEY)
+});
 const spatialShareStore = new SupabaseSpatialShareStore({ supabase });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -289,7 +306,7 @@ function retainP0QualificationAcquisition(req, response, budget) {
   if (process.env.P0_QUALIFICATION_ACQUISITION_ENABLED !== "true"
     || !getRegressionTestMode(req).active || p0QualificationAcquisitionUsed
     || budget?.caseId !== "indonesia-dms-real-001"
-    || !/^recognition_[a-z0-9_-]{1,160}$/i.test(budget?.requestId || "")
+    || !isRecognitionRequestId(budget?.requestId)
     || !Buffer.isBuffer(req.file?.buffer)
     || crypto.createHash("sha256").update(req.file.buffer).digest("hex") !== "2f508653305fee7c08470218f9bf94f75b56d26d7b28edcd7d8d68cd8f88eaf6") return false;
   p0QualificationAcquisitionUsed = true;
@@ -1002,6 +1019,17 @@ function parseCookieHeader(req) {
         return [name, ""];
       }
     }));
+}
+
+function getCoordinateUsageSessionBinding(req, res, { create = false } = {}) {
+  let token = String(parseCookieHeader(req)[COORDINATE_USAGE_SESSION_COOKIE] || "");
+  let bindingSha256 = hashCoordinateUsageSession(token);
+  if (!bindingSha256 && create) {
+    token = createCoordinateUsageSessionToken();
+    bindingSha256 = hashCoordinateUsageSession(token);
+    res.append("Set-Cookie", `${COORDINATE_USAGE_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Strict`);
+  }
+  return bindingSha256;
 }
 
 const SPATIAL_SHARE_MANAGER_COOKIE = "__Host-geokit_spatial_share_manager";
@@ -7713,8 +7741,8 @@ async function callAliyunVision({
     throw error;
   }
   const budget = getRecognitionBudget();
-  budget?.assertCanContinue({ stageName, minRequiredMs, lowValue });
-  const effectiveTimeoutMs = budget ? budget.effectiveTimeout(timeoutMs) : timeoutMs;
+  budget?.assertCanStartProvider({ stageName, minRequiredMs, lowValue });
+  const effectiveTimeoutMs = budget ? budget.effectiveProviderTimeout(timeoutMs) : timeoutMs;
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < minRequiredMs) {
     const error = new Error("Insufficient remaining budget for Provider stage.");
     error.code = RECOGNITION_BUDGET_CODE;
@@ -7764,8 +7792,11 @@ async function callAliyunVision({
   let response;
   let data;
   let stageResult = "success";
+  let providerCompletionState = "FAILED";
+  let providerUsageObserved = false;
 
   try {
+    budget?.markProviderAttempted();
     response = await fetch(getAliyunChatCompletionsUrl(), {
       method: "POST",
       headers: {
@@ -7776,12 +7807,15 @@ async function callAliyunVision({
       signal: combinedAbort.signal
     });
     data = await response.json().catch(() => ({}));
+    providerUsageObserved = Boolean(data?.usage && typeof data.usage === "object");
+    providerCompletionState = response.ok ? "SUCCEEDED" : "FAILED";
     if (!response.ok) stageResult = "failed";
   } catch (error) {
     const endedAt = Date.now();
     const requestDeadlineExceeded = Boolean(getRecognitionDeadlineSignal()?.aborted);
     if (error.name === "AbortError" || requestDeadlineExceeded) {
       stageResult = requestDeadlineExceeded ? "aborted" : "timeout";
+      providerCompletionState = requestDeadlineExceeded ? "ABORTED" : "TIMED_OUT";
       const timeoutError = new Error(requestDeadlineExceeded ? "坐标识别请求超过硬截止时间" : "阿里云接口超时");
       timeoutError.code = requestDeadlineExceeded ? RECOGNITION_DEADLINE_CODE : "ALIYUN_TIMEOUT";
       timeoutError.reason = "timeout";
@@ -7797,6 +7831,7 @@ async function callAliyunVision({
       throw timeoutError;
     }
     stageResult = "failed";
+    providerCompletionState = "FAILED";
     const durationMs = endedAt - startedAt;
     console.error("[Aliyun] 网络请求失败：", {
       model: modelName,
@@ -7811,6 +7846,12 @@ async function callAliyunVision({
   } finally {
     clearTimeout(timer);
     combinedAbort.cleanup();
+    if (budget?.providerAttempted) {
+      budget.markProviderCompleted({
+        state: providerCompletionState,
+        usageObserved: providerUsageObserved
+      });
+    }
     budget?.stageCompleted(stageEvent, { result: stageResult });
   }
 
@@ -12797,7 +12838,7 @@ app.get("/api/regression/recognition-trace/:requestId", (req, res) => {
     });
   }
   const requestId = String(req.params?.requestId || "").trim();
-  if (!/^recognition_[a-z0-9_-]{1,160}$/i.test(requestId)) {
+  if (!isRecognitionRequestId(requestId)) {
     return res.status(400).json({ success: false, reason: "invalid_request_id" });
   }
   const trace = regressionRecognitionTraces.get(requestId);
@@ -13160,12 +13201,113 @@ app.delete(
  * override BFTM, do not let DMS override cadastral grid, and do not let a new display layer override
  * recognizedLines.
  */
+const buildCoordinateVerificationResponseWithoutRecognitionBudget = buildCoordinateVerificationResponse;
+
+app.post("/api/recognize-coordinates/session", (req, res) => {
+  const sessionBindingSha256 = getCoordinateUsageSessionBinding(req, res, { create: true });
+  return sessionBindingSha256
+    ? res.json({ success: true, sessionReady: true })
+    : res.status(503).json({ success: false, sessionReady: false, code: COORDINATE_USAGE_ERROR_CODE.SESSION_BINDING_INVALID });
+});
+
+app.post("/api/recognize-coordinates/recover", async (req, res) => {
+  const recognitionRequestId = String(req.body?.recognitionRequestId || req.get("x-recognition-request-id") || "").trim().toLowerCase();
+  const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
+  const sessionBindingSha256 = getCoordinateUsageSessionBinding(req, res);
+  if (!isRecognitionRequestId(recognitionRequestId) || !visitorId || !sessionBindingSha256) {
+    return res.status(400).json({
+      success: false,
+      code: "COORDINATE_USAGE_RECOVERY_IDENTITY_INVALID",
+      requestId: isRecognitionRequestId(recognitionRequestId) ? recognitionRequestId : null
+    });
+  }
+  try {
+    const recovered = await coordinateUsageAtomicity.recover({
+      recognitionRequestId,
+      userId: visitorId,
+      sessionBindingSha256
+    });
+    if ([COORDINATE_USAGE_COMMIT_RESULT.COMMITTED, COORDINATE_USAGE_COMMIT_RESULT.ALREADY_COMMITTED].includes(recovered.result)
+      && recovered.responsePayload) {
+      return res.json({
+        ...recovered.responsePayload,
+        requestId: recognitionRequestId,
+        usageConsumed: true,
+        quota: recovered.quota || recovered.responsePayload.quota || null,
+        recovered: true
+      });
+    }
+    if (recovered.result === COORDINATE_USAGE_COMMIT_RESULT.QUOTA_EXHAUSTED) {
+      return res.status(403).json({
+        success: false,
+        reason: "limit_exceeded",
+        code: getQuotaExhaustedCode("convert"),
+        requestId: recognitionRequestId,
+        usageConsumed: false,
+        quota: recovered.quota || null
+      });
+    }
+    if (recovered.result === COORDINATE_USAGE_COMMIT_RESULT.OUTCOME_UNKNOWN) {
+      return res.status(503).json({
+        success: false,
+        reason: "usage_commit_outcome_unknown",
+        code: COORDINATE_USAGE_ERROR_CODE.COMMIT_OUTCOME_UNKNOWN,
+        error: "本次识别已完成，扣次状态仍在确认中。请稍后使用同一请求编号恢复结果，不要重新上传图片。",
+        requestId: recognitionRequestId,
+        usageConsumed: null,
+        recoveryRequired: true,
+        retryAllowed: false
+      });
+    }
+    if (recovered.result === COORDINATE_USAGE_COMMIT_RESULT.COMMITTED_RESULT_UNAVAILABLE) {
+      return res.status(500).json({
+        success: false,
+        reason: "committed_result_unavailable",
+        code: "COORDINATE_COMMITTED_RESULT_UNAVAILABLE",
+        error: "本次使用次数已确认扣除，但结果安全校验失败，无法披露。请向支持人员提供本次请求编号。",
+        requestId: recognitionRequestId,
+        usageConsumed: true,
+        recoveryRequired: false,
+        retryAllowed: false
+      });
+    }
+    const terminalNoCharge = (recovered.result === COORDINATE_USAGE_COMMIT_RESULT.EXPIRED
+      && recovered.state === COORDINATE_USAGE_COMMIT_STATE.EXPIRED)
+      || (recovered.result === COORDINATE_USAGE_COMMIT_RESULT.FAILED
+        && recovered.state === COORDINATE_USAGE_COMMIT_STATE.FAILED);
+    return res.status(recovered.result === COORDINATE_USAGE_COMMIT_RESULT.NOT_FOUND ? 404 : 409).json({
+      success: false,
+      reason: "usage_recovery_unavailable",
+      code: "COORDINATE_USAGE_RECOVERY_UNAVAILABLE",
+      requestId: recognitionRequestId,
+      usageConsumed: terminalNoCharge ? false : null,
+      recoveryTerminal: terminalNoCharge,
+      recoveryRequired: !terminalNoCharge,
+      retryAllowed: terminalNoCharge
+    });
+  } catch (error) {
+    return res.status(503).json({
+      success: false,
+      reason: "usage_commit_outcome_unknown",
+      code: COORDINATE_USAGE_ERROR_CODE.COMMIT_OUTCOME_UNKNOWN,
+      error: "扣次或结果恢复状态暂时无法确认。请稍后使用同一请求编号恢复结果，不要重新上传图片。",
+      requestId: recognitionRequestId,
+      usageConsumed: null,
+      recoveryRequired: true,
+      retryAllowed: false
+    });
+  }
+});
+
 app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.single("image"), async (req, res) => {
   activateRecognitionDeadlineContext(req);
   const recognitionBudget = getRecognitionBudget();
-  const uploadStage = recognitionBudget?.stageStarted("upload");
-  recognitionBudget?.stageCompleted(uploadStage);
-  recognitionBudget?.assertCanContinue({ stageName: "pre_route" });
+  recognitionBudget?.setIngressMetadata({
+    runtimeCommit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null,
+    runtimeBranch: process.env.RENDER_GIT_BRANCH || process.env.GIT_BRANCH || null,
+    uploadSize: req.file?.size
+  });
+  recognitionBudget?.completeIngressUpload();
   console.log("---- 收到阿里云识别请求 ----");
   console.log("是否收到图片：", Boolean(req.file));
   console.log("坐标识别环境变量检查：", {
@@ -13181,11 +13323,145 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
 
   let visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || req.query?.visitorId || "").trim();
   const regressionTestMode = getRegressionTestMode(req);
-  const consumeCoordinateUsage = async (metadata = {}) => {
-    if (regressionTestMode.active) {
-      return { success: true, reason: "regression_test", skipped: true };
+  const coordinateUsageSessionBinding = regressionTestMode.active
+    ? null
+    : getCoordinateUsageSessionBinding(req, res, { create: true });
+  let checkedCoordinateUsageStatus = null;
+  let responseCommitPromise = null;
+  const sendRecognitionJson = res.json.bind(res);
+  const runBudgetedStage = async (stageName, action) => {
+    recognitionBudget?.assertCanContinue({ stageName });
+    const event = recognitionBudget?.stageStarted(stageName);
+    let result = "success";
+    try {
+      return await action();
+    } catch (error) {
+      result = isRecognitionStopError(error) ? "budget_exhausted" : "failed";
+      throw error;
+    } finally {
+      recognitionBudget?.stageCompleted(event, { result });
     }
-    return consumeUsage(visitorId, "convert", req, metadata);
+  };
+  const buildCoordinateVerificationResponse = (...args) => {
+    recognitionBudget?.assertCanContinue({ stageName: "finalizer" });
+    const event = recognitionBudget?.stageStarted("finalizer");
+    let result = "success";
+    try {
+      return buildCoordinateVerificationResponseWithoutRecognitionBudget(...args);
+    } catch (error) {
+      result = isRecognitionStopError(error) ? "budget_exhausted" : "failed";
+      throw error;
+    } finally {
+      recognitionBudget?.stageCompleted(event, { result });
+    }
+  };
+  const usageCommitController = createCoordinateUsageCommitController({
+    regressionTestMode: regressionTestMode.active,
+    budget: recognitionBudget,
+    atomicityService: coordinateUsageAtomicity,
+    recognitionRequestId: recognitionBudget?.requestId,
+    userId: visitorId,
+    sessionBindingSha256: coordinateUsageSessionBinding,
+    providerCostState: () => recognitionBudget?.providerCostState || "NOT_INCURRED"
+  });
+  const consumeCoordinateUsage = async (metadata = {}) => usageCommitController.schedule(
+    metadata,
+    checkedCoordinateUsageStatus?.quota || null
+  );
+  res.json = function usageSafeRecognitionJson(body) {
+    if (responseCommitPromise) return res;
+    responseCommitPromise = (async () => {
+      try {
+        const settlement = await usageCommitController.settle({
+          httpStatus: res.statusCode,
+          body
+        });
+        if (settlement.kind === "USAGE_COMMIT_OUTCOME_UNKNOWN") {
+          res.status(503);
+          return sendRecognitionJson({
+            success: false,
+            reason: "usage_commit_outcome_unknown",
+            code: COORDINATE_USAGE_ERROR_CODE.COMMIT_OUTCOME_UNKNOWN,
+            error: "本次识别已完成，扣次状态仍在确认中。请使用本次请求编号恢复结果，不要重新上传图片。",
+            requestId: recognitionBudget?.requestId || null,
+            usageConsumed: null,
+            recoveryRequired: true,
+            retryAllowed: false,
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        if (settlement.kind === "USAGE_COMMIT_FAILED") {
+          const commitResult = settlement.commitResult || {};
+          const limitExceeded = commitResult.result === COORDINATE_USAGE_COMMIT_RESULT.QUOTA_EXHAUSTED;
+          res.status(limitExceeded ? 403 : 500);
+          return sendRecognitionJson({
+            success: false,
+            reason: limitExceeded ? "limit_exceeded" : "usage_commit_failed",
+            code: limitExceeded ? getQuotaExhaustedCode("convert") : "CONVERT_QUOTA_CONSUME_FAILED",
+            type: "convert",
+            quota: commitResult.quota || null,
+            error: limitExceeded ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            requestId: recognitionBudget?.requestId || null,
+            usageConsumed: false,
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        if (settlement.kind === "UNCHARGED_RESPONSE" && settlement.authorityReason !== "REGRESSION_TEST") {
+          const originalStatus = Number(res.statusCode);
+          res.status(body?.success === false && originalStatus >= 400 && originalStatus < 600 ? originalStatus : 422);
+          return sendRecognitionJson(buildUnchargedCoordinateFailureResponse({
+            body,
+            recognitionRequestId: recognitionBudget?.requestId || null
+          }));
+        }
+        const committedBody = settlement.kind === "USAGE_COMMITTED" && body && typeof body === "object"
+          ? {
+            ...body,
+            quota: settlement.commitResult?.quota || body.quota || null,
+            requestId: recognitionBudget?.requestId || null,
+            usageConsumed: true
+          }
+          : body;
+        if (!res.headersSent) sendRecognitionJson(committedBody);
+        return res;
+      } catch (error) {
+        if (res.headersSent) return res;
+        if (error?.code === RECOGNITION_BUDGET_CODE || error?.code === RECOGNITION_DEADLINE_CODE) {
+          res.status(503);
+          return sendRecognitionJson({
+            success: false,
+            reason: error.reason || "budget_exhausted",
+            code: RECOGNITION_BUDGET_CODE,
+            error: "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。",
+            requestId: recognitionBudget?.requestId || null,
+            usageConsumed: false,
+            retryAllowed: true,
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const atomicityUnavailable = error?.code === COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE
+          || error?.code === COORDINATE_USAGE_ERROR_CODE.COMMIT_FAILED;
+        res.status(atomicityUnavailable ? 503 : 500);
+        return sendRecognitionJson({
+          success: false,
+          reason: atomicityUnavailable ? "usage_atomicity_unavailable" : "usage_commit_failed",
+          code: atomicityUnavailable
+            ? COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE
+            : "CONVERT_QUOTA_CONSUME_FAILED",
+          error: atomicityUnavailable
+            ? "扣次确认服务暂不可用，本次未返回坐标结果。"
+            : "CONVERT_QUOTA_CONSUME_FAILED",
+          requestId: recognitionBudget?.requestId || null,
+          usageConsumed: false,
+          rawText: "",
+          coordinates: ""
+        });
+      }
+    })();
+    return res;
   };
   const parserTrace = ["OCR"];
   let stage1ProviderSucceeded = false;
@@ -13216,8 +13492,11 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
       });
     }
 
+    recognitionBudget?.assertCanContinue({ stageName: "image_safety" });
+    const imageSafetyStage = recognitionBudget?.stageStarted("image_safety");
     const imageCanonicalization = canonicalizeCoordinateImageUpload(req.file);
     if (!imageCanonicalization.valid) {
+      recognitionBudget?.stageCompleted(imageSafetyStage, { result: "failed" });
       return res.status(400).json({
         success: false,
         reason: "invalid_image",
@@ -13233,6 +13512,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
 
     const imageValidation = validateCoordinateImageUpload(req.file);
     if (!imageValidation.valid) {
+      recognitionBudget?.stageCompleted(imageSafetyStage, { result: "failed" });
       return res.status(400).json({
         success: false,
         reason: "invalid_image",
@@ -13243,10 +13523,17 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
         coordinates: ""
       });
     }
+    recognitionBudget?.stageCompleted(imageSafetyStage);
 
-    const adminData = await readAdminData();
-    const user = ensureUser(adminData, visitorId);
-    const permissions = getEffectivePermissions(user, adminData.featureFlags);
+    const { adminData, user, permissions } = await runBudgetedStage("permissions", async () => {
+      const currentAdminData = await readAdminData();
+      const currentUser = ensureUser(currentAdminData, visitorId);
+      return {
+        adminData: currentAdminData,
+        user: currentUser,
+        permissions: getEffectivePermissions(currentUser, currentAdminData.featureFlags)
+      };
+    });
 
     if (!permissions.aiOcrEnabled) {
       if (user) {
@@ -13265,6 +13552,8 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
       ? String(req.get("x-sr08b-deadline-scenario") || "").trim()
       : "";
     if (["fast_success", "slow_provider"].includes(sr08bDeadlineScenario)) {
+      recognitionBudget?.beginExecutionPhase();
+      recognitionBudget?.assertCanContinue({ stageName: "pre_route" });
       if (sr08bDeadlineScenario === "slow_provider") {
         const waitMs = Math.max(10, Math.floor((getRecognitionHardDeadlineMs() * 0.5)));
         await new Promise(resolve => setTimeout(resolve, waitMs));
@@ -13306,9 +13595,11 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     }
 
     if (!regressionTestMode.active) {
-      await updateSupabaseUserVisitMeta(visitorId, req);
-
-      const usageStatus = await checkUsage(visitorId, "convert");
+      const usageStatus = await runBudgetedStage("usage_eligibility", async () => {
+        await updateSupabaseUserVisitMeta(visitorId, req);
+        return checkUsage(visitorId, "convert");
+      });
+      checkedCoordinateUsageStatus = usageStatus;
 
       if (!usageStatus.allowed && usageStatus.reason === "limit_exceeded") {
         return res.status(403).json({
@@ -13334,6 +13625,9 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
         });
       }
     }
+
+    recognitionBudget?.beginExecutionPhase();
+    recognitionBudget?.assertCanContinue({ stageName: "pre_route" });
 
     if (!aliyunApiKey) {
       console.error("坐标识别失败：缺少环境变量 ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
@@ -15719,6 +16013,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const finalWarning = wgs84TableCoordinates.isWgs84TableCoordinates && wgs84TableCoordinates.warning ? wgs84TableCoordinates.warning : (chatCoordinates.isChatCoordinates && chatCoordinates.warning ? chatCoordinates.warning : warning);
     const dmsGroupedReviewCandidate = dmsGroupedAcquisitionExpansion || dmsGroupedPartialMultisiteRecovery;
     const recognitionPayload = {
+      success: true,
       model: usedModel,
       rawText: dmsGroupedReviewCandidate?.stage1Candidate.rawText ?? rawText,
       coordinates: dmsGroupedReviewCandidate?.stage1Candidate.coordinates ?? coordinates,
@@ -15951,7 +16246,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         success: false,
         reason: error.reason || "budget_exhausted",
         code: RECOGNITION_BUDGET_CODE,
-        error: "Recognition stopped because the remaining request budget was insufficient.",
+        error: "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。",
+        requestId: recognitionBudget?.requestId || null,
+        usageConsumed: false,
+        retryAllowed: true,
         rawText: "",
         coordinates: ""
       });
@@ -16695,7 +16993,10 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
           success: false,
           reason: fallbackError.reason || "budget_exhausted",
           code: RECOGNITION_BUDGET_CODE,
-          error: "Recognition fallback stopped because the remaining request budget was insufficient.",
+          error: "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。",
+          requestId: recognitionBudget?.requestId || null,
+          usageConsumed: false,
+          retryAllowed: true,
           rawText: "",
           coordinates: ""
         });
@@ -16722,6 +17023,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
       });
     }
   } finally {
+    if (responseCommitPromise) await responseCommitPromise;
     recognitionBudget?.markHandlerCompleted();
     if (regressionTestMode.active) {
       storeRegressionRecognitionTrace(recognitionBudget?.toSanitizedTrace());
@@ -16735,6 +17037,8 @@ app.use((error, req, res, next) => {
   }
 
   if (error instanceof multer.MulterError) {
+    const recognitionBudget = req?.recognitionDeadlineContext?.budget || null;
+    recognitionBudget?.completeIngressUpload({ result: "failed" });
     console.error("Multer 上传解析失败：", {
       code: error.code,
       message: error.message,
@@ -16744,7 +17048,7 @@ app.use((error, req, res, next) => {
 
     if (String(req.path || "").startsWith("/api/")) {
       const isTooLarge = error.code === "LIMIT_FILE_SIZE";
-      return res.status(isTooLarge ? 413 : 400).json({
+      const response = res.status(isTooLarge ? 413 : 400).json({
         success: false,
         reason: isTooLarge ? "image_too_large" : "image_invalid",
         detail: isTooLarge
@@ -16752,6 +17056,8 @@ app.use((error, req, res, next) => {
           : "后端解析上传图片失败，请重新选择 JPG/PNG 图片上传。",
         code: error.code
       });
+      recognitionBudget?.markHandlerCompleted();
+      return response;
     }
   }
 

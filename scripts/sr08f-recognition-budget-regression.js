@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import {
   RecognitionBudget,
   RECOGNITION_BUDGET_CODE,
+  RECOGNITION_BUDGET_PHASE,
   RECOGNITION_DEADLINE_CODE,
   getRecognitionDeadlineContext,
   recognitionDeadlineMiddleware
@@ -58,6 +59,60 @@ test("B05", "required stage may use only remaining bounded time", () => {
   assert.equal(budget.effectiveTimeout(80_000), 12_500);
 });
 
+test("B06", "ingress preflight and recognition execution use separate phase clocks under one hard deadline", () => {
+  const { budget, setNow } = makeBudget();
+  budget.startIngressUpload();
+  setNow(7_000);
+  budget.completeIngressUpload();
+  const eligibility = budget.stageStarted("usage_eligibility");
+  setNow(12_000);
+  budget.stageCompleted(eligibility);
+  assert.equal(budget.budgetPhase, RECOGNITION_BUDGET_PHASE.INGRESS_PREFLIGHT);
+  assert.equal(budget.beginExecutionPhase(), true);
+  assert.equal(budget.budgetPhase, RECOGNITION_BUDGET_PHASE.EXECUTION);
+  assert.equal(budget.preflightCompletedAt, 12_000);
+  setNow(17_000);
+  const ledger = budget.toSanitizedLedger();
+  assert.equal(ledger.preflightDurationMs, 12_000);
+  assert.equal(ledger.executionElapsedMs, 5_000);
+  assert.equal(ledger.overallElapsedMs, 17_000);
+  assert.equal(budget.deadlineMs, 55_000);
+});
+
+test("B07", "preflight time does not prematurely trigger the execution fallback cutoff", () => {
+  const { budget, setNow } = makeBudget();
+  setNow(20_000);
+  budget.beginExecutionPhase();
+  setNow(45_000);
+  assert.doesNotThrow(() => budget.assertCanContinue({ stageName: "local_ocr", lowValue: true }));
+  setNow(55_000);
+  assert.throws(
+    () => budget.assertCanContinue({ stageName: "local_ocr", lowValue: true }),
+    error => error.code === RECOGNITION_BUDGET_CODE && error.reason === "soft_fallback_cutoff"
+  );
+});
+
+test("B08", "Provider admission reserves parsing Finalizer and response time and fails before attempt", () => {
+  const { budget, setNow } = makeBudget();
+  budget.beginExecutionPhase();
+  setNow(50_800);
+  assert.throws(
+    () => budget.assertCanStartProvider({ stageName: "generic_provider", minRequiredMs: 500 }),
+    error => error.code === RECOGNITION_BUDGET_CODE
+      && error.reason === "provider_admission_budget_insufficient"
+  );
+  assert.equal(budget.providerAttempted, false);
+  assert.equal(budget.providerAttemptCount, 0);
+  assert.equal(budget.events.at(-1).skippedReason, "provider_admission_budget_insufficient");
+});
+
+test("B09", "Provider timeout excludes post-Provider and response reserves", () => {
+  const { budget, setNow } = makeBudget();
+  budget.beginExecutionPhase();
+  setNow(20_000);
+  assert.equal(budget.effectiveProviderTimeout(80_000), 31_000);
+});
+
 test("A01-A06", "hard deadline sends 504 and prevents every later recognition stage", async () => {
   const response = Object.assign(new EventEmitter(), {
     headersSent: false,
@@ -73,6 +128,10 @@ test("A01-A06", "hard deadline sends 504 and prevents every later recognition st
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.equal(response.statusCode, 504);
   assert.equal(response.body.code, RECOGNITION_DEADLINE_CODE);
+  assert.equal(response.body.error, "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。");
+  assert.match(response.body.requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.equal(response.body.usageConsumed, false);
+  assert.equal(response.body.retryAllowed, true);
   assert.equal(context.signal.aborted, true);
   const eventCount = context.budget.events.length;
   for (const stageName of ["generic_provider", "local_ocr", "family_retry", "finalizer"]) {
@@ -177,6 +236,92 @@ test("TRACE01", "stage trace contains timing only and no recognition payload", (
   for (const forbidden of ["rawText", "coordinates", "fileName", "projectName", "visitorId", "apiKey", "authorization"]) {
     assert.equal(Object.hasOwn(event, forbidden), false);
   }
+});
+
+test("A08", "hard deadline during an atomic commit reports unknown instead of uncharged", async () => {
+  for (const state of ["PREPARING", "PREPARED", "COMMITTING"]) {
+    const response = Object.assign(new EventEmitter(), {
+      headersSent: false,
+      statusCode: 200,
+      body: null,
+      headers: {},
+      setHeader(name, value) { this.headers[String(name).toLowerCase()] = value; },
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.headersSent = true; this.body = body; this.emit("finish"); return this; }
+    });
+    recognitionDeadlineMiddleware({ deadlineMs: 15 })({
+      get(name) {
+        if (String(name).toLowerCase() === "x-recognition-request-id") return "11111111-1111-4111-8111-111111111111";
+        return "";
+      }
+    }, response, () => {
+      getRecognitionDeadlineContext().budget.markUsageCommitState(state);
+    });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(response.statusCode, 504, state);
+    assert.equal(response.body.code, "USAGE_COMMIT_OUTCOME_UNKNOWN", state);
+    assert.equal(response.body.requestId, "11111111-1111-4111-8111-111111111111", state);
+    assert.equal(response.body.usageConsumed, null, state);
+    assert.equal(response.body.recoveryRequired, true, state);
+    assert.equal(response.body.retryAllowed, false, state);
+    assert.doesNotMatch(response.body.error, /未扣除使用次数/, state);
+  }
+});
+
+test("A09", "invalid client request ID is replaced by a server UUID", () => {
+  const response = Object.assign(new EventEmitter(), {
+    headersSent: false,
+    statusCode: 200,
+    headers: {},
+    setHeader(name, value) { this.headers[String(name).toLowerCase()] = value; },
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.headersSent = true; this.body = body; this.emit("finish"); return this; }
+  });
+  recognitionDeadlineMiddleware({ deadlineMs: 1000 })({ get: () => "not-a-uuid" }, response, () => {});
+  assert.match(response.headers["x-recognition-request-id"], /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  response.emit("close");
+});
+
+test("LEDGER01", "strict ledger contains only approved fields and normalizes unknown identity and reasons", () => {
+  const { budget } = makeBudget();
+  budget.setIngressMetadata({
+    runtimeCommit: "private commit text",
+    runtimeBranch: "branch with spaces and secret",
+    uploadSize: 900_000
+  });
+  budget.beginExecutionPhase();
+  budget.markProviderAttempted();
+  budget.markProviderCompleted({ state: "SUCCEEDED", usageObserved: true });
+  budget.recordSkippedStage("private_stage_name", "private_error_detail", "failed");
+  budget.markResponseSent({ httpStatus: 200, responseCode: "private_response_detail" });
+  budget.markHandlerCompleted();
+  const ledger = budget.toSanitizedLedger();
+  assert.deepEqual(Object.keys(ledger).sort(), [
+    "budgetPhase", "executionElapsedMs", "httpStatus", "overallElapsedMs",
+    "preflightDurationMs", "providerAttempted", "providerCompletionState",
+    "providerCostState", "requestId", "responseCode",
+    "runtimeBranch", "runtimeCommit", "schemaVersion", "stages", "uploadSizeBucket", "usageCommitState", "userUsageConsumed"
+  ].sort());
+  assert.deepEqual(Object.keys(ledger.stages[0]).sort(), [
+    "budgetPhase", "durationMs", "reasonCode", "remainingBudgetAtEndMs",
+    "remainingBudgetAtStartMs", "result", "stageName"
+  ].sort());
+  assert.equal(ledger.runtimeCommit, "UNLISTED_RUNTIME_COMMIT");
+  assert.equal(ledger.runtimeBranch, "UNLISTED_RUNTIME_BRANCH");
+  assert.equal(ledger.uploadSizeBucket, "LE_1_MIB");
+  assert.equal(ledger.providerAttempted, true);
+  assert.equal(ledger.providerCompletionState, "SUCCEEDED");
+  assert.equal(ledger.providerCostState, "USAGE_REPORTED");
+  assert.equal(ledger.userUsageConsumed, false);
+  assert.equal(ledger.usageCommitState, "NOT_STARTED");
+  assert.equal(ledger.responseCode, "UNLISTED_RESPONSE_CODE");
+  assert.equal(ledger.stages[0].stageName, "UNLISTED_STAGE");
+  assert.equal(ledger.stages[0].reasonCode, "UNLISTED_STAGE_REASON");
+  const serialized = JSON.stringify(ledger).toLowerCase();
+  for (const forbidden of [
+    "rawtext", "coordinate", "filename", "filehash", "prompt", "providerrequest",
+    "providerresponse", "visitorid", "userid", "authorization", "cookie", "secret", "api_key"
+  ]) assert.equal(serialized.includes(forbidden), false, forbidden);
 });
 
 let passed = 0;

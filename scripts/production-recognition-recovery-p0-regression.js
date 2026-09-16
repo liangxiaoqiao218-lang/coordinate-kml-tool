@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import crypto from "node:crypto";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "../server/recognition/cancellable-ocr.js";
+import { createCoordinateUsageCommitController, isRecognitionRequestId } from "../server/coordinate-usage-atomicity.js";
 import * as primaryRouting from "../server/recognition/family-primary-routing.js";
 import * as dmsSourceStructure from "../server/recognition/dms-source-structure.js";
 import * as familyRetryPolicy from "../server/recognition/family-retry-policy.js";
@@ -40,7 +41,8 @@ const replay = JSON.parse(await readFile(path.join(root, "release-governance/p0-
 const releaseGate = JSON.parse(await readFile(path.join(root, "release-governance/p0-release-gate-governance.json"), "utf8"));
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
 // Execute the actual runtime function declarations without app startup or Provider I/O.
-const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, utmToWgs84, Buffer, crypto,
+const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, utmToWgs84,
+  isRecognitionRequestId, Buffer, crypto,
   process: { env: {} }, setTimeout: () => ({ unref() {} }) });
 const declarations = [];
 for (const start of serverSource.matchAll(/^(?:async )?function \w+\(/gm)) {
@@ -137,6 +139,178 @@ async function runHttpCandidate(scenario) {
 }
 const cases = [];
 function test(name, fn) { cases.push({ name, fn }); }
+
+function makeUsageBudget({ rejectCommit = false } = {}) {
+  const state = { assertions: 0, starts: 0, completions: 0, markedConsumed: 0 };
+  return {
+    state,
+    budget: {
+      assertCanContinue({ stageName }) {
+        assert.equal(stageName, "usage_commit");
+        state.assertions += 1;
+        if (rejectCommit) {
+          const error = new Error("fixed budget rejection");
+          error.code = "RECOGNITION_BUDGET_EXHAUSTED";
+          error.reason = "insufficient_remaining_budget";
+          throw error;
+        }
+      },
+      stageStarted(stageName) {
+        assert.equal(stageName, "usage_commit");
+        state.starts += 1;
+        return { stageName };
+      },
+      stageCompleted(stage, { result }) {
+        assert.equal(stage.stageName, "usage_commit");
+        assert.ok(["success", "failed", "budget_exhausted"].includes(result));
+        state.completions += 1;
+      },
+      markUserUsageConsumed(value) {
+        assert.equal(value, true);
+        state.markedConsumed += 1;
+      }
+    }
+  };
+}
+
+function makeAtomicUsageService({ commitResult = "COMMITTED" } = {}) {
+  const state = { prepareCalls: 0, commitCalls: 0 };
+  return {
+    state,
+    service: {
+      async prepare() {
+        state.prepareCalls += 1;
+        return { result: "PREPARED" };
+      },
+      async commit() {
+        state.commitCalls += 1;
+        return { result: commitResult, quota: { remaining: 2 } };
+      }
+    }
+  };
+}
+
+function makeAuthoritativeUsagePayload() {
+  const finalizedCoordinateResult = finalizeCoordinateResult({
+    sourceAuthority: "legacy",
+    crs: FINALIZED_COORDINATE_CRS,
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[20, 10], [21, 10], [21, 11], [20, 10]]]
+    },
+    confirmationStatus: COORDINATE_CONFIRMATION_STATUS.NOT_REQUIRED,
+    qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.PASSED,
+    currentAuthorizedGeometryExportable: true,
+    requiresReview: false,
+    kmlReady: true
+  });
+  return { success: true, finalizedCoordinateResult };
+}
+
+test("actual usage controller defers and commits a successful authority response exactly once", async () => {
+  const { budget, state } = makeUsageBudget();
+  const atomic = makeAtomicUsageService();
+  const controller = createCoordinateUsageCommitController({
+    budget,
+    atomicityService: atomic.service,
+    recognitionRequestId: "11111111-1111-4111-8111-111111111111",
+    userId: "synthetic-user",
+    sessionBindingSha256: "1".repeat(64)
+  });
+  const scheduled = controller.schedule({ note: "authority established" }, { remaining: 3 });
+  assert.equal(scheduled.reason, "usage_commit_pending");
+  assert.equal(atomic.state.commitCalls, 0);
+  const first = await controller.settle({ httpStatus: 200, body: makeAuthoritativeUsagePayload() });
+  assert.equal(first.kind, "USAGE_COMMITTED");
+  assert.equal(first.committed, true);
+  assert.equal(atomic.state.prepareCalls, 1);
+  assert.equal(atomic.state.commitCalls, 1);
+  assert.equal(state.assertions, 1);
+  assert.equal(state.starts, 1);
+  assert.equal(state.completions, 1);
+  assert.equal(state.markedConsumed, 1);
+  const second = await controller.settle({ httpStatus: 200, body: { success: true } });
+  assert.equal(second.kind, "DUPLICATE_SETTLEMENT");
+  assert.equal(atomic.state.commitCalls, 1);
+  assert.equal(state.markedConsumed, 1);
+});
+
+test("actual usage controller rejects insufficient final response budget before any charge", async () => {
+  const { budget, state } = makeUsageBudget({ rejectCommit: true });
+  const atomic = makeAtomicUsageService();
+  const controller = createCoordinateUsageCommitController({
+    budget,
+    atomicityService: atomic.service,
+    recognitionRequestId: "22222222-2222-4222-8222-222222222222",
+    userId: "synthetic-user",
+    sessionBindingSha256: "2".repeat(64)
+  });
+  controller.schedule({ note: "must remain uncharged" });
+  await assert.rejects(
+    controller.settle({ httpStatus: 200, body: makeAuthoritativeUsagePayload() }),
+    error => error.code === "RECOGNITION_BUDGET_EXHAUSTED"
+  );
+  assert.equal(atomic.state.prepareCalls, 0);
+  assert.equal(atomic.state.commitCalls, 0);
+  assert.equal(state.assertions, 1);
+  assert.equal(state.starts, 0);
+  assert.equal(state.markedConsumed, 0);
+  assert.equal(controller.snapshot().committed, false);
+});
+
+for (const [name, response] of [
+  ["post-Provider pre-Finalizer failure", { httpStatus: 422, body: { success: false, code: "COORDINATE_POST_PROVIDER_PROCESSING_FAILED" } }],
+  ["fallback failure", { httpStatus: 422, body: { success: false, code: "COORDINATE_RECOGNITION_FAILED_CLOSED" } }],
+  ["budget failure", { httpStatus: 503, body: { success: false, code: "RECOGNITION_BUDGET_EXHAUSTED" } }]
+]) {
+  test(`actual usage controller keeps ${name} uncharged`, async () => {
+    const { budget, state } = makeUsageBudget();
+    const atomic = makeAtomicUsageService();
+    const controller = createCoordinateUsageCommitController({
+      budget,
+      atomicityService: atomic.service,
+      recognitionRequestId: "33333333-3333-4333-8333-333333333333",
+      userId: "synthetic-user",
+      sessionBindingSha256: "3".repeat(64)
+    });
+    controller.schedule({ note: "must remain uncharged" });
+    const settlement = await controller.settle(response);
+    assert.equal(settlement.kind, "UNCHARGED_RESPONSE");
+    assert.equal(atomic.state.prepareCalls, 0);
+    assert.equal(atomic.state.commitCalls, 0);
+    assert.equal(state.assertions, 0);
+    assert.equal(state.markedConsumed, 0);
+    assert.equal(controller.snapshot().committed, false);
+  });
+}
+
+test("production source orders Provider admission before attempt and defers usage to response settlement", async () => {
+  const deadlineSource = await readFile(path.join(root, "server/coordinate-finalizer/recognition-deadline.js"), "utf8");
+  const indexSource = await readFile(path.join(root, "index.html"), "utf8");
+  const providerFunction = serverSource.slice(
+    serverSource.indexOf("async function callAliyunVision"),
+    serverSource.indexOf("async function callAliyunOcr")
+  );
+  assert.ok(providerFunction.indexOf("assertCanStartProvider") >= 0);
+  assert.ok(providerFunction.indexOf("assertCanStartProvider") < providerFunction.indexOf("markProviderAttempted"));
+  assert.equal((providerFunction.match(/await fetch\(/g) || []).length, 1);
+  assert.match(deadlineSource, /startIngressUpload\(\)/);
+  assert.match(serverSource, /completeIngressUpload\(\)/);
+  const usageEligibilityIndex = serverSource.indexOf('runBudgetedStage("usage_eligibility"');
+  assert.ok(usageEligibilityIndex >= 0);
+  assert.ok(usageEligibilityIndex < serverSource.indexOf("beginExecutionPhase()", usageEligibilityIndex));
+  assert.match(serverSource, /createCoordinateUsageCommitController/);
+  assert.match(serverSource, /assertCanContinue\(\{ stageName: "finalizer" \}\)/);
+  assert.match(serverSource, /buildCoordinateVerificationResponseWithoutRecognitionBudget/);
+  assert.match(serverSource, /if \(responseCommitPromise\) await responseCommitPromise/);
+  assert.match(deadlineSource, /DEFAULT_RECOGNITION_HARD_DEADLINE_MS = 55_000/);
+  assert.match(deadlineSource, /MAX_RECOGNITION_HARD_DEADLINE_MS = 59_000/);
+  const fixedMessage = "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。";
+  assert.ok(serverSource.includes(fixedMessage));
+  assert.ok(indexSource.includes(fixedMessage));
+  assert.match(indexSource, /RECOGNITION_BUDGET_EXHAUSTED/);
+  assert.match(indexSource, /RECOGNITION_DEADLINE_EXCEEDED/);
+});
 
 test("local OCR worker rejection is normalized and sanitized", async () => {
   let terminated = false;
@@ -1029,7 +1203,7 @@ test("qualification retention is default-off production-blocked hash-bound and o
   const file = await readFile(path.join(root, replay.records[0].fixture));
   const req = { ip: '127.0.0.1', socket: { remoteAddress: '127.0.0.1' }, get: key => key === 'x-regression-test' ? '1' : '', file: { buffer: file } };
   const response = { choices: [{ message: { content: observedText } }], api_key: "NOT_RETAINED" };
-  const budget = { caseId: 'indonesia-dms-real-001', requestId: 'recognition_test_1' };
+  const budget = { caseId: 'indonesia-dms-real-001', requestId: '11111111-1111-4111-8111-111111111111' };
   assert.equal(runtime.retainP0QualificationAcquisition(req, response, budget), false);
   runtime.process.env = { P0_QUALIFICATION_ACQUISITION_ENABLED: 'true', ENABLE_REGRESSION_TEST_MODE: 'true', NODE_ENV: 'production' };
   assert.equal(runtime.retainP0QualificationAcquisition(req, response, budget), false);
@@ -1038,7 +1212,7 @@ test("qualification retention is default-off production-blocked hash-bound and o
   assert.equal(runtime.retainP0QualificationAcquisition({ ...req, file: { buffer: Buffer.from('wrong') } }, response, budget), false);
   assert.equal(runtime.retainP0QualificationAcquisition(req, response, { ...budget, caseId: 'wrong' }), false);
   assert.equal(runtime.retainP0QualificationAcquisition(req, response, budget), true);
-  assert.equal(runtime.retainP0QualificationAcquisition(req, response, { ...budget, requestId: 'recognition_test_2' }), false);
+  assert.equal(runtime.retainP0QualificationAcquisition(req, response, { ...budget, requestId: '22222222-2222-4222-8222-222222222222' }), false);
   const retained = vm.runInContext('p0QualificationAcquisition', runtime);
   assert.equal(retained.fullResponseJsonRetained, false);
   assert.equal(retained.acquisitionKind, 'LOCAL_REPLAY');

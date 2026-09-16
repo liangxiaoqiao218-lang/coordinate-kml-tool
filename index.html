@@ -5297,6 +5297,7 @@ Au值 = 纯度 × 10 后取整数</div>
     window.addEventListener("pageshow", () => {
       restoreHandwrittenReviewGuard();
       setTimeout(restoreHandwrittenReviewGuard, 0);
+      setTimeout(() => { void recoverPendingCoordinateCommitOnPageShow(); }, 0);
     });
     input.addEventListener("input", () => {
       markCoordinateTextChanged();
@@ -13706,34 +13707,115 @@ ${placemarks}
       }
     }
 
+    const PENDING_COORDINATE_COMMIT_REQUEST_KEY = "geokit_pending_coordinate_commit_request_id";
+
+    function isRecognitionRequestId(value) {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+    }
+
+    function getPendingCoordinateCommitRequestId() {
+      try {
+        const value = sessionStorage.getItem(PENDING_COORDINATE_COMMIT_REQUEST_KEY) || "";
+        return isRecognitionRequestId(value) ? value.toLowerCase() : "";
+      } catch {
+        return "";
+      }
+    }
+
+    function rememberPendingCoordinateCommitRequestId(value) {
+      if (!isRecognitionRequestId(value)) return;
+      try { sessionStorage.setItem(PENDING_COORDINATE_COMMIT_REQUEST_KEY, String(value).toLowerCase()); } catch { /* memory-only fallback */ }
+    }
+
+    function clearPendingCoordinateCommitRequestId() {
+      try { sessionStorage.removeItem(PENDING_COORDINATE_COMMIT_REQUEST_KEY); } catch { /* memory-only fallback */ }
+    }
+
+    function createRecognitionRequestId() {
+      const value = globalThis.crypto?.randomUUID?.();
+      return isRecognitionRequestId(value)
+        ? String(value).toLowerCase()
+        : "";
+    }
+
+    async function recoverCommittedCoordinateResult(recognitionRequestId, visitorId) {
+      const response = await fetch("/api/recognize-coordinates/recover", {
+        method: "POST",
+        headers: getSourceHeaders({
+          "content-type": "application/json",
+          "x-visitor-id": visitorId,
+          "x-recognition-request-id": recognitionRequestId
+        }),
+        body: JSON.stringify({ recognitionRequestId, visitorId })
+      });
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        data = { success: false, code: "COORDINATE_USAGE_RECOVERY_INVALID_RESPONSE" };
+      }
+      return { response, data };
+    }
+
+    async function prepareCoordinateUsageSession(visitorId) {
+      const response = await fetch("/api/recognize-coordinates/session", {
+        method: "POST",
+        headers: getSourceHeaders({
+          "content-type": "application/json",
+          "x-visitor-id": visitorId
+        }),
+        body: JSON.stringify({ visitorId })
+      });
+      if (!response.ok) throw new Error("COORDINATE_USAGE_SESSION_UNAVAILABLE");
+      const data = await response.json();
+      if (data?.sessionReady !== true) throw new Error("COORDINATE_USAGE_SESSION_UNAVAILABLE");
+    }
+
+    let pendingCoordinateRecoveryPromise = null;
+
+    async function recoverPendingCoordinateCommitOnPageShow() {
+      if (!getPendingCoordinateCommitRequestId() || pendingCoordinateRecoveryPromise) return;
+      pendingCoordinateRecoveryPromise = recognizeImage();
+      try {
+        await pendingCoordinateRecoveryPromise;
+      } finally {
+        pendingCoordinateRecoveryPromise = null;
+      }
+    }
+
     async function recognizeImage() {
       const file = imageInput.files[0];
-
-      if (!file) {
-        return;
-      }
-
-      try {
-        showSelectedImage(file);
-      } catch (error) {
-        console.error(error);
-        showMessage("图片预览失败，但会继续尝试识别。", true);
-      }
-
       const currentVisitorId = ensureVisitorId();
+      const pendingCoordinateCommitRequestId = getPendingCoordinateCommitRequestId();
+      const recognitionRequestId = pendingCoordinateCommitRequestId || createRecognitionRequestId();
+      const recoveryOnly = Boolean(pendingCoordinateCommitRequestId);
 
-      if (!currentVisitorId) {
-        imageInput.value = "";
-        showMessage("用户识别码初始化失败，请刷新页面后重试。", true);
-        setRecognitionStatus("用户识别码初始化失败，请刷新页面后重试。", "error");
+      if (!file && !recoveryOnly) {
         return;
       }
 
-      await loadUserConfig();
+      if (file) {
+        try {
+          showSelectedImage(file);
+        } catch (error) {
+          console.error(error);
+          showMessage("图片预览失败，但会继续尝试识别。", true);
+        }
+      }
 
-      if (!canUse("aiOcrEnabled", "当前用户暂未开通图片识别。")) {
+      if (!currentVisitorId || !recognitionRequestId) {
         imageInput.value = "";
+        showMessage("安全请求编号初始化失败，请刷新页面后重试。", true);
+        setRecognitionStatus("安全请求编号初始化失败，请刷新页面后重试。", "error");
         return;
+      }
+
+      if (!recoveryOnly) {
+        await loadUserConfig();
+        if (!canUse("aiOcrEnabled", "当前用户暂未开通图片识别。")) {
+          imageInput.value = "";
+          return;
+        }
       }
 
       imageInput.disabled = true;
@@ -13748,41 +13830,72 @@ ${placemarks}
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
-      showRecognitionProgress("正在上传图片...", "loading");
-      trackEvent("image_upload_select", {
-        fileSize: file.size,
-        fileType: file.type
-      });
-      setDebug(`正在上传图片\n文件名：${file.name}\n大小：${Math.round(file.size / 1024)} KB`);
-      showMessage("正在上传图片……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
+      showRecognitionProgress(recoveryOnly ? "正在恢复识别结果..." : "正在上传图片...", "loading");
+      if (file) {
+        trackEvent("image_upload_select", {
+          fileSize: file.size,
+          fileType: file.type
+        });
+        setDebug(`正在上传图片\n文件名：${file.name}\n大小：${Math.round(file.size / 1024)} KB`);
+        showMessage("正在上传图片……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
+      } else {
+        setDebug(`正在恢复识别结果\n请求编号：${recognitionRequestId}`);
+        showMessage("正在恢复上次识别结果……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
+      }
 
       try {
-        const formData = new FormData();
-        formData.append("image", file);
-        formData.append("visitorId", currentVisitorId);
-        formData.append("userCode", userCode);
-
-        appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
-        appendDebug("正在调用识别接口");
-        showMessage("正在调用识别接口……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
-        showRecognitionProgress("正在识别坐标...", "loading");
-
-        const response = await fetch("/api/recognize-coordinates", {
-          method: "POST",
-          headers: getSourceHeaders({
-            "x-visitor-id": currentVisitorId
-          }),
-          body: formData
-        });
-
+        let response;
         let data;
-        try {
-          data = await response.json();
-        } catch (error) {
-          data = {
-            error: "后端没有返回 JSON，可能是服务异常。"
-          };
+        let responseWasRecovery = recoveryOnly;
+        if (recoveryOnly) {
+          const recovered = await recoverCommittedCoordinateResult(recognitionRequestId, currentVisitorId);
+          response = recovered.response;
+          data = recovered.data;
+        } else {
+          const formData = new FormData();
+          formData.append("image", file);
+          formData.append("visitorId", currentVisitorId);
+          formData.append("userCode", userCode);
+          appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
+          appendDebug("正在调用识别接口");
+          showMessage("正在调用识别接口……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showRecognitionProgress("正在识别坐标...", "loading");
+          await prepareCoordinateUsageSession(currentVisitorId);
+          rememberPendingCoordinateCommitRequestId(recognitionRequestId);
+          response = await fetch("/api/recognize-coordinates", {
+            method: "POST",
+            headers: getSourceHeaders({
+              "x-visitor-id": currentVisitorId,
+              "x-recognition-request-id": recognitionRequestId
+            }),
+            body: formData
+          });
+          try {
+            data = await response.json();
+          } catch (error) {
+            data = { error: "后端没有返回 JSON，可能是服务异常。" };
+          }
         }
+        if (data.code === "USAGE_COMMIT_OUTCOME_UNKNOWN") {
+          rememberPendingCoordinateCommitRequestId(recognitionRequestId);
+          if (!recoveryOnly) {
+            const recovered = await recoverCommittedCoordinateResult(recognitionRequestId, currentVisitorId);
+            response = recovered.response;
+            data = recovered.data;
+            responseWasRecovery = true;
+          }
+          if (data.code === "USAGE_COMMIT_OUTCOME_UNKNOWN") {
+            const pendingMessage = "本次识别已完成，扣次状态仍在确认中。请稍后使用本次请求编号恢复结果，不要重新上传图片。";
+            setRecognitionStatus(pendingMessage, "error");
+            showMessage(pendingMessage, true, COORDINATE_RECOGNITION_MESSAGE_MS);
+            showUploadSupportMessage(`${pendingMessage} 请求编号：${recognitionRequestId}`);
+            return;
+          }
+        }
+        if (response.ok && data?.success === true) clearPendingCoordinateCommitRequestId();
+        else if (!responseWasRecovery && data?.usageConsumed === false) clearPendingCoordinateCommitRequestId();
+        else if (responseWasRecovery && data?.usageConsumed === true) clearPendingCoordinateCommitRequestId();
+        else if (responseWasRecovery && data?.recoveryTerminal === true && data?.usageConsumed === false) clearPendingCoordinateCommitRequestId();
         showRecognitionProgress("正在解析坐标...", "loading");
 
         if (!response.ok && data.reason === "limit_exceeded") {
@@ -13791,6 +13904,23 @@ ${placemarks}
           }
           setRecognitionStatus("", "");
           showQuotaModal("convert");
+          return;
+        }
+
+        const recognitionBudgetFailureMessage = "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。";
+        const responseRecognitionRequestId = String(
+          data.requestId || response.headers.get("x-recognition-request-id") || ""
+        ).trim();
+        if (!response.ok && ["RECOGNITION_BUDGET_EXHAUSTED", "RECOGNITION_DEADLINE_EXCEEDED"].includes(data.code)) {
+          setRecognitionStatus(recognitionBudgetFailureMessage, "error");
+          showMessage(recognitionBudgetFailureMessage, true, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showUploadSupportMessage(responseRecognitionRequestId
+            ? `${recognitionBudgetFailureMessage} 请求编号：${responseRecognitionRequestId}`
+            : recognitionBudgetFailureMessage);
+          trackEvent("image_recognize_fail", {
+            code: data.code,
+            retryAllowed: data.retryAllowed === true
+          });
           return;
         }
 
