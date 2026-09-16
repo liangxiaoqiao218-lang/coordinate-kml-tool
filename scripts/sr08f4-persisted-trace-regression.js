@@ -55,6 +55,7 @@ function buildCompleteTrace() {
     "cote_divoire_retry", "family_retry", "parser", "crs", "geometry", "verification", "finalizer"
   ];
   for (const [index, stageName] of stageNames.entries()) {
+    if (stageName === "pre_route") clock.budget.beginExecutionPhase();
     const stage = clock.budget.stageStarted(stageName, {
       attempt: index + 1,
       configuredTimeoutMs: 35_000,
@@ -114,7 +115,7 @@ function deterministicAuthorityResult(traceEnabled) {
 const trace = buildCompleteTrace();
 
 await test("E01", "requestId generated", () => {
-  assert.match(trace.requestId, /^recognition_/);
+  assert.match(trace.requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   assert.notEqual(makeBudget().budget.requestId, makeBudget().budget.requestId);
 });
 await test("E02", "caseId propagated", () => assert.equal(trace.caseId, "deterministic_case_001"));
@@ -161,6 +162,62 @@ await test("E09", "handler completion persisted", () => {
 await test("E10", "post response stage count calculated", () => {
   assert.equal(trace.postResponseStageCount, 0);
   assert.equal(trace.postDeadlineWorkStatus, "PROVEN_NONE");
+});
+
+await test("E10A", "sanitized ledger preserves phase timing Provider cost and charge state", () => {
+  const clock = makeBudget();
+  clock.budget.setIngressMetadata({
+    runtimeCommit: "321f647c21fb29f183e2b19224b5fa3d80b014fa",
+    runtimeBranch: "release/wgs84-kml-closure",
+    uploadSize: 300_000
+  });
+  const upload = clock.budget.startIngressUpload();
+  clock.advance(10);
+  clock.budget.completeIngressUpload();
+  assert.ok(upload);
+  clock.budget.beginExecutionPhase();
+  clock.budget.markProviderAttempted();
+  clock.budget.markProviderCompleted({ state: "SUCCEEDED", usageObserved: true });
+  clock.budget.markUserUsageConsumed(true);
+  clock.budget.markUsageCommitState("COMMITTED");
+  clock.budget.markResponseSent({ httpStatus: 200, responseCode: "OK" });
+  const ledger = clock.budget.toSanitizedLedger();
+  assert.equal(ledger.schemaVersion, "recognition_stage_ledger_v2");
+  assert.equal(ledger.runtimeCommit, "321f647c21fb29f183e2b19224b5fa3d80b014fa");
+  assert.equal(ledger.runtimeBranch, "release/wgs84-kml-closure");
+  assert.equal(ledger.preflightDurationMs, 10);
+  assert.equal(ledger.providerAttempted, true);
+  assert.equal(ledger.providerCompletionState, "SUCCEEDED");
+  assert.equal(ledger.providerCostState, "USAGE_REPORTED");
+  assert.equal(ledger.userUsageConsumed, true);
+  assert.equal(ledger.usageCommitState, "COMMITTED");
+  assert.equal(ledger.httpStatus, 200);
+  assert.equal(ledger.responseCode, "OK");
+});
+
+await test("E10B", "ledger normalization cannot persist unlisted runtime or response text", () => {
+  const clock = makeBudget();
+  clock.budget.setIngressMetadata({
+    runtimeCommit: "credential-bearing runtime identity",
+    runtimeBranch: "private branch value with spaces",
+    uploadSize: Number.NaN
+  });
+  clock.budget.recordSkippedStage("private_stage", "private_error_message", "failed");
+  clock.budget.markResponseSent({ httpStatus: 999, responseCode: "private_response_text" });
+  const ledger = clock.budget.toSanitizedLedger();
+  assert.equal(ledger.runtimeCommit, "UNLISTED_RUNTIME_COMMIT");
+  assert.equal(ledger.runtimeBranch, "UNLISTED_RUNTIME_BRANCH");
+  assert.equal(ledger.uploadSizeBucket, "UNLISTED_UPLOAD_SIZE_BUCKET");
+  assert.equal(ledger.httpStatus, null);
+  assert.equal(ledger.responseCode, "UNLISTED_RESPONSE_CODE");
+  assert.equal(ledger.stages[0].stageName, "UNLISTED_STAGE");
+  assert.equal(ledger.stages[0].reasonCode, "UNLISTED_STAGE_REASON");
+  const serialized = JSON.stringify(ledger).toLowerCase();
+  for (const forbidden of [
+    "credential-bearing", "private branch", "private_error", "private_response",
+    "rawtext", "coordinates", "filename", "filehash", "visitorid", "userid",
+    "authorization", "cookie", "secret", "prompt"
+  ]) assert.equal(serialized.includes(forbidden), false, forbidden);
 });
 
 const [sourceFingerprint, governanceFingerprint, fixtureFingerprint] = await Promise.all([
