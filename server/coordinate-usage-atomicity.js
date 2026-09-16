@@ -3,6 +3,7 @@ import {
   createDecipheriv,
   createHash,
   randomBytes,
+  randomUUID,
   timingSafeEqual
 } from "node:crypto";
 import {
@@ -47,6 +48,18 @@ export const COORDINATE_USAGE_ERROR_CODE = Object.freeze({
   ENVELOPE_INVALID: "COORDINATE_RESULT_ENVELOPE_INVALID",
   REQUEST_ID_INVALID: "RECOGNITION_REQUEST_ID_INVALID",
   SESSION_BINDING_INVALID: "COORDINATE_USAGE_SESSION_BINDING_INVALID"
+});
+export const COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS = Object.freeze({
+  READY: "READY",
+  SUPABASE_URL_MISSING: "SUPABASE_URL_MISSING",
+  SUPABASE_PROJECT_REF_MISMATCH: "SUPABASE_PROJECT_REF_MISMATCH",
+  SERVICE_ROLE_KEY_MISSING: "SERVICE_ROLE_KEY_MISSING",
+  SEAL_KEY_INVALID: "SEAL_KEY_INVALID",
+  RPC_SCHEMA_CACHE_ERROR: "RPC_SCHEMA_CACHE_ERROR",
+  RPC_PERMISSION_ERROR: "RPC_PERMISSION_ERROR",
+  RPC_AUTH_ERROR: "RPC_AUTH_ERROR",
+  RPC_NETWORK_ERROR: "RPC_NETWORK_ERROR",
+  RPC_UNKNOWN_ERROR: "RPC_UNKNOWN_ERROR"
 });
 
 const SAFE_REVIEW_BLOCKERS = new Set([
@@ -148,6 +161,150 @@ export function parseCoordinateUsageSealKey(value) {
     }
   }
   return key?.length === 32 ? key : null;
+}
+
+function coordinateUsageProjectRefMatches(value, expectedProjectRef) {
+  try {
+    const url = new URL(String(value || "").trim());
+    return url.protocol === "https:"
+      && url.username === ""
+      && url.password === ""
+      && url.port === ""
+      && url.pathname === "/"
+      && url.search === ""
+      && url.hash === ""
+      && url.hostname === `${expectedProjectRef}.supabase.co`;
+  } catch {
+    return false;
+  }
+}
+
+function classifyCoordinateUsageRuntimeDiagnosticError(error, responseStatus) {
+  const code = String(error?.code || "").trim().toUpperCase();
+  const outerStatus = Number(responseStatus);
+  const status = Number.isFinite(outerStatus) ? outerStatus : Number(error?.status);
+  const name = String(error?.name || "").trim();
+  if (["PGRST002", "PGRST106", "PGRST202"].includes(code)) {
+    return COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_SCHEMA_CACHE_ERROR;
+  }
+  if (code === "42501") return COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_PERMISSION_ERROR;
+  if ([401, 403].includes(status) || ["PGRST301", "PGRST302", "PGRST303"].includes(code) || /^28[A-Z0-9]{3}$/.test(code)) {
+    return COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_AUTH_ERROR;
+  }
+  if (status === 0
+    || ["ECONNABORTED", "ECONNREFUSED", "ECONNRESET", "ENETUNREACH", "ENOTFOUND", "ETIMEDOUT"].includes(code)
+    || ["AbortError", "TimeoutError", "TypeError"].includes(name)) {
+    return COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_NETWORK_ERROR;
+  }
+  return COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_UNKNOWN_ERROR;
+}
+
+export function createCoordinateUsageRuntimeDiagnostic({
+  supabase = null,
+  supabaseUrl = "",
+  serviceRoleKeyPresent = false,
+  sealKey = null,
+  expectedProjectRef,
+  timeoutMs = 8000,
+  randomRequestId = randomUUID,
+  randomSessionBinding = () => randomBytes(32).toString("hex")
+} = {}) {
+  const hasSupabaseUrl = String(supabaseUrl || "").trim().length > 0;
+  const productionProjectRefMatch = hasSupabaseUrl
+    && /^[a-z0-9]{20}$/i.test(String(expectedProjectRef || ""))
+    && coordinateUsageProjectRefMatches(supabaseUrl, String(expectedProjectRef));
+  const hasServiceRoleKey = serviceRoleKeyPresent === true;
+  const validSealKey = Buffer.isBuffer(sealKey) && sealKey.length === 32;
+  const boundedTimeoutMs = Number.isFinite(Number(timeoutMs))
+    ? Math.min(Math.max(Math.trunc(Number(timeoutMs)), 1), 30000)
+    : 8000;
+  const initialStatus = !hasSupabaseUrl
+    ? COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SUPABASE_URL_MISSING
+    : !productionProjectRefMatch
+      ? COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SUPABASE_PROJECT_REF_MISMATCH
+      : !hasServiceRoleKey
+        ? COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SERVICE_ROLE_KEY_MISSING
+        : !validSealKey
+          ? COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SEAL_KEY_INVALID
+          : COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_UNKNOWN_ERROR;
+  let snapshot = Object.freeze({
+    status: initialStatus,
+    probeComplete: false,
+    productionProjectRefMatch
+  });
+  let probePromise = null;
+
+  const complete = status => {
+    snapshot = Object.freeze({
+      status,
+      probeComplete: true,
+      productionProjectRefMatch
+    });
+    return snapshot;
+  };
+
+  const runProbe = async () => {
+    if (initialStatus !== COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_UNKNOWN_ERROR) {
+      return complete(initialStatus);
+    }
+    if (!supabase || typeof supabase.rpc !== "function") {
+      return complete(COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_UNKNOWN_ERROR);
+    }
+
+    let recognitionRequestId;
+    let sessionBindingSha256;
+    try {
+      recognitionRequestId = String(randomRequestId() || "").toLowerCase();
+      sessionBindingSha256 = String(randomSessionBinding() || "").toLowerCase();
+    } catch {
+      return complete(COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_UNKNOWN_ERROR);
+    }
+    if (!isRecognitionRequestId(recognitionRequestId) || !/^[a-f0-9]{64}$/.test(sessionBindingSha256)) {
+      return complete(COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_UNKNOWN_ERROR);
+    }
+
+    let timeoutHandle = null;
+    let abortController = null;
+    try {
+      abortController = typeof AbortController === "function" ? new AbortController() : null;
+      const builder = supabase.rpc("get_coordinate_recognition_commit_state", {
+        p_recognition_request_id: recognitionRequestId,
+        p_user_id: "synthetic-runtime-diagnostic",
+        p_session_binding_sha256: sessionBindingSha256
+      });
+      const request = abortController && typeof builder?.abortSignal === "function"
+        ? builder.abortSignal(abortController.signal)
+        : builder;
+      const timeoutResult = Symbol("coordinate_usage_runtime_diagnostic_timeout");
+      const timeoutPromise = new Promise(resolve => {
+        timeoutHandle = setTimeout(() => resolve(timeoutResult), boundedTimeoutMs);
+      });
+      const response = await Promise.race([Promise.resolve(request), timeoutPromise]);
+      if (response === timeoutResult) {
+        abortController?.abort();
+        return complete(COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_NETWORK_ERROR);
+      }
+      if (response?.error) return complete(classifyCoordinateUsageRuntimeDiagnosticError(response.error, response.status));
+      const row = Array.isArray(response?.data) ? response.data[0] : response?.data;
+      return complete(row?.result === COORDINATE_USAGE_COMMIT_RESULT.NOT_FOUND
+        ? COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.READY
+        : COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_UNKNOWN_ERROR);
+    } catch (error) {
+      return complete(classifyCoordinateUsageRuntimeDiagnosticError(error));
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  };
+
+  return Object.freeze({
+    runOnce() {
+      if (!probePromise) probePromise = runProbe();
+      return probePromise;
+    },
+    snapshot() {
+      return snapshot;
+    }
+  });
 }
 
 function canonicalJson(value) {

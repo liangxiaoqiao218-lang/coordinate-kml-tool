@@ -18,10 +18,12 @@ import {
   COORDINATE_USAGE_COMMIT_RESULT,
   COORDINATE_USAGE_COMMIT_STATE,
   COORDINATE_USAGE_ERROR_CODE,
+  COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS,
   COORDINATE_USAGE_SESSION_COOKIE,
   CoordinateUsageAtomicityService,
   buildUnchargedCoordinateFailureResponse,
   createCoordinateUsageCommitController,
+  createCoordinateUsageRuntimeDiagnostic,
   createCoordinateUsageSessionToken,
   hashCoordinateUsageSession,
   isRecognitionRequestId,
@@ -271,9 +273,17 @@ const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "
 const supabase = supabaseUrl && supabaseServiceRoleKey
   ? createClient(supabaseUrl, supabaseServiceRoleKey)
   : null;
+const coordinateUsageSealKey = parseCoordinateUsageSealKey(process.env.COORDINATE_USAGE_SEAL_KEY);
 const coordinateUsageAtomicity = new CoordinateUsageAtomicityService({
   supabase,
-  sealKey: parseCoordinateUsageSealKey(process.env.COORDINATE_USAGE_SEAL_KEY)
+  sealKey: coordinateUsageSealKey
+});
+const coordinateUsageRuntimeDiagnostic = createCoordinateUsageRuntimeDiagnostic({
+  supabase,
+  supabaseUrl,
+  serviceRoleKeyPresent: Boolean(supabaseServiceRoleKey),
+  sealKey: coordinateUsageSealKey,
+  expectedProjectRef: "xyiffmpzdtmurmnsibdt"
 });
 const spatialShareStore = new SupabaseSpatialShareStore({ supabase });
 const __filename = fileURLToPath(import.meta.url);
@@ -1207,6 +1217,7 @@ app.use(express.static(__dirname, {
 }));
 
 app.get("/api/version", (req, res) => {
+  const coordinateUsageDiagnostic = coordinateUsageRuntimeDiagnostic.snapshot();
   res.json({
     brand: appBrand,
     version: appVersion,
@@ -1225,7 +1236,14 @@ app.get("/api/version", (req, res) => {
           ? false
           : null,
       runtimeSourceSha256: process.env.RUNTIME_SOURCE_SHA256 || null,
-      fixtureSetSha256: process.env.FIXTURE_SET_SHA256 || null
+      fixtureSetSha256: process.env.FIXTURE_SET_SHA256 || null,
+      coordinateUsageAtomicityRuntimeDiagnostic: {
+        status: Object.values(COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS).includes(coordinateUsageDiagnostic.status)
+          ? coordinateUsageDiagnostic.status
+          : COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_UNKNOWN_ERROR,
+        probeComplete: coordinateUsageDiagnostic.probeComplete === true,
+        productionProjectRefMatch: coordinateUsageDiagnostic.productionProjectRefMatch === true
+      }
     }
   });
 });
@@ -17078,6 +17096,8 @@ await loadPricingConfigFromSupabase().catch(error => {
     hint: error?.hint
   });
 });
+
+await coordinateUsageRuntimeDiagnostic.runOnce();
 
 app.listen(port, () => {
   console.log(`坐标工具已启动：http://localhost:${port}`);
