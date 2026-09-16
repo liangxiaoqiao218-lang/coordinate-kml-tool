@@ -87,7 +87,9 @@ import {
   inferStructuredBoundaryType,
   parseStructuredBoundaryPoint
 } from "./server/structured-coordinate-boundary.js";
-import { buildCoordinateVerificationResponse } from "./server/verification/index.js";
+import { buildCoordinateVerificationResponse as buildCoordinateVerificationResponseBase } from "./server/verification/index.js";
+import { buildEvidenceAcquisition } from "./server/evidence-acquisition/index.js";
+import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
 import { parseManualLongitudeLatitudeText } from "./server/manual-coordinate-input.js";
 import { calculateSpatialFacts } from "./server/spatial/spatial-facts.js";
@@ -13219,6 +13221,26 @@ app.delete(
  * override BFTM, do not let DMS override cadastral grid, and do not let a new display layer override
  * recognizedLines.
  */
+function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null, finalizerOptions = {}) {
+  const engine = coordinateEngineV2 || payload.coordinateEngineV2 || {};
+  const revision = Number(finalizerOptions?.revision?.resultRevision ?? payload?.finalizerRevision?.resultRevision ?? 1);
+  const evidenceAcquisition = buildEvidenceAcquisition({ recognitionResult: payload, coordinateEngineV2: engine });
+  const prepared = applyWgs84NearDuplicateAuthority({
+    recognitionResult: payload,
+    coordinateEngineV2: engine,
+    evidenceAcquisition,
+    revision: Number.isSafeInteger(revision) && revision > 0 ? revision : 1
+  });
+  const response = buildCoordinateVerificationResponseBase(
+    prepared.recognitionResult,
+    prepared.coordinateEngineV2,
+    finalizerOptions
+  );
+  return prepared.evaluation.applies
+    ? { ...response, evidenceAcquisition }
+    : response;
+}
+
 const buildCoordinateVerificationResponseWithoutRecognitionBudget = buildCoordinateVerificationResponse;
 
 app.post("/api/recognize-coordinates/session", (req, res) => {

@@ -15,6 +15,7 @@ import {
   partialMultisiteRecoveryProvenanceMatches,
   validateWeakPartialMultisiteLifecycleEvidence
 } from "../recognition/dms-source-structure.js";
+import { validateWgs84NearDuplicateAuthority } from "../recognition/wgs84-near-duplicate-consolidation.js";
 
 function uniqueStrings(values) {
   return Object.freeze([...new Set((Array.isArray(values) ? values : []).map(value => String(value || "").trim()).filter(Boolean))]);
@@ -24,6 +25,20 @@ function deepFreeze(value) {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
   Object.values(value).forEach(deepFreeze);
   return Object.freeze(value);
+}
+
+function bindNearDuplicateAuthorityToGeometry(geometry, decision, geometryIntentGate) {
+  if (!geometry || !decision || !geometryIntentGate) return geometry;
+  return {
+    ...geometry,
+    coordinateAuthorityBinding: {
+      schemaVersion: "near_duplicate_geometry_authority_binding_v1",
+      decisionSha256: decision.decision_sha256,
+      provenanceSha256: decision.binding?.provenance_sha256 || null,
+      canonicalCoordinateSha256: decision.binding?.canonical_coordinate_sha256 || null,
+      geometryIntentGateSha256: geometryIntentGate.gate_sha256
+    }
+  };
 }
 
 function normalizedGroups(text = "") {
@@ -137,24 +152,39 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
   const availabilityBlocked = isFamilyAvailabilityBlocked({ status: availabilityStatus });
   const weakPartialLifecycle = rebuildWeakPartialLifecycleEvidence(candidate);
   const weakPartialEvidenceValid = weakPartialLifecycle.valid === true;
+  const nearDuplicateAuthority = validateWgs84NearDuplicateAuthority({
+    decision: candidate.nearDuplicateDecision,
+    geometryIntentGate: candidate.geometryIntentAuthorityGate,
+    resultRevision
+  });
+  const nearDuplicateEvidenceValid = nearDuplicateAuthority.valid === true;
+  const nearDuplicateAuthorityBlocked = nearDuplicateAuthority.blocked === true;
   const effectiveCandidate = {
     ...candidate,
-    explicitAuthorityRejected: candidate.explicitAuthorityRejected === true || !weakPartialEvidenceValid,
-    qualityGateStatus: weakPartialEvidenceValid
+    explicitAuthorityRejected: candidate.explicitAuthorityRejected === true
+      || !weakPartialEvidenceValid || !nearDuplicateEvidenceValid,
+    qualityGateStatus: weakPartialEvidenceValid && nearDuplicateEvidenceValid
       ? candidate.qualityGateStatus
       : COORDINATE_QUALITY_GATE_STATUS.FAILED,
     availabilityStatus,
-    technicalKmlReady: availabilityBlocked || !weakPartialEvidenceValid
+    technicalKmlReady: availabilityBlocked || !weakPartialEvidenceValid || nearDuplicateAuthorityBlocked
       ? false
       : (candidate.technicalKmlReady === true || candidate.kmlReady === true),
-    requiresReview: availabilityBlocked ? false : (!weakPartialEvidenceValid || candidate.requiresReview),
-    kmlReady: availabilityBlocked || !weakPartialEvidenceValid ? false : candidate.kmlReady,
-    kmlAuthorityBlocked: candidate.kmlAuthorityBlocked === true || !weakPartialEvidenceValid,
+    requiresReview: availabilityBlocked ? false : (!weakPartialEvidenceValid || nearDuplicateAuthorityBlocked || candidate.requiresReview),
+    kmlReady: availabilityBlocked || !weakPartialEvidenceValid || nearDuplicateAuthorityBlocked ? false : candidate.kmlReady,
+    kmlAuthorityBlocked: candidate.kmlAuthorityBlocked === true || !weakPartialEvidenceValid || nearDuplicateAuthorityBlocked,
     resultId,
     resultRevision
   };
   const gate = evaluateCoordinateReleaseGate(effectiveCandidate);
-  const geometry = weakPartialEvidenceValid && candidate.geometry ? structuredClone(candidate.geometry) : null;
+  const baseGeometry = weakPartialEvidenceValid && !nearDuplicateAuthorityBlocked && candidate.geometry
+    ? structuredClone(candidate.geometry)
+    : null;
+  const geometry = bindNearDuplicateAuthorityToGeometry(
+    baseGeometry,
+    nearDuplicateAuthority.declared && nearDuplicateEvidenceValid ? candidate.nearDuplicateDecision : null,
+    nearDuplicateAuthority.declared && nearDuplicateEvidenceValid ? candidate.geometryIntentAuthorityGate : null
+  );
   const geometryHash = geometry ? createGeometryHash(geometry) : null;
   const result = {
     schemaVersion: FINALIZED_COORDINATE_SCHEMA_VERSION,
@@ -199,6 +229,12 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
       : null,
     sourceCandidates: weakPartialEvidenceValid && weakPartialLifecycle.sourceCandidates
       ? deepFreeze(structuredClone(weakPartialLifecycle.sourceCandidates))
+      : null,
+    nearDuplicateDecision: nearDuplicateAuthority.declared && nearDuplicateEvidenceValid
+      ? deepFreeze(structuredClone(candidate.nearDuplicateDecision))
+      : null,
+    geometryIntentAuthorityGate: nearDuplicateAuthority.declared && nearDuplicateEvidenceValid
+      ? deepFreeze(structuredClone(candidate.geometryIntentAuthorityGate))
       : null,
     createdAt: candidate.createdAt || now,
     finalizedAt: now

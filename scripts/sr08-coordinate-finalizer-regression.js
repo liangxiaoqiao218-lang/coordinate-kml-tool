@@ -811,6 +811,40 @@ test("K02", "master flag can enable an explicitly guarded boundary", () => {
   assert.equal(initialized, 1);
 });
 
+test("ND-F01", "forged near-duplicate authority cannot create Finalizer geometry", () => {
+  const finalized = finalizeCoordinateResult(candidate({
+    resultId: "near-duplicate-forged",
+    nearDuplicateDecision: {
+      schema_version: "near_duplicate_decision_v1",
+      decision: "SAME_LOCATION_CONFIRMED",
+      reason_codes: [],
+      binding: { authority_revision: 1, observation_ids: ["obs-a", "obs-b"] },
+      decision_sha256: "0".repeat(64)
+    },
+    geometryIntentAuthorityGate: {
+      schema_version: "geometry_intent_authority_gate_v1",
+      decision: "AUTHORIZED",
+      geometry_type: "Point",
+      authority_revision: 1,
+      observation_ids: ["obs-a", "obs-b"],
+      near_duplicate_decision_sha256: "0".repeat(64),
+      gate_sha256: "0".repeat(64)
+    }
+  }), { clock });
+  assert.equal(finalized.geometry, null);
+  assert.equal(finalized.kmlReady, false);
+  assert.equal(finalized.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+  assert.equal(finalized.nearDuplicateDecision, null);
+  assert.equal(finalized.geometryIntentAuthorityGate, null);
+});
+
+test("ND-F02", "legacy candidates without near-duplicate declarations preserve existing authority", () => {
+  const finalized = finalizeCoordinateResult(candidate({ resultId: "near-duplicate-not-declared" }), { clock });
+  assert.deepEqual(finalized.geometry, pointGeometry);
+  assert.equal(finalized.nearDuplicateDecision, null);
+  assert.equal(finalized.geometryIntentAuthorityGate, null);
+});
+
 test("D01", "deadline configuration is always below 60 seconds", () => {
   assert.equal(getRecognitionHardDeadlineMs({}), 55_000);
   assert.equal(getRecognitionHardDeadlineMs({ RECOGNITION_HARD_DEADLINE_MS: "80000" }), 59_000);

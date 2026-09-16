@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { buildRecognitionEvidence } from "../server/evidence/recognition-evidence-adapter.js";
 import { buildCoordinateVerification, buildCoordinateVerificationResponse } from "../server/verification/index.js";
 import { buildSourceCoordinateRepresentation } from "../server/source-coordinate-representation.js";
+import { SERVER_PROVENANCE_ATTESTATION } from "../server/evidence-acquisition/index.js";
 
 function makePoint(label, raw) {
   return {
@@ -132,6 +133,49 @@ assert.ok(degradedResponse.evidenceAcquisition.rowBindings.every(binding => (
   binding.location_status === "LOGICAL_ROW_ONLY" && binding.bbox === null
 )));
 
+const trustedRegionPayload = {
+  success: true,
+  request_asset_id: "synthetic-region-asset",
+  image_id: "synthetic-region-image",
+  imageMetadata: { width: 1080, height: 1920, page: 1 },
+  rawText: "35.447819,83.178991",
+  coordinates: "35.447819,83.178991",
+  ocrLineLocations: [{
+    id: "synthetic-region-line",
+    source_line_id: "synthetic-region-line",
+    text: "35.447819,83.178991",
+    point_id: "1",
+    bbox: [20, 20, 500, 80],
+    coordinate_space: "ORIGINAL_IMAGE_PIXELS",
+    source: "qwenOcr",
+    source_role: "MAP_SEARCH_BOX",
+    source_region_id: "MAP_SEARCH_BOX_REGION",
+    provenance_trust: "SERVER_ATTESTED",
+    provenance_attestor: "SYNTHETIC_REGRESSION_V1"
+  }]
+};
+Object.defineProperty(trustedRegionPayload, SERVER_PROVENANCE_ATTESTATION, { value: true, enumerable: true });
+const trustedRegionEngine = {
+  coordinate_type: "wgs84_chat_coordinates",
+  groups: [{ group_id: "group_1", geometry: "point", points: [{
+    label: "1", raw: trustedRegionPayload.rawText, lat: 35.447819, lon: 83.178991
+  }] }]
+};
+const trustedRegionResponse = buildCoordinateVerificationResponse(trustedRegionPayload, trustedRegionEngine);
+const trustedObservation = trustedRegionResponse.evidenceAcquisition.observations[0];
+assert.equal(trustedObservation.request_asset_id, "synthetic-region-asset");
+assert.equal(trustedObservation.source_role, "MAP_SEARCH_BOX");
+assert.equal(trustedObservation.source_region_id, "MAP_SEARCH_BOX_REGION");
+assert.equal(trustedObservation.provenance_trust, "SERVER_ATTESTED");
+assert.equal(trustedRegionResponse.evidenceAcquisition.shadow_only, true);
+assert.equal(trustedRegionResponse.evidenceAcquisition.affects_coordinates, false);
+assert.equal(trustedRegionResponse.evidenceAcquisition.affects_kml, false);
+
+const pseudoRegionPayload = structuredClone(trustedRegionPayload);
+const pseudoRegionResponse = buildCoordinateVerificationResponse(pseudoRegionPayload, trustedRegionEngine);
+assert.equal(pseudoRegionResponse.evidenceAcquisition.observations[0].source_role, null);
+assert.equal(pseudoRegionResponse.evidenceAcquisition.observations[0].provenance_trust, "UNTRUSTED");
+
 const legacyEngine = makeEngine(standardDms);
 const phase2Baseline = {
   success: true,
@@ -170,7 +214,7 @@ assert.equal(phase3Response.coordinates, legacySnapshot.coordinates, "coordinate
 
 console.log(JSON.stringify({
   suite: "evidence-acquisition-regression",
-  passed: 4,
+  passed: 5,
   cases: [
     {
       id: "handwritten_dms_conflict_row_evidence",
@@ -185,6 +229,7 @@ console.log(JSON.stringify({
       bindings: standardResponse.evidenceAcquisition.rowBindings.length
     },
     { id: "missing_or_invalid_bbox_degrades_safely", status: "PASS" },
+    { id: "trusted_source_role_attestation_and_pseudo_provenance_rejection", status: "PASS" },
     { id: "phase2_response_compatibility", status: "PASS" }
   ]
 }, null, 2));

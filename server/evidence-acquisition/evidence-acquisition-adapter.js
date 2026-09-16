@@ -1,5 +1,6 @@
 import {
   ORIGINAL_IMAGE_PIXEL_SPACE,
+  SERVER_PROVENANCE_ATTESTATION,
   createImageTextObservation,
   polygonToObservationBbox
 } from "./observation-schema.js";
@@ -16,9 +17,10 @@ function getImageMeta(recognitionResult = {}) {
   const image = recognitionResult.imageMetadata || recognitionResult.image || {};
   return {
     image_id: recognitionResult.image_id || recognitionResult.imageId || image.image_id || image.id || null,
+    request_asset_id: recognitionResult.request_asset_id || recognitionResult.requestAssetId || image.request_asset_id || null,
     width: Number(image.width) || null,
     height: Number(image.height) || null,
-    page: Number.parseInt(image.page || recognitionResult.page, 10) || 1
+    page: Number.parseInt(image.page || recognitionResult.page, 10) || null
   };
 }
 
@@ -48,7 +50,7 @@ function normalizeRawObservation(value = {}, index, fallbackSource, imageMeta) {
   const source = normalizeSource(value.source, fallbackSource);
   const text = String(value.text ?? value.raw_text ?? value.value ?? "");
   const trustedAbsolutePixelSource = source === "qwenOcr" || value.trusted_pixel_bbox === true;
-  return createImageTextObservation({
+  const observationInput = {
     observation_id: value.observation_id,
     image_id: value.image_id || imageMeta.image_id,
     page: value.page || imageMeta.page,
@@ -58,10 +60,41 @@ function normalizeRawObservation(value = {}, index, fallbackSource, imageMeta) {
     coordinate_space: value.coordinate_space || (trustedAbsolutePixelSource ? ORIGINAL_IMAGE_PIXEL_SPACE : null),
     source,
     source_ref: value.source_ref || value.id || `${source}_${index + 1}`,
+    request_asset_id: value.request_asset_id || imageMeta.request_asset_id,
+    source_line_id: value.source_line_id || value.id || `${source}_${index + 1}`,
+    source_role: value.source_role,
+    source_region_id: value.source_region_id,
+    provenance_trust: value.provenance_trust,
+    provenance_attestor: value.provenance_attestor,
+    semantic_label: value.semantic_label,
+    measurement_semantics: value.measurement_semantics,
+    boundary_point: value.boundary_point,
+    table_row: value.table_row,
+    contradictory_evidence: value.contradictory_evidence,
     group_id: value.group_id,
     point_id: value.point_id || extractPointId(text),
     image: imageMeta
-  });
+  };
+  if (value[SERVER_PROVENANCE_ATTESTATION] === true) {
+    Object.defineProperty(observationInput, SERVER_PROVENANCE_ATTESTATION, { value: true });
+  }
+  return createImageTextObservation(observationInput);
+}
+
+function attestProvenanceValue(value = {}) {
+  const attested = { ...value };
+  Object.defineProperty(attested, SERVER_PROVENANCE_ATTESTATION, { value: true, enumerable: true });
+  return attested;
+}
+
+function discardUnattestedProvenance(value = {}) {
+  return {
+    ...value,
+    source_role: null,
+    source_region_id: null,
+    provenance_trust: "UNTRUSTED",
+    provenance_attestor: null
+  };
 }
 
 function collectLegacyImageEvidence(recognitionResult = {}, imageMeta = {}) {
@@ -91,11 +124,13 @@ function buildLogicalRawTextObservations(recognitionResult = {}, imageMeta = {})
     .filter(Boolean)
     .map((text, index) => createImageTextObservation({
       image_id: imageMeta.image_id,
+      request_asset_id: imageMeta.request_asset_id,
       page: imageMeta.page,
       text,
       coordinate_space: null,
       source: "rawText",
       source_ref: `raw_text_${index + 1}`,
+      source_line_id: `raw_text_${index + 1}`,
       point_id: extractPointId(text),
       image: imageMeta
     }));
@@ -103,13 +138,38 @@ function buildLogicalRawTextObservations(recognitionResult = {}, imageMeta = {})
 
 export function buildImageTextObservations({ recognitionResult = {} } = {}) {
   const imageMeta = getImageMeta(recognitionResult);
+  const provenanceAttestedByServer = recognitionResult[SERVER_PROVENANCE_ATTESTATION] === true;
   const observations = [];
   getRawObservationCollections(recognitionResult).forEach(collection => {
     (Array.isArray(collection.values) ? collection.values : []).forEach((value, index) => {
-      observations.push(normalizeRawObservation(value, index, collection.source, imageMeta));
+      observations.push(normalizeRawObservation(
+        provenanceAttestedByServer ? attestProvenanceValue(value) : discardUnattestedProvenance(value),
+        index,
+        collection.source,
+        imageMeta
+      ));
     });
   });
-  observations.push(...collectLegacyImageEvidence(recognitionResult, imageMeta));
+  const legacyRecognitionResult = provenanceAttestedByServer ? {
+    ...recognitionResult,
+    imageEvidence: {
+      ...(recognitionResult.imageEvidence || {}),
+      sources: Object.fromEntries(Object.entries(recognitionResult.imageEvidence?.sources || {}).map(([source, container]) => [
+        source,
+        { ...container, rows: (container?.rows || []).map(attestProvenanceValue) }
+      ]))
+    }
+  } : {
+    ...recognitionResult,
+    imageEvidence: {
+      ...(recognitionResult.imageEvidence || {}),
+      sources: Object.fromEntries(Object.entries(recognitionResult.imageEvidence?.sources || {}).map(([source, container]) => [
+        source,
+        { ...container, rows: (container?.rows || []).map(discardUnattestedProvenance) }
+      ]))
+    }
+  };
+  observations.push(...collectLegacyImageEvidence(legacyRecognitionResult, imageMeta));
 
   const hasPixelObservations = observations.some(observation => observation.location_status === "PIXEL_BBOX");
   if (!hasPixelObservations) {

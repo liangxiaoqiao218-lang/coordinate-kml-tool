@@ -16,6 +16,7 @@ import {
   buildDmsGroupedPartialMultisiteRecoveryCandidate,
   partialMultisiteRecoveryProvenanceMatches
 } from "../recognition/dms-source-structure.js";
+import { validateWgs84NearDuplicateAuthority } from "../recognition/wgs84-near-duplicate-consolidation.js";
 
 function verificationQualityStatus(verification) {
   if (verification?.status === "PASS") return COORDINATE_QUALITY_GATE_STATUS.PASSED;
@@ -125,6 +126,14 @@ function commonInput({
 }) {
   const groups = Array.isArray(structuredResult.groups) ? structuredResult.groups : [];
   const geometryResult = geometryFromStructuredGroups(groups);
+  const resultRevision = revision.resultRevision ?? 1;
+  const nearDuplicateAuthority = validateWgs84NearDuplicateAuthority({
+    decision: structuredResult.near_duplicate_decision_v1 || recognitionResult.nearDuplicateDecision,
+    geometryIntentGate: structuredResult.geometry_intent_authority_gate_v1 || recognitionResult.geometryIntentAuthorityGate,
+    resultRevision
+  });
+  const nearDuplicateInvalid = nearDuplicateAuthority.valid !== true;
+  const nearDuplicateBlocked = nearDuplicateAuthority.blocked === true;
   const acquisitionDeltaDeclared = structuredResult?.acquisition_delta_provenance !== null
     && structuredResult?.acquisition_delta_provenance !== undefined;
   const acquisitionDeltaApplies = isDmsGroupedAcquisitionDeltaProvenance(structuredResult);
@@ -151,7 +160,7 @@ function commonInput({
   const underlyingRequiresReview = Boolean(structuredResult.requires_review || groups.some(group => group?.requires_review !== false));
   const underlyingKmlReady = groups.length > 0 && groups.every(group => group?.kml_ready === true);
   const technicalKmlReady = geometryResult.ok && verification?.status !== "BLOCK"
-    && !acquisitionDeltaInvalid && !partialRecoveryInvalid;
+    && !acquisitionDeltaInvalid && !partialRecoveryInvalid && !nearDuplicateBlocked;
   const underlyingGroups = groups.map(group => ({
     groupId: group?.group_id || null,
     requiresReview: group?.requires_review !== false,
@@ -164,7 +173,8 @@ function commonInput({
     || familyPolicyApplies
     || acquisitionDeltaApplies
     || partialRecoveryApplies
-    || reviewOnlyTechnicalKmlReady;
+    || reviewOnlyTechnicalKmlReady
+    || nearDuplicateBlocked;
   const confirmationOnlyReview = needsConfirmation && reviewOnlyTechnicalKmlReady;
   const confirmationStatus = revision.confirmationStatus || (needsConfirmation
     ? COORDINATE_CONFIRMATION_STATUS.PENDING
@@ -186,14 +196,14 @@ function commonInput({
   const productionSource = ["legacy", "manual_input", "coordinate_engine_v2"].includes(sourceAuthority);
   const currentAuthorizedGeometryExportable = geometryResult.ok && productionSource
     && !technicalFailure && !authorityRejected && !invalidCrs
-    && !acquisitionDeltaDeclared && !partialRecoveryDeclared;
+    && !acquisitionDeltaDeclared && !partialRecoveryDeclared && !nearDuplicateBlocked;
   // Provider availability governs acquisition, not an already valid deterministic result.
   const availabilityStatus = currentAuthorizedGeometryExportable ? FAMILY_AVAILABILITY_STATUS.AVAILABLE
     : familyAvailability?.status || FAMILY_AVAILABILITY_STATUS.AVAILABLE;
   const availabilityBlocked = isFamilyAvailabilityBlocked({ status: availabilityStatus });
   return {
     resultId: revision.resultId,
-    resultRevision: revision.resultRevision ?? 1,
+    resultRevision,
     currentRevision: revision.currentRevision ?? revision.resultRevision ?? 1,
     confirmedRevision: revision.confirmedRevision ?? null,
     sourceAuthority,
@@ -206,17 +216,21 @@ function commonInput({
     crs: invalidCrs ? null : FINALIZED_COORDINATE_CRS,
     explicitAuthorityRejected: authorityRejected,
     kmlAuthorityBlocked: technicalFailure || invalidCrs || authorityRejected
-      || acquisitionDeltaInvalid || partialRecoveryInvalid,
-    geometry: geometryResult.ok && !acquisitionDeltaInvalid && !partialRecoveryInvalid
+      || acquisitionDeltaInvalid || partialRecoveryInvalid || nearDuplicateBlocked,
+    geometry: geometryResult.ok && !acquisitionDeltaInvalid && !partialRecoveryInvalid && !nearDuplicateBlocked
       ? geometryResult.geometry
       : null,
     geometryFailureReason: acquisitionDeltaInvalid
       ? "ACQUISITION_DELTA_PROVENANCE_INVALID"
       : partialRecoveryInvalid
         ? "PARTIAL_MULTISITE_RECOVERY_PROVENANCE_INVALID"
+      : nearDuplicateInvalid
+        ? "NEAR_DUPLICATE_AUTHORITY_BINDING_INVALID"
+      : nearDuplicateBlocked
+        ? (nearDuplicateAuthority.reason || "GEOMETRY_INTENT_AUTHORITY_BLOCKED")
       : (geometryResult.ok ? null : geometryResult.reasonCode),
     confirmationStatus,
-    qualityGateStatus: acquisitionDeltaInvalid || partialRecoveryInvalid
+    qualityGateStatus: acquisitionDeltaInvalid || partialRecoveryInvalid || nearDuplicateInvalid
       ? COORDINATE_QUALITY_GATE_STATUS.FAILED
       : availabilityBlocked
       ? COORDINATE_QUALITY_GATE_STATUS.FAILED
@@ -242,6 +256,12 @@ function commonInput({
     partialMultisiteRecoveryProvenance: partialRecovery?.provenance || null,
     partialMultisiteRecoveryInputEvidence: partialRecovery?.inputEvidence || null,
     sourceCandidates: partialRecovery?.sourceCandidates || null,
+    nearDuplicateDecision: nearDuplicateAuthority.declared
+      ? (structuredResult.near_duplicate_decision_v1 || recognitionResult.nearDuplicateDecision)
+      : null,
+    geometryIntentAuthorityGate: nearDuplicateAuthority.declared
+      ? (structuredResult.geometry_intent_authority_gate_v1 || recognitionResult.geometryIntentAuthorityGate)
+      : null,
     warnings: [
       ...(acquisitionDeltaApplies
         ? ["结构化复读补充了坐标行；确认当前精确结果前，地图及 KML 均不可用。"]
@@ -251,6 +271,8 @@ function commonInput({
         ? ["多站点结构化恢复仅作为非权威复核候选；确认前地图及 KML 均不可用。"]
         : []),
       ...(partialRecoveryInvalid ? ["多站点结构化恢复候选的逐点绑定证明无效，结果已阻断。"] : []),
+      ...(nearDuplicateInvalid ? ["近重复坐标的权威绑定无效，地图及 KML 已阻断。"] : []),
+      ...(!nearDuplicateInvalid && nearDuplicateBlocked ? ["近重复坐标或几何意图尚未取得充分权威，地图及 KML 已阻断。"] : []),
       ...(currentAuthorizedGeometryExportable && (underlyingRequiresReview || confirmationStatus === "pending")
         ? ["当前坐标仍需核对；地图及 KML 使用服务端当前有效几何。"] : []),
       ...(Array.isArray(structuredResult.warnings) ? structuredResult.warnings : []),
