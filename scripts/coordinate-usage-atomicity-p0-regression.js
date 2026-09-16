@@ -29,7 +29,7 @@ import { FAMILY_AVAILABILITY_STATUS } from "../server/coordinate-finalizer/famil
 import { createGeometryHash } from "../server/coordinate-finalizer/geometry-hash.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const migrationPath = path.join(root, "supabase/migrations/20260916090000_coordinate_usage_atomicity_p0.sql");
+const migrationPath = path.join(root, "supabase/migrations/20260916013501_coordinate_usage_atomicity_p0.sql");
 const sealKey = Buffer.alloc(32, 7);
 const sealKeyText = sealKey.toString("base64");
 const requestId = "11111111-1111-4111-8111-111111111111";
