@@ -10,6 +10,7 @@ import {
   createServerClassifiedLayoutRows,
   createServerOwnedLayoutClassifierProfile,
   createTrustedLayoutAttestation,
+  collectProviderLayoutProfileQualification,
   extractProviderLayoutCandidates,
   validateTrustedLayoutAttestation
 } from "../server/evidence-acquisition/index.js";
@@ -326,6 +327,52 @@ test("TLA-16", "swapped or modified candidate coordinates cannot reuse the attes
   });
   assert.equal(result.decision.decision, "PROVENANCE_INSUFFICIENT");
   assert.equal(result.decision.reason_codes.includes("OBSERVATION_VALUE_BINDING_INVALID"), true);
+});
+
+test("TLA-17", "qualification candidate cannot create Trusted Layout or row binding", () => {
+  const qualificationResponse = { id: "qualification-only", output: { layout: [{
+      candidate_schema_version: "provider_layout_candidate_v1",
+      id: "search",
+      line_id: "line-search",
+      source_ref: "search",
+      source_line_id: "line-search",
+      text: low,
+      bbox: [5, 5, 95, 25],
+      coordinate_space: "ORIGINAL_IMAGE_PIXELS",
+      page: 1,
+      image_width: 100,
+      image_height: 100
+    }, {
+      candidate_schema_version: "provider_layout_candidate_v1",
+      id: "details",
+      line_id: "line-details",
+      source_ref: "details",
+      source_line_id: "line-details",
+      text: high,
+      bbox: [5, 55, 95, 75],
+      coordinate_space: "ORIGINAL_IMAGE_PIXELS",
+      page: 1,
+      image_width: 100,
+      image_height: 100
+    }] } };
+  const qualification = collectProviderLayoutProfileQualification({
+    response: qualificationResponse,
+    providerId: "ALIYUN_DASHSCOPE",
+    modelName: "qwen-vl-plus",
+    responseContractId: "DASHSCOPE_STRUCTURED_LAYOUT_V1",
+    providerResponseId: "qualification-only",
+    imageIdentity,
+    resultRevision: 1
+  });
+  assert.equal(qualification.status, "QUALIFICATION_CANDIDATE");
+  assert.equal(createTrustedLayoutAttestation({
+    imageIdentity,
+    observations: extractProviderLayoutCandidates(qualificationResponse),
+    coordinateEngineV2: engine,
+    resultRevision: 1,
+    providerResponseId: "qualification-only",
+    providerLayoutClassification: qualification
+  }), null);
 });
 
 let passed = 0;

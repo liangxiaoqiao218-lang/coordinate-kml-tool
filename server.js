@@ -95,7 +95,10 @@ import {
   createServerClassifiedLayoutRows,
   createTrustedLayoutAttestation,
   extractProviderLayoutCandidates,
-  getProductionProviderLayoutClassifierProfile
+  getProductionProviderLayoutClassifierProfile,
+  ProviderLayoutProfileQualificationRuntime,
+  collectProviderLayoutProfileQualification,
+  isProviderLayoutQualificationReadAllowed
 } from "./server/evidence-acquisition/index.js";
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
@@ -303,6 +306,7 @@ const noCoordinatesText = "未识别到有效坐标，请重新上传更清晰�
 const handwrittenCandidateOwnerContext = Object.freeze({ ownerFamily: RETRY_OWNER_FAMILY.HANDWRITTEN_DMS });
 const regressionRecognitionTraces = new Map();
 const MAX_REGRESSION_RECOGNITION_TRACES = 200;
+const providerLayoutProfileQualificationRuntime = new ProviderLayoutProfileQualificationRuntime();
 let p0QualificationAcquisition = null;
 let p0QualificationAcquisitionUsed = false;
 
@@ -346,6 +350,48 @@ function retainP0QualificationAcquisition(req, response, budget) {
   const timer = setTimeout(() => { p0QualificationAcquisition = null; }, 5 * 60 * 1000);
   timer.unref();
   return true;
+}
+
+function retainProviderLayoutProfileQualification(req, response, imageIdentity, budget, modelName) {
+  // Qualification is a non-authoritative, redacted, one-shot observation. It is
+  // never enabled in Production and never stores the Provider response or image.
+  const regressionMode = getRegressionTestMode(req);
+  const requestId = String(budget?.requestId || "").trim().toLowerCase();
+  const expectedRequestId = String(req.get?.("x-provider-layout-qualification-request-id") || "").trim().toLowerCase();
+  const expectedImageSha256 = String(req.get?.("x-provider-layout-qualification-image-sha256") || "").trim().toLowerCase();
+  const explicitlySynthetic = /^(1|true|yes)$/i.test(
+    String(req.get?.("x-provider-layout-qualification-synthetic") || "").trim()
+  );
+  if (process.env.PROVIDER_LAYOUT_PROFILE_QUALIFICATION_ENABLED !== "true"
+    || !regressionMode.active
+    || !explicitlySynthetic
+    || !isRecognitionRequestId(requestId)
+    || expectedRequestId !== requestId
+    || !coordinateImageIdentityMatchesQualification(imageIdentity, expectedImageSha256)) return false;
+
+  const evidence = collectProviderLayoutProfileQualification({
+    response,
+    providerId: "ALIYUN_DASHSCOPE",
+    modelName,
+    // The current chat-completions request does not negotiate a versioned
+    // structured-layout response contract. Keep qualification unsupported
+    // until a separately reviewed request contract exists.
+    responseContractId: "",
+    providerResponseId: String(response?.id || response?.request_id || ""),
+    imageIdentity,
+    resultRevision: 1
+  });
+  return providerLayoutProfileQualificationRuntime.capture({
+    evidence,
+    requestId,
+    imageSha256: expectedImageSha256
+  }).ok;
+}
+
+function coordinateImageIdentityMatchesQualification(imageIdentity, expectedImageSha256) {
+  return Boolean(imageIdentity
+    && /^[0-9a-f]{64}$/.test(expectedImageSha256)
+    && imageIdentity.image_sha256 === expectedImageSha256);
 }
 const spatialShareReviewReasonRegistry = new Map();
 const MAX_SPATIAL_SHARE_REVIEW_REASONS = 500;
@@ -12879,6 +12925,35 @@ app.get("/api/regression/recognition-trace/:requestId", (req, res) => {
   return res.json({ success: true, trace });
 });
 
+app.get("/api/regression/provider-layout-profile-qualification/:requestId", (req, res) => {
+  const regressionTestMode = getRegressionTestMode(req);
+  const qualificationReadAllowed = isProviderLayoutQualificationReadAllowed({
+    regressionTestHeader: req.get("x-regression-test"),
+    regressionTestModeEnabled: process.env.ENABLE_REGRESSION_TEST_MODE,
+    nodeEnv: process.env.NODE_ENV,
+    remoteAddresses: [req.ip, req.socket?.remoteAddress, req.connection?.remoteAddress]
+  });
+  if (!regressionTestMode.active || !qualificationReadAllowed) {
+    return res.status(403).json({ success: false, reason: "qualification_read_forbidden" });
+  }
+  const requestId = String(req.params?.requestId || "").trim().toLowerCase();
+  const imageSha256 = String(req.get("x-provider-layout-qualification-image-sha256") || "").trim().toLowerCase();
+  if (!isRecognitionRequestId(requestId) || !/^[0-9a-f]{64}$/.test(imageSha256)) {
+    return res.status(400).json({ success: false, reason: "qualification_read_binding_invalid" });
+  }
+  const outcome = providerLayoutProfileQualificationRuntime.consume({ requestId, imageSha256 });
+  if (!outcome.ok) {
+    const status = outcome.reason === "QUALIFICATION_EXPIRED"
+      ? 410
+      : outcome.reason === "QUALIFICATION_REPLAY_REJECTED" || outcome.reason === "QUALIFICATION_READ_BINDING_MISMATCH"
+        ? 409
+        : 404;
+    return res.status(status).json({ success: false, reason: outcome.reason });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({ success: true, qualification: outcome.evidence });
+});
+
 app.post("/api/coordinate-confirmation", (req, res) => {
   const outcome = confirmFinalizedCoordinateResult({
     resultId: String(req.body?.resultId || ""),
@@ -14733,6 +14808,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         const wgs84PrimaryRawText = wgs84PrimaryResponse.choices?.[0]?.message?.content || "";
         providerLayoutCandidates = extractProviderLayoutCandidates(wgs84PrimaryResponse);
         providerLayoutResponseId = String(wgs84PrimaryResponse?.id || wgs84PrimaryResponse?.request_id || "");
+        retainProviderLayoutProfileQualification(
+          req,
+          wgs84PrimaryResponse,
+          coordinateImageIdentity,
+          recognitionBudget,
+          aliyunVisionModel
+        );
         const wgs84PrimaryInfo = getWgs84TableCoordinatesInfo(wgs84PrimaryRawText, {
           preserveDuplicatePoints: true
         });
@@ -14878,6 +14960,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     });
     providerLayoutCandidates = extractProviderLayoutCandidates(response);
     providerLayoutResponseId = String(response?.id || response?.request_id || "");
+    retainProviderLayoutProfileQualification(
+      req,
+      response,
+      coordinateImageIdentity,
+      recognitionBudget,
+      aliyunVisionModel
+    );
     stage1ProviderSucceeded = true;
     if (
       regressionTestMode.active
