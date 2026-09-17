@@ -11,6 +11,7 @@ import {
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
 import { applyWgs84NearDuplicateAuthority } from "../server/recognition/wgs84-near-duplicate-consolidation.js";
+import { PointGeometryIntentReviewRuntime } from "../server/recognition/trusted-point-geometry-intent.js";
 import {
   SERVER_PROVENANCE_ATTESTATION,
   buildEvidenceAcquisition,
@@ -485,15 +486,7 @@ const nearDuplicateRecognition = {
   request_asset_id: nearDuplicateImageIdentity.request_asset_id,
   imageMetadata: nearDuplicateImageIdentity,
   ocrLineLocations: nearDuplicateObservations,
-  trustedLayoutAttestation: nearDuplicateTrustedLayout,
-  geometryIntent: {
-    schema_version: "geometry_intent_v1",
-    geometry_type: "Point",
-    provenance_trust: "SERVER_ATTESTED",
-    provenance_attestor: "SYNTHETIC_REGRESSION_V1",
-    authority_revision: 1,
-    observation_ids: nearDuplicateTrustedLayout.row_bindings.map(binding => binding.observation_id)
-  }
+  trustedLayoutAttestation: nearDuplicateTrustedLayout
 };
 Object.defineProperty(nearDuplicateRecognition, SERVER_PROVENANCE_ATTESTATION, { value: true, enumerable: true });
 const nearDuplicateEvidence = buildEvidenceAcquisition({
@@ -501,6 +494,32 @@ const nearDuplicateEvidence = buildEvidenceAcquisition({
   coordinateEngineV2: nearDuplicateEngine,
   resultRevision: 1
 });
+const preliminaryNearDuplicate = applyWgs84NearDuplicateAuthority({
+  recognitionResult: nearDuplicateRecognition,
+  coordinateEngineV2: nearDuplicateEngine,
+  evidenceAcquisition: nearDuplicateEvidence,
+  revision: 1
+});
+const pointReviewRuntime = new PointGeometryIntentReviewRuntime({ now: () => 1_000 });
+const pointReview = pointReviewRuntime.issue({
+  imageIdentity: nearDuplicateImageIdentity,
+  trustedLayoutAttestation: nearDuplicateTrustedLayout,
+  nearDuplicateDecision: preliminaryNearDuplicate.evaluation.decision,
+  canonicalPoints: preliminaryNearDuplicate.evaluation.canonicalPoints,
+  coordinateEngineV2: nearDuplicateEngine,
+  resultId: "near-duplicate-confirmation",
+  resultRevision: 1
+});
+const pointIntent = pointReviewRuntime.accept({
+  reviewId: pointReview.review_id,
+  reviewBindingSha256: pointReview.review_binding_sha256,
+  resultId: pointReview.result_id,
+  resultRevision: pointReview.result_revision,
+  geometryType: "Point",
+  action: "accept_point"
+});
+assert.equal(pointIntent.ok, true, "C08E explicit Point Review mints bound server intent");
+nearDuplicateRecognition.trustedPointGeometryIntent = pointIntent.intent;
 const nearDuplicateApplied = applyWgs84NearDuplicateAuthority({
   recognitionResult: nearDuplicateRecognition,
   coordinateEngineV2: nearDuplicateEngine,
@@ -560,6 +579,9 @@ assert.equal(expired.code, COORDINATE_GATE_REASON.CONFIRMATION_RESULT_EXPIRED, "
 
 const html = fs.readFileSync("index.html", "utf8");
 assert.match(html, /fetch\("\/api\/coordinate-confirmation"/);
+assert.match(html, /fetch\("\/api\/coordinate-point-intent-review"/);
+assert.match(html, /确认同一位置并作为 Point/);
+assert.match(html, /action: "accept_point"/);
 assert.match(html, /fetch\("\/api\/coordinate-revision"/);
 assert.match(html, /finalizedCoordinateDirty/);
 assert.match(html, /shouldBlockFinalizedCoordinateKml\(\)/);

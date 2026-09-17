@@ -16,6 +16,7 @@ import {
   validateWeakPartialMultisiteLifecycleEvidence
 } from "../recognition/dms-source-structure.js";
 import { validateWgs84NearDuplicateAuthority } from "../recognition/wgs84-near-duplicate-consolidation.js";
+import { validatePointGeometryConfirmationBinding } from "../recognition/trusted-point-geometry-intent.js";
 
 function uniqueStrings(values) {
   return Object.freeze([...new Set((Array.isArray(values) ? values : []).map(value => String(value || "").trim()).filter(Boolean))]);
@@ -155,24 +156,38 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
   const nearDuplicateAuthority = validateWgs84NearDuplicateAuthority({
     decision: candidate.nearDuplicateDecision,
     geometryIntentGate: candidate.geometryIntentAuthorityGate,
+    resultId,
     resultRevision
   });
   const nearDuplicateEvidenceValid = nearDuplicateAuthority.valid === true;
   const nearDuplicateAuthorityBlocked = nearDuplicateAuthority.blocked === true;
+  const pointIntentConfirmationRequired = nearDuplicateAuthority.trustedPointIntent === true;
+  const pointIntentConfirmationValid = !pointIntentConfirmationRequired
+    || candidate.confirmationStatus !== "accepted"
+    || validatePointGeometryConfirmationBinding({
+      binding: candidate.pointGeometryIntentConfirmation,
+      intentSha256: nearDuplicateAuthority.trustedPointGeometryIntentSha256,
+      resultId,
+      resultRevision,
+      geometryHash: candidate.geometryHash
+    });
   const effectiveCandidate = {
     ...candidate,
     explicitAuthorityRejected: candidate.explicitAuthorityRejected === true
-      || !weakPartialEvidenceValid || !nearDuplicateEvidenceValid,
-    qualityGateStatus: weakPartialEvidenceValid && nearDuplicateEvidenceValid
+      || !weakPartialEvidenceValid || !nearDuplicateEvidenceValid || !pointIntentConfirmationValid,
+    qualityGateStatus: weakPartialEvidenceValid && nearDuplicateEvidenceValid && pointIntentConfirmationValid
       ? candidate.qualityGateStatus
       : COORDINATE_QUALITY_GATE_STATUS.FAILED,
     availabilityStatus,
-    technicalKmlReady: availabilityBlocked || !weakPartialEvidenceValid || nearDuplicateAuthorityBlocked
+    technicalKmlReady: availabilityBlocked || !weakPartialEvidenceValid || nearDuplicateAuthorityBlocked || !pointIntentConfirmationValid
       ? false
       : (candidate.technicalKmlReady === true || candidate.kmlReady === true),
-    requiresReview: availabilityBlocked ? false : (!weakPartialEvidenceValid || nearDuplicateAuthorityBlocked || candidate.requiresReview),
-    kmlReady: availabilityBlocked || !weakPartialEvidenceValid || nearDuplicateAuthorityBlocked ? false : candidate.kmlReady,
-    kmlAuthorityBlocked: candidate.kmlAuthorityBlocked === true || !weakPartialEvidenceValid || nearDuplicateAuthorityBlocked,
+    requiresReview: availabilityBlocked ? false : (!weakPartialEvidenceValid || nearDuplicateAuthorityBlocked
+      || !pointIntentConfirmationValid || candidate.requiresReview),
+    kmlReady: availabilityBlocked || !weakPartialEvidenceValid || nearDuplicateAuthorityBlocked || !pointIntentConfirmationValid
+      ? false : candidate.kmlReady,
+    kmlAuthorityBlocked: candidate.kmlAuthorityBlocked === true || !weakPartialEvidenceValid
+      || nearDuplicateAuthorityBlocked || !pointIntentConfirmationValid,
     resultId,
     resultRevision
   };
@@ -235,6 +250,12 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
       : null,
     geometryIntentAuthorityGate: nearDuplicateAuthority.declared && nearDuplicateEvidenceValid
       ? deepFreeze(structuredClone(candidate.geometryIntentAuthorityGate))
+      : null,
+    trustedPointGeometryIntent: nearDuplicateAuthority.trustedPointIntent === true
+      ? deepFreeze(structuredClone(candidate.trustedPointGeometryIntent))
+      : null,
+    pointGeometryIntentConfirmation: pointIntentConfirmationValid && candidate.pointGeometryIntentConfirmation
+      ? deepFreeze(structuredClone(candidate.pointGeometryIntentConfirmation))
       : null,
     createdAt: candidate.createdAt || now,
     finalizedAt: now

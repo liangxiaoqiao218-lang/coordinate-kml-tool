@@ -1,6 +1,7 @@
 import { COORDINATE_CONFIRMATION_STATUS, COORDINATE_GATE_REASON } from "./reason-codes.js";
 import { finalizeCoordinateResult } from "./finalized-coordinate-result-v1.js";
 import { releaseConfirmedFamilySafetyPolicy } from "./family-safety-policy.js";
+import { createPointGeometryConfirmationBinding } from "../recognition/trusted-point-geometry-intent.js";
 
 export const DEFAULT_CONFIRMATION_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_CONFIRMATION_MAX_RESULTS = 500;
@@ -71,10 +72,22 @@ export class CoordinateConfirmationRuntime {
     if (validated.result.confirmationStatus === COORDINATE_CONFIRMATION_STATUS.ACCEPTED) {
       return Object.freeze({ ok: true, idempotent: true, finalizedCoordinateResult: validated.result });
     }
+    const pointGeometryIntentConfirmation = validated.result.trustedPointGeometryIntent
+      ? createPointGeometryConfirmationBinding({
+          intentSha256: validated.result.geometryIntentAuthorityGate?.trusted_point_geometry_intent_sha256,
+          resultId: validated.result.resultId,
+          resultRevision: validated.result.resultRevision,
+          geometryHash: validated.result.geometryHash
+        })
+      : null;
+    if (validated.result.trustedPointGeometryIntent && !pointGeometryIntentConfirmation) {
+      return runtimeFailure(COORDINATE_GATE_REASON.POINT_GEOMETRY_INTENT_CONFIRMATION_INVALID, 409);
+    }
     const confirmedPolicy = releaseConfirmedFamilySafetyPolicy(validated.result);
     const updated = finalizeCoordinateResult({
       ...validated.result,
       ...confirmedPolicy,
+      ...(pointGeometryIntentConfirmation ? { pointGeometryIntentConfirmation } : {}),
       currentRevision: validated.result.resultRevision,
       confirmedRevision: validated.result.resultRevision,
       confirmationStatus: COORDINATE_CONFIRMATION_STATUS.ACCEPTED,
