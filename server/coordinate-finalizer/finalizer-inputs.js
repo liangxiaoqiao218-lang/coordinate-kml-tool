@@ -126,10 +126,12 @@ function commonInput({
 }) {
   const groups = Array.isArray(structuredResult.groups) ? structuredResult.groups : [];
   const geometryResult = geometryFromStructuredGroups(groups);
+  const resultId = revision.resultId || null;
   const resultRevision = revision.resultRevision ?? 1;
   const nearDuplicateAuthority = validateWgs84NearDuplicateAuthority({
     decision: structuredResult.near_duplicate_decision_v1 || recognitionResult.nearDuplicateDecision,
     geometryIntentGate: structuredResult.geometry_intent_authority_gate_v1 || recognitionResult.geometryIntentAuthorityGate,
+    resultId,
     resultRevision
   });
   const nearDuplicateInvalid = nearDuplicateAuthority.valid !== true;
@@ -174,11 +176,14 @@ function commonInput({
     || acquisitionDeltaApplies
     || partialRecoveryApplies
     || reviewOnlyTechnicalKmlReady
-    || nearDuplicateBlocked;
+    || nearDuplicateBlocked
+    || nearDuplicateAuthority.trustedPointIntent === true;
   const confirmationOnlyReview = needsConfirmation && reviewOnlyTechnicalKmlReady;
-  const confirmationStatus = revision.confirmationStatus || (needsConfirmation
+  const confirmationStatus = nearDuplicateAuthority.trustedPointIntent === true
     ? COORDINATE_CONFIRMATION_STATUS.PENDING
-    : COORDINATE_CONFIRMATION_STATUS.NOT_REQUIRED);
+    : revision.confirmationStatus || (needsConfirmation
+      ? COORDINATE_CONFIRMATION_STATUS.PENDING
+      : COORDINATE_CONFIRMATION_STATUS.NOT_REQUIRED);
   const familySafety = applyFamilySafetyPolicy({
     structuredResult,
     confirmationStatus,
@@ -196,13 +201,14 @@ function commonInput({
   const productionSource = ["legacy", "manual_input", "coordinate_engine_v2"].includes(sourceAuthority);
   const currentAuthorizedGeometryExportable = geometryResult.ok && productionSource
     && !technicalFailure && !authorityRejected && !invalidCrs
-    && !acquisitionDeltaDeclared && !partialRecoveryDeclared && !nearDuplicateBlocked;
+    && !acquisitionDeltaDeclared && !partialRecoveryDeclared && !nearDuplicateBlocked
+    && nearDuplicateAuthority.trustedPointIntent !== true;
   // Provider availability governs acquisition, not an already valid deterministic result.
   const availabilityStatus = currentAuthorizedGeometryExportable ? FAMILY_AVAILABILITY_STATUS.AVAILABLE
     : familyAvailability?.status || FAMILY_AVAILABILITY_STATUS.AVAILABLE;
   const availabilityBlocked = isFamilyAvailabilityBlocked({ status: availabilityStatus });
   return {
-    resultId: revision.resultId,
+    resultId,
     resultRevision,
     currentRevision: revision.currentRevision ?? revision.resultRevision ?? 1,
     confirmedRevision: revision.confirmedRevision ?? null,
@@ -261,6 +267,9 @@ function commonInput({
       : null,
     geometryIntentAuthorityGate: nearDuplicateAuthority.declared
       ? (structuredResult.geometry_intent_authority_gate_v1 || recognitionResult.geometryIntentAuthorityGate)
+      : null,
+    trustedPointGeometryIntent: nearDuplicateAuthority.trustedPointIntent === true
+      ? recognitionResult.trustedPointGeometryIntent
       : null,
     warnings: [
       ...(acquisitionDeltaApplies

@@ -95,6 +95,7 @@ import {
   extractProviderLayoutCandidates
 } from "./server/evidence-acquisition/index.js";
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
+import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
 import { parseManualLongitudeLatitudeText } from "./server/manual-coordinate-input.js";
 import { calculateSpatialFacts } from "./server/spatial/spatial-facts.js";
@@ -12892,6 +12893,54 @@ app.post("/api/coordinate-confirmation", (req, res) => {
   });
 });
 
+app.post("/api/coordinate-point-intent-review", (req, res) => {
+  const requestedReviewId = String(req.body?.reviewId || req.body?.review_id || "");
+  pointGeometryIntentReviewRuntime.cleanup();
+  coordinateConfirmationRuntime.cleanup();
+  const reviewRecord = pointGeometryIntentReviewRuntime.records.get(requestedReviewId);
+  const currentResult = reviewRecord
+    ? coordinateConfirmationRuntime.records.get(reviewRecord.review.result_id)?.result
+    : null;
+  if (reviewRecord && (!currentResult
+    || currentResult.resultRevision !== reviewRecord.review.result_revision)) {
+    return res.status(409).json({ success: false, code: "POINT_GEOMETRY_INTENT_REVIEW_STALE" });
+  }
+  const outcome = pointGeometryIntentReviewRuntime.accept({
+    reviewId: requestedReviewId,
+    reviewBindingSha256: String(req.body?.reviewBindingSha256 || req.body?.review_binding_sha256 || ""),
+    resultId: String(req.body?.resultId || req.body?.result_id || ""),
+    resultRevision: Number(req.body?.resultRevision ?? req.body?.result_revision),
+    geometryType: String(req.body?.geometryType || req.body?.geometry_type || ""),
+    action: String(req.body?.action || "")
+  });
+  if (!outcome.ok) {
+    return res.status(outcome.httpStatus).json({ success: false, code: outcome.code });
+  }
+  const context = outcome.context;
+  if (!context?.recognitionResult || !context?.coordinateEngineV2) {
+    return res.status(409).json({ success: false, code: "POINT_GEOMETRY_INTENT_REVIEW_CONTEXT_INVALID" });
+  }
+  Object.defineProperty(context.recognitionResult, "trustedPointGeometryIntent", {
+    value: outcome.intent,
+    enumerable: true,
+    configurable: true
+  });
+  const revision = {
+    resultId: outcome.intent.result_id,
+    resultRevision: outcome.intent.result_revision,
+    currentRevision: outcome.intent.result_revision,
+    confirmedRevision: null,
+    confirmationStatus: "pending"
+  };
+  context.recognitionResult.finalizerRevision = revision;
+  const response = buildCoordinateVerificationResponse(
+    context.recognitionResult,
+    context.coordinateEngineV2,
+    { ...(context.finalizerOptions || {}), revision }
+  );
+  return res.json({ ...response, success: true, pointGeometryIntentReview: null });
+});
+
 app.post("/api/coordinate-revision", (req, res) => {
   const identity = {
     resultId: String(req.body?.resultId || ""),
@@ -13265,9 +13314,25 @@ function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = 
     prepared.coordinateEngineV2,
     finalizerOptions
   );
-  return prepared.evaluation.applies
-    ? { ...response, evidenceAcquisition }
-    : response;
+  if (!prepared.evaluation.applies) return response;
+  let pointGeometryIntentReview = null;
+  if (prepared.evaluation.decision?.decision === "SAME_LOCATION_CONFIRMED"
+    && prepared.evaluation.geometryIntentGate?.decision === "BLOCKED"
+    && prepared.evaluation.geometryIntentGate?.reason_code === "POINT_GEOMETRY_INTENT_CAPABILITY_MISSING"
+    && response.finalizedCoordinateResult?.resultId
+    && Number.isSafeInteger(response.finalizedCoordinateResult?.resultRevision)) {
+    pointGeometryIntentReview = pointGeometryIntentReviewRuntime.issue({
+      imageIdentity: payload.imageMetadata,
+      trustedLayoutAttestation: payload.trustedLayoutAttestation,
+      nearDuplicateDecision: prepared.evaluation.decision,
+      canonicalPoints: prepared.evaluation.canonicalPoints,
+      coordinateEngineV2: engine,
+      resultId: response.finalizedCoordinateResult.resultId,
+      resultRevision: response.finalizedCoordinateResult.resultRevision,
+      context: { recognitionResult: payload, coordinateEngineV2: engine, finalizerOptions }
+    });
+  }
+  return { ...response, evidenceAcquisition, pointGeometryIntentReview };
 }
 
 const buildCoordinateVerificationResponseWithoutRecognitionBudget = buildCoordinateVerificationResponse;

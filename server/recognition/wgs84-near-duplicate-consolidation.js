@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import {
   IMAGE_OBSERVATION_SCHEMA_VERSION,
-  ORIGINAL_IMAGE_OBSERVATION_ATTESTATION,
-  SERVER_PROVENANCE_ATTESTATION
+  ORIGINAL_IMAGE_OBSERVATION_ATTESTATION
 } from "../evidence-acquisition/observation-schema.js";
 import {
   TRUSTED_LAYOUT_ATTESTATION_CAPABILITY,
   TRUSTED_ROW_BINDING_SCHEMA_VERSION
 } from "../evidence-acquisition/trusted-layout-attestation.js";
+import { validateTrustedPointGeometryIntent } from "./trusted-point-geometry-intent.js";
 
 export const NEAR_DUPLICATE_DECISION_SCHEMA_VERSION = "near_duplicate_decision_v1";
 export const GEOMETRY_INTENT_GATE_SCHEMA_VERSION = "geometry_intent_authority_gate_v1";
@@ -211,35 +211,35 @@ function decisionPayload({ state, reasonCodes, observationIds = [], canonicalObs
   return deepFreeze({ ...identity, decision_sha256: digest(identity) });
 }
 
-function geometryGatePayload({ decision, intent = null, revision = 1, provenanceCapability = false } = {}) {
-  const declared = intent && typeof intent === "object" ? intent : {};
+function geometryGatePayload({ decision, intent = null, revision = 1, imageIdentity = null,
+  trustedLayoutAttestation = null, canonicalPoints = [], coordinateEngineV2 = {} } = {}) {
   const observationIds = decision?.binding?.observation_ids || [];
-  const validBinding = provenanceCapability === true
-    && declared.schema_version === "geometry_intent_v1"
-    && declared.provenance_trust === "SERVER_ATTESTED"
-    && TRUSTED_ATTESTORS.has(text(declared.provenance_attestor))
-    && declared.authority_revision === revision
-    && Array.isArray(declared.observation_ids)
-    && JSON.stringify([...declared.observation_ids].sort()) === JSON.stringify([...observationIds].sort());
-  const authorizedGeometry = validBinding && (
-    (decision?.decision === NEAR_DUPLICATE_DECISION.SAME_LOCATION_CONFIRMED && declared.geometry_type === "Point")
-    || (decision?.decision === NEAR_DUPLICATE_DECISION.DISTINCT_POINTS && declared.geometry_type === "LineString")
-  );
+  const intentValidation = validateTrustedPointGeometryIntent({
+    intent,
+    imageIdentity,
+    trustedLayoutAttestation,
+    nearDuplicateDecision: decision,
+    canonicalPoints,
+    coordinateEngineV2,
+    resultRevision: revision
+  });
+  const authorizedGeometry = intentValidation.valid === true
+    && decision?.decision === NEAR_DUPLICATE_DECISION.SAME_LOCATION_CONFIRMED;
   const identity = {
     schema_version: GEOMETRY_INTENT_GATE_SCHEMA_VERSION,
     decision: authorizedGeometry ? "AUTHORIZED" : "BLOCKED",
-    geometry_type: authorizedGeometry ? declared.geometry_type : null,
-    reason_code: authorizedGeometry
-      ? (declared.geometry_type === "Point" ? "EXPLICIT_BOUND_POINT_INTENT" : "EXPLICIT_BOUND_LINESTRING_INTENT")
-      : "GEOMETRY_INTENT_MISSING_OR_INVALID",
+    geometry_type: authorizedGeometry ? "Point" : null,
+    reason_code: authorizedGeometry ? "EXPLICIT_BOUND_POINT_INTENT" : intentValidation.reason,
     near_duplicate_decision_sha256: decision?.decision_sha256 || null,
     authority_revision: revision,
+    result_id: authorizedGeometry ? intent.result_id : null,
+    trusted_point_geometry_intent_sha256: intentValidation.intentSha256,
     observation_ids: [...observationIds].sort()
   };
   return deepFreeze({ ...identity, gate_sha256: digest(identity) });
 }
 
-function blockedResult({ state, reasons, points, evidence, revision, intent, provenanceCapability = false } = {}) {
+function blockedResult({ state, reasons, points, evidence, revision, intent, coordinateEngineV2 = {}, imageIdentity = null } = {}) {
   const boundObservationIds = (Array.isArray(evidence?.rowBindings) ? evidence.rowBindings : [])
     .map(item => item.observation_id).filter(Boolean);
   const observationIds = boundObservationIds.length > 0
@@ -257,7 +257,15 @@ function blockedResult({ state, reasons, points, evidence, revision, intent, pro
     revision,
     provenanceDigest
   });
-  const geometryIntentGate = geometryGatePayload({ decision, intent, revision, provenanceCapability });
+  const geometryIntentGate = geometryGatePayload({
+    decision,
+    intent,
+    revision,
+    imageIdentity,
+    trustedLayoutAttestation: evidence?.trustedLayoutAttestation,
+    canonicalPoints: points,
+    coordinateEngineV2
+  });
   return deepFreeze({
     applies: true,
     canonicalPoints: points,
@@ -269,7 +277,6 @@ function blockedResult({ state, reasons, points, evidence, revision, intent, pro
 
 export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {}, evidenceAcquisition = {},
   recognitionResult = {}, revision = 1 } = {}) {
-  const provenanceCapability = recognitionResult[SERVER_PROVENANCE_ATTESTATION] === true;
   const groups = Array.isArray(coordinateEngineV2.groups) ? coordinateEngineV2.groups : [];
   const points = groups.flatMap(group => (Array.isArray(group.points) ? group.points.map(point => ({ ...point, group_id: group.group_id })) : []));
   const wgs84Chat = coordinateEngineV2.coordinate_type === "wgs84_chat_coordinates"
@@ -283,8 +290,9 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
       points,
       evidence: evidenceAcquisition,
       revision,
-      intent: recognitionResult.geometryIntent,
-      provenanceCapability
+      intent: recognitionResult.trustedPointGeometryIntent,
+      coordinateEngineV2,
+      imageIdentity: recognitionResult.imageMetadata
     });
   }
 
@@ -302,8 +310,9 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
       points,
       evidence: evidenceAcquisition,
       revision,
-      intent: recognitionResult.geometryIntent,
-      provenanceCapability
+      intent: recognitionResult.trustedPointGeometryIntent,
+      coordinateEngineV2,
+      imageIdentity: recognitionResult.imageMetadata
     });
   }
 
@@ -356,8 +365,9 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
       points,
       evidence: evidenceAcquisition,
       revision,
-      intent: recognitionResult.geometryIntent,
-      provenanceCapability
+      intent: recognitionResult.trustedPointGeometryIntent,
+      coordinateEngineV2,
+      imageIdentity: recognitionResult.imageMetadata
     });
   }
 
@@ -368,8 +378,9 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
       points,
       evidence: evidenceAcquisition,
       revision,
-      intent: recognitionResult.geometryIntent,
-      provenanceCapability
+      intent: recognitionResult.trustedPointGeometryIntent,
+      coordinateEngineV2,
+      imageIdentity: recognitionResult.imageMetadata
     });
   }
 
@@ -392,8 +403,9 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
       points,
       evidence: evidenceAcquisition,
       revision,
-      intent: recognitionResult.geometryIntent,
-      provenanceCapability
+      intent: recognitionResult.trustedPointGeometryIntent,
+      coordinateEngineV2,
+      imageIdentity: recognitionResult.imageMetadata
     });
   }
 
@@ -412,9 +424,12 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
   });
   const geometryIntentGate = geometryGatePayload({
     decision,
-    intent: recognitionResult.geometryIntent,
+    intent: recognitionResult.trustedPointGeometryIntent,
     revision,
-    provenanceCapability
+    imageIdentity: recognitionResult.imageMetadata,
+    trustedLayoutAttestation: evidenceAcquisition.trustedLayoutAttestation,
+    canonicalPoints: [canonicalPoint],
+    coordinateEngineV2
   });
   return deepFreeze({
     applies: true,
@@ -425,13 +440,14 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
   });
 }
 
-export function validateWgs84NearDuplicateAuthority({ decision, geometryIntentGate, resultRevision } = {}) {
+export function validateWgs84NearDuplicateAuthority({ decision, geometryIntentGate, resultId = null, resultRevision } = {}) {
   if (!decision && !geometryIntentGate) return Object.freeze({ declared: false, valid: true, blocked: false });
   if (!decision || !geometryIntentGate
     || decision.schema_version !== NEAR_DUPLICATE_DECISION_SCHEMA_VERSION
     || geometryIntentGate.schema_version !== GEOMETRY_INTENT_GATE_SCHEMA_VERSION
     || decision.binding?.authority_revision !== resultRevision
-    || geometryIntentGate.authority_revision !== resultRevision) {
+    || geometryIntentGate.authority_revision !== resultRevision
+    || (geometryIntentGate.decision === "AUTHORIZED" && geometryIntentGate.result_id !== resultId)) {
     return Object.freeze({ declared: true, valid: false, blocked: true, reason: "NEAR_DUPLICATE_AUTHORITY_BINDING_INVALID" });
   }
   const decisionIdentity = {
@@ -447,6 +463,8 @@ export function validateWgs84NearDuplicateAuthority({ decision, geometryIntentGa
     reason_code: geometryIntentGate.reason_code,
     near_duplicate_decision_sha256: geometryIntentGate.near_duplicate_decision_sha256,
     authority_revision: geometryIntentGate.authority_revision,
+    result_id: geometryIntentGate.result_id,
+    trusted_point_geometry_intent_sha256: geometryIntentGate.trusted_point_geometry_intent_sha256,
     observation_ids: geometryIntentGate.observation_ids
   };
   const valid = decision.decision_sha256 === digest(decisionIdentity)
@@ -455,13 +473,13 @@ export function validateWgs84NearDuplicateAuthority({ decision, geometryIntentGa
   const authorized = valid && geometryIntentGate.decision === "AUTHORIZED" && (
     (decision.decision === NEAR_DUPLICATE_DECISION.SAME_LOCATION_CONFIRMED
       && geometryIntentGate.geometry_type === "Point")
-    || (decision.decision === NEAR_DUPLICATE_DECISION.DISTINCT_POINTS
-      && geometryIntentGate.geometry_type === "LineString")
   );
   return Object.freeze({
     declared: true,
     valid,
     blocked: !authorized,
+    trustedPointIntent: authorized,
+    trustedPointGeometryIntentSha256: authorized ? geometryIntentGate.trusted_point_geometry_intent_sha256 : null,
     reason: valid ? (authorized ? null : geometryIntentGate.reason_code) : "NEAR_DUPLICATE_AUTHORITY_DIGEST_INVALID"
   });
 }

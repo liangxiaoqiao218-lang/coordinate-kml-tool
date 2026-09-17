@@ -5224,6 +5224,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeCoordinateEngineV2 = null;
     let activeCoordinateFieldConflictCount = 0;
     let activeFinalizedCoordinateResult = null;
+    let activePointGeometryIntentReview = null;
     let finalizedCoordinateTextSnapshot = "";
     let finalizedCoordinateDirty = false;
     let lastValidIdentityBoundSnapshot = null;
@@ -5284,6 +5285,7 @@ Au值 = 纯度 × 10 后取整数</div>
         && positions[0][1] === positions.at(-1)[1]) positions = positions.slice(0, -1);
       input.value = positions.map(position => `${position[0]},${position[1]}`).join("\n");
       activeFinalizedCoordinateResult = null;
+      activePointGeometryIntentReview = null;
       lastValidIdentityBoundSnapshot = null;
       finalizedCoordinateTextSnapshot = "";
       finalizedCoordinateDirty = true;
@@ -6812,7 +6814,11 @@ Au值 = 纯度 × 10 后取整数</div>
       const statusText = document.createElement("span");
       statusText.className = "handwritten-dms-review-text";
       const ordinaryReviewOnly = isOrdinaryReviewOnlyFinalizedResult();
-      statusText.textContent = ordinaryReviewOnly && activeCoordinateFieldConflictCount > 0
+      const pointIntentReview = handwrittenDmsReviewState.source === "trusted_point_geometry_intent_v1"
+        && activePointGeometryIntentReview;
+      statusText.textContent = pointIntentReview
+        ? "检测到同一位置以不同精度重复显示。请对照原图，明确选择是否作为一个 Point。"
+        : ordinaryReviewOnly && activeCoordinateFieldConflictCount > 0
         ? `发现 ${activeCoordinateFieldConflictCount} 处坐标可能存在识别差异，请重点核对标记位置。`
         : ordinaryReviewOnly
           ? "建议对照原图核对坐标，部分字符可能存在识别误差。"
@@ -6827,14 +6833,19 @@ Au值 = 纯度 × 10 后取整数</div>
         const confirmButton = document.createElement("button");
         confirmButton.type = "button";
         confirmButton.className = "handwritten-dms-review-button";
-        confirmButton.textContent = "我已对照原图核对当前坐标";
-        confirmButton.addEventListener("click", confirmHandwrittenDmsReview);
+        confirmButton.textContent = pointIntentReview
+          ? "确认同一位置并作为 Point"
+          : "我已对照原图核对当前坐标";
+        confirmButton.addEventListener("click", pointIntentReview
+          ? confirmPointGeometryIntentReview
+          : confirmHandwrittenDmsReview);
         handwrittenDmsReviewPanel.appendChild(confirmButton);
       }
     }
 
     function resetHandwrittenDmsReviewState() {
       handwrittenDmsReviewState = createHandwrittenDmsReviewState();
+      activePointGeometryIntentReview = null;
       activeCoordinateFieldConflictCount = 0;
       setHandwrittenDmsReviewGuardContext(false);
       renderHandwrittenDmsReviewState();
@@ -6844,12 +6855,15 @@ Au值 = 纯度 × 10 后取整数</div>
       const type = String(engine?.coordinate_type || engine?.coordinateType || "").trim();
       const serverRequiresConfirmation = finalizedCoordinateResultRequiresUserConfirmation(result);
       const legacyHandwrittenRequiresReview = !result && type === "handwritten_dms_experimental" && engine?.requires_review === true;
-      const required = serverRequiresConfirmation || legacyHandwrittenRequiresReview;
+      const pointIntentReviewRequired = Boolean(activePointGeometryIntentReview?.review_id);
+      const required = pointIntentReviewRequired || serverRequiresConfirmation || legacyHandwrittenRequiresReview;
       handwrittenDmsReviewState = required
         ? createHandwrittenDmsReviewState({
             required: true,
             status: HANDWRITTEN_DMS_REVIEW_STATUS.PENDING,
-            source: serverRequiresConfirmation ? "finalized_coordinate_result_v1" : "handwritten_dms_legacy"
+            source: pointIntentReviewRequired
+              ? "trusted_point_geometry_intent_v1"
+              : serverRequiresConfirmation ? "finalized_coordinate_result_v1" : "handwritten_dms_legacy"
           })
         : createHandwrittenDmsReviewState();
       setHandwrittenDmsReviewGuardContext(required);
@@ -7481,11 +7495,73 @@ Au值 = 纯度 × 10 后取整数</div>
       }
     }
 
+    async function confirmPointGeometryIntentReview(event) {
+      const review = activePointGeometryIntentReview;
+      if (!review?.review_id) return;
+      const button = event?.currentTarget;
+      if (button) {
+        button.disabled = true;
+        button.textContent = "正在确认 Point…";
+      }
+      try {
+        const reviewResponse = await fetch("/api/coordinate-point-intent-review", {
+          method: "POST",
+          headers: getSourceHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            reviewId: review.review_id,
+            reviewBindingSha256: review.review_binding_sha256,
+            resultId: review.result_id,
+            resultRevision: review.result_revision,
+            geometryType: "Point",
+            action: "accept_point"
+          })
+        });
+        const reviewed = await reviewResponse.json().catch(() => ({}));
+        if (!reviewResponse.ok || !getFinalizedCoordinateIdentity(reviewed.finalizedCoordinateResult)) {
+          throw new Error(getCoordinateFlowUserMessage(reviewed.code, "Point 选择未能完成，请重新识别。"));
+        }
+        activeCoordinateEngineV2 = reviewed.coordinateEngineV2 || activeCoordinateEngineV2;
+        activeFinalizedCoordinateResult = reviewed.finalizedCoordinateResult;
+        const identity = getFinalizedCoordinateIdentity();
+        const confirmationResponse = await fetch("/api/coordinate-confirmation", {
+          method: "POST",
+          headers: getSourceHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({ ...identity, action: "accept" })
+        });
+        const confirmed = await confirmationResponse.json().catch(() => ({}));
+        if (!confirmationResponse.ok || confirmed.finalizedCoordinateResult?.decisionState !== "AUTO_EXPORT") {
+          throw new Error(getCoordinateFlowUserMessage(confirmed.code, "Point 最终确认未能完成，请重新识别。"));
+        }
+        activeFinalizedCoordinateResult = confirmed.finalizedCoordinateResult;
+        activePointGeometryIntentReview = null;
+        invalidateSpatialPreview();
+        const canonicalText = getCanonicalCoordinateDisplayText(activeFinalizedCoordinateResult);
+        if (canonicalText) input.value = canonicalText;
+        finalizedCoordinateTextSnapshot = String(input.value || "");
+        finalizedCoordinateDirty = false;
+        handwrittenDmsReviewState = createHandwrittenDmsReviewState({
+          required: true,
+          status: HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED,
+          confirmedRevision: 0,
+          revision: 0,
+          source: "trusted_point_geometry_intent_v1"
+        });
+        rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
+        renderHandwrittenDmsReviewState();
+        refreshMapPreviewAction();
+        showMessage("已确认同一位置并由服务端绑定为 Point。", false, 5000);
+      } catch (error) {
+        renderHandwrittenDmsReviewState();
+        showMessage(error?.message || "Point 确认失败，请重新识别。", true, 6000);
+      }
+    }
+
     function markCoordinateTextChanged() {
       activeCoordinatePrecisionMode = "";
       activeCoordinateEngineV2 = null;
       activeCoordinateFieldConflictCount = 0;
       if (activeFinalizedCoordinateResult) finalizedCoordinateDirty = true;
+      activePointGeometryIntentReview = null;
       handwrittenDmsReviewState = getHandwrittenDmsReviewStateAfterTextChange(handwrittenDmsReviewState);
       renderHandwrittenDmsReviewState();
       clearRecognitionSummary();
@@ -14107,6 +14183,7 @@ ${placemarks}
           ? data.handwrittenVisionRouting.fieldConflicts.length
           : 0;
         activeFinalizedCoordinateResult = data.finalizedCoordinateResult || null;
+        activePointGeometryIntentReview = data.pointGeometryIntentReview || null;
         invalidateSpatialPreview();
 
         rememberState();

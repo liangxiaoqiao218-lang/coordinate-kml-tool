@@ -12,6 +12,7 @@ import {
   evaluateWgs84NearDuplicateConsolidation,
   validateWgs84NearDuplicateAuthority
 } from "../server/recognition/wgs84-near-duplicate-consolidation.js";
+import { PointGeometryIntentReviewRuntime } from "../server/recognition/trusted-point-geometry-intent.js";
 import {
   COORDINATE_CONFIRMATION_STATUS,
   CoordinateConfirmationRuntime,
@@ -120,16 +121,36 @@ function prepare(rows = [low, high], overrides = {}) {
     coordinateEngineV2,
     resultRevision: overrides.revision || 1
   });
-  const observationIds = evidenceAcquisition.rowBindings.map(binding => binding.observation_id).sort();
-  const geometryIntent = overrides.geometryIntent === false ? null : {
-    schema_version: "geometry_intent_v1",
-    geometry_type: overrides.geometryType || "Point",
-    provenance_trust: "SERVER_ATTESTED",
-    provenance_attestor: "SYNTHETIC_REGRESSION_V1",
-    authority_revision: overrides.revision || 1,
-    observation_ids: observationIds
+  const baseInput = {
+    recognitionResult,
+    coordinateEngineV2,
+    evidenceAcquisition,
+    revision: overrides.revision || 1
   };
-  const withIntent = { ...recognitionResult, ...(geometryIntent ? { geometryIntent } : {}) };
+  if (overrides.geometryIntent === false) return baseInput;
+  const evaluated = evaluateWgs84NearDuplicateConsolidation(baseInput);
+  if (evaluated.decision?.decision !== NEAR_DUPLICATE_DECISION.SAME_LOCATION_CONFIRMED) return baseInput;
+  const runtime = new PointGeometryIntentReviewRuntime({ now: () => 1_000 });
+  const review = runtime.issue({
+    imageIdentity: recognitionResult.imageMetadata,
+    trustedLayoutAttestation: recognitionResult.trustedLayoutAttestation,
+    nearDuplicateDecision: evaluated.decision,
+    canonicalPoints: evaluated.canonicalPoints,
+    coordinateEngineV2,
+    resultId: overrides.resultId || "near-duplicate-fixture",
+    resultRevision: overrides.revision || 1
+  });
+  assert.ok(review);
+  const accepted = runtime.accept({
+    reviewId: review.review_id,
+    reviewBindingSha256: review.review_binding_sha256,
+    resultId: review.result_id,
+    resultRevision: review.result_revision,
+    geometryType: "Point",
+    action: "accept_point"
+  });
+  assert.equal(accepted.ok, true);
+  const withIntent = { ...recognitionResult, trustedPointGeometryIntent: accepted.intent };
   return {
     recognitionResult: withIntent,
     coordinateEngineV2,
@@ -172,14 +193,14 @@ test("ND-03", "distance never substitutes for exact rounding containment", () =>
   assert.equal(result.authorityBlocked, true);
 });
 
-test("ND-03B", "distinct points require an independently bound LineString intent", () => {
+test("ND-03B", "candidate count cannot mint LineString authority", () => {
   const result = evaluateWgs84NearDuplicateConsolidation(prepare([
     "35.4478190,83.1789910",
     "35.4478290,83.1790010"
-  ], { geometryType: "LineString" }));
+  ]));
   assert.equal(result.decision.decision, NEAR_DUPLICATE_DECISION.DISTINCT_POINTS);
-  assert.equal(result.geometryIntentGate.decision, "AUTHORIZED");
-  assert.equal(result.authorityBlocked, false);
+  assert.equal(result.geometryIntentGate.decision, "BLOCKED");
+  assert.equal(result.authorityBlocked, true);
 });
 
 test("ND-03C", "LineString intent cannot bypass provenance or CRS identity", () => {
@@ -187,7 +208,6 @@ test("ND-03C", "LineString intent cannot bypass provenance or CRS identity", () 
     "35.4478190,83.1789910",
     "35.4478290,83.1790010"
   ], {
-    geometryType: "LineString",
     observationOverrides: [{ provenance_trust: "UNTRUSTED" }, {}]
   });
   input.coordinateEngineV2.source_crs = { id: "EPSG:3857", axisOrder: "easting_northing" };
@@ -407,8 +427,9 @@ test("ND-12B", "authority provenance changes invalidate an old confirmation iden
       revision: { resultId: "near-duplicate-authority-rebind", resultRevision: 1, confirmationStatus: "pending" }
     }), { clock: () => "2026-09-17T00:00:00.000Z" });
   };
-  const first = finalizePrepared(prepare());
+  const first = finalizePrepared(prepare([low, high], { resultId: "near-duplicate-authority-rebind" }));
   const second = finalizePrepared(prepare([low, high], {
+    resultId: "near-duplicate-authority-rebind",
     observationOverrides: [{ bbox: [30, 20, 510, 80] }, {}]
   }));
   assert.deepEqual(first.geometry.coordinates, second.geometry.coordinates);
@@ -451,7 +472,8 @@ test("ND-14", "runtime response path applies authority before verification and F
   assert.match(wrapper, /buildEvidenceAcquisition/);
   assert.match(wrapper, /applyWgs84NearDuplicateAuthority/);
   assert.match(wrapper, /buildCoordinateVerificationResponseBase/);
-  assert.match(wrapper, /\{ \.\.\.response, evidenceAcquisition \}/);
+  assert.match(wrapper, /pointGeometryIntentReviewRuntime\.issue/);
+  assert.match(wrapper, /pointGeometryIntentReview/);
 });
 
 let passed = 0;

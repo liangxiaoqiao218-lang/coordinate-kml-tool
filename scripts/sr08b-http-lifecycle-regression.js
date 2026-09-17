@@ -76,6 +76,21 @@ const duplicate = await jsonRequest("/api/coordinate-confirmation", {
 });
 assert.equal(duplicate.payload.idempotent, true);
 
+const forgedPointReview = await jsonRequest("/api/coordinate-point-intent-review", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    reviewId: "00000000-0000-4000-8000-000000000000",
+    reviewBindingSha256: "0".repeat(64),
+    resultId: revision2.resultId,
+    resultRevision: revision2.resultRevision,
+    geometryType: "Point",
+    action: "accept_point"
+  })
+});
+assert.equal(forgedPointReview.response.status, 404);
+assert.equal(forgedPointReview.payload.code, "POINT_GEOMETRY_INTENT_REVIEW_NOT_FOUND");
+
 const scenarios = ["fast_success", "slow_provider", "provider_hang", "ocr_hang", "multiple_fallback"];
 const deadlineEvidence = [];
 for (const scenario of scenarios) {
@@ -118,7 +133,7 @@ assert.ok(version.payload.runtimeIdentity.recognitionHardDeadlineMs < 60_000);
 
 console.log(JSON.stringify({
   suite: "sr08b-http-lifecycle-regression",
-  passed: 12,
+  passed: 13,
   deadlineEvidence,
   runtimeIdentity: version.payload.runtimeIdentity
 }, null, 2));
