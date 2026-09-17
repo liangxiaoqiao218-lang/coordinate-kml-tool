@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { buildRecognitionEvidence } from "../server/evidence/recognition-evidence-adapter.js";
 import { buildCoordinateVerification, buildCoordinateVerificationResponse } from "../server/verification/index.js";
 import { buildSourceCoordinateRepresentation } from "../server/source-coordinate-representation.js";
-import { SERVER_PROVENANCE_ATTESTATION } from "../server/evidence-acquisition/index.js";
+import {
+  SERVER_PROVENANCE_ATTESTATION,
+  TRUSTED_LAYOUT_ATTESTATION_CAPABILITY,
+  extractProviderLayoutCandidates
+} from "../server/evidence-acquisition/index.js";
 
 function makePoint(label, raw) {
   return {
@@ -170,11 +174,31 @@ assert.equal(trustedObservation.provenance_trust, "SERVER_ATTESTED");
 assert.equal(trustedRegionResponse.evidenceAcquisition.shadow_only, true);
 assert.equal(trustedRegionResponse.evidenceAcquisition.affects_coordinates, false);
 assert.equal(trustedRegionResponse.evidenceAcquisition.affects_kml, false);
+assert.equal(trustedRegionResponse.evidenceAcquisition.trusted_layout_status, "UNATTESTED");
+assert.notEqual(trustedRegionResponse.evidenceAcquisition[TRUSTED_LAYOUT_ATTESTATION_CAPABILITY], true,
+  "legacy provenance strings and markers cannot mint trusted layout capability");
 
 const pseudoRegionPayload = structuredClone(trustedRegionPayload);
 const pseudoRegionResponse = buildCoordinateVerificationResponse(pseudoRegionPayload, trustedRegionEngine);
 assert.equal(pseudoRegionResponse.evidenceAcquisition.observations[0].source_role, null);
 assert.equal(pseudoRegionResponse.evidenceAcquisition.observations[0].provenance_trust, "UNTRUSTED");
+
+const providerLayoutCandidates = extractProviderLayoutCandidates({
+  message: { content: JSON.stringify({ bbox: [1, 2, 3, 4], text: "must-not-be-trusted" }) },
+  output: {
+    layout: [{
+      id: "layout-1",
+      line_id: "provider-line-1",
+      text: "35.447819,83.178991",
+      bbox: [20, 20, 500, 80],
+      source_role: "MAP_SEARCH_BOX"
+    }]
+  }
+});
+assert.equal(providerLayoutCandidates.length, 1, "only allowlisted structured provider layout fields are extracted");
+assert.equal(providerLayoutCandidates[0].text, "35.447819,83.178991");
+assert.equal(providerLayoutCandidates[0].provenance_trust, "UNTRUSTED");
+assert.equal(providerLayoutCandidates[0].source_role, null, "provider self-described roles are discarded");
 
 const legacyEngine = makeEngine(standardDms);
 const phase2Baseline = {
@@ -214,7 +238,7 @@ assert.equal(phase3Response.coordinates, legacySnapshot.coordinates, "coordinate
 
 console.log(JSON.stringify({
   suite: "evidence-acquisition-regression",
-  passed: 5,
+  passed: 6,
   cases: [
     {
       id: "handwritten_dms_conflict_row_evidence",
@@ -230,6 +254,7 @@ console.log(JSON.stringify({
     },
     { id: "missing_or_invalid_bbox_degrades_safely", status: "PASS" },
     { id: "trusted_source_role_attestation_and_pseudo_provenance_rejection", status: "PASS" },
+    { id: "provider_structured_layout_allowlist_remains_shadow_only", status: "PASS" },
     { id: "phase2_response_compatibility", status: "PASS" }
   ]
 }, null, 2));

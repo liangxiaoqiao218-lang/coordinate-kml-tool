@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
   SERVER_PROVENANCE_ATTESTATION,
-  buildEvidenceAcquisition
+  buildEvidenceAcquisition,
+  createTrustedLayoutAttestation
 } from "../server/evidence-acquisition/index.js";
+import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
 import {
   NEAR_DUPLICATE_DECISION,
   applyWgs84NearDuplicateAuthority,
@@ -21,6 +23,25 @@ import { MapPreviewAdapter } from "../server/spatial/adapters/map-preview-adapte
 
 const low = "35.447819,83.178991";
 const high = "35.4478191,83.1789913";
+
+function makeBmp(width = 1080, height = 1920) {
+  const rowBytes = Math.floor(((24 * width) + 31) / 32) * 4;
+  const buffer = Buffer.alloc(54 + (rowBytes * height));
+  buffer.write("BM", 0, "ascii");
+  buffer.writeUInt32LE(buffer.length, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(width, 18);
+  buffer.writeInt32LE(height, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  return buffer;
+}
+
+const syntheticImageIdentity = createCoordinateImageIdentity(
+  { buffer: makeBmp(), mimetype: "image/bmp" },
+  { requestId: "near-duplicate-p0-regression", page: 1 }
+);
 
 function point(raw, label) {
   const [lat, lon] = raw.split(",").map(Number);
@@ -44,40 +65,61 @@ function engine(rows = [low, high]) {
   };
 }
 
-function payload(rows = [low, high], overrides = {}) {
-  const observations = rows.map((row, index) => ({
+function payload(rows = [low, high], overrides = {}, coordinateEngineV2 = engine(rows)) {
+  const observations = rows.map((row, index) => {
+    const observation = {
     id: `line-${index + 1}`,
+    source_ref: `line-${index + 1}`,
     source_line_id: `line-${index + 1}`,
     text: row,
     point_id: String(index + 1),
     bbox: index === 0 ? [20, 20, 500, 80] : [20, 500, 500, 560],
     coordinate_space: "ORIGINAL_IMAGE_PIXELS",
     source: "qwenOcr",
+    source_type: "SYNTHETIC_REGRESSION_V1",
     source_role: index === 0 ? "MAP_SEARCH_BOX" : "MAP_PLACE_DETAILS",
     source_region_id: index === 0 ? "MAP_SEARCH_BOX_REGION" : "MAP_PLACE_DETAILS_REGION",
     provenance_trust: "SERVER_ATTESTED",
     provenance_attestor: "SYNTHETIC_REGRESSION_V1",
     measurement_semantics: "UNSPECIFIED",
+    group_id: "group_1",
     ...overrides.observationOverrides?.[index]
-  }));
+    };
+    if (observation.provenance_trust === "SERVER_ATTESTED") {
+      Object.defineProperty(observation, SERVER_PROVENANCE_ATTESTATION, { value: true });
+    }
+    return observation;
+  });
   const result = {
     success: true,
-    request_asset_id: overrides.request_asset_id || "synthetic-request-asset",
-    image_id: overrides.image_id || "synthetic-image",
-    imageMetadata: { width: 1080, height: 1920, page: 1 },
+    request_asset_id: overrides.request_asset_id || syntheticImageIdentity.request_asset_id,
+    image_id: overrides.image_id || syntheticImageIdentity.image_id,
+    imageMetadata: syntheticImageIdentity,
     rawText: rows.join("\n"),
     coordinates: rows.join("\n"),
     ocrLineLocations: observations,
     ...overrides.payloadOverrides
   };
+  const trustedLayoutAttestation = createTrustedLayoutAttestation({
+    imageIdentity: result.imageMetadata,
+    observations,
+    coordinateEngineV2,
+    resultRevision: overrides.revision || 1,
+    providerResponseId: "synthetic-near-duplicate-response"
+  });
+  if (trustedLayoutAttestation) result.trustedLayoutAttestation = trustedLayoutAttestation;
   Object.defineProperty(result, SERVER_PROVENANCE_ATTESTATION, { value: true, enumerable: true });
   return result;
 }
 
 function prepare(rows = [low, high], overrides = {}) {
-  const recognitionResult = payload(rows, overrides);
   const coordinateEngineV2 = engine(rows);
-  const evidenceAcquisition = buildEvidenceAcquisition({ recognitionResult, coordinateEngineV2 });
+  const recognitionResult = payload(rows, overrides, coordinateEngineV2);
+  const evidenceAcquisition = buildEvidenceAcquisition({
+    recognitionResult,
+    coordinateEngineV2,
+    resultRevision: overrides.revision || 1
+  });
   const observationIds = evidenceAcquisition.rowBindings.map(binding => binding.observation_id).sort();
   const geometryIntent = overrides.geometryIntent === false ? null : {
     schema_version: "geometry_intent_v1",
@@ -102,7 +144,8 @@ function test(id, name, fn) {
 }
 
 test("ND-01", "incident fixture selects the strictly higher precision observation", () => {
-  const result = evaluateWgs84NearDuplicateConsolidation(prepare());
+  const input = prepare();
+  const result = evaluateWgs84NearDuplicateConsolidation(input);
   assert.equal(result.decision.decision, NEAR_DUPLICATE_DECISION.SAME_LOCATION_CONFIRMED);
   assert.equal(result.geometryIntentGate.decision, "AUTHORIZED");
   assert.equal(result.canonicalPoints.length, 1);

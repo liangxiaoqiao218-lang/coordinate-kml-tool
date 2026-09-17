@@ -12,6 +12,7 @@ import { applyMiningJudgeabilityGate } from "./server/mining-judgeability.js";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
 import {
   canonicalizeCoordinateImageUpload,
+  createCoordinateImageIdentity,
   hasValidJpegStructure as hasValidCanonicalJpegStructure
 } from "./server/recognition/coordinate-image-safety.js";
 import {
@@ -88,7 +89,11 @@ import {
   parseStructuredBoundaryPoint
 } from "./server/structured-coordinate-boundary.js";
 import { buildCoordinateVerificationResponse as buildCoordinateVerificationResponseBase } from "./server/verification/index.js";
-import { buildEvidenceAcquisition } from "./server/evidence-acquisition/index.js";
+import {
+  buildEvidenceAcquisition,
+  createTrustedLayoutAttestation,
+  extractProviderLayoutCandidates
+} from "./server/evidence-acquisition/index.js";
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
 import { parseManualLongitudeLatitudeText } from "./server/manual-coordinate-input.js";
@@ -13224,12 +13229,36 @@ app.delete(
 function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = null, finalizerOptions = {}) {
   const engine = coordinateEngineV2 || payload.coordinateEngineV2 || {};
   const revision = Number(finalizerOptions?.revision?.resultRevision ?? payload?.finalizerRevision?.resultRevision ?? 1);
-  const evidenceAcquisition = buildEvidenceAcquisition({ recognitionResult: payload, coordinateEngineV2: engine });
+  const normalizedRevision = Number.isSafeInteger(revision) && revision > 0 ? revision : 1;
+  if (!payload.trustedLayoutAttestation
+    && payload.imageMetadata
+    && Array.isArray(payload.providerLayoutCandidates)
+    && payload.providerLayoutCandidates.length > 0) {
+    const trustedLayoutAttestation = createTrustedLayoutAttestation({
+      imageIdentity: payload.imageMetadata,
+      observations: payload.providerLayoutCandidates,
+      coordinateEngineV2: engine,
+      resultRevision: normalizedRevision,
+      providerResponseId: payload.providerLayoutResponseId
+    });
+    if (trustedLayoutAttestation) {
+      Object.defineProperty(payload, "trustedLayoutAttestation", {
+        value: trustedLayoutAttestation,
+        enumerable: false,
+        configurable: true
+      });
+    }
+  }
+  const evidenceAcquisition = buildEvidenceAcquisition({
+    recognitionResult: payload,
+    coordinateEngineV2: engine,
+    resultRevision: normalizedRevision
+  });
   const prepared = applyWgs84NearDuplicateAuthority({
     recognitionResult: payload,
     coordinateEngineV2: engine,
     evidenceAcquisition,
-    revision: Number.isSafeInteger(revision) && revision > 0 ? revision : 1
+    revision: normalizedRevision
   });
   const response = buildCoordinateVerificationResponseBase(
     prepared.recognitionResult,
@@ -13367,6 +13396,9 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     ? null
     : getCoordinateUsageSessionBinding(req, res, { create: true });
   let checkedCoordinateUsageStatus = null;
+  let coordinateImageIdentity = null;
+  let providerLayoutCandidates = [];
+  let providerLayoutResponseId = "";
   let responseCommitPromise = null;
   const sendRecognitionJson = res.json.bind(res);
   const runBudgetedStage = async (stageName, action) => {
@@ -13387,6 +13419,26 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     const event = recognitionBudget?.stageStarted("finalizer");
     let result = "success";
     try {
+      const payload = args[0];
+      if (payload && typeof payload === "object" && coordinateImageIdentity) {
+        Object.defineProperty(payload, "imageMetadata", {
+          value: coordinateImageIdentity,
+          enumerable: false,
+          configurable: true
+        });
+        if (providerLayoutCandidates.length > 0) {
+          Object.defineProperty(payload, "providerLayoutCandidates", {
+            value: providerLayoutCandidates,
+            enumerable: false,
+            configurable: true
+          });
+          Object.defineProperty(payload, "providerLayoutResponseId", {
+            value: providerLayoutResponseId,
+            enumerable: false,
+            configurable: true
+          });
+        }
+      }
       return buildCoordinateVerificationResponseWithoutRecognitionBudget(...args);
     } catch (error) {
       result = isRecognitionStopError(error) ? "budget_exhausted" : "failed";
@@ -13558,6 +13610,22 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
         reason: "invalid_image",
         code: COORDINATE_IMAGE_INVALID_CODE,
         safetyReason: COORDINATE_IMAGE_INVALID_CODE,
+        error: "图片格式不支持或文件无效。",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+    coordinateImageIdentity = createCoordinateImageIdentity(req.file, {
+      requestId: recognitionBudget?.requestId,
+      page: 1
+    });
+    if (!coordinateImageIdentity) {
+      recognitionBudget?.stageCompleted(imageSafetyStage, { result: "failed" });
+      return res.status(400).json({
+        success: false,
+        reason: "invalid_image",
+        code: COORDINATE_IMAGE_INVALID_CODE,
+        safetyReason: "CANONICAL_IMAGE_IDENTITY_UNAVAILABLE",
         error: "图片格式不支持或文件无效。",
         rawText: "",
         coordinates: ""
@@ -14574,6 +14642,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           familyEvidence: true
         });
         const wgs84PrimaryRawText = wgs84PrimaryResponse.choices?.[0]?.message?.content || "";
+        providerLayoutCandidates = extractProviderLayoutCandidates(wgs84PrimaryResponse);
+        providerLayoutResponseId = String(wgs84PrimaryResponse?.id || wgs84PrimaryResponse?.request_id || "");
         const wgs84PrimaryInfo = getWgs84TableCoordinatesInfo(wgs84PrimaryRawText, {
           preserveDuplicatePoints: true
         });
@@ -14717,6 +14787,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       imageItems,
       temperature: 0.1
     });
+    providerLayoutCandidates = extractProviderLayoutCandidates(response);
+    providerLayoutResponseId = String(response?.id || response?.request_id || "");
     stage1ProviderSucceeded = true;
     if (
       regressionTestMode.active

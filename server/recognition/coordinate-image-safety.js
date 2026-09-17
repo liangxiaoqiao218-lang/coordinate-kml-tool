@@ -1,9 +1,14 @@
+import { createHash, randomUUID } from "node:crypto";
+
 export const COORDINATE_IMAGE_SAFETY_LIMITS = Object.freeze({
   maxUploadBytes: 12 * 1024 * 1024,
   maxTrailingBytes: 64 * 1024,
   maxDimension: 16_384,
   maxPixels: 40_000_000
 });
+
+export const COORDINATE_IMAGE_IDENTITY_SCHEMA_VERSION = "coordinate_image_identity_v1";
+export const CANONICAL_IMAGE_IDENTITY_ATTESTATION = Symbol("CANONICAL_IMAGE_IDENTITY_ATTESTATION");
 
 export const COORDINATE_IMAGE_SAFETY_STATUS = Object.freeze({
   JPEG_CANONICAL_UNCHANGED: "JPEG_CANONICAL_UNCHANGED",
@@ -39,6 +44,8 @@ function inspectJpegStructure(buffer, { allowTrailing = false } = {}) {
   const scannedComponents = new Set();
   let frameComponents = null;
   let frameMode = null;
+  let frameWidth = null;
+  let frameHeight = null;
   let sawScan = false;
 
   const finishAtEoi = endOffset => {
@@ -52,7 +59,9 @@ function inspectJpegStructure(buffer, { allowTrailing = false } = {}) {
       valid: true,
       reason: "JPEG_STRUCTURE_VALID",
       logicalEoiOffset: endOffset,
-      trailingByteCount: buffer.length - endOffset
+      trailingByteCount: buffer.length - endOffset,
+      width: frameWidth,
+      height: frameHeight
     });
   };
 
@@ -144,6 +153,8 @@ function inspectJpegStructure(buffer, { allowTrailing = false } = {}) {
         return fail(COORDINATE_IMAGE_SAFETY_REASON.JPEG_CANONICAL_PREFIX_UNPROVEN);
       }
       frameMode = marker === 0xc0 ? "BASELINE" : "PROGRESSIVE";
+      frameWidth = width;
+      frameHeight = height;
       frameComponents = new Map();
       let componentOffset = offset + 8;
       for (let index = 0; index < componentCount; index += 1) {
@@ -254,6 +265,94 @@ function inspectJpegStructure(buffer, { allowTrailing = false } = {}) {
   }
 
   return fail(COORDINATE_IMAGE_SAFETY_REASON.JPEG_CANONICAL_PREFIX_UNPROVEN);
+}
+
+function readPngDimensions(buffer) {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (!Buffer.isBuffer(buffer)
+    || buffer.length < 24
+    || !buffer.subarray(0, 8).equals(signature)
+    || buffer.readUInt32BE(8) !== 13
+    || buffer.toString("ascii", 12, 16) !== "IHDR") return null;
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  return validImageDimensions(width, height) ? { width, height } : null;
+}
+
+function readBmpDimensions(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 26 || buffer.toString("ascii", 0, 2) !== "BM") return null;
+  const width = buffer.readInt32LE(18);
+  const height = Math.abs(buffer.readInt32LE(22));
+  return validImageDimensions(width, height) ? { width, height } : null;
+}
+
+function validImageDimensions(width, height) {
+  return Number.isInteger(width)
+    && Number.isInteger(height)
+    && width > 0
+    && height > 0
+    && width <= COORDINATE_IMAGE_SAFETY_LIMITS.maxDimension
+    && height <= COORDINATE_IMAGE_SAFETY_LIMITS.maxDimension
+    && width * height <= COORDINATE_IMAGE_SAFETY_LIMITS.maxPixels;
+}
+
+function readCoordinateImageDimensions(file = {}) {
+  const buffer = file.buffer;
+  const mimeType = String(file.mimetype || "").toLowerCase();
+  if (["image/jpeg", "image/jpg"].includes(mimeType)) {
+    const inspection = inspectJpegStructure(buffer, { allowTrailing: false });
+    return inspection.valid && validImageDimensions(inspection.width, inspection.height)
+      ? { width: inspection.width, height: inspection.height }
+      : null;
+  }
+  if (mimeType === "image/png") return readPngDimensions(buffer);
+  if (["image/bmp", "image/x-ms-bmp"].includes(mimeType)) return readBmpDimensions(buffer);
+  return null;
+}
+
+export function createCoordinateImageIdentity(file = {}, { requestId = "", page = 1 } = {}) {
+  const buffer = file.buffer;
+  if (!Buffer.isBuffer(buffer)
+    || buffer.length <= 0
+    || buffer.length > COORDINATE_IMAGE_SAFETY_LIMITS.maxUploadBytes) return null;
+  const dimensions = readCoordinateImageDimensions(file);
+  if (!dimensions) return null;
+  const normalizedPage = Number.parseInt(page, 10);
+  if (!Number.isInteger(normalizedPage) || normalizedPage <= 0) return null;
+  const imageSha256 = createHash("sha256").update(buffer).digest("hex");
+  const requestNonce = String(requestId || randomUUID());
+  const requestAssetSha256 = createHash("sha256")
+    .update(`coordinate-request-asset-v1\0${requestNonce}\0${imageSha256}\0${normalizedPage}`)
+    .digest("hex");
+  const identity = {
+    schema_version: COORDINATE_IMAGE_IDENTITY_SCHEMA_VERSION,
+    image_sha256: imageSha256,
+    byte_length: buffer.length,
+    mime_type: String(file.mimetype || "").toLowerCase(),
+    width: dimensions.width,
+    height: dimensions.height,
+    page: normalizedPage,
+    image_id: `img_${imageSha256}`,
+    request_asset_id: `asset_${requestAssetSha256}`
+  };
+  Object.defineProperty(identity, CANONICAL_IMAGE_IDENTITY_ATTESTATION, {
+    value: true,
+    enumerable: false
+  });
+  return Object.freeze(identity);
+}
+
+export function isCanonicalCoordinateImageIdentity(value = {}) {
+  return value?.[CANONICAL_IMAGE_IDENTITY_ATTESTATION] === true
+    && value.schema_version === COORDINATE_IMAGE_IDENTITY_SCHEMA_VERSION
+    && /^[0-9a-f]{64}$/.test(String(value.image_sha256 || ""))
+    && Number.isInteger(value.byte_length)
+    && value.byte_length > 0
+    && validImageDimensions(value.width, value.height)
+    && Number.isInteger(value.page)
+    && value.page > 0
+    && value.image_id === `img_${value.image_sha256}`
+    && /^asset_[0-9a-f]{64}$/.test(String(value.request_asset_id || ""));
 }
 
 export function hasValidJpegStructure(buffer) {

@@ -158,6 +158,7 @@ export function locateCoordinateRows({ coordinateEngineV2 = {}, observations = [
         match_score: Number((selected?.score || 0).toFixed(3)),
         score_method: "rule_based_row_match_v1",
         score_calibrated: false,
+        binding_authority: "SHADOW_ONLY",
         match_factors: selected?.factors || {},
         threshold
       };
@@ -167,4 +168,13 @@ export function locateCoordinateRows({ coordinateEngineV2 = {}, observations = [
   });
 
   return bindings;
+}
+
+export function locateTrustedCoordinateRows({ trustedLayoutValidation } = {}) {
+  if (trustedLayoutValidation?.valid !== true
+    || !Array.isArray(trustedLayoutValidation.attestation?.row_bindings)) return null;
+  return trustedLayoutValidation.attestation.row_bindings.map(binding => ({
+    ...binding,
+    binding_authority: "SERVER_ATTESTED"
+  }));
 }
