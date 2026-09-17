@@ -42,6 +42,19 @@ export {
   validateProviderLayoutProfileQualification
 } from "./provider-layout-profile-qualification.js";
 export {
+  PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_GRANT_SCHEMA_VERSION,
+  PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_OUTPUT_POLICY,
+  PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT,
+  PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_TTL_MS,
+  ProviderLayoutProductionQualificationGrantRuntime,
+  authorizeProviderLayoutProductionQualificationGrant,
+  executeProviderLayoutProductionQualificationProbe,
+  hasProviderLayoutProductionQualificationGrantCapability,
+  serializeProviderLayoutProductionQualificationGrant,
+  verifyEd25519DetachedSignature,
+  verifyProviderLayoutProductionQualificationGrantSignature
+} from "./provider-layout-production-qualification-gate.js";
+export {
   IMAGE_OBSERVATION_SCHEMA_VERSION,
   ORIGINAL_IMAGE_OBSERVATION_ATTESTATION,
   ORIGINAL_IMAGE_PIXEL_SPACE,

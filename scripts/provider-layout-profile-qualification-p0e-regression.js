@@ -5,11 +5,13 @@ import {
   PROVIDER_LAYOUT_RESPONSE_CONTRACT,
   SERVER_LAYOUT_ROLE_CLASSIFICATION_CAPABILITY,
   ProviderLayoutProfileQualificationRuntime,
+  ProviderLayoutProductionQualificationGrantRuntime,
   classifyProviderLayoutRoles,
   collectProviderLayoutProfileQualification,
   getProductionProviderLayoutClassifierProfile,
   getProviderLayoutRoleClassificationFailureReason,
   hasProviderLayoutProfileQualificationCapability,
+  hasProviderLayoutProductionQualificationGrantCapability,
   isProviderLayoutQualificationReadAllowed,
   validateProviderLayoutProfileQualification
 } from "../server/evidence-acquisition/index.js";
@@ -256,6 +258,16 @@ test("forged client JSON cannot be captured as server qualification evidence", (
 });
 
 test("Production classifier profile remains unavailable", () => {
+  assert.equal(getProductionProviderLayoutClassifierProfile(), null);
+});
+
+test("qualification evidence cannot become a Production probe grant", () => {
+  const qualification = collect();
+  assert.equal(hasProviderLayoutProductionQualificationGrantCapability(qualification), false);
+  assert.equal(
+    new ProviderLayoutProductionQualificationGrantRuntime().consumeBeforeProvider(qualification).reason,
+    "PRODUCTION_QUALIFICATION_CAPABILITY_MISSING"
+  );
   assert.equal(getProductionProviderLayoutClassifierProfile(), null);
 });
 
