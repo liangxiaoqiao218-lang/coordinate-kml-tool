@@ -118,6 +118,15 @@ assert.equal(isProviderLayoutQualificationReadAllowed(qualificationReadGate), tr
 assert.equal(isProviderLayoutQualificationReadAllowed({ ...qualificationReadGate, nodeEnv: "production" }), false);
 assert.equal(isProviderLayoutQualificationReadAllowed({ ...qualificationReadGate, remoteAddresses: ["198.51.100.20"] }), false);
 
+const disabledProductionProbeForm = new FormData();
+disabledProductionProbeForm.append("image", new Blob([syntheticPng], { type: "image/png" }), "synthetic-probe.png");
+const disabledProductionProbe = await jsonRequest("/api/internal/provider-layout-production-qualification-probe", {
+  method: "POST",
+  body: disabledProductionProbeForm
+});
+assert.equal(disabledProductionProbe.response.status, 404);
+assert.deepEqual(disabledProductionProbe.payload, { success: false });
+
 const scenarios = ["fast_success", "slow_provider", "provider_hang", "ocr_hang", "multiple_fallback"];
 const deadlineEvidence = [];
 for (const scenario of scenarios) {
@@ -160,6 +169,10 @@ assert.ok(version.payload.runtimeIdentity.recognitionHardDeadlineMs < 60_000);
 const serverSource = fs.readFileSync("server.js", "utf8");
 const classifierSource = fs.readFileSync("server/evidence-acquisition/provider-layout-role-classifier.js", "utf8");
 const qualificationSource = fs.readFileSync("server/evidence-acquisition/provider-layout-profile-qualification.js", "utf8");
+const productionQualificationGateSource = fs.readFileSync(
+  "server/evidence-acquisition/provider-layout-production-qualification-gate.js",
+  "utf8"
+);
 assert.match(serverSource, /classifyProviderLayoutRoles/);
 assert.match(serverSource, /createServerClassifiedLayoutRows/);
 assert.match(serverSource, /getProductionProviderLayoutClassifierProfile/);
@@ -171,10 +184,19 @@ assert.match(serverSource, /responseContractId:\s*""/);
 assert.match(qualificationSource, /provider_layout_profile_qualification_v1/);
 assert.match(qualificationSource, /QUALIFICATION_CANDIDATE/);
 assert.doesNotMatch(qualificationSource, /SERVER_LAYOUT_ROLE_CLASSIFICATION_CAPABILITY\s*=\s*Symbol/);
+assert.match(serverSource, /provider-layout-production-qualification-probe/);
+assert.match(serverSource, /PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_ENABLED/);
+assert.match(serverSource, /responseContractId:\s*""/);
+assert.match(productionQualificationGateSource, /provider_layout_production_qualification_grant_v1/);
+assert.match(productionQualificationGateSource, /verifySignature\(null,/);
+assert.match(productionQualificationGateSource, /createPublicKey\(publicKey\)/);
+assert.match(productionQualificationGateSource, /key\.type === "public"/);
+assert.match(productionQualificationGateSource, /key\.asymmetricKeyType === "ed25519"/);
+assert.doesNotMatch(productionQualificationGateSource, /privateKey|generateKeyPair|createPrivateKey/);
 
 console.log(JSON.stringify({
   suite: "sr08b-http-lifecycle-regression",
-  passed: 18,
+  passed: 19,
   deadlineEvidence,
   runtimeIdentity: version.payload.runtimeIdentity
 }, null, 2));

@@ -96,8 +96,12 @@ import {
   createTrustedLayoutAttestation,
   extractProviderLayoutCandidates,
   getProductionProviderLayoutClassifierProfile,
+  PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT,
+  ProviderLayoutProductionQualificationGrantRuntime,
   ProviderLayoutProfileQualificationRuntime,
+  authorizeProviderLayoutProductionQualificationGrant,
   collectProviderLayoutProfileQualification,
+  executeProviderLayoutProductionQualificationProbe,
   isProviderLayoutQualificationReadAllowed
 } from "./server/evidence-acquisition/index.js";
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
@@ -307,6 +311,7 @@ const handwrittenCandidateOwnerContext = Object.freeze({ ownerFamily: RETRY_OWNE
 const regressionRecognitionTraces = new Map();
 const MAX_REGRESSION_RECOGNITION_TRACES = 200;
 const providerLayoutProfileQualificationRuntime = new ProviderLayoutProfileQualificationRuntime();
+const providerLayoutProductionQualificationGrantRuntime = new ProviderLayoutProductionQualificationGrantRuntime();
 let p0QualificationAcquisition = null;
 let p0QualificationAcquisitionUsed = false;
 
@@ -392,6 +397,18 @@ function coordinateImageIdentityMatchesQualification(imageIdentity, expectedImag
   return Boolean(imageIdentity
     && /^[0-9a-f]{64}$/.test(expectedImageSha256)
     && imageIdentity.image_sha256 === expectedImageSha256);
+}
+
+function parseProviderLayoutProductionQualificationGrant(req) {
+  const encoded = String(req.get?.("x-provider-layout-production-qualification-grant") || "").trim();
+  if (!encoded || encoded.length > 16384) return null;
+  try {
+    const decoded = Buffer.from(encoded, "base64url").toString("utf8");
+    const grant = JSON.parse(decoded);
+    return grant && typeof grant === "object" && !Array.isArray(grant) ? grant : null;
+  } catch {
+    return null;
+  }
 }
 const spatialShareReviewReasonRegistry = new Map();
 const MAX_SPATIAL_SHARE_REVIEW_REASONS = 500;
@@ -7788,6 +7805,41 @@ function getAliyunChatCompletionsUrl() {
   return base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
 }
 
+async function callAliyunProductionLayoutQualificationProbe({ imageDataUrl, modelName }) {
+  if (!aliyunApiKey) throw new Error("PROVIDER_UNAVAILABLE");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 35000);
+  try {
+    const response = await fetch(getAliyunChatCompletionsUrl(), {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${aliyunApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Inspect only this synthetic image. Return structured layout metadata if the negotiated Provider response contract supports it. Do not infer geometry intent."
+            },
+            { type: "image_url", image_url: { url: imageDataUrl } }
+          ]
+        }],
+        temperature: 0
+      }),
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error("PROVIDER_FAILED");
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function callAliyunVision({
   modelName,
   prompt,
@@ -12953,6 +13005,89 @@ app.get("/api/regression/provider-layout-profile-qualification/:requestId", (req
   res.setHeader("Cache-Control", "no-store");
   return res.json({ success: true, qualification: outcome.evidence });
 });
+
+app.post(
+  "/api/internal/provider-layout-production-qualification-probe",
+  (req, res, next) => {
+    const enabled = process.env.PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_ENABLED === "true";
+    const publicKeyPresent = Boolean(String(process.env.PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_PUBLIC_KEY || "").trim());
+    if (!enabled || !publicKeyPresent) return res.status(404).json({ success: false });
+    return next();
+  },
+  upload.single("image"),
+  async (req, res) => {
+    const requestId = String(req.get("x-provider-layout-qualification-request-id") || "").trim().toLowerCase();
+    const grant = parseProviderLayoutProductionQualificationGrant(req);
+    const signatureBase64Url = String(
+      req.get("x-provider-layout-production-qualification-signature") || ""
+    ).trim();
+    if (!isRecognitionRequestId(requestId) || !grant || !req.file) {
+      return res.status(403).json({ success: false });
+    }
+
+    const canonicalization = canonicalizeCoordinateImageUpload(req.file);
+    if (!canonicalization.valid) return res.status(400).json({ success: false });
+    req.file = canonicalization.file;
+    if (!validateCoordinateImageUpload(req.file).valid) return res.status(400).json({ success: false });
+    const imageIdentity = createCoordinateImageIdentity(req.file, { requestId, page: 1 });
+    if (!imageIdentity) return res.status(400).json({ success: false });
+
+    const publicKeyPem = String(process.env.PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_PUBLIC_KEY || "")
+      .replace(/\\n/g, "\n");
+    const authorization = authorizeProviderLayoutProductionQualificationGrant({
+      enabled: true,
+      publicKeyPem,
+      grant,
+      signatureBase64Url,
+      service: "coordinate-kml-tool-rc",
+      runtimeCommit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || "",
+      runtimeBranch: process.env.RENDER_GIT_BRANCH || process.env.GIT_BRANCH || "",
+      requestId,
+      imageIdentity,
+      providerId: "ALIYUN_DASHSCOPE",
+      modelFamily: "QWEN_VL",
+      modelName: aliyunVisionModel,
+      responseContractId: PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT
+    });
+    if (!authorization.ok) return res.status(403).json({ success: false });
+
+    const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+    const outcome = await executeProviderLayoutProductionQualificationProbe({
+      grant: authorization.grant,
+      runtime: providerLayoutProductionQualificationGrantRuntime,
+      providerCall: () => callAliyunProductionLayoutQualificationProbe({
+        imageDataUrl,
+        modelName: aliyunVisionModel
+      }),
+      collectQualification: response => collectProviderLayoutProfileQualification({
+        response,
+        providerId: "ALIYUN_DASHSCOPE",
+        modelName: aliyunVisionModel,
+        responseContractId: "",
+        providerResponseId: String(response?.id || response?.request_id || ""),
+        imageIdentity,
+        resultRevision: 1
+      })
+    });
+    res.setHeader("Cache-Control", "no-store");
+    if (!outcome.ok) {
+      const statusCode = outcome.provider_call_count === 1 ? 502 : 409;
+      return res.status(statusCode).json({
+        success: false,
+        providerAttempted: outcome.provider_attempted === true,
+        providerCompleted: outcome.provider_completed === true,
+        providerCallCount: outcome.provider_call_count || 0
+      });
+    }
+    return res.json({
+      success: true,
+      qualificationStatus: outcome.status,
+      providerAttempted: outcome.provider_attempted,
+      providerCompleted: outcome.provider_completed,
+      providerCallCount: outcome.provider_call_count
+    });
+  }
+);
 
 app.post("/api/coordinate-confirmation", (req, res) => {
   const outcome = confirmFinalizedCoordinateResult({

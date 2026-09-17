@@ -5,9 +5,11 @@ import { buildSourceCoordinateRepresentation } from "../server/source-coordinate
 import {
   SERVER_PROVENANCE_ATTESTATION,
   TRUSTED_LAYOUT_ATTESTATION_CAPABILITY,
+  ProviderLayoutProductionQualificationGrantRuntime,
   classifyProviderLayoutRoles,
   collectProviderLayoutProfileQualification,
-  extractProviderLayoutCandidates
+  extractProviderLayoutCandidates,
+  hasProviderLayoutProductionQualificationGrantCapability
 } from "../server/evidence-acquisition/index.js";
 
 function makePoint(label, raw) {
@@ -232,6 +234,11 @@ const qualificationOnlyEvidence = buildCoordinateVerificationResponse({
 assert.equal(qualificationOnly.status, "RESPONSE_CONTRACT_UNSUPPORTED");
 assert.equal(qualificationOnlyEvidence.trusted_layout_status, "UNATTESTED");
 assert.equal(qualificationOnlyEvidence.shadow_only, true);
+assert.equal(hasProviderLayoutProductionQualificationGrantCapability(qualificationOnly), false);
+assert.equal(
+  new ProviderLayoutProductionQualificationGrantRuntime().consumeBeforeProvider(qualificationOnly).reason,
+  "PRODUCTION_QUALIFICATION_CAPABILITY_MISSING"
+);
 
 const legacyEngine = makeEngine(standardDms);
 const phase2Baseline = {
@@ -271,7 +278,7 @@ assert.equal(phase3Response.coordinates, legacySnapshot.coordinates, "coordinate
 
 console.log(JSON.stringify({
   suite: "evidence-acquisition-regression",
-  passed: 8,
+  passed: 9,
   cases: [
     {
       id: "handwritten_dms_conflict_row_evidence",
@@ -290,6 +297,7 @@ console.log(JSON.stringify({
     { id: "provider_structured_layout_allowlist_remains_shadow_only", status: "PASS" },
     { id: "missing_server_classifier_profile_fails_closed", status: "PASS" },
     { id: "qualification_evidence_cannot_create_trusted_layout", status: "PASS" },
+    { id: "qualification_evidence_cannot_create_production_probe_authority", status: "PASS" },
     { id: "phase2_response_compatibility", status: "PASS" }
   ]
 }, null, 2));
