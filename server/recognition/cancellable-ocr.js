@@ -10,6 +10,8 @@ export const LOCAL_OCR_FAILURE_CODE = "LOCAL_OCR_FAILED";
 export async function runCancellableOcrJob({
   createWorker,
   image,
+  recognizeOptions = {},
+  recognizeOutput = undefined,
   signal = null,
   timeoutMs,
   terminationTimeoutMs = 250,
@@ -60,7 +62,7 @@ export async function runCancellableOcrJob({
         await terminate();
         throw createStopError(deadlineCode, "OCR job aborted.", "request_aborted");
       }
-      return worker.recognize(image);
+      return worker.recognize(image, recognizeOptions, recognizeOutput);
     })();
 
     const cancellation = new Promise((_, reject) => {

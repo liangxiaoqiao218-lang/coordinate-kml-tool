@@ -522,6 +522,10 @@ test("ND-14", "runtime response path applies authority before verification and F
   assert.match(wrapper, /buildCoordinateVerificationResponseBase/);
   assert.match(wrapper, /pointGeometryIntentReviewRuntime\.issue/);
   assert.match(wrapper, /pointGeometryIntentReview/);
+  assert.match(source, /runLocalOcrMapLayoutClassification/);
+  assert.match(source, /imageBuffer: req\.file\.buffer/);
+  assert.match(source, /localOcrStructuredLayoutRows = await/);
+  assert.match(wrapper, /observations: payload\.localOcrStructuredLayoutRows/);
 });
 
 test("ND-15", "missing Provider layout classifier profile remains shadow-only and authority-blocked", () => {

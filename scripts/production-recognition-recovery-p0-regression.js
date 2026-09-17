@@ -380,6 +380,27 @@ test("synchronous OCR termination failures cannot escape or mask the primary out
   }), error => error.code === "RECOGNITION_BUDGET_EXHAUSTED" && error.reason === "stage_timeout");
 });
 
+test("local OCR forwards explicitly requested structured-output options", async () => {
+  const calls = [];
+  const successful = await runCancellableOcrJob({
+    createWorker: async () => ({
+      recognize: async (...args) => {
+        calls.push(args);
+        return { data: { text: "synthetic", blocks: [] } };
+      },
+      terminate: async () => {}
+    }),
+    image: syntheticPng,
+    recognizeOptions: { rotateAuto: false },
+    recognizeOutput: { text: true, blocks: true },
+    timeoutMs: 1000
+  });
+  assert.equal(successful.data.text, "synthetic");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][1], { rotateAuto: false });
+  assert.deepEqual(calls[0][2], { text: true, blocks: true });
+});
+
 test("production route binds retry classification and fail-closed runtime guards", () => {
   assert.match(serverSource, /DMS_RETRY_ROUTE_CLASSIFICATION[\s\S]*?from "\.\/server\/recognition\/dms-source-structure\.js"/);
   assert.match(serverSource, /COORDINATE_IMAGE_INVALID/);
