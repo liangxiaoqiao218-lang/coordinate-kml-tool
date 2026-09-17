@@ -6,6 +6,7 @@ import {
   createServerClassifiedLayoutRows,
   createServerOwnedLayoutClassifierProfile,
   createTrustedLayoutAttestation,
+  collectProviderLayoutProfileQualification,
   extractProviderLayoutCandidates,
   getProductionProviderLayoutClassifierProfile,
   getProviderLayoutRoleClassificationFailureReason,
@@ -375,6 +376,23 @@ test("P0D-19", "server-classified rows are immutable and clones lose every in-pr
     resultRevision: 1,
     providerLayoutClassification: clonedClassification
   }), null);
+});
+
+test("P0D-20", "profile qualification evidence cannot substitute for role-classification authority", () => {
+  const qualification = collectProviderLayoutProfileQualification({
+    response: response(),
+    providerId: "ALIYUN_DASHSCOPE",
+    modelName: "qwen-vl-plus",
+    responseContractId: "DASHSCOPE_STRUCTURED_LAYOUT_V1",
+    providerResponseId,
+    imageIdentity,
+    resultRevision: 1
+  });
+  assert.ok(qualification);
+  assert.equal(getProductionProviderLayoutClassifierProfile(), null);
+  const outcome = classify({ profile: qualification });
+  assert.equal(outcome.ok, false);
+  assert.equal(getProviderLayoutRoleClassificationFailureReason(outcome), PROVIDER_LAYOUT_CLASSIFICATION_REASON.EVIDENCE_MISSING);
 });
 
 let passed = 0;

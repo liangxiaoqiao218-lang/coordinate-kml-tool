@@ -4,6 +4,7 @@ import {
   SERVER_PROVENANCE_ATTESTATION,
   buildEvidenceAcquisition,
   classifyProviderLayoutRoles,
+  collectProviderLayoutProfileQualification,
   extractProviderLayoutCandidates,
   createTrustedLayoutAttestation
 } from "../server/evidence-acquisition/index.js";
@@ -501,6 +502,33 @@ test("ND-15", "missing Provider layout classifier profile remains shadow-only an
   assert.equal(evidenceAcquisition.trusted_layout_status, "UNATTESTED");
   assert.equal(evidenceAcquisition.shadow_only, true);
   assert.notEqual(evidenceAcquisition.trusted_layout_status, "ATTESTED");
+});
+
+test("ND-16", "qualification candidate alone leaves Review, Map and KML fail-closed", () => {
+  const qualification = collectProviderLayoutProfileQualification({
+    response: { id: "qualification-only", output: { layout: [
+      { candidate_schema_version: "provider_layout_candidate_v1", id: "search", line_id: "line-search", source_ref: "search", source_line_id: "line-search", text: low, bbox: [20, 20, 500, 80], coordinate_space: "ORIGINAL_IMAGE_PIXELS", page: 1, image_width: 1080, image_height: 1920 },
+      { candidate_schema_version: "provider_layout_candidate_v1", id: "details", line_id: "line-details", source_ref: "details", source_line_id: "line-details", text: high, bbox: [20, 500, 500, 560], coordinate_space: "ORIGINAL_IMAGE_PIXELS", page: 1, image_width: 1080, image_height: 1920 }
+    ] } },
+    providerId: "ALIYUN_DASHSCOPE",
+    modelName: "qwen-vl-plus",
+    responseContractId: "DASHSCOPE_STRUCTURED_LAYOUT_V1",
+    providerResponseId: "qualification-only",
+    imageIdentity: syntheticImageIdentity,
+    resultRevision: 1
+  });
+  assert.equal(qualification.status, "QUALIFICATION_CANDIDATE");
+  const input = prepare([low, high], { geometryIntent: false });
+  input.recognitionResult = { ...input.recognitionResult, providerLayoutProfileQualification: qualification };
+  const applied = applyWgs84NearDuplicateAuthority(input);
+  const finalized = finalizeCoordinateResult(createLegacyFinalizerInput({
+    recognitionResult: applied.recognitionResult,
+    coordinateEngineV2: applied.coordinateEngineV2,
+    verification: { status: "REVIEW", warnings: [] },
+    revision: { resultId: "qualification-only", resultRevision: 1 }
+  }));
+  assert.equal(finalized.geometry, null);
+  assert.equal(finalized.kmlReady, false);
 });
 
 let passed = 0;

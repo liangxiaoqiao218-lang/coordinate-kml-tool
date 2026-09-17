@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { performance } from "node:perf_hooks";
+import { isProviderLayoutQualificationReadAllowed } from "../server/evidence-acquisition/index.js";
 
 const baseUrl = String(process.env.SR08B_BASE_URL || "http://127.0.0.1:32109").replace(/\/$/, "");
 const visitorId = `sr08b-${Date.now()}`;
@@ -92,6 +93,31 @@ const forgedPointReview = await jsonRequest("/api/coordinate-point-intent-review
 assert.equal(forgedPointReview.response.status, 404);
 assert.equal(forgedPointReview.payload.code, "POINT_GEOMETRY_INTENT_REVIEW_NOT_FOUND");
 
+const qualificationRequestId = "00000000-0000-4000-8000-0000000000e1";
+const qualificationImageSha256 = "0".repeat(64);
+const forbiddenQualificationRead = await jsonRequest(`/api/regression/provider-layout-profile-qualification/${qualificationRequestId}`, {
+  headers: { "x-provider-layout-qualification-image-sha256": qualificationImageSha256 }
+});
+assert.equal(forbiddenQualificationRead.response.status, 403);
+assert.equal(forbiddenQualificationRead.payload.reason, "qualification_read_forbidden");
+const emptyQualificationRead = await jsonRequest(`/api/regression/provider-layout-profile-qualification/${qualificationRequestId}`, {
+  headers: {
+    "x-regression-test": "true",
+    "x-provider-layout-qualification-image-sha256": qualificationImageSha256
+  }
+});
+assert.equal(emptyQualificationRead.response.status, 404);
+assert.equal(emptyQualificationRead.payload.reason, "QUALIFICATION_NOT_FOUND");
+const qualificationReadGate = {
+  regressionTestHeader: "true",
+  regressionTestModeEnabled: "true",
+  nodeEnv: "test",
+  remoteAddresses: ["127.0.0.1"]
+};
+assert.equal(isProviderLayoutQualificationReadAllowed(qualificationReadGate), true);
+assert.equal(isProviderLayoutQualificationReadAllowed({ ...qualificationReadGate, nodeEnv: "production" }), false);
+assert.equal(isProviderLayoutQualificationReadAllowed({ ...qualificationReadGate, remoteAddresses: ["198.51.100.20"] }), false);
+
 const scenarios = ["fast_success", "slow_provider", "provider_hang", "ocr_hang", "multiple_fallback"];
 const deadlineEvidence = [];
 for (const scenario of scenarios) {
@@ -133,15 +159,22 @@ assert.equal(version.payload.runtimeIdentity.spatialResultEnabled, false);
 assert.ok(version.payload.runtimeIdentity.recognitionHardDeadlineMs < 60_000);
 const serverSource = fs.readFileSync("server.js", "utf8");
 const classifierSource = fs.readFileSync("server/evidence-acquisition/provider-layout-role-classifier.js", "utf8");
+const qualificationSource = fs.readFileSync("server/evidence-acquisition/provider-layout-profile-qualification.js", "utf8");
 assert.match(serverSource, /classifyProviderLayoutRoles/);
 assert.match(serverSource, /createServerClassifiedLayoutRows/);
 assert.match(serverSource, /getProductionProviderLayoutClassifierProfile/);
 assert.match(classifierSource, /TRUSTED_LAYOUT_CLASSIFIER_EVIDENCE_MISSING/);
 assert.match(classifierSource, /return null;\s*\n}/, "Production classifier profile must remain unavailable by default");
+assert.match(serverSource, /provider-layout-profile-qualification/);
+assert.match(serverSource, /getRegressionTestMode\(req\)/);
+assert.match(serverSource, /responseContractId:\s*""/);
+assert.match(qualificationSource, /provider_layout_profile_qualification_v1/);
+assert.match(qualificationSource, /QUALIFICATION_CANDIDATE/);
+assert.doesNotMatch(qualificationSource, /SERVER_LAYOUT_ROLE_CLASSIFICATION_CAPABILITY\s*=\s*Symbol/);
 
 console.log(JSON.stringify({
   suite: "sr08b-http-lifecycle-regression",
-  passed: 14,
+  passed: 18,
   deadlineEvidence,
   runtimeIdentity: version.payload.runtimeIdentity
 }, null, 2));

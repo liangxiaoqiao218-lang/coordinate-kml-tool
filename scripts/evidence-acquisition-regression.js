@@ -6,6 +6,7 @@ import {
   SERVER_PROVENANCE_ATTESTATION,
   TRUSTED_LAYOUT_ATTESTATION_CAPABILITY,
   classifyProviderLayoutRoles,
+  collectProviderLayoutProfileQualification,
   extractProviderLayoutCandidates
 } from "../server/evidence-acquisition/index.js";
 
@@ -215,6 +216,22 @@ const missingClassifierEvidence = buildCoordinateVerificationResponse({
 assert.equal(missingClassifierEvidence.trusted_layout_status, "UNATTESTED");
 assert.equal(missingClassifierEvidence.trusted_layout_reason, "TRUSTED_LAYOUT_CLASSIFIER_EVIDENCE_MISSING");
 assert.equal(missingClassifierEvidence.shadow_only, true);
+const qualificationOnly = collectProviderLayoutProfileQualification({
+  response: { id: "qualification-only", output: { layout: [] } },
+  providerId: "ALIYUN_DASHSCOPE",
+  modelName: "qwen-vl-plus",
+  responseContractId: "DASHSCOPE_STRUCTURED_LAYOUT_V1",
+  providerResponseId: "qualification-only",
+  imageIdentity: trustedRegionPayload.imageMetadata,
+  resultRevision: 1
+});
+const qualificationOnlyEvidence = buildCoordinateVerificationResponse({
+  ...trustedRegionPayload,
+  providerLayoutProfileQualification: qualificationOnly
+}, trustedRegionEngine).evidenceAcquisition;
+assert.equal(qualificationOnly.status, "RESPONSE_CONTRACT_UNSUPPORTED");
+assert.equal(qualificationOnlyEvidence.trusted_layout_status, "UNATTESTED");
+assert.equal(qualificationOnlyEvidence.shadow_only, true);
 
 const legacyEngine = makeEngine(standardDms);
 const phase2Baseline = {
@@ -254,7 +271,7 @@ assert.equal(phase3Response.coordinates, legacySnapshot.coordinates, "coordinate
 
 console.log(JSON.stringify({
   suite: "evidence-acquisition-regression",
-  passed: 7,
+  passed: 8,
   cases: [
     {
       id: "handwritten_dms_conflict_row_evidence",
@@ -272,6 +289,7 @@ console.log(JSON.stringify({
     { id: "trusted_source_role_attestation_and_pseudo_provenance_rejection", status: "PASS" },
     { id: "provider_structured_layout_allowlist_remains_shadow_only", status: "PASS" },
     { id: "missing_server_classifier_profile_fails_closed", status: "PASS" },
+    { id: "qualification_evidence_cannot_create_trusted_layout", status: "PASS" },
     { id: "phase2_response_compatibility", status: "PASS" }
   ]
 }, null, 2));

@@ -155,6 +155,8 @@ export function createServerOwnedLayoutClassifierProfile({ profileId, classifier
 }
 
 export function getProductionProviderLayoutClassifierProfile() {
+  // P0E qualification evidence is observational only. Enabling a Production
+  // classifier profile requires a separately reviewed, calibrated profile.
   return null;
 }
 
