@@ -3,6 +3,8 @@ import fs from "node:fs";
 import {
   SERVER_PROVENANCE_ATTESTATION,
   buildEvidenceAcquisition,
+  classifyProviderLayoutRoles,
+  extractProviderLayoutCandidates,
   createTrustedLayoutAttestation
 } from "../server/evidence-acquisition/index.js";
 import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
@@ -474,6 +476,31 @@ test("ND-14", "runtime response path applies authority before verification and F
   assert.match(wrapper, /buildCoordinateVerificationResponseBase/);
   assert.match(wrapper, /pointGeometryIntentReviewRuntime\.issue/);
   assert.match(wrapper, /pointGeometryIntentReview/);
+});
+
+test("ND-15", "missing Provider layout classifier profile remains shadow-only and authority-blocked", () => {
+  const coordinateEngineV2 = engine();
+  const providerLayoutCandidates = extractProviderLayoutCandidates({ output: { layout: [
+    { id: "search", line_id: "line-search", text: low, bbox: [20, 20, 500, 80] },
+    { id: "details", line_id: "line-details", text: high, bbox: [20, 500, 500, 560] }
+  ] } });
+  const outcome = classifyProviderLayoutRoles({
+    profile: null,
+    imageIdentity: syntheticImageIdentity,
+    candidates: providerLayoutCandidates,
+    providerResponseId: "synthetic-no-profile",
+    resultRevision: 1
+  });
+  const recognitionResult = {
+    imageMetadata: syntheticImageIdentity,
+    providerLayoutCandidates,
+    providerLayoutClassificationOutcome: outcome
+  };
+  const evidenceAcquisition = buildEvidenceAcquisition({ recognitionResult, coordinateEngineV2, resultRevision: 1 });
+  assert.equal(evidenceAcquisition.trusted_layout_reason, "TRUSTED_LAYOUT_CLASSIFIER_EVIDENCE_MISSING");
+  assert.equal(evidenceAcquisition.trusted_layout_status, "UNATTESTED");
+  assert.equal(evidenceAcquisition.shadow_only, true);
+  assert.notEqual(evidenceAcquisition.trusted_layout_status, "ATTESTED");
 });
 
 let passed = 0;

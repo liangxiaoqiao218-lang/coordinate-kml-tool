@@ -4,6 +4,7 @@ import {
   TRUSTED_LAYOUT_ATTESTATION_CAPABILITY,
   validateTrustedLayoutAttestation
 } from "./trusted-layout-attestation.js";
+import { getProviderLayoutRoleClassificationFailureReason } from "./provider-layout-role-classifier.js";
 
 export const EVIDENCE_ACQUISITION_SCHEMA_VERSION = "evidence_acquisition_v1";
 
@@ -17,6 +18,17 @@ export {
   extractProviderLayoutCandidates,
   validateTrustedLayoutAttestation
 } from "./trusted-layout-attestation.js";
+export {
+  PROVIDER_LAYOUT_CLASSIFICATION_REASON,
+  PROVIDER_LAYOUT_ROLE_CLASSIFICATION_SCHEMA_VERSION,
+  SERVER_LAYOUT_ROLE_CLASSIFICATION_CAPABILITY,
+  STRUCTURED_PROVIDER_LAYOUT_EXTRACTION_CAPABILITY,
+  classifyProviderLayoutRoles,
+  createServerOwnedLayoutClassifierProfile,
+  getProductionProviderLayoutClassifierProfile,
+  getProviderLayoutRoleClassificationFailureReason,
+  validateProviderLayoutRoleClassification
+} from "./provider-layout-role-classifier.js";
 export {
   IMAGE_OBSERVATION_SCHEMA_VERSION,
   ORIGINAL_IMAGE_OBSERVATION_ATTESTATION,
@@ -43,6 +55,9 @@ export function buildEvidenceAcquisition({ recognitionResult = {}, coordinateEng
   ];
   const trustedRowBindings = locateTrustedCoordinateRows({ trustedLayoutValidation });
   const rowBindings = trustedRowBindings || locateCoordinateRows({ coordinateEngineV2, observations });
+  const trustedClassifierFailureReason = getProviderLayoutRoleClassificationFailureReason(
+    recognitionResult.providerLayoutClassificationOutcome
+  );
   const evidence = {
     schema_version: EVIDENCE_ACQUISITION_SCHEMA_VERSION,
     observations,
@@ -52,7 +67,9 @@ export function buildEvidenceAcquisition({ recognitionResult = {}, coordinateEng
     affects_coordinates: false,
     affects_kml: false,
     trusted_layout_status: trustedLayoutValidation.valid ? "ATTESTED" : "UNATTESTED",
-    trusted_layout_reason: trustedLayoutValidation.reason,
+    trusted_layout_reason: trustedLayoutValidation.valid
+      ? null
+      : (trustedClassifierFailureReason || trustedLayoutValidation.reason),
     trusted_layout_attestation_sha256: trustedLayoutValidation.valid
       ? trustedLayoutValidation.attestation.attestation_sha256
       : null

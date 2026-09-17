@@ -91,8 +91,11 @@ import {
 import { buildCoordinateVerificationResponse as buildCoordinateVerificationResponseBase } from "./server/verification/index.js";
 import {
   buildEvidenceAcquisition,
+  classifyProviderLayoutRoles,
+  createServerClassifiedLayoutRows,
   createTrustedLayoutAttestation,
-  extractProviderLayoutCandidates
+  extractProviderLayoutCandidates,
+  getProductionProviderLayoutClassifierProfile
 } from "./server/evidence-acquisition/index.js";
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
@@ -13281,21 +13284,42 @@ function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = 
   const normalizedRevision = Number.isSafeInteger(revision) && revision > 0 ? revision : 1;
   if (!payload.trustedLayoutAttestation
     && payload.imageMetadata
-    && Array.isArray(payload.providerLayoutCandidates)
-    && payload.providerLayoutCandidates.length > 0) {
-    const trustedLayoutAttestation = createTrustedLayoutAttestation({
+    && Array.isArray(payload.providerLayoutCandidates)) {
+    const providerLayoutClassificationOutcome = classifyProviderLayoutRoles({
+      profile: getProductionProviderLayoutClassifierProfile(),
       imageIdentity: payload.imageMetadata,
-      observations: payload.providerLayoutCandidates,
-      coordinateEngineV2: engine,
-      resultRevision: normalizedRevision,
-      providerResponseId: payload.providerLayoutResponseId
+      candidates: payload.providerLayoutCandidates,
+      providerResponseId: payload.providerLayoutResponseId,
+      resultRevision: normalizedRevision
     });
-    if (trustedLayoutAttestation) {
-      Object.defineProperty(payload, "trustedLayoutAttestation", {
-        value: trustedLayoutAttestation,
-        enumerable: false,
-        configurable: true
+    Object.defineProperty(payload, "providerLayoutClassificationOutcome", {
+      value: providerLayoutClassificationOutcome,
+      enumerable: false,
+      configurable: true
+    });
+    if (providerLayoutClassificationOutcome.ok) {
+      const serverClassifiedLayoutRows = createServerClassifiedLayoutRows({
+        candidates: payload.providerLayoutCandidates,
+        classification: providerLayoutClassificationOutcome.classification,
+        imageIdentity: payload.imageMetadata,
+        providerResponseId: payload.providerLayoutResponseId,
+        resultRevision: normalizedRevision
       });
+      const trustedLayoutAttestation = createTrustedLayoutAttestation({
+        imageIdentity: payload.imageMetadata,
+        observations: serverClassifiedLayoutRows || [],
+        coordinateEngineV2: engine,
+        resultRevision: normalizedRevision,
+        providerResponseId: payload.providerLayoutResponseId,
+        providerLayoutClassification: providerLayoutClassificationOutcome.classification
+      });
+      if (trustedLayoutAttestation) {
+        Object.defineProperty(payload, "trustedLayoutAttestation", {
+          value: trustedLayoutAttestation,
+          enumerable: false,
+          configurable: true
+        });
+      }
     }
   }
   const evidenceAcquisition = buildEvidenceAcquisition({
@@ -13491,7 +13515,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
           enumerable: false,
           configurable: true
         });
-        if (providerLayoutCandidates.length > 0) {
+        if (providerLayoutCandidates.length > 0 || providerLayoutResponseId) {
           Object.defineProperty(payload, "providerLayoutCandidates", {
             value: providerLayoutCandidates,
             enumerable: false,
