@@ -411,6 +411,12 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
         candidateRole: "NONAUTHORITATIVE_REVIEW_CANDIDATE",
         candidateSha256: reviewCandidate.provenance.retryCandidateSha256
       })
-    }) : null
+    }) : null,
+    nearDuplicateDecision: effectiveRecognitionResult?.nearDuplicateDecision
+      ? Object.freeze(structuredClone(effectiveRecognitionResult.nearDuplicateDecision))
+      : null,
+    geometryIntentAuthorityGate: effectiveRecognitionResult?.geometryIntentAuthorityGate
+      ? Object.freeze(structuredClone(effectiveRecognitionResult.geometryIntentAuthorityGate))
+      : null
   });
 }

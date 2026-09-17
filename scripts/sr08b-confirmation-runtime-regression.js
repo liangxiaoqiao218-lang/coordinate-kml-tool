@@ -7,8 +7,15 @@ import {
   COORDINATE_QUALITY_GATE_STATUS,
   CoordinateConfirmationRuntime,
   FINALIZED_COORDINATE_CRS,
+  createLegacyFinalizerInput,
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
+import { applyWgs84NearDuplicateAuthority } from "../server/recognition/wgs84-near-duplicate-consolidation.js";
+import {
+  IMAGE_OBSERVATION_SCHEMA_VERSION,
+  ORIGINAL_IMAGE_OBSERVATION_ATTESTATION,
+  SERVER_PROVENANCE_ATTESTATION
+} from "../server/evidence-acquisition/index.js";
 import {
   buildDmsGroupedPartialMultisiteRecoveryCandidate,
   evaluateDmsGroupedAcquisitionExpansion,
@@ -387,6 +394,129 @@ for (const blocker of independentBlockers) {
   }
 }
 
+const nearDuplicateObservations = [
+  {
+    schema_version: IMAGE_OBSERVATION_SCHEMA_VERSION,
+    observation_id: "obs-search",
+    image_id: "synthetic-image",
+    image_width: 1080,
+    image_height: 1920,
+    request_asset_id: "synthetic-asset",
+    page: 1,
+    page_attested: true,
+    text: "35.447819,83.178991",
+    bbox: [20, 20, 500, 80],
+    coordinate_space: "ORIGINAL_IMAGE_PIXELS",
+    location_status: "PIXEL_BBOX",
+    source: "qwenOcr",
+    source_ref: "line-search",
+    source_role: "MAP_SEARCH_BOX",
+    source_region_id: "MAP_SEARCH_BOX_REGION",
+    provenance_trust: "SERVER_ATTESTED",
+    provenance_attestor: "SYNTHETIC_REGRESSION_V1",
+    source_line_id: "line-search",
+    measurement_semantics: "UNSPECIFIED",
+    boundary_point: false,
+    table_row: false,
+    contradictory_evidence: false
+  },
+  {
+    schema_version: IMAGE_OBSERVATION_SCHEMA_VERSION,
+    observation_id: "obs-details",
+    image_id: "synthetic-image",
+    image_width: 1080,
+    image_height: 1920,
+    request_asset_id: "synthetic-asset",
+    page: 1,
+    page_attested: true,
+    text: "35.4478191,83.1789913",
+    bbox: [20, 500, 500, 560],
+    coordinate_space: "ORIGINAL_IMAGE_PIXELS",
+    location_status: "PIXEL_BBOX",
+    source: "qwenOcr",
+    source_ref: "line-details",
+    source_role: "MAP_PLACE_DETAILS",
+    source_region_id: "MAP_PLACE_DETAILS_REGION",
+    provenance_trust: "SERVER_ATTESTED",
+    provenance_attestor: "SYNTHETIC_REGRESSION_V1",
+    source_line_id: "line-details",
+    measurement_semantics: "UNSPECIFIED",
+    boundary_point: false,
+    table_row: false,
+    contradictory_evidence: false
+  }
+];
+nearDuplicateObservations.forEach(observation => Object.defineProperty(
+  observation,
+  ORIGINAL_IMAGE_OBSERVATION_ATTESTATION,
+  { value: true }
+));
+const nearDuplicateEngine = {
+  coordinate_type: "wgs84_chat_coordinates",
+  precision_mode: "wgs84-chat-coordinates",
+  groups: [{
+    group_id: "group_1",
+    geometry: "line",
+    requires_review: false,
+    kml_ready: true,
+    points: [
+      { label: "1", raw: nearDuplicateObservations[0].text, lat: 35.447819, lon: 83.178991 },
+      { label: "2", raw: nearDuplicateObservations[1].text, lat: 35.4478191, lon: 83.1789913 }
+    ]
+  }]
+};
+const nearDuplicateEvidence = {
+  shadow_only: true,
+  affects_coordinates: false,
+  affects_kml: false,
+  observations: nearDuplicateObservations,
+  rowBindings: nearDuplicateObservations.map((observation, index) => ({
+    group_id: "group_1",
+    point_id: String(index + 1),
+    observation_id: observation.observation_id
+  }))
+};
+const nearDuplicateRecognition = {
+  geometryIntent: {
+    schema_version: "geometry_intent_v1",
+    geometry_type: "Point",
+    provenance_trust: "SERVER_ATTESTED",
+    provenance_attestor: "SYNTHETIC_REGRESSION_V1",
+    authority_revision: 1,
+    observation_ids: ["obs-search", "obs-details"]
+  }
+};
+Object.defineProperty(nearDuplicateRecognition, SERVER_PROVENANCE_ATTESTATION, { value: true, enumerable: true });
+const nearDuplicateApplied = applyWgs84NearDuplicateAuthority({
+  recognitionResult: nearDuplicateRecognition,
+  coordinateEngineV2: nearDuplicateEngine,
+  evidenceAcquisition: nearDuplicateEvidence,
+  revision: 1
+});
+const nearDuplicatePending = finalizeCoordinateResult(createLegacyFinalizerInput({
+  recognitionResult: nearDuplicateApplied.recognitionResult,
+  coordinateEngineV2: nearDuplicateApplied.coordinateEngineV2,
+  verification: { status: "PASS", warnings: [] },
+  revision: { resultId: "near-duplicate-confirmation", resultRevision: 1, confirmationStatus: "pending" }
+}), { clock });
+const nearDuplicateRuntime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
+nearDuplicateRuntime.register(nearDuplicatePending);
+const nearDuplicateAccepted = nearDuplicateRuntime.confirm({
+  resultId: nearDuplicatePending.resultId,
+  resultRevision: nearDuplicatePending.resultRevision,
+  geometryHash: nearDuplicatePending.geometryHash,
+  action: "accept"
+});
+assert.equal(nearDuplicateAccepted.ok, true, "C08E bound near-duplicate Point may use current confirmation");
+assert.equal(nearDuplicateAccepted.finalizedCoordinateResult.geometry.type, "Point");
+const nearDuplicateStale = nearDuplicateRuntime.confirm({
+  resultId: nearDuplicatePending.resultId,
+  resultRevision: 2,
+  geometryHash: nearDuplicatePending.geometryHash,
+  action: "accept"
+});
+assert.equal(nearDuplicateStale.ok, false, "C08E revision changes invalidate old confirmation binding");
+
 const mismatch = runtime.confirm({
   resultId: edited.resultId,
   resultRevision: edited.resultRevision,
@@ -424,6 +554,6 @@ assert.match(html, /if \(activeFinalizedCoordinateResult\) finalizedCoordinateDi
 
 console.log(JSON.stringify({
   suite: "sr08b-confirmation-runtime-regression",
-  passed: 17,
-  cases: ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C08A", "C08B", "C08C", "C08D", "C09", "C10", "TTL", "UI_BINDING", "KML_GATE"]
+  passed: 18,
+  cases: ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C08A", "C08B", "C08C", "C08D", "C08E", "C09", "C10", "TTL", "UI_BINDING", "KML_GATE"]
 }, null, 2));
