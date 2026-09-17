@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { performance } from "node:perf_hooks";
 
 const baseUrl = String(process.env.SR08B_BASE_URL || "http://127.0.0.1:32109").replace(/\/$/, "");
@@ -130,10 +131,17 @@ const version = await jsonRequest("/api/version");
 assert.equal(version.payload.runtimeIdentity.finalizerSchemaVersion, "finalized_coordinate_result_v1");
 assert.equal(version.payload.runtimeIdentity.spatialResultEnabled, false);
 assert.ok(version.payload.runtimeIdentity.recognitionHardDeadlineMs < 60_000);
+const serverSource = fs.readFileSync("server.js", "utf8");
+const classifierSource = fs.readFileSync("server/evidence-acquisition/provider-layout-role-classifier.js", "utf8");
+assert.match(serverSource, /classifyProviderLayoutRoles/);
+assert.match(serverSource, /createServerClassifiedLayoutRows/);
+assert.match(serverSource, /getProductionProviderLayoutClassifierProfile/);
+assert.match(classifierSource, /TRUSTED_LAYOUT_CLASSIFIER_EVIDENCE_MISSING/);
+assert.match(classifierSource, /return null;\s*\n}/, "Production classifier profile must remain unavailable by default");
 
 console.log(JSON.stringify({
   suite: "sr08b-http-lifecycle-regression",
-  passed: 13,
+  passed: 14,
   deadlineEvidence,
   runtimeIdentity: version.payload.runtimeIdentity
 }, null, 2));

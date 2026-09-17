@@ -5,13 +5,16 @@ import {
   SERVER_PROVENANCE_ATTESTATION,
   createImageTextObservation
 } from "./observation-schema.js";
+import {
+  STRUCTURED_PROVIDER_LAYOUT_EXTRACTION_CAPABILITY,
+  validateProviderLayoutRoleClassification
+} from "./provider-layout-role-classifier.js";
 
 export const TRUSTED_LAYOUT_ATTESTATION_SCHEMA_VERSION = "trusted_layout_attestation_v1";
 export const TRUSTED_ROW_BINDING_SCHEMA_VERSION = "trusted_row_binding_v1";
 export const TRUSTED_LAYOUT_ATTESTATION_CAPABILITY = Symbol("TRUSTED_LAYOUT_ATTESTATION_CAPABILITY");
 
 const TRUSTED_ATTESTOR = "SERVER_LAYOUT_CLASSIFIER_V2";
-const STRUCTURED_LAYOUT_EXTRACTION_CAPABILITY = Symbol("STRUCTURED_LAYOUT_EXTRACTION_CAPABILITY");
 const SERVER_LAYOUT_CLASSIFICATION_CAPABILITY = Symbol("SERVER_LAYOUT_CLASSIFICATION_CAPABILITY");
 const SOURCE_TYPE_ALLOWLIST = new Set(["PROVIDER_STRUCTURED_LAYOUT_V1", "LOCAL_OCR_STRUCTURED_LAYOUT_V1", "SYNTHETIC_REGRESSION_V1"]);
 const ROLE_REGION = Object.freeze({
@@ -133,41 +136,51 @@ export function extractProviderLayoutCandidates(response = {}) {
   ];
   const values = containers.find(Array.isArray) || [];
   return values.map((value, index) => {
+    const explicitSourceRef = text(value?.source_ref ?? value?.id);
+    const explicitSourceLineId = text(value?.source_line_id ?? value?.line_id ?? value?.id);
     const candidate = {
       text: text(value?.text ?? value?.word ?? value?.value),
       bbox: Array.isArray(value?.bbox) ? value.bbox : value?.bbox_2d,
       polygon: Array.isArray(value?.polygon) ? value.polygon : value?.location,
       source: "providerStructuredLayout",
       source_type: "PROVIDER_STRUCTURED_LAYOUT_V1",
-      source_ref: text(value?.id) || `provider_layout_${index + 1}`,
-      source_line_id: text(value?.line_id ?? value?.id) || `provider_layout_${index + 1}`,
+      source_ref: explicitSourceRef || `provider_layout_${index + 1}`,
+      source_line_id: explicitSourceLineId || `provider_layout_${index + 1}`,
+      source_ref_explicit: Boolean(explicitSourceRef),
+      source_line_id_explicit: Boolean(explicitSourceLineId),
+      page: value?.page ?? null,
+      image_width: value?.image_width ?? value?.imageWidth ?? null,
+      image_height: value?.image_height ?? value?.imageHeight ?? null,
       source_role: null,
       source_region_id: null,
       provenance_trust: "UNTRUSTED"
     };
-    Object.defineProperty(candidate, STRUCTURED_LAYOUT_EXTRACTION_CAPABILITY, { value: true, enumerable: false });
+    Object.defineProperty(candidate, STRUCTURED_PROVIDER_LAYOUT_EXTRACTION_CAPABILITY, { value: true, enumerable: false });
     return candidate;
   }).filter(value => value.text && (Array.isArray(value.bbox) || Array.isArray(value.polygon)));
 }
 
-export function createServerClassifiedLayoutRows({ candidates = [], classifications = [], classifierVersion = TRUSTED_ATTESTOR } = {}) {
-  if (classifierVersion !== TRUSTED_ATTESTOR
-    || !Array.isArray(candidates)
-    || !Array.isArray(classifications)
-    || candidates.length !== classifications.length
-    || candidates.length === 0) return null;
-  const assignments = new Map();
-  for (const classification of classifications) {
-    const sourceRef = text(classification?.source_ref);
-    const role = text(classification?.source_role);
-    if (!sourceRef || !ROLE_REGION[role] || assignments.has(sourceRef)) return null;
-    assignments.set(sourceRef, role);
-  }
+export function createServerClassifiedLayoutRows({
+  candidates = [],
+  classification = null,
+  imageIdentity,
+  providerResponseId = "",
+  resultRevision = 1
+} = {}) {
+  const validation = validateProviderLayoutRoleClassification({
+    classification,
+    imageIdentity,
+    candidates,
+    providerResponseId,
+    resultRevision
+  });
+  if (!validation.valid) return null;
+  const assignments = new Map(validation.classification.assignments.map(item => [item.source_ref, item.source_role]));
   const classified = [];
   for (const candidate of candidates) {
     const sourceRef = text(candidate?.source_ref);
     const role = assignments.get(sourceRef);
-    if (candidate?.[STRUCTURED_LAYOUT_EXTRACTION_CAPABILITY] !== true
+    if (candidate?.[STRUCTURED_PROVIDER_LAYOUT_EXTRACTION_CAPABILITY] !== true
       || candidate.source_type !== "PROVIDER_STRUCTURED_LAYOUT_V1"
       || !role) return null;
     const row = {
@@ -179,9 +192,10 @@ export function createServerClassifiedLayoutRows({ candidates = [], classificati
     };
     Object.defineProperty(row, SERVER_PROVENANCE_ATTESTATION, { value: true, enumerable: false });
     Object.defineProperty(row, SERVER_LAYOUT_CLASSIFICATION_CAPABILITY, { value: true, enumerable: false });
-    classified.push(row);
+    Object.defineProperty(row, STRUCTURED_PROVIDER_LAYOUT_EXTRACTION_CAPABILITY, { value: true, enumerable: false });
+    classified.push(Object.freeze(row));
   }
-  return classified;
+  return Object.freeze(classified);
 }
 
 export function createTrustedLayoutAttestation({
@@ -190,6 +204,7 @@ export function createTrustedLayoutAttestation({
   coordinateEngineV2 = {},
   resultRevision = 1,
   providerResponseId = "",
+  providerLayoutClassification = null,
   provenanceAttestor = TRUSTED_ATTESTOR
 } = {}) {
   if (!isCanonicalCoordinateImageIdentity(imageIdentity)
@@ -198,6 +213,17 @@ export function createTrustedLayoutAttestation({
     || resultRevision <= 0) return null;
   const points = flattenPoints(coordinateEngineV2);
   if (points.length !== 2 || !Array.isArray(observations) || observations.length !== 2) return null;
+  const hasProviderStructuredLayout = observations.some(item => item?.source_type === "PROVIDER_STRUCTURED_LAYOUT_V1");
+  const providerClassificationValidation = hasProviderStructuredLayout
+    ? validateProviderLayoutRoleClassification({
+      classification: providerLayoutClassification,
+      imageIdentity,
+      candidates: observations,
+      providerResponseId,
+      resultRevision
+    })
+    : null;
+  if (hasProviderStructuredLayout && !providerClassificationValidation.valid) return null;
   const providerResponseIdSha256 = providerResponseId ? sha256(providerResponseId) : null;
   const observationIds = new Set();
   const trustedObservations = [];
@@ -215,6 +241,7 @@ export function createTrustedLayoutAttestation({
       && raw.provenance_trust === "SERVER_ATTESTED";
     const isServerClassifiedLayout = raw[SERVER_LAYOUT_CLASSIFICATION_CAPABILITY] === true
       && raw[SERVER_PROVENANCE_ATTESTATION] === true
+      && providerClassificationValidation?.valid === true
       && raw.provenance_trust === "SERVER_ATTESTED"
       && raw.provenance_attestor === TRUSTED_ATTESTOR
       && /^[0-9a-f]{64}$/.test(providerResponseIdSha256 || "");

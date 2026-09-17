@@ -5,6 +5,7 @@ import { buildSourceCoordinateRepresentation } from "../server/source-coordinate
 import {
   SERVER_PROVENANCE_ATTESTATION,
   TRUSTED_LAYOUT_ATTESTATION_CAPABILITY,
+  classifyProviderLayoutRoles,
   extractProviderLayoutCandidates
 } from "../server/evidence-acquisition/index.js";
 
@@ -199,6 +200,21 @@ assert.equal(providerLayoutCandidates.length, 1, "only allowlisted structured pr
 assert.equal(providerLayoutCandidates[0].text, "35.447819,83.178991");
 assert.equal(providerLayoutCandidates[0].provenance_trust, "UNTRUSTED");
 assert.equal(providerLayoutCandidates[0].source_role, null, "provider self-described roles are discarded");
+const missingClassifierOutcome = classifyProviderLayoutRoles({
+  profile: null,
+  imageIdentity: trustedRegionPayload.imageMetadata,
+  candidates: providerLayoutCandidates,
+  providerResponseId: "provider-response-shadow-only",
+  resultRevision: 1
+});
+const missingClassifierEvidence = buildCoordinateVerificationResponse({
+  ...trustedRegionPayload,
+  providerLayoutCandidates,
+  providerLayoutClassificationOutcome: missingClassifierOutcome
+}, trustedRegionEngine).evidenceAcquisition;
+assert.equal(missingClassifierEvidence.trusted_layout_status, "UNATTESTED");
+assert.equal(missingClassifierEvidence.trusted_layout_reason, "TRUSTED_LAYOUT_CLASSIFIER_EVIDENCE_MISSING");
+assert.equal(missingClassifierEvidence.shadow_only, true);
 
 const legacyEngine = makeEngine(standardDms);
 const phase2Baseline = {
@@ -238,7 +254,7 @@ assert.equal(phase3Response.coordinates, legacySnapshot.coordinates, "coordinate
 
 console.log(JSON.stringify({
   suite: "evidence-acquisition-regression",
-  passed: 6,
+  passed: 7,
   cases: [
     {
       id: "handwritten_dms_conflict_row_evidence",
@@ -255,6 +271,7 @@ console.log(JSON.stringify({
     { id: "missing_or_invalid_bbox_degrades_safely", status: "PASS" },
     { id: "trusted_source_role_attestation_and_pseudo_provenance_rejection", status: "PASS" },
     { id: "provider_structured_layout_allowlist_remains_shadow_only", status: "PASS" },
+    { id: "missing_server_classifier_profile_fails_closed", status: "PASS" },
     { id: "phase2_response_compatibility", status: "PASS" }
   ]
 }, null, 2));

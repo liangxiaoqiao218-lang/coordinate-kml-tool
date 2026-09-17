@@ -15,6 +15,7 @@ import { PointGeometryIntentReviewRuntime } from "../server/recognition/trusted-
 import {
   SERVER_PROVENANCE_ATTESTATION,
   buildEvidenceAcquisition,
+  classifyProviderLayoutRoles,
   createTrustedLayoutAttestation
 } from "../server/evidence-acquisition/index.js";
 import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
@@ -501,6 +502,18 @@ const preliminaryNearDuplicate = applyWgs84NearDuplicateAuthority({
   revision: 1
 });
 const pointReviewRuntime = new PointGeometryIntentReviewRuntime({ now: () => 1_000 });
+const missingLayoutClassifierOutcome = classifyProviderLayoutRoles({ profile: null });
+assert.equal(missingLayoutClassifierOutcome.reason, "TRUSTED_LAYOUT_CLASSIFIER_EVIDENCE_MISSING",
+  "C08E0 missing layout classifier profile must fail closed before Point Review");
+assert.equal(pointReviewRuntime.issue({
+  imageIdentity: nearDuplicateImageIdentity,
+  trustedLayoutAttestation: null,
+  nearDuplicateDecision: preliminaryNearDuplicate.evaluation.decision,
+  canonicalPoints: preliminaryNearDuplicate.evaluation.canonicalPoints,
+  coordinateEngineV2: nearDuplicateEngine,
+  resultId: "missing-layout-classifier",
+  resultRevision: 1
+}), null, "C08E0 missing trusted layout cannot issue Point Review");
 const pointReview = pointReviewRuntime.issue({
   imageIdentity: nearDuplicateImageIdentity,
   trustedLayoutAttestation: nearDuplicateTrustedLayout,
@@ -590,6 +603,6 @@ assert.match(html, /if \(activeFinalizedCoordinateResult\) finalizedCoordinateDi
 
 console.log(JSON.stringify({
   suite: "sr08b-confirmation-runtime-regression",
-  passed: 18,
-  cases: ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C08A", "C08B", "C08C", "C08D", "C08E", "C09", "C10", "TTL", "UI_BINDING", "KML_GATE"]
+  passed: 19,
+  cases: ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C08A", "C08B", "C08C", "C08D", "C08E0", "C08E", "C09", "C10", "TTL", "UI_BINDING", "KML_GATE"]
 }, null, 2));

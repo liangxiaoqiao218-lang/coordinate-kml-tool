@@ -6,7 +6,9 @@ import {
 import {
   SERVER_PROVENANCE_ATTESTATION,
   buildEvidenceAcquisition,
+  classifyProviderLayoutRoles,
   createServerClassifiedLayoutRows,
+  createServerOwnedLayoutClassifierProfile,
   createTrustedLayoutAttestation,
   extractProviderLayoutCandidates,
   validateTrustedLayoutAttestation
@@ -214,14 +216,32 @@ test("TLA-12", "provider self-described roles stay untrusted until independently
     resultRevision: 1,
     providerResponseId: "provider-response-1"
   }), null, "response identity cannot upgrade provider self-described roles");
-  const serverClassified = createServerClassifiedLayoutRows({
-    candidates,
-    classifications: [
+  const profile = createServerOwnedLayoutClassifierProfile({
+    profileId: "SYNTHETIC_LAYOUT_ROLE_PROFILE_V1",
+    classifierVersion: "P0D_SYNTHETIC_V1",
+    classify: () => [
       { source_ref: "provider-search", source_role: "MAP_SEARCH_BOX" },
       { source_ref: "provider-details", source_role: "MAP_PLACE_DETAILS" }
     ]
   });
+  const classificationOutcome = classifyProviderLayoutRoles({
+    profile,
+    imageIdentity,
+    candidates,
+    providerResponseId: "provider-response-1",
+    resultRevision: 1
+  });
+  assert.equal(classificationOutcome.ok, true);
+  const serverClassified = createServerClassifiedLayoutRows({
+    candidates,
+    classification: classificationOutcome.classification,
+    imageIdentity,
+    providerResponseId: "provider-response-1",
+    resultRevision: 1
+  });
   assert.ok(serverClassified, "independent server classification produces an in-process capability");
+  assert.equal(Object.isFrozen(serverClassified), true);
+  assert.equal(serverClassified.every(Object.isFrozen), true);
   assert.equal(createTrustedLayoutAttestation({
     imageIdentity,
     observations: serverClassified,
@@ -229,7 +249,16 @@ test("TLA-12", "provider self-described roles stay untrusted until independently
     resultRevision: 1,
     providerResponseId: ""
   }), null, "server-classified Provider rows still require a bound Provider response identity");
-  assert.ok(create({ observations: serverClassified }), "server-classified rows can be attested after all bindings validate");
+  assert.equal(create({ observations: serverClassified }), null,
+    "server-classified rows cannot be reused without the exact classification capability");
+  assert.ok(createTrustedLayoutAttestation({
+    imageIdentity,
+    observations: serverClassified,
+    coordinateEngineV2: engine,
+    resultRevision: 1,
+    providerResponseId: "provider-response-1",
+    providerLayoutClassification: classificationOutcome.classification
+  }), "server-classified rows can be attested only after all classification bindings validate again");
   const plainClassified = structuredClone(serverClassified);
   assert.equal(create({ observations: plainClassified }), null,
     "ordinary JSON cannot preserve the server layout classification capability");
