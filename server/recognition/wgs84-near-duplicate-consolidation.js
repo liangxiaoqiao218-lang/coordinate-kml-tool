@@ -279,9 +279,13 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
   recognitionResult = {}, revision = 1 } = {}) {
   const groups = Array.isArray(coordinateEngineV2.groups) ? coordinateEngineV2.groups : [];
   const points = groups.flatMap(group => (Array.isArray(group.points) ? group.points.map(point => ({ ...point, group_id: group.group_id })) : []));
-  const wgs84Chat = coordinateEngineV2.coordinate_type === "wgs84_chat_coordinates"
-    || coordinateEngineV2.precision_mode === "wgs84-chat-coordinates";
-  if (!wgs84Chat || points.length < 2) return deepFreeze({ applies: false, canonicalPoints: points });
+  const wgs84NearDuplicateEligible = coordinateEngineV2.coordinate_type === "wgs84_chat_coordinates"
+    || coordinateEngineV2.precision_mode === "wgs84-chat-coordinates"
+    || (coordinateEngineV2.coordinate_type === "decimal_latlon"
+      && coordinateEngineV2.precision_mode === "wgs84-table-coordinates");
+  if (!wgs84NearDuplicateEligible || points.length < 2) {
+    return deepFreeze({ applies: false, canonicalPoints: points });
+  }
 
   if (groups.length !== 1) {
     return blockedResult({

@@ -52,10 +52,13 @@ function point(raw, label) {
   return { label: String(label), raw, lat, lon, confidence: 0.99, requires_review: false, warnings: [] };
 }
 
-function engine(rows = [low, high]) {
+function engine(rows = [low, high], {
+  coordinateType = "wgs84_chat_coordinates",
+  precisionMode = "wgs84-chat-coordinates"
+} = {}) {
   return {
-    coordinate_type: "wgs84_chat_coordinates",
-    precision_mode: "wgs84-chat-coordinates",
+    coordinate_type: coordinateType,
+    precision_mode: precisionMode,
     requires_review: false,
     groups: [{
       group_id: "group_1",
@@ -117,7 +120,7 @@ function payload(rows = [low, high], overrides = {}, coordinateEngineV2 = engine
 }
 
 function prepare(rows = [low, high], overrides = {}) {
-  const coordinateEngineV2 = engine(rows);
+  const coordinateEngineV2 = overrides.coordinateEngineV2 || engine(rows);
   const recognitionResult = payload(rows, overrides, coordinateEngineV2);
   const evidenceAcquisition = buildEvidenceAcquisition({
     recognitionResult,
@@ -176,6 +179,48 @@ test("ND-01", "incident fixture selects the strictly higher precision observatio
   assert.equal(result.canonicalPoints[0].raw, high);
   assert.equal(result.canonicalPoints[0].lat, 35.4478191);
   assert.equal(result.canonicalPoints[0].lon, 83.1789913);
+});
+
+test("ND-01B", "Production WGS84 table route reaches the same near-duplicate authority", () => {
+  const coordinateEngineV2 = engine([low, high], {
+    coordinateType: "decimal_latlon",
+    precisionMode: "wgs84-table-coordinates"
+  });
+  const result = evaluateWgs84NearDuplicateConsolidation(prepare([low, high], {
+    coordinateEngineV2
+  }));
+  assert.equal(result.decision.decision, NEAR_DUPLICATE_DECISION.SAME_LOCATION_CONFIRMED);
+  assert.equal(result.geometryIntentGate.decision, "AUTHORIZED");
+  assert.equal(result.canonicalPoints.length, 1);
+  assert.equal(result.canonicalPoints[0].raw, high);
+});
+
+test("ND-01C", "unregistered decimal modes do not enter the WGS84 near-duplicate gate", () => {
+  const coordinateEngineV2 = engine([low, high], {
+    coordinateType: "decimal_latlon",
+    precisionMode: "generic-decimal"
+  });
+  const result = evaluateWgs84NearDuplicateConsolidation(prepare([low, high], {
+    coordinateEngineV2
+  }));
+  assert.equal(result.applies, false);
+  assert.equal(result.canonicalPoints.length, 2);
+});
+
+test("ND-01D", "Production WGS84 table near-duplicates cannot become a LineString without trusted layout", () => {
+  const coordinateEngineV2 = engine([low, high], {
+    coordinateType: "decimal_latlon",
+    precisionMode: "wgs84-table-coordinates"
+  });
+  const input = prepare([low, high], {
+    coordinateEngineV2,
+    observationOverrides: [{ provenance_trust: "UNTRUSTED" }, { provenance_trust: "UNTRUSTED" }]
+  });
+  const result = evaluateWgs84NearDuplicateConsolidation(input);
+  assert.equal(result.decision.decision, NEAR_DUPLICATE_DECISION.PROVENANCE_INSUFFICIENT);
+  assert.equal(result.geometryIntentGate.decision, "BLOCKED");
+  assert.equal(result.authorityBlocked, true);
+  assert.equal(result.canonicalPoints.length, 2);
 });
 
 test("ND-02", "missing trusted provenance fails closed", () => {
