@@ -120,6 +120,11 @@ assert.equal(isProviderLayoutQualificationReadAllowed({ ...qualificationReadGate
 
 const disabledProductionProbeForm = new FormData();
 disabledProductionProbeForm.append("image", new Blob([syntheticPng], { type: "image/png" }), "synthetic-probe.png");
+const disabledProductionChallenge = await jsonRequest("/api/internal/provider-layout-production-qualification-challenge", {
+  method: "POST"
+});
+assert.equal(disabledProductionChallenge.response.status, 404);
+assert.deepEqual(disabledProductionChallenge.payload, { success: false });
 const disabledProductionProbe = await jsonRequest("/api/internal/provider-layout-production-qualification-probe", {
   method: "POST",
   body: disabledProductionProbeForm
@@ -185,9 +190,12 @@ assert.match(qualificationSource, /provider_layout_profile_qualification_v1/);
 assert.match(qualificationSource, /QUALIFICATION_CANDIDATE/);
 assert.doesNotMatch(qualificationSource, /SERVER_LAYOUT_ROLE_CLASSIFICATION_CAPABILITY\s*=\s*Symbol/);
 assert.match(serverSource, /provider-layout-production-qualification-probe/);
+assert.match(serverSource, /provider-layout-production-qualification-challenge/);
 assert.match(serverSource, /PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_ENABLED/);
 assert.match(serverSource, /responseContractId:\s*""/);
-assert.match(productionQualificationGateSource, /provider_layout_production_qualification_grant_v1/);
+assert.match(productionQualificationGateSource, /provider_layout_production_qualification_grant_v2/);
+assert.match(productionQualificationGateSource, /provider_layout_production_qualification_challenge_v1/);
+assert.match(productionQualificationGateSource, /boot_identity/);
 assert.match(productionQualificationGateSource, /verifySignature\(null,/);
 assert.match(productionQualificationGateSource, /createPublicKey\(publicKey\)/);
 assert.match(productionQualificationGateSource, /key\.type === "public"/);
@@ -196,7 +204,7 @@ assert.doesNotMatch(productionQualificationGateSource, /privateKey|generateKeyPa
 
 console.log(JSON.stringify({
   suite: "sr08b-http-lifecycle-regression",
-  passed: 19,
+  passed: 20,
   deadlineEvidence,
   runtimeIdentity: version.payload.runtimeIdentity
 }, null, 2));

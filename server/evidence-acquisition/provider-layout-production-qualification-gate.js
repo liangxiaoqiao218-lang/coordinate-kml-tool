@@ -1,7 +1,9 @@
-import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
 
 export const PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_GRANT_SCHEMA_VERSION =
-  "provider_layout_production_qualification_grant_v1";
+  "provider_layout_production_qualification_grant_v2";
+export const PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_CHALLENGE_SCHEMA_VERSION =
+  "provider_layout_production_qualification_challenge_v1";
 export const PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_OUTPUT_POLICY =
   "FIXED_REDACTED_QUALIFICATION_STATUS_V1";
 export const PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_TTL_MS = 5 * 60 * 1000;
@@ -10,7 +12,13 @@ export const PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT = "UNSUP
 const PRODUCTION_QUALIFICATION_GRANT_CAPABILITY = Symbol(
   "PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_GRANT_CAPABILITY"
 );
+const PRODUCTION_QUALIFICATION_CHALLENGE_CAPABILITY = Symbol(
+  "PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_CHALLENGE_CAPABILITY"
+);
 const GRANT_DIGEST = Symbol("PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_GRANT_DIGEST");
+const GRANT_BOOT_BINDING = Symbol("PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_GRANT_BOOT_BINDING");
+const CHALLENGE_DIGEST = Symbol("PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_CHALLENGE_DIGEST");
+const HEX_40 = /^[0-9a-f]{40}$/;
 const HEX_64 = /^[0-9a-f]{64}$/;
 const REQUEST_ID = /^[0-9a-f-]{16,128}$/;
 const TOKEN = /^[A-Za-z0-9._:-]{8,256}$/;
@@ -21,8 +29,19 @@ const FIXED_QUALIFICATION_STATUSES = new Set([
   "QUALIFICATION_CANDIDATE",
   "QUALIFICATION_CONFLICT"
 ]);
+const CHALLENGE_FIELDS = Object.freeze([
+  "boot_identity",
+  "challenge_id",
+  "expires_at",
+  "issued_at",
+  "runtime_branch",
+  "runtime_commit",
+  "schema_version",
+  "service"
+]);
 const GRANT_FIELDS = Object.freeze([
   "canonical_image_identity",
+  "challenge",
   "expires_at",
   "issued_at",
   "max_provider_calls",
@@ -60,6 +79,17 @@ function deepFreeze(value) {
   return Object.freeze(value);
 }
 
+function hasExactFields(value, fields) {
+  return value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(fields);
+}
+
+function randomIdentity() {
+  return randomBytes(32).toString("hex");
+}
+
 export function serializeProviderLayoutProductionQualificationGrant(value) {
   return Buffer.from(JSON.stringify(stableValue(value)), "utf8");
 }
@@ -87,6 +117,32 @@ function imageBinding(imageIdentity) {
     : null;
 }
 
+function challengeBinding(challenge) {
+  if (!hasExactFields(challenge, CHALLENGE_FIELDS)) return null;
+  const binding = {
+    schema_version: text(challenge.schema_version),
+    service: text(challenge.service),
+    runtime_commit: text(challenge.runtime_commit).toLowerCase(),
+    runtime_branch: text(challenge.runtime_branch),
+    boot_identity: text(challenge.boot_identity).toLowerCase(),
+    challenge_id: text(challenge.challenge_id).toLowerCase(),
+    issued_at: Number(challenge.issued_at),
+    expires_at: Number(challenge.expires_at)
+  };
+  return binding.schema_version === PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_CHALLENGE_SCHEMA_VERSION
+    && binding.service
+    && HEX_40.test(binding.runtime_commit)
+    && binding.runtime_branch
+    && HEX_64.test(binding.boot_identity)
+    && HEX_64.test(binding.challenge_id)
+    && Number.isSafeInteger(binding.issued_at)
+    && Number.isSafeInteger(binding.expires_at)
+    && binding.expires_at > binding.issued_at
+    && binding.expires_at - binding.issued_at <= PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_TTL_MS
+    ? binding
+    : null;
+}
+
 function grantIdentity(grant) {
   return {
     schema_version: grant.schema_version,
@@ -97,6 +153,7 @@ function grantIdentity(grant) {
     nonce: grant.nonce,
     synthetic_image: grant.synthetic_image,
     canonical_image_identity: grant.canonical_image_identity,
+    challenge: grant.challenge,
     provider_id: grant.provider_id,
     model_family: grant.model_family,
     model_name: grant.model_name,
@@ -110,6 +167,10 @@ function grantIdentity(grant) {
 
 function fixedFailure(reason) {
   return Object.freeze({ ok: false, reason, grant: null });
+}
+
+function challengeFailure(reason) {
+  return Object.freeze({ ok: false, reason, challenge: null });
 }
 
 export function verifyProviderLayoutProductionQualificationGrantSignature({
@@ -163,6 +224,7 @@ export function authorizeProviderLayoutProductionQualificationGrant({
   modelFamily = "",
   modelName = "",
   responseContractId = PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT,
+  runtime,
   now = Date.now(),
   verify = verifyProviderLayoutProductionQualificationGrantSignature
 } = {}) {
@@ -171,7 +233,11 @@ export function authorizeProviderLayoutProductionQualificationGrant({
   if (!grant || typeof grant !== "object" || Array.isArray(grant)) {
     return fixedFailure("PRODUCTION_QUALIFICATION_GRANT_INVALID");
   }
+  if (!(runtime instanceof ProviderLayoutProductionQualificationGrantRuntime)) {
+    return fixedFailure("PRODUCTION_QUALIFICATION_RUNTIME_MISSING");
+  }
   const canonicalImageIdentity = imageBinding(imageIdentity);
+  const normalizedChallenge = challengeBinding(grant.challenge);
   const normalized = {
     ...grantIdentity(grant),
     schema_version: text(grant.schema_version),
@@ -182,6 +248,7 @@ export function authorizeProviderLayoutProductionQualificationGrant({
     nonce: text(grant.nonce),
     synthetic_image: grant.synthetic_image === true,
     canonical_image_identity: grant.canonical_image_identity,
+    challenge: normalizedChallenge,
     provider_id: text(grant.provider_id).toUpperCase(),
     model_family: text(grant.model_family).toUpperCase(),
     model_name: text(grant.model_name),
@@ -194,7 +261,7 @@ export function authorizeProviderLayoutProductionQualificationGrant({
   const expectedImage = imageBinding(normalized.canonical_image_identity);
   const issuedAt = normalized.issued_at;
   const expiresAt = normalized.expires_at;
-  const exactBindings = JSON.stringify(Object.keys(grant).sort()) === JSON.stringify(GRANT_FIELDS)
+  const exactBindings = hasExactFields(grant, GRANT_FIELDS)
     && normalized.schema_version === PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_GRANT_SCHEMA_VERSION
     && normalized.service === text(service)
     && normalized.runtime_commit === text(runtimeCommit).toLowerCase()
@@ -208,6 +275,7 @@ export function authorizeProviderLayoutProductionQualificationGrant({
       .equals(serializeProviderLayoutProductionQualificationGrant(expectedImage))
     && serializeProviderLayoutProductionQualificationGrant(expectedImage)
       .equals(serializeProviderLayoutProductionQualificationGrant(canonicalImageIdentity))
+    && normalizedChallenge
     && normalized.provider_id === text(providerId).toUpperCase()
     && normalized.model_family === text(modelFamily).toUpperCase()
     && normalized.model_name === text(modelName)
@@ -218,9 +286,18 @@ export function authorizeProviderLayoutProductionQualificationGrant({
     && Number.isSafeInteger(issuedAt) && Number.isSafeInteger(expiresAt)
     && issuedAt <= now && expiresAt > now
     && expiresAt - issuedAt > 0
-    && expiresAt - issuedAt <= PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_TTL_MS;
+    && expiresAt - issuedAt <= PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_TTL_MS
+    && normalizedChallenge.issued_at <= issuedAt
+    && expiresAt <= normalizedChallenge.expires_at;
   if (!exactBindings) return fixedFailure("PRODUCTION_QUALIFICATION_BINDING_MISMATCH");
+  const challenge = runtime.validateChallengeBinding(normalizedChallenge, {
+    service,
+    runtimeCommit,
+    runtimeBranch
+  });
+  if (!challenge.ok) return fixedFailure(challenge.reason);
   normalized.canonical_image_identity = expectedImage;
+  normalized.challenge = challenge.challenge;
   if (!verify({ grant: normalized, signatureBase64Url, publicKeyPem })) {
     return fixedFailure("PRODUCTION_QUALIFICATION_SIGNATURE_INVALID");
   }
@@ -232,6 +309,10 @@ export function authorizeProviderLayoutProductionQualificationGrant({
     value: sha256(serializeProviderLayoutProductionQualificationGrant(normalized)),
     enumerable: false
   });
+  Object.defineProperty(normalized, GRANT_BOOT_BINDING, {
+    value: runtime.bootIdentity,
+    enumerable: false
+  });
   return Object.freeze({ ok: true, reason: null, grant: deepFreeze(normalized) });
 }
 
@@ -240,17 +321,113 @@ export function hasProviderLayoutProductionQualificationGrantCapability(value) {
 }
 
 export class ProviderLayoutProductionQualificationGrantRuntime {
-  constructor({ now = () => Date.now() } = {}) {
+  constructor({
+    now = () => Date.now(),
+    bootIdentity = "",
+    challengeIdFactory = randomIdentity
+  } = {}) {
     this.now = now;
-    this.consumedNonces = new Map();
+    this.bootIdentity = text(bootIdentity).toLowerCase() || randomIdentity();
+    if (!HEX_64.test(this.bootIdentity)) throw new Error("PRODUCTION_QUALIFICATION_BOOT_IDENTITY_INVALID");
+    this.challengeIdFactory = challengeIdFactory;
+    this.challengeIssued = false;
+    this.challengeRecord = null;
+  }
+
+  issueChallenge({
+    service = "",
+    runtimeCommit = "",
+    runtimeBranch = "",
+    ttlMs = PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_TTL_MS
+  } = {}) {
+    const normalizedService = text(service);
+    const normalizedCommit = text(runtimeCommit).toLowerCase();
+    const normalizedBranch = text(runtimeBranch);
+    const normalizedTtl = Number(ttlMs);
+    if (!normalizedService || !HEX_40.test(normalizedCommit) || !normalizedBranch
+      || !Number.isSafeInteger(normalizedTtl) || normalizedTtl <= 0
+      || normalizedTtl > PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_TTL_MS) {
+      return challengeFailure("PRODUCTION_QUALIFICATION_CHALLENGE_BINDING_INVALID");
+    }
+    if (this.challengeIssued) {
+      if (!this.challengeRecord?.[PRODUCTION_QUALIFICATION_CHALLENGE_CAPABILITY]) {
+        return challengeFailure("PRODUCTION_QUALIFICATION_CHALLENGE_CAPABILITY_MISSING");
+      }
+      if (this.challengeRecord.consumed) {
+        return challengeFailure("PRODUCTION_QUALIFICATION_CHALLENGE_ALREADY_CONSUMED");
+      }
+      if (this.challengeRecord.challenge.expires_at <= this.now()) {
+        return challengeFailure("PRODUCTION_QUALIFICATION_CHALLENGE_EXPIRED");
+      }
+      const existing = this.challengeRecord.challenge;
+      if (existing.service !== normalizedService
+        || existing.runtime_commit !== normalizedCommit
+        || existing.runtime_branch !== normalizedBranch) {
+        return challengeFailure("PRODUCTION_QUALIFICATION_CHALLENGE_BINDING_MISMATCH");
+      }
+      return Object.freeze({ ok: true, reason: null, challenge: existing });
+    }
+    const issuedAt = this.now();
+    const challengeId = text(this.challengeIdFactory()).toLowerCase();
+    if (!HEX_64.test(challengeId)) {
+      return challengeFailure("PRODUCTION_QUALIFICATION_CHALLENGE_ID_INVALID");
+    }
+    const challenge = deepFreeze({
+      schema_version: PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_CHALLENGE_SCHEMA_VERSION,
+      service: normalizedService,
+      runtime_commit: normalizedCommit,
+      runtime_branch: normalizedBranch,
+      boot_identity: this.bootIdentity,
+      challenge_id: challengeId,
+      issued_at: issuedAt,
+      expires_at: issuedAt + normalizedTtl
+    });
+    const record = { challenge, consumed: false };
+    Object.defineProperty(record, PRODUCTION_QUALIFICATION_CHALLENGE_CAPABILITY, {
+      value: true,
+      enumerable: false
+    });
+    Object.defineProperty(record, CHALLENGE_DIGEST, {
+      value: sha256(serializeProviderLayoutProductionQualificationGrant(challenge)),
+      enumerable: false
+    });
+    this.challengeIssued = true;
+    this.challengeRecord = record;
+    return Object.freeze({ ok: true, reason: null, challenge });
+  }
+
+  validateChallengeBinding(challenge, {
+    service = "",
+    runtimeCommit = "",
+    runtimeBranch = ""
+  } = {}) {
+    const record = this.challengeRecord;
+    if (!record?.[PRODUCTION_QUALIFICATION_CHALLENGE_CAPABILITY]) {
+      return Object.freeze({ ok: false, reason: "PRODUCTION_QUALIFICATION_CHALLENGE_MISSING" });
+    }
+    if (record.consumed) {
+      return Object.freeze({ ok: false, reason: "PRODUCTION_QUALIFICATION_CHALLENGE_ALREADY_CONSUMED" });
+    }
+    if (record.challenge.expires_at <= this.now()) {
+      return Object.freeze({ ok: false, reason: "PRODUCTION_QUALIFICATION_CHALLENGE_EXPIRED" });
+    }
+    const normalized = challengeBinding(challenge);
+    if (!normalized
+      || normalized.expires_at <= this.now()
+      || normalized.boot_identity !== this.bootIdentity
+      || normalized.service !== text(service)
+      || normalized.runtime_commit !== text(runtimeCommit).toLowerCase()
+      || normalized.runtime_branch !== text(runtimeBranch)
+      || sha256(serializeProviderLayoutProductionQualificationGrant(normalized)) !== record[CHALLENGE_DIGEST]) {
+      return Object.freeze({ ok: false, reason: "PRODUCTION_QUALIFICATION_CHALLENGE_BINDING_MISMATCH" });
+    }
+    return Object.freeze({ ok: true, reason: null, challenge: record.challenge });
   }
 
   consumeBeforeProvider(grant) {
-    if (!hasProviderLayoutProductionQualificationGrantCapability(grant)) {
+    if (!hasProviderLayoutProductionQualificationGrantCapability(grant)
+      || grant?.[GRANT_BOOT_BINDING] !== this.bootIdentity) {
       return Object.freeze({ ok: false, reason: "PRODUCTION_QUALIFICATION_CAPABILITY_MISSING" });
-    }
-    for (const [key, expiresAt] of this.consumedNonces) {
-      if (expiresAt <= this.now()) this.consumedNonces.delete(key);
     }
     if (grant.expires_at <= this.now()) {
       return Object.freeze({ ok: false, reason: "PRODUCTION_QUALIFICATION_EXPIRED" });
@@ -258,11 +435,13 @@ export class ProviderLayoutProductionQualificationGrantRuntime {
     if (grant[GRANT_DIGEST] !== sha256(serializeProviderLayoutProductionQualificationGrant(grant))) {
       return Object.freeze({ ok: false, reason: "PRODUCTION_QUALIFICATION_BINDING_MISMATCH" });
     }
-    const nonceDigest = sha256(Buffer.from(grant.nonce, "utf8"));
-    if (this.consumedNonces.has(nonceDigest)) {
-      return Object.freeze({ ok: false, reason: "PRODUCTION_QUALIFICATION_REPLAY_REJECTED" });
-    }
-    this.consumedNonces.set(nonceDigest, grant.expires_at);
+    const challenge = this.validateChallengeBinding(grant.challenge, {
+      service: grant.service,
+      runtimeCommit: grant.runtime_commit,
+      runtimeBranch: grant.runtime_branch
+    });
+    if (!challenge.ok) return challenge;
+    this.challengeRecord.consumed = true;
     return Object.freeze({ ok: true, reason: null, grantDigest: grant[GRANT_DIGEST] });
   }
 }

@@ -410,6 +410,15 @@ function parseProviderLayoutProductionQualificationGrant(req) {
     return null;
   }
 }
+
+function requireProviderLayoutProductionQualificationGate(req, res, next) {
+  const enabled = process.env.PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_ENABLED === "true";
+  const publicKeyPresent = Boolean(String(
+    process.env.PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_PUBLIC_KEY || ""
+  ).trim());
+  if (!enabled || !publicKeyPresent) return res.status(404).json({ success: false });
+  return next();
+}
 const spatialShareReviewReasonRegistry = new Map();
 const MAX_SPATIAL_SHARE_REVIEW_REASONS = 500;
 
@@ -13007,13 +13016,23 @@ app.get("/api/regression/provider-layout-profile-qualification/:requestId", (req
 });
 
 app.post(
+  "/api/internal/provider-layout-production-qualification-challenge",
+  requireProviderLayoutProductionQualificationGate,
+  (req, res) => {
+    const outcome = providerLayoutProductionQualificationGrantRuntime.issueChallenge({
+      service: "coordinate-kml-tool-rc",
+      runtimeCommit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || "",
+      runtimeBranch: process.env.RENDER_GIT_BRANCH || process.env.GIT_BRANCH || ""
+    });
+    res.setHeader("Cache-Control", "no-store");
+    if (!outcome.ok) return res.status(409).json({ success: false });
+    return res.json({ success: true, challenge: outcome.challenge });
+  }
+);
+
+app.post(
   "/api/internal/provider-layout-production-qualification-probe",
-  (req, res, next) => {
-    const enabled = process.env.PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_ENABLED === "true";
-    const publicKeyPresent = Boolean(String(process.env.PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_PUBLIC_KEY || "").trim());
-    if (!enabled || !publicKeyPresent) return res.status(404).json({ success: false });
-    return next();
-  },
+  requireProviderLayoutProductionQualificationGate,
   upload.single("image"),
   async (req, res) => {
     const requestId = String(req.get("x-provider-layout-qualification-request-id") || "").trim().toLowerCase();
@@ -13047,7 +13066,8 @@ app.post(
       providerId: "ALIYUN_DASHSCOPE",
       modelFamily: "QWEN_VL",
       modelName: aliyunVisionModel,
-      responseContractId: PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT
+      responseContractId: PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT,
+      runtime: providerLayoutProductionQualificationGrantRuntime
     });
     if (!authorization.ok) return res.status(403).json({ success: false });
 
