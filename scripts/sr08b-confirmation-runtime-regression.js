@@ -12,10 +12,11 @@ import {
 } from "../server/coordinate-finalizer/index.js";
 import { applyWgs84NearDuplicateAuthority } from "../server/recognition/wgs84-near-duplicate-consolidation.js";
 import {
-  IMAGE_OBSERVATION_SCHEMA_VERSION,
-  ORIGINAL_IMAGE_OBSERVATION_ATTESTATION,
-  SERVER_PROVENANCE_ATTESTATION
+  SERVER_PROVENANCE_ATTESTATION,
+  buildEvidenceAcquisition,
+  createTrustedLayoutAttestation
 } from "../server/evidence-acquisition/index.js";
+import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
 import {
   buildDmsGroupedPartialMultisiteRecoveryCandidate,
   evaluateDmsGroupedAcquisitionExpansion,
@@ -394,52 +395,58 @@ for (const blocker of independentBlockers) {
   }
 }
 
+function makeSyntheticBmp(width = 1080, height = 1920) {
+  const rowBytes = Math.floor(((24 * width) + 31) / 32) * 4;
+  const buffer = Buffer.alloc(54 + (rowBytes * height));
+  buffer.write("BM", 0, "ascii");
+  buffer.writeUInt32LE(buffer.length, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(width, 18);
+  buffer.writeInt32LE(height, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  return buffer;
+}
+
+const nearDuplicateImageIdentity = createCoordinateImageIdentity(
+  { buffer: makeSyntheticBmp(), mimetype: "image/bmp" },
+  { requestId: "sr08b-near-duplicate-confirmation", page: 1 }
+);
 const nearDuplicateObservations = [
   {
-    schema_version: IMAGE_OBSERVATION_SCHEMA_VERSION,
-    observation_id: "obs-search",
-    image_id: "synthetic-image",
-    image_width: 1080,
-    image_height: 1920,
-    request_asset_id: "synthetic-asset",
-    page: 1,
-    page_attested: true,
     text: "35.447819,83.178991",
     bbox: [20, 20, 500, 80],
     coordinate_space: "ORIGINAL_IMAGE_PIXELS",
-    location_status: "PIXEL_BBOX",
     source: "qwenOcr",
+    source_type: "SYNTHETIC_REGRESSION_V1",
     source_ref: "line-search",
     source_role: "MAP_SEARCH_BOX",
     source_region_id: "MAP_SEARCH_BOX_REGION",
     provenance_trust: "SERVER_ATTESTED",
     provenance_attestor: "SYNTHETIC_REGRESSION_V1",
     source_line_id: "line-search",
+    group_id: "group_1",
+    point_id: "1",
     measurement_semantics: "UNSPECIFIED",
     boundary_point: false,
     table_row: false,
     contradictory_evidence: false
   },
   {
-    schema_version: IMAGE_OBSERVATION_SCHEMA_VERSION,
-    observation_id: "obs-details",
-    image_id: "synthetic-image",
-    image_width: 1080,
-    image_height: 1920,
-    request_asset_id: "synthetic-asset",
-    page: 1,
-    page_attested: true,
     text: "35.4478191,83.1789913",
     bbox: [20, 500, 500, 560],
     coordinate_space: "ORIGINAL_IMAGE_PIXELS",
-    location_status: "PIXEL_BBOX",
     source: "qwenOcr",
+    source_type: "SYNTHETIC_REGRESSION_V1",
     source_ref: "line-details",
     source_role: "MAP_PLACE_DETAILS",
     source_region_id: "MAP_PLACE_DETAILS_REGION",
     provenance_trust: "SERVER_ATTESTED",
     provenance_attestor: "SYNTHETIC_REGRESSION_V1",
     source_line_id: "line-details",
+    group_id: "group_1",
+    point_id: "2",
     measurement_semantics: "UNSPECIFIED",
     boundary_point: false,
     table_row: false,
@@ -448,7 +455,7 @@ const nearDuplicateObservations = [
 ];
 nearDuplicateObservations.forEach(observation => Object.defineProperty(
   observation,
-  ORIGINAL_IMAGE_OBSERVATION_ATTESTATION,
+  SERVER_PROVENANCE_ATTESTATION,
   { value: true }
 ));
 const nearDuplicateEngine = {
@@ -465,28 +472,35 @@ const nearDuplicateEngine = {
     ]
   }]
 };
-const nearDuplicateEvidence = {
-  shadow_only: true,
-  affects_coordinates: false,
-  affects_kml: false,
+const nearDuplicateTrustedLayout = createTrustedLayoutAttestation({
+  imageIdentity: nearDuplicateImageIdentity,
   observations: nearDuplicateObservations,
-  rowBindings: nearDuplicateObservations.map((observation, index) => ({
-    group_id: "group_1",
-    point_id: String(index + 1),
-    observation_id: observation.observation_id
-  }))
-};
+  coordinateEngineV2: nearDuplicateEngine,
+  resultRevision: 1,
+  providerResponseId: "synthetic-sr08b-layout-response"
+});
 const nearDuplicateRecognition = {
+  success: true,
+  image_id: nearDuplicateImageIdentity.image_id,
+  request_asset_id: nearDuplicateImageIdentity.request_asset_id,
+  imageMetadata: nearDuplicateImageIdentity,
+  ocrLineLocations: nearDuplicateObservations,
+  trustedLayoutAttestation: nearDuplicateTrustedLayout,
   geometryIntent: {
     schema_version: "geometry_intent_v1",
     geometry_type: "Point",
     provenance_trust: "SERVER_ATTESTED",
     provenance_attestor: "SYNTHETIC_REGRESSION_V1",
     authority_revision: 1,
-    observation_ids: ["obs-search", "obs-details"]
+    observation_ids: nearDuplicateTrustedLayout.row_bindings.map(binding => binding.observation_id)
   }
 };
 Object.defineProperty(nearDuplicateRecognition, SERVER_PROVENANCE_ATTESTATION, { value: true, enumerable: true });
+const nearDuplicateEvidence = buildEvidenceAcquisition({
+  recognitionResult: nearDuplicateRecognition,
+  coordinateEngineV2: nearDuplicateEngine,
+  resultRevision: 1
+});
 const nearDuplicateApplied = applyWgs84NearDuplicateAuthority({
   recognitionResult: nearDuplicateRecognition,
   coordinateEngineV2: nearDuplicateEngine,

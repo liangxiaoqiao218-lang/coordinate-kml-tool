@@ -23,7 +23,7 @@ const SOURCE_ROLE_REGION = new Map([
   ["MAP_SEARCH_BOX", "MAP_SEARCH_BOX_REGION"],
   ["MAP_PLACE_DETAILS", "MAP_PLACE_DETAILS_REGION"]
 ]);
-const PROVENANCE_ATTESTORS = new Set(["SERVER_LAYOUT_CLASSIFIER_V1", "SYNTHETIC_REGRESSION_V1"]);
+const PROVENANCE_ATTESTORS = new Set(["SERVER_LAYOUT_CLASSIFIER_V1", "SERVER_LAYOUT_CLASSIFIER_V2", "SYNTHETIC_REGRESSION_V1"]);
 
 function trustedProvenance(value = {}) {
   const sourceRole = optionalText(value.source_role);
@@ -111,6 +111,11 @@ export function createImageTextObservation(value = {}) {
     schema_version: IMAGE_OBSERVATION_SCHEMA_VERSION,
     observation_id: optionalText(value.observation_id),
     image_id: optionalText(value.image_id),
+    image_sha256: optionalText(value.image_sha256),
+    image_byte_length: Number.isSafeInteger(Number(value.image_byte_length)) && Number(value.image_byte_length) > 0
+      ? Number(value.image_byte_length)
+      : null,
+    image_mime_type: optionalText(value.image_mime_type),
     image_width: Number.isFinite(Number(image.width)) && Number(image.width) > 0 ? Number(image.width) : null,
     image_height: Number.isFinite(Number(image.height)) && Number(image.height) > 0 ? Number(image.height) : null,
     page: normalizePage(value.page),
@@ -120,6 +125,7 @@ export function createImageTextObservation(value = {}) {
     polygon,
     coordinate_space: bbox ? ORIGINAL_IMAGE_PIXEL_SPACE : null,
     source: optionalText(value.source),
+    source_type: optionalText(value.source_type),
     source_ref: optionalText(value.source_ref),
     request_asset_id: optionalText(value.request_asset_id),
     source_line_id: optionalText(value.source_line_id),
@@ -127,6 +133,12 @@ export function createImageTextObservation(value = {}) {
     source_region_id: provenance.source_region_id,
     provenance_trust: provenance.provenance_trust,
     provenance_attestor: provenance.provenance_attestor,
+    text_sha256: optionalText(value.text_sha256),
+    candidate_provenance_sha256: optionalText(value.candidate_provenance_sha256),
+    provider_response_id_sha256: optionalText(value.provider_response_id_sha256),
+    attestation_revision: Number.isSafeInteger(Number(value.attestation_revision)) && Number(value.attestation_revision) > 0
+      ? Number(value.attestation_revision)
+      : null,
     semantic_label: optionalText(value.semantic_label),
     measurement_semantics: value.measurement_semantics === "DISTINCT_MEASUREMENT_POINT"
       ? "DISTINCT_MEASUREMENT_POINT"

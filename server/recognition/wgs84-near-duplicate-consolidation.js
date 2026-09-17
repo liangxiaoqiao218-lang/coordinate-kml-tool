@@ -4,6 +4,10 @@ import {
   ORIGINAL_IMAGE_OBSERVATION_ATTESTATION,
   SERVER_PROVENANCE_ATTESTATION
 } from "../evidence-acquisition/observation-schema.js";
+import {
+  TRUSTED_LAYOUT_ATTESTATION_CAPABILITY,
+  TRUSTED_ROW_BINDING_SCHEMA_VERSION
+} from "../evidence-acquisition/trusted-layout-attestation.js";
 
 export const NEAR_DUPLICATE_DECISION_SCHEMA_VERSION = "near_duplicate_decision_v1";
 export const GEOMETRY_INTENT_GATE_SCHEMA_VERSION = "geometry_intent_authority_gate_v1";
@@ -20,7 +24,7 @@ const TRUSTED_ROLE_REGION = Object.freeze({
   MAP_SEARCH_BOX: "MAP_SEARCH_BOX_REGION",
   MAP_PLACE_DETAILS: "MAP_PLACE_DETAILS_REGION"
 });
-const TRUSTED_ATTESTORS = new Set(["SERVER_LAYOUT_CLASSIFIER_V1", "SYNTHETIC_REGRESSION_V1"]);
+const TRUSTED_ATTESTORS = new Set(["SERVER_LAYOUT_CLASSIFIER_V1", "SERVER_LAYOUT_CLASSIFIER_V2", "SYNTHETIC_REGRESSION_V1"]);
 
 function deepFreeze(value) {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
@@ -127,7 +131,7 @@ function hasDistinctMeasurementMeaning(observation = {}) {
   return Boolean(label && !/^(?:location|coordinate|位置|坐标)$/i.test(label));
 }
 
-function trustedObservation(observation = {}) {
+function trustedObservation(observation = {}, revision = 1) {
   return observation.schema_version === IMAGE_OBSERVATION_SCHEMA_VERSION
     && observation[ORIGINAL_IMAGE_OBSERVATION_ATTESTATION] === true
     && validBbox(observation)
@@ -140,7 +144,36 @@ function trustedObservation(observation = {}) {
     && Boolean(text(observation.image_id))
     && Boolean(text(observation.source))
     && Boolean(text(observation.source_ref))
-    && Boolean(text(observation.source_line_id));
+    && Boolean(text(observation.source_line_id))
+    && /^[0-9a-f]{64}$/.test(text(observation.image_sha256))
+    && Number.isSafeInteger(observation.image_byte_length)
+    && observation.image_byte_length > 0
+    && Boolean(text(observation.image_mime_type))
+    && /^[0-9a-f]{64}$/.test(text(observation.text_sha256))
+    && /^[0-9a-f]{64}$/.test(text(observation.candidate_provenance_sha256))
+    && /^[0-9a-f]{64}$/.test(text(observation.layout_attestation_sha256))
+    && observation.attestation_revision === revision;
+}
+
+function trustedBinding(binding = {}, observation = {}, revision = 1) {
+  const identity = {
+    schema_version: binding.schema_version,
+    group_id: binding.group_id,
+    point_id: binding.point_id,
+    observation_id: binding.observation_id,
+    candidate_provenance_sha256: binding.candidate_provenance_sha256,
+    layout_attestation_sha256: binding.layout_attestation_sha256,
+    result_revision: binding.result_revision
+  };
+  return binding.schema_version === TRUSTED_ROW_BINDING_SCHEMA_VERSION
+    && binding.binding_authority === "SERVER_ATTESTED"
+    && binding.score_method === "trusted_layout_exact_binding_v1"
+    && binding.score_calibrated === true
+    && binding.result_revision === revision
+    && binding.observation_id === observation.observation_id
+    && binding.candidate_provenance_sha256 === observation.candidate_provenance_sha256
+    && binding.layout_attestation_sha256 === observation.layout_attestation_sha256
+    && binding.binding_sha256 === digest(identity);
 }
 
 function bindingForPoint(evidence = {}, point = {}, pointIndex = 0) {
@@ -207,8 +240,12 @@ function geometryGatePayload({ decision, intent = null, revision = 1, provenance
 }
 
 function blockedResult({ state, reasons, points, evidence, revision, intent, provenanceCapability = false } = {}) {
-  const observationIds = (Array.isArray(evidence?.observations) ? evidence.observations : [])
+  const boundObservationIds = (Array.isArray(evidence?.rowBindings) ? evidence.rowBindings : [])
     .map(item => item.observation_id).filter(Boolean);
+  const observationIds = boundObservationIds.length > 0
+    ? boundObservationIds
+    : (Array.isArray(evidence?.observations) ? evidence.observations : [])
+      .map(item => item.observation_id).filter(Boolean);
   const provenanceDigest = digest({
     observations: evidence?.observations || [],
     rowBindings: evidence?.rowBindings || []
@@ -287,13 +324,18 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
       && [undefined, null, "latitude_longitude"].includes(declaredCrs.axisOrder || declaredCrs.axis_order));
 
   const commonReasons = [];
+  const trustedLayoutCapability = evidenceAcquisition[TRUSTED_LAYOUT_ATTESTATION_CAPABILITY] === true
+    && evidenceAcquisition.trusted_layout_status === "ATTESTED";
   if (!crsCompatible) commonReasons.push("CRS_OR_AXIS_CONFLICT");
   if (evidenceAcquisition?.shadow_only !== true
     || evidenceAcquisition?.affects_coordinates !== false
     || evidenceAcquisition?.affects_kml !== false) commonReasons.push("ORIGINAL_EVIDENCE_AUTHORITY_INVALID");
   if (bindings.some(binding => !binding) || observations.some(observation => !observation)) commonReasons.push("UNBOUND_OBSERVATION");
+  if (!trustedLayoutCapability) commonReasons.push("TRUSTED_LAYOUT_ATTESTATION_MISSING");
   if (new Set(observations.filter(Boolean).map(item => item.observation_id)).size !== 2) commonReasons.push("OBSERVATION_IDENTITY_INVALID");
-  if (observations.some(observation => !trustedObservation(observation))) commonReasons.push("PROVENANCE_MISSING_OR_MALFORMED");
+  if (observations.some(observation => !trustedObservation(observation, revision))) commonReasons.push("PROVENANCE_MISSING_OR_MALFORMED");
+  if (bindings.some((binding, index) => !binding || !observations[index]
+    || !trustedBinding(binding, observations[index], revision))) commonReasons.push("TRUSTED_ROW_BINDING_INVALID");
   if (observations.length === 2 && observations.every(Boolean)) {
     if (observations[0].request_asset_id !== observations[1].request_asset_id
       || observations[0].image_id !== observations[1].image_id

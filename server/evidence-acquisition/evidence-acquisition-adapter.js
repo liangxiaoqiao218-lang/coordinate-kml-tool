@@ -18,6 +18,9 @@ function getImageMeta(recognitionResult = {}) {
   return {
     image_id: recognitionResult.image_id || recognitionResult.imageId || image.image_id || image.id || null,
     request_asset_id: recognitionResult.request_asset_id || recognitionResult.requestAssetId || image.request_asset_id || null,
+    image_sha256: recognitionResult.image_sha256 || image.image_sha256 || null,
+    byte_length: Number(recognitionResult.image_byte_length || image.byte_length) || null,
+    mime_type: recognitionResult.image_mime_type || image.mime_type || null,
     width: Number(image.width) || null,
     height: Number(image.height) || null,
     page: Number.parseInt(image.page || recognitionResult.page, 10) || null
@@ -39,6 +42,7 @@ function getRawObservationCollections(recognitionResult = {}) {
     { source: "qwenOcr", values: recognitionResult.ocrLineLocations },
     { source: "qwenOcr", values: recognitionResult.ocrObservations },
     { source: "qwenOcr", values: ocrResult.words_info },
+    { source: "providerStructuredLayout", values: recognitionResult.providerLayoutCandidates },
     { source: "visionObservation", values: recognitionResult.visionObservations },
     { source: "imageObservation", values: recognitionResult.imageObservations }
   ];
@@ -49,16 +53,20 @@ function normalizeRawObservation(value = {}, index, fallbackSource, imageMeta) {
   const bbox = value.bbox || value.bbox_2d || polygonToObservationBbox(polygon, imageMeta);
   const source = normalizeSource(value.source, fallbackSource);
   const text = String(value.text ?? value.raw_text ?? value.value ?? "");
-  const trustedAbsolutePixelSource = source === "qwenOcr" || value.trusted_pixel_bbox === true;
+  const trustedAbsolutePixelSource = ["qwenOcr", "providerStructuredLayout", "localOcrStructuredLayout"].includes(source);
   const observationInput = {
     observation_id: value.observation_id,
     image_id: value.image_id || imageMeta.image_id,
+    image_sha256: value.image_sha256 || imageMeta.image_sha256,
+    image_byte_length: value.image_byte_length || imageMeta.byte_length,
+    image_mime_type: value.image_mime_type || imageMeta.mime_type,
     page: value.page || imageMeta.page,
     text,
     bbox,
     polygon,
     coordinate_space: value.coordinate_space || (trustedAbsolutePixelSource ? ORIGINAL_IMAGE_PIXEL_SPACE : null),
     source,
+    source_type: value.source_type,
     source_ref: value.source_ref || value.id || `${source}_${index + 1}`,
     request_asset_id: value.request_asset_id || imageMeta.request_asset_id,
     source_line_id: value.source_line_id || value.id || `${source}_${index + 1}`,
@@ -66,6 +74,10 @@ function normalizeRawObservation(value = {}, index, fallbackSource, imageMeta) {
     source_region_id: value.source_region_id,
     provenance_trust: value.provenance_trust,
     provenance_attestor: value.provenance_attestor,
+    text_sha256: value.text_sha256,
+    candidate_provenance_sha256: value.candidate_provenance_sha256,
+    provider_response_id_sha256: value.provider_response_id_sha256,
+    attestation_revision: value.attestation_revision,
     semantic_label: value.semantic_label,
     measurement_semantics: value.measurement_semantics,
     boundary_point: value.boundary_point,
@@ -124,6 +136,9 @@ function buildLogicalRawTextObservations(recognitionResult = {}, imageMeta = {})
     .filter(Boolean)
     .map((text, index) => createImageTextObservation({
       image_id: imageMeta.image_id,
+      image_sha256: imageMeta.image_sha256,
+      image_byte_length: imageMeta.byte_length,
+      image_mime_type: imageMeta.mime_type,
       request_asset_id: imageMeta.request_asset_id,
       page: imageMeta.page,
       text,
