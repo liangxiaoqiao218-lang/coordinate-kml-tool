@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_CHALLENGE_SCHEMA_VERSION,
   PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_GRANT_SCHEMA_VERSION,
   PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_OUTPUT_POLICY,
   PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT,
@@ -15,8 +16,13 @@ import { createCoordinateImageIdentity } from "../server/recognition/coordinate-
 
 const now = 2_000_000_000_000;
 const requestId = "00000000-0000-4000-8000-0000000000e2";
-const runtimeCommit = "29b557ba1629a49b9b86e8160cdc01d1da6bc445";
+const runtimeCommit = "4325535f2e49584023ad9189eac7a450874580a4";
 const runtimeBranch = "release/wgs84-kml-closure";
+const service = "coordinate-kml-tool-rc";
+const bootA = "a".repeat(64);
+const bootB = "b".repeat(64);
+const challengeA = "c".repeat(64);
+const challengeB = "d".repeat(64);
 const forbidden = "35.4478191,83.1789913 PRIVATE_SYNTHETIC_TEXT";
 
 function makeBmp(width = 120, height = 100) {
@@ -40,22 +46,53 @@ const imageIdentity = createCoordinateImageIdentity(
   { requestId, page: 1 }
 );
 
-function grant(overrides = {}) {
+function makeRuntime({ currentTime = now, bootIdentity = bootA, challengeId = challengeA } = {}) {
+  return new ProviderLayoutProductionQualificationGrantRuntime({
+    now: () => currentTime,
+    bootIdentity,
+    challengeIdFactory: () => challengeId
+  });
+}
+
+function issue(runtime, overrides = {}) {
+  const outcome = runtime.issueChallenge({
+    service: overrides.service ?? service,
+    runtimeCommit: overrides.runtimeCommit ?? runtimeCommit,
+    runtimeBranch: overrides.runtimeBranch ?? runtimeBranch,
+    ttlMs: overrides.ttlMs
+  });
+  assert.equal(outcome.ok, true);
+  return outcome.challenge;
+}
+
+const detachedChallenge = Object.freeze({
+  schema_version: PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_CHALLENGE_SCHEMA_VERSION,
+  service,
+  runtime_commit: runtimeCommit,
+  runtime_branch: runtimeBranch,
+  boot_identity: bootA,
+  challenge_id: challengeA,
+  issued_at: now,
+  expires_at: now + 60_000
+});
+
+function grant(challenge = detachedChallenge, overrides = {}) {
   return {
     schema_version: PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_GRANT_SCHEMA_VERSION,
-    service: "coordinate-kml-tool-rc",
+    service,
     runtime_commit: runtimeCommit,
     runtime_branch: runtimeBranch,
     request_id: requestId,
     nonce: "p0e-e2-synthetic-nonce-0001",
     synthetic_image: true,
     canonical_image_identity: { ...imageIdentity },
+    challenge: { ...challenge },
     provider_id: "ALIYUN_DASHSCOPE",
     model_family: "QWEN_VL",
     model_name: "qwen-vl-plus",
     response_contract_id: PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT,
     max_provider_calls: 1,
-    issued_at: now - 1000,
+    issued_at: now,
     expires_at: now + 60_000,
     output_policy: PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_OUTPUT_POLICY,
     ...overrides
@@ -63,12 +100,15 @@ function grant(overrides = {}) {
 }
 
 function authorize(overrides = {}) {
-  return authorizeProviderLayoutProductionQualificationGrant({
-    enabled: true,
-    publicKeyPem: "synthetic-public-key-placeholder",
-    grant: overrides.grant ?? grant(),
+  const runtime = overrides.runtime ?? makeRuntime();
+  const challenge = overrides.challenge ?? issue(runtime);
+  const inputGrant = overrides.grant ?? grant(challenge, overrides.grantOverrides);
+  const authorization = authorizeProviderLayoutProductionQualificationGrant({
+    enabled: overrides.enabled ?? true,
+    publicKeyPem: overrides.publicKeyPem ?? "synthetic-public-key-placeholder",
+    grant: inputGrant,
     signatureBase64Url: "synthetic-signature",
-    service: overrides.service ?? "coordinate-kml-tool-rc",
+    service: overrides.service ?? service,
     runtimeCommit: overrides.runtimeCommit ?? runtimeCommit,
     runtimeBranch: overrides.runtimeBranch ?? runtimeBranch,
     requestId: overrides.requestId ?? requestId,
@@ -77,9 +117,11 @@ function authorize(overrides = {}) {
     modelFamily: overrides.modelFamily ?? "QWEN_VL",
     modelName: overrides.modelName ?? "qwen-vl-plus",
     responseContractId: overrides.responseContractId ?? PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT,
+    runtime,
     now: overrides.now ?? now,
     verify: overrides.verify ?? (() => true)
   });
+  return { ...authorization, runtime, challenge, inputGrant };
 }
 
 let passed = 0;
@@ -101,6 +143,34 @@ await test("gate is disabled unless explicitly enabled", () => {
 await test("missing public key fails before authorization", () => {
   const result = authorizeProviderLayoutProductionQualificationGrant({ enabled: true, grant: grant() });
   assert.equal(result.reason, "PRODUCTION_QUALIFICATION_PUBLIC_KEY_MISSING");
+});
+
+await test("missing challenge runtime fails before authorization", () => {
+  const result = authorizeProviderLayoutProductionQualificationGrant({
+    enabled: true,
+    publicKeyPem: "present",
+    grant: grant()
+  });
+  assert.equal(result.reason, "PRODUCTION_QUALIFICATION_RUNTIME_MISSING");
+});
+
+await test("server issues one boot-bound challenge and repeats only that descriptor", () => {
+  const runtime = makeRuntime();
+  const first = issue(runtime);
+  const repeated = issue(runtime);
+  assert.deepEqual(repeated, first);
+  assert.equal(first.boot_identity, bootA);
+  assert.equal(first.challenge_id, challengeA);
+  assert.equal(first.schema_version, PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_CHALLENGE_SCHEMA_VERSION);
+  assert.equal(first.expires_at - first.issued_at, 5 * 60 * 1000);
+});
+
+await test("challenge lifetime cannot exceed five minutes and expired challenge cannot be reissued", () => {
+  const runtime = makeRuntime();
+  assert.equal(runtime.issueChallenge({ service, runtimeCommit, runtimeBranch, ttlMs: (5 * 60 * 1000) + 1 }).ok, false);
+  issue(runtime, { ttlMs: 1 });
+  runtime.now = () => now + 1;
+  assert.equal(runtime.issueChallenge({ service, runtimeCommit, runtimeBranch }).reason, "PRODUCTION_QUALIFICATION_CHALLENGE_EXPIRED");
 });
 
 await test("valid exact bindings mint an in-process grant capability", () => {
@@ -163,6 +233,14 @@ await test("service commit branch and request bindings fail closed", () => {
   assert.equal(authorize({ requestId: requestId.replace(/e2$/, "e3") }).ok, false);
 });
 
+await test("challenge and grant identities cannot be substituted", () => {
+  const runtime = makeRuntime();
+  const challenge = issue(runtime);
+  const substitutedChallenge = { ...challenge, challenge_id: "e".repeat(64) };
+  assert.equal(authorize({ runtime, challenge, grant: grant(substitutedChallenge) }).ok, false);
+  assert.equal(authorize({ runtime, challenge, grant: grant(challenge, { nonce: "different-grant-nonce-0002" }) }).ok, true);
+});
+
 await test("canonical image identity mismatch fails closed", () => {
   const other = createCoordinateImageIdentity(
     { buffer: Buffer.concat([makeBmp(), Buffer.from([0])]), mimetype: "image/bmp" },
@@ -178,28 +256,33 @@ await test("Provider model and family bindings fail closed", () => {
 });
 
 await test("unproven or forged response contract cannot be promoted", () => {
-  assert.equal(authorize({ grant: grant({ response_contract_id: "DASHSCOPE_STRUCTURED_LAYOUT_V1" }) }).ok, false);
+  assert.equal(authorize({ grantOverrides: { response_contract_id: "DASHSCOPE_STRUCTURED_LAYOUT_V1" } }).ok, false);
   assert.equal(authorize({ responseContractId: "DASHSCOPE_STRUCTURED_LAYOUT_V1" }).ok, false);
 });
 
 await test("maximum Provider calls must be exactly one", () => {
-  assert.equal(authorize({ grant: grant({ max_provider_calls: 0 }) }).ok, false);
-  assert.equal(authorize({ grant: grant({ max_provider_calls: 2 }) }).ok, false);
+  assert.equal(authorize({ grantOverrides: { max_provider_calls: 0 } }).ok, false);
+  assert.equal(authorize({ grantOverrides: { max_provider_calls: 2 } }).ok, false);
 });
 
 await test("output policy is fixed and cannot be widened", () => {
-  assert.equal(authorize({ grant: grant({ output_policy: "RAW_PROVIDER_RESPONSE" }) }).ok, false);
+  assert.equal(authorize({ grantOverrides: { output_policy: "RAW_PROVIDER_RESPONSE" } }).ok, false);
 });
 
-await test("grant lifetime is at most five minutes and must be current", () => {
-  assert.equal(authorize({ grant: grant({ expires_at: now + (5 * 60 * 1000) + 1 }) }).ok, false);
-  assert.equal(authorize({ grant: grant({ expires_at: now }) }).ok, false);
-  assert.equal(authorize({ grant: grant({ issued_at: now + 1 }) }).ok, false);
+await test("grant lifetime is current bounded and nested within challenge lifetime", () => {
+  assert.equal(authorize({ grantOverrides: { expires_at: now + (5 * 60 * 1000) + 1 } }).ok, false);
+  assert.equal(authorize({ grantOverrides: { expires_at: now } }).ok, false);
+  assert.equal(authorize({ grantOverrides: { issued_at: now + 1 } }).ok, false);
+  assert.equal(authorize({ grantOverrides: { issued_at: now - 1 } }).ok, false);
 });
 
-await test("missing nonce and non-synthetic grants fail closed", () => {
-  assert.equal(authorize({ grant: grant({ nonce: "" }) }).ok, false);
-  assert.equal(authorize({ grant: grant({ synthetic_image: false }) }).ok, false);
+await test("missing nonce non-synthetic and legacy grants fail closed", () => {
+  assert.equal(authorize({ grantOverrides: { nonce: "" } }).ok, false);
+  assert.equal(authorize({ grantOverrides: { synthetic_image: false } }).ok, false);
+  const legacy = grant();
+  delete legacy.challenge;
+  legacy.schema_version = "provider_layout_production_qualification_grant_v1";
+  assert.equal(authorize({ grant: legacy }).ok, false);
 });
 
 await test("JSON serialization and structuredClone lose grant capability", () => {
@@ -217,30 +300,83 @@ await test("canonical serializer is stable across key order", () => {
   );
 });
 
-await test("nonce is consumed before the Provider and replay is rejected", () => {
-  const authorized = authorize().grant;
-  const runtime = new ProviderLayoutProductionQualificationGrantRuntime({ now: () => now });
-  assert.equal(runtime.consumeBeforeProvider(authorized).ok, true);
-  assert.equal(runtime.consumeBeforeProvider(authorized).reason, "PRODUCTION_QUALIFICATION_REPLAY_REJECTED");
+await test("same signed grant cannot be reauthorized by a fresh runtime", () => {
+  const first = authorize();
+  const restarted = makeRuntime({ bootIdentity: bootB, challengeId: challengeB });
+  const result = authorize({ runtime: restarted, challenge: first.challenge, grant: first.inputGrant });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /CHALLENGE_(?:MISSING|BINDING_MISMATCH)/);
 });
 
-await test("expired grants are rejected by the runtime", () => {
-  const authorized = authorize().grant;
-  const runtime = new ProviderLayoutProductionQualificationGrantRuntime({ now: () => now + 60_001 });
-  assert.equal(runtime.consumeBeforeProvider(authorized).reason, "PRODUCTION_QUALIFICATION_EXPIRED");
+await test("challenge routed to another instance fails closed before Provider", async () => {
+  const first = authorize();
+  const otherRuntime = makeRuntime({ bootIdentity: bootB, challengeId: challengeB });
+  issue(otherRuntime);
+  const otherAuthorization = authorize({ runtime: otherRuntime, challenge: first.challenge, grant: first.inputGrant });
+  assert.equal(otherAuthorization.ok, false);
+  let providerCalls = 0;
+  const outcome = await executeProviderLayoutProductionQualificationProbe({
+    grant: first.grant,
+    runtime: otherRuntime,
+    providerCall: async () => { providerCalls += 1; },
+    collectQualification: () => ({ status: "RESPONSE_CONTRACT_UNSUPPORTED" })
+  });
+  assert.equal(outcome.ok, false);
+  assert.equal(providerCalls, 0);
 });
 
-await test("restart or serialized replay loses the process capability", () => {
-  const persisted = JSON.parse(JSON.stringify(authorize().grant));
-  const runtime = new ProviderLayoutProductionQualificationGrantRuntime({ now: () => now });
-  assert.equal(runtime.consumeBeforeProvider(persisted).reason, "PRODUCTION_QUALIFICATION_CAPABILITY_MISSING");
+await test("different grants and nonces for one challenge permit at most one Provider call", async () => {
+  const runtime = makeRuntime();
+  const challenge = issue(runtime);
+  const first = authorize({ runtime, challenge, grant: grant(challenge, { nonce: "nonce-one-00000001" }) });
+  const second = authorize({ runtime, challenge, grant: grant(challenge, { nonce: "nonce-two-00000002" }) });
+  let providerCalls = 0;
+  const call = authorized => executeProviderLayoutProductionQualificationProbe({
+    grant: authorized,
+    runtime,
+    providerCall: async () => { providerCalls += 1; return { id: "synthetic" }; },
+    collectQualification: () => ({ status: "RESPONSE_CONTRACT_UNSUPPORTED" })
+  });
+  const [one, two] = await Promise.all([call(first.grant), call(second.grant)]);
+  assert.equal(providerCalls, 1);
+  assert.equal([one, two].filter(item => item.ok).length, 1);
+});
+
+await test("expired grant is rejected before Provider", async () => {
+  const authorized = authorize();
+  authorized.runtime.now = () => now + 60_001;
+  let providerCalls = 0;
+  const outcome = await executeProviderLayoutProductionQualificationProbe({
+    grant: authorized.grant,
+    runtime: authorized.runtime,
+    providerCall: async () => { providerCalls += 1; },
+    collectQualification: () => ({ status: "RESPONSE_CONTRACT_UNSUPPORTED" })
+  });
+  assert.equal(outcome.reason, "PRODUCTION_QUALIFICATION_EXPIRED");
+  assert.equal(providerCalls, 0);
+});
+
+await test("serialized challenge and grant cannot restore server capabilities", async () => {
+  const authorized = authorize();
+  const persisted = JSON.parse(JSON.stringify(authorized.grant));
+  const restarted = makeRuntime({ bootIdentity: bootB, challengeId: challengeB });
+  let providerCalls = 0;
+  const outcome = await executeProviderLayoutProductionQualificationProbe({
+    grant: persisted,
+    runtime: restarted,
+    providerCall: async () => { providerCalls += 1; },
+    collectQualification: () => ({ status: "RESPONSE_CONTRACT_UNSUPPORTED" })
+  });
+  assert.equal(outcome.reason, "PRODUCTION_QUALIFICATION_CAPABILITY_MISSING");
+  assert.equal(providerCalls, 0);
 });
 
 await test("successful probe performs exactly one Provider call and emits only fixed status", async () => {
+  const authorized = authorize();
   let providerCalls = 0;
   const outcome = await executeProviderLayoutProductionQualificationProbe({
-    grant: authorize().grant,
-    runtime: new ProviderLayoutProductionQualificationGrantRuntime({ now: () => now }),
+    grant: authorized.grant,
+    runtime: authorized.runtime,
     providerCall: async () => {
       providerCalls += 1;
       return { id: "synthetic-response", choices: [{ message: { content: forbidden } }] };
@@ -258,47 +394,57 @@ await test("successful probe performs exactly one Provider call and emits only f
   assert.equal(JSON.stringify(outcome).includes(forbidden), false);
 });
 
-await test("Provider failure is never retried and returns fixed counters", async () => {
-  let providerCalls = 0;
-  const outcome = await executeProviderLayoutProductionQualificationProbe({
-    grant: authorize().grant,
-    runtime: new ProviderLayoutProductionQualificationGrantRuntime({ now: () => now }),
-    providerCall: async () => {
-      providerCalls += 1;
-      throw new Error("sensitive Provider failure");
+await test("Provider failure timeout and uncertain result each consume their process challenge", async () => {
+  const scenarios = [
+    {
+      name: "failure",
+      providerCall: async () => { throw new Error("sensitive Provider failure"); },
+      collectQualification: () => { throw new Error("must not collect"); },
+      providerCompleted: false
     },
-    collectQualification: () => { throw new Error("must not collect"); }
-  });
-  assert.equal(providerCalls, 1);
-  assert.equal(outcome.provider_call_count, 1);
-  assert.equal(outcome.provider_completed, false);
-  assert.equal(JSON.stringify(outcome).includes("sensitive"), false);
-});
-
-await test("failed Provider attempt consumes nonce and a second execution cannot call Provider", async () => {
-  let providerCalls = 0;
-  const runtime = new ProviderLayoutProductionQualificationGrantRuntime({ now: () => now });
-  const authorized = authorize().grant;
-  await executeProviderLayoutProductionQualificationProbe({
-    grant: authorized,
-    runtime,
-    providerCall: async () => { providerCalls += 1; throw new Error("failed"); },
-    collectQualification: () => ({ status: "RESPONSE_CONTRACT_UNSUPPORTED" })
-  });
-  const replay = await executeProviderLayoutProductionQualificationProbe({
-    grant: authorized,
-    runtime,
-    providerCall: async () => { providerCalls += 1; },
-    collectQualification: () => ({ status: "RESPONSE_CONTRACT_UNSUPPORTED" })
-  });
-  assert.equal(providerCalls, 1);
-  assert.equal(replay.reason, "PRODUCTION_QUALIFICATION_REPLAY_REJECTED");
+    {
+      name: "timeout",
+      providerCall: async () => { const error = new Error("sensitive Provider timeout"); error.code = "ETIMEDOUT"; throw error; },
+      collectQualification: () => { throw new Error("must not collect"); },
+      providerCompleted: false
+    },
+    {
+      name: "uncertain",
+      providerCall: async () => ({ id: "uncertain-response" }),
+      collectQualification: () => { throw new Error("sensitive uncertain result"); },
+      providerCompleted: true
+    }
+  ];
+  for (const [index, scenario] of scenarios.entries()) {
+    const authorized = authorize({
+      runtime: makeRuntime({
+        bootIdentity: String(index + 1).repeat(64),
+        challengeId: String(index + 4).repeat(64)
+      })
+    });
+    let providerCalls = 0;
+    const outcome = await executeProviderLayoutProductionQualificationProbe({
+      grant: authorized.grant,
+      runtime: authorized.runtime,
+      providerCall: async () => { providerCalls += 1; return scenario.providerCall(); },
+      collectQualification: scenario.collectQualification
+    });
+    assert.equal(providerCalls, 1, `${scenario.name} Provider call count`);
+    assert.equal(outcome.provider_call_count, 1, `${scenario.name} fixed call count`);
+    assert.equal(outcome.provider_completed, scenario.providerCompleted, `${scenario.name} completion state`);
+    assert.equal(JSON.stringify(outcome).includes("sensitive"), false, `${scenario.name} redaction`);
+    assert.equal(authorized.runtime.issueChallenge({ service, runtimeCommit, runtimeBranch }).reason,
+      "PRODUCTION_QUALIFICATION_CHALLENGE_ALREADY_CONSUMED");
+    const replay = authorize({ runtime: authorized.runtime, challenge: authorized.challenge, grant: authorized.inputGrant });
+    assert.equal(replay.ok, false, `${scenario.name} replay authorization`);
+  }
 });
 
 await test("non-fixed collector output is rejected without disclosure", async () => {
+  const authorized = authorize();
   const outcome = await executeProviderLayoutProductionQualificationProbe({
-    grant: authorize().grant,
-    runtime: new ProviderLayoutProductionQualificationGrantRuntime({ now: () => now }),
+    grant: authorized.grant,
+    runtime: authorized.runtime,
     providerCall: async () => ({ id: "synthetic-response" }),
     collectQualification: () => ({ status: "RAW_PROVIDER_RESPONSE", raw: forbidden })
   });
@@ -307,10 +453,12 @@ await test("non-fixed collector output is rejected without disclosure", async ()
 });
 
 await test("ordinary objects cannot invoke the Provider", async () => {
+  const runtime = makeRuntime();
+  const challenge = issue(runtime);
   let providerCalls = 0;
   const outcome = await executeProviderLayoutProductionQualificationProbe({
-    grant: grant(),
-    runtime: new ProviderLayoutProductionQualificationGrantRuntime({ now: () => now }),
+    grant: grant(challenge),
+    runtime,
     providerCall: async () => { providerCalls += 1; },
     collectQualification: () => ({ status: "RESPONSE_CONTRACT_UNSUPPORTED" })
   });
@@ -319,9 +467,10 @@ await test("ordinary objects cannot invoke the Provider", async () => {
 });
 
 await test("fixed response contains no image Provider text bbox headers cookies keys or downstream authority", async () => {
+  const authorized = authorize();
   const outcome = await executeProviderLayoutProductionQualificationProbe({
-    grant: authorize().grant,
-    runtime: new ProviderLayoutProductionQualificationGrantRuntime({ now: () => now }),
+    grant: authorized.grant,
+    runtime: authorized.runtime,
     providerCall: async () => ({
       id: "response",
       choices: [{ message: { content: forbidden } }],
