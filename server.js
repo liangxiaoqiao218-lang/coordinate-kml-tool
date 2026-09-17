@@ -14110,7 +14110,10 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
 
     if (!regressionTestMode.active) {
       const usageStatus = await runBudgetedStage("usage_eligibility", async () => {
-        await updateSupabaseUserVisitMeta(visitorId, req);
+        // Visitor metadata is already refreshed by /api/config and is not an
+        // authorization or quota prerequisite. Keeping IP geolocation and its
+        // database writes out of the recognition critical path prevents an
+        // unrelated analytics dependency from consuming the Provider budget.
         return checkUsage(visitorId, "convert");
       });
       checkedCoordinateUsageStatus = usageStatus;
