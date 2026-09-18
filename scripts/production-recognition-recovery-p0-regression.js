@@ -1515,6 +1515,54 @@ test("one-shot structured diagnostics are bounded and redact source content", ()
   assert.doesNotMatch(diagnostic, /rawText|imageDataUrl|providerResponse|authorization|cookie|apiKey|secret/iu);
 });
 
+test("one-shot structured acquisition contract rejects post-Provider family drift", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const route = primaryRouting.classifyOneShotStructuredFamily({ text: source });
+  const contract = primaryRouting.createOneShotAcquisitionContract({ route, sourceText: source });
+  const conformant = primaryRouting.validateOneShotAcquisitionContract({
+    contract,
+    providerText: "Longitude: 63.500001\nLatitude: 11.500002"
+  });
+  const drifted = primaryRouting.validateOneShotAcquisitionContract({
+    contract,
+    providerText: "Longitude: 63.500001\nLatitude: 11.500002\n64.1000 | 12.2000"
+  });
+  assert.equal(conformant.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  assert.equal(drifted.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+});
+
+test("one-shot structured generic contract cannot be upgraded by Provider output", () => {
+  const route = primaryRouting.classifyOneShotStructuredFamily({ text: "ordinary report" });
+  const contract = primaryRouting.createOneShotAcquisitionContract({ route, sourceText: "ordinary report" });
+  const result = primaryRouting.validateOneShotAcquisitionContract({
+    contract,
+    providerText: "Longitude: 63.500001\nLatitude: 11.500002"
+  });
+  assert.equal(result.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY);
+});
+
+test("one-shot structured server gates conformance before parsing and returns sanitized review", () => {
+  const routeStart = serverSource.indexOf('app.post("/api/recognize-coordinates"');
+  const conformanceIndex = serverSource.indexOf("validateOneShotAcquisitionContract", routeStart);
+  const dmsFormatIndex = serverSource.indexOf("formatHandwrittenDmsRawRows", conformanceIndex);
+  const parseIndex = serverSource.indexOf("extractCoordinateLines", conformanceIndex);
+  assert.ok(conformanceIndex >= 0 && dmsFormatIndex > conformanceIndex && parseIndex > conformanceIndex);
+  const reviewBlock = serverSource.slice(conformanceIndex, dmsFormatIndex);
+  assert.match(reviewBlock, /ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED/);
+  assert.match(reviewBlock, /forceRequiresReview:\s*true/);
+  assert.match(reviewBlock, /rawText:\s*""/);
+  assert.match(reviewBlock, /coordinates:\s*""/);
+});
+
+test("one-shot structured conformance diagnostics remain bounded", () => {
+  const start = serverSource.indexOf('console.log("One-shot acquisition conformance:"');
+  const diagnostic = serverSource.slice(start, serverSource.indexOf("if (oneShotAcquisitionConformance.status", start));
+  assert.ok(start >= 0);
+  assert.match(diagnostic, /family|status|reason|counts|providerCallCount|localOcrCallCount|terminalState/);
+  assert.doesNotMatch(diagnostic, /rawText|providerRawText|imageDataUrl|authorization|cookie|apiKey|secret|headers/iu);
+});
+
 let passed = 0;
 const noServiceMode = process.argv.includes("--no-service");
 const structuredFamilyOnly = process.argv.includes("--structured-family-only");

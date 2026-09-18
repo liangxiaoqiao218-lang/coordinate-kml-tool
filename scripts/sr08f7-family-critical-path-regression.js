@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  ONE_SHOT_ACQUISITION_CONFORMANCE_REASON,
+  ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS,
   ONE_SHOT_STRUCTURED_FAMILY,
   buildOneShotStructuredFamilyPrompt,
   buildPrimaryRouteDecision,
-  classifyOneShotStructuredFamily
+  classifyOneShotStructuredFamily,
+  createOneShotAcquisitionContract,
+  validateOneShotAcquisitionContract
 } from "../server/recognition/family-primary-routing.js";
 import {
   RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_CODE,
@@ -743,6 +747,196 @@ test("R16", "sanitized diagnostics contain only bounded route evidence", async (
   assert.doesNotMatch(diagnostic, /rawText|imageDataUrl|providerResponse|cookie|apiKey|secret/iu);
   assert.match(diagnostic, /coordinateRowCount/);
   assert.match(diagnostic, /localOcrCallCount/);
+});
+
+function contractFor(text, layoutLines = []) {
+  const selectedRoute = route(text, layoutLines);
+  return createOneShotAcquisitionContract({ route: selectedRoute, sourceText: text });
+}
+
+function assertConformant(contract, providerText) {
+  const result = validateOneShotAcquisitionContract({ contract, providerText });
+  assert.equal(result.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  assert.equal(result.reason, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT);
+  return result;
+}
+
+function assertReview(contract, providerText, reason) {
+  const result = validateOneShotAcquisitionContract({ contract, providerText });
+  assert.equal(result.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  if (reason) assert.equal(result.reason, reason);
+  return result;
+}
+
+test("R17", "request contract is bounded immutable and rejects digest tampering", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const contract = contractFor(source);
+  assert.equal(Object.isFrozen(contract), true);
+  assert.equal(Object.isFrozen(contract.structure), true);
+  assert.doesNotMatch(JSON.stringify(contract), /64\.125001|12\.875002|Longitude:/u);
+  const tampered = { ...contract, family: ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE };
+  assertReview(tampered, source, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONTRACT_INVALID);
+});
+
+test("R18", "decimal and DMS single-point evidence conforms only as one closed pair", () => {
+  const decimal = contractFor("Longitude: 64.125001\nLatitude: 12.875002");
+  const dms = contractFor(`Longitude: 64°07'30.00\"E\nLatitude: 12°52'30.00\"N`);
+  assertConformant(decimal, "Longitude: 63.500001\nLatitude: 11.500002");
+  assertConformant(dms, `Longitude: 63°07'30.00\"E\nLatitude: 11°52'30.00\"N`);
+  for (const providerText of [
+    "Longitude: 63.500001\nLatitude: 11.500002\n64.1000 | 12.2000",
+    "Longitude: 63.500001\nLongitude: 64.1000\nLatitude: 11.500002",
+    `Longitude: 63°07'30.00\"E\nLatitude: 11.500002`,
+    `Longitude: 11°30'00.00\"N\nLatitude: 63°30'00.00\"E`
+  ]) assertReview(decimal, providerText);
+});
+
+test("R19", "WGS84 table contract detects header row and continuity loss", () => {
+  const source = [
+    "Point | Longitude | Latitude",
+    "A | 64.1001 | 12.8001",
+    "B | 64.2002 | 12.8002",
+    "C | 64.2003 | 12.9003",
+    "D | 64.1004 | 12.9004"
+  ].join("\n");
+  const contract = contractFor(source);
+  const valid = source.replaceAll("64.", "63.").replaceAll("12.", "11.");
+  assertConformant(contract, valid);
+  assertReview(contract, valid.split("\n").slice(1).join("\n"));
+  assertReview(contract, valid.replace("C |", "B |"));
+  assertReview(contract, valid.split("\n").filter(line => !line.startsWith("C |")).join("\n"));
+});
+
+test("R20", "twenty-row table contract preserves exact row count and header", () => {
+  const rows = Array.from({ length: 20 }, (_, index) => `${index + 1} | ${(61 + index / 1000).toFixed(4)} | ${(14 + index / 1000).toFixed(4)}`);
+  const source = ["No | Longitude | Latitude", ...rows].join("\n");
+  const contract = contractFor(source);
+  assert.equal(contract.structure.coordinateRowCount, 20);
+  assertConformant(contract, source);
+  assertReview(contract, ["No | Longitude | Latitude", ...rows.slice(0, 19)].join("\n"));
+});
+
+test("R20B", "DMS table contract preserves original format header and exact rows", () => {
+  const source = [
+    "Point | Latitude | Longitude",
+    `A | 12°01'01.00\"N | 64°01'01.00\"E`,
+    `B | 12°01'02.00\"N | 64°01'02.00\"E`,
+    `C | 12°01'03.00\"N | 64°01'03.00\"E`,
+    `D | 12°01'04.00\"N | 64°01'04.00\"E`
+  ].join("\n");
+  const contract = contractFor(source);
+  assert.equal(contract.family, ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE);
+  assertConformant(contract, source);
+  assertReview(contract, source.split("\n").slice(1).join("\n"));
+  assertReview(contract, source.replace(`C | 12°01'03.00\"N | 64°01'03.00\"E\n`, ""));
+});
+
+test("R21", "grouped DMS contract preserves repeated headers and group boundaries", () => {
+  const source = [
+    "GROUP A",
+    "Point | Latitude | Longitude",
+    `A | 12°01'01.00\"N | 64°01'01.00\"E`,
+    `B | 12°01'02.00\"N | 64°01'02.00\"E`,
+    "GROUP B",
+    "Point | Latitude | Longitude",
+    `A | 13°01'01.00\"N | 65°01'01.00\"E`,
+    `B | 13°01'02.00\"N | 65°01'02.00\"E`
+  ].join("\n");
+  const contract = contractFor(source);
+  const provider = [
+    "GROUP | A", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 11°01'01.00\"N | 63°01'01.00\"E`,
+    `POINT | B | 11°01'02.00\"N | 63°01'02.00\"E`,
+    "GROUP | B", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 14°01'01.00\"N | 66°01'01.00\"E`,
+    `POINT | B | 14°01'02.00\"N | 66°01'02.00\"E`
+  ].join("\n");
+  assertConformant(contract, provider);
+  assertReview(contract, provider.replace("GROUP | B\n", ""), ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GROUP_BOUNDARY_MISMATCH);
+  assertReview(contract, provider.replace("POINT | B | 14°01'02.00\"N", "POINT | A | 14°01'02.00\"N"));
+  const movedAcrossGroups = provider
+    .replace(`POINT | B | 11°01'02.00\"N | 63°01'02.00\"E\n`, "")
+    .replace("GROUP | B\n", `GROUP | B\nPOINT | C | 15°01'03.00\"N | 67°01'03.00\"E\n`);
+  assertReview(contract, movedAcrossGroups, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GROUP_BOUNDARY_MISMATCH);
+});
+
+test("R22", "map roles require pre-bound local layout and cannot be forged by Provider text", () => {
+  const source = "Search 64.1250,12.8750\nPlace details 64.125001,12.875002\nPlus Code 7JCPTEST+5P";
+  const layoutLines = [
+    { text: "Search 64.1250,12.8750", bbox: [1, 1, 101, 21] },
+    { text: "Place details 64.125001,12.875002", bbox: [1, 101, 151, 121] }
+  ];
+  const provider = "MAP_SEARCH_BOX | 63.1250,11.8750\nMAP_PLACE_DETAILS | 63.125001,11.875002\nPLUS_CODE | 7JCPTEST+5P";
+  assertConformant(contractFor(source, layoutLines), provider);
+  assertReview(contractFor("unclassified evidence"), provider, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY);
+});
+
+test("R21B", "repeated DMS headers bind group rows even without visible group titles", () => {
+  const source = [
+    "Point | Latitude | Longitude",
+    `A | 12°01'01.00\"N | 64°01'01.00\"E`,
+    `B | 12°01'02.00\"N | 64°01'02.00\"E`,
+    "Point | Latitude | Longitude",
+    `A | 13°01'01.00\"N | 65°01'01.00\"E`,
+    `B | 13°01'02.00\"N | 65°01'02.00\"E`
+  ].join("\n");
+  const contract = contractFor(source);
+  assert.equal(contract.family, ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED);
+  assert.equal(contract.structure.groupBoundaryMode, "REPEATED_HEADERS");
+  assert.deepEqual(contract.structure.groupRowCounts, [2, 2]);
+  const provider = [
+    "GROUP | REPEATED_HEADER_BOUNDARY", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 11°01'01.00\"N | 63°01'01.00\"E`,
+    `POINT | B | 11°01'02.00\"N | 63°01'02.00\"E`,
+    "GROUP | REPEATED_HEADER_BOUNDARY", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 14°01'01.00\"N | 66°01'01.00\"E`,
+    `POINT | B | 14°01'02.00\"N | 66°01'02.00\"E`
+  ].join("\n");
+  assertConformant(contract, provider);
+});
+
+test("R23", "projected contract requires exact complete CRS identity", () => {
+  const source = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nPoint | Easting | Northing\nA | 500100 | 2065100";
+  const contract = contractFor(source);
+  const provider = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nAXIS_ORDER | EASTING | NORTHING\nPOINT | A | 500200 | 2065200";
+  assertConformant(contract, provider);
+  assertReview(contract, provider.replace("43N", "44N"), ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH);
+  assertReview(contract, provider.replace("Zone 43N | Hemisphere N", "Zone 43"), ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH);
+  assertReview(contract, provider.replace("EASTING | NORTHING", "NORTHING | EASTING"), ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH);
+});
+
+test("R23B", "MGRS contract requires the same explicit CRS and bounded row count", () => {
+  const source = "MGRS | Datum WGS 84 | Zone 43N | Hemisphere N\nAxis order X | Y\nMGRS | 43Q | AB | 12345 | 67890";
+  const contract = contractFor(source);
+  const provider = "CRS | Datum WGS 84\nZONE | 43N\nHEMISPHERE | N\nAXIS_ORDER | X | Y\nMGRS | 43Q | CD | 23456 | 78901";
+  assertConformant(contract, provider);
+  assertReview(contract, provider.replace("43Q", "44Q"), ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH);
+});
+
+test("R24", "generic review contract cannot be upgraded by authoritative-looking Provider output", () => {
+  const contract = contractFor("ordinary report with no closed coordinate structure");
+  const result = assertReview(contract, "Longitude: 63.500001\nLatitude: 11.500002");
+  assert.equal(result.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+});
+
+test("R25", "post-Provider conformance gate runs before parsing and geometry inference", async () => {
+  const source = await readFile(new URL("../server.js", import.meta.url), "utf8");
+  const conformanceIndex = source.indexOf("validateOneShotAcquisitionContract");
+  const rawDmsIndex = source.indexOf("formatHandwrittenDmsRawRows", conformanceIndex);
+  const parserIndex = source.indexOf("extractCoordinateLines", conformanceIndex);
+  assert.ok(conformanceIndex >= 0 && rawDmsIndex > conformanceIndex && parserIndex > conformanceIndex);
+  assert.match(source, /ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED/);
+  assert.match(source, /rawText:\s*""/);
+  assert.match(source, /coordinates:\s*""/);
+});
+
+test("R26", "contract diagnostics expose bounded enums and counts only", async () => {
+  const source = await readFile(new URL("../server.js", import.meta.url), "utf8");
+  const start = source.indexOf('console.log("One-shot acquisition conformance:"');
+  const diagnostic = source.slice(start, source.indexOf("if (oneShotAcquisitionConformance.status", start));
+  assert.ok(start >= 0);
+  assert.match(diagnostic, /family|status|reason|counts|providerCallCount|localOcrCallCount|terminalState/);
+  assert.doesNotMatch(diagnostic, /rawText|providerRawText|imageDataUrl|authorization|cookie|apiKey|secret|headers/iu);
 });
 
 let passed = 0;
