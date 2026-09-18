@@ -3,8 +3,12 @@ import { randomUUID } from "node:crypto";
 
 export const RECOGNITION_DEADLINE_CODE = "RECOGNITION_DEADLINE_EXCEEDED";
 export const RECOGNITION_BUDGET_CODE = "RECOGNITION_BUDGET_EXHAUSTED";
+export const RECOGNITION_PROVIDER_ATTEMPT_LIMIT_CODE = "RECOGNITION_PROVIDER_ATTEMPT_LIMIT_REACHED";
+export const RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_CODE = "RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_REACHED";
 export const DEFAULT_RECOGNITION_HARD_DEADLINE_MS = 55_000;
 export const MAX_RECOGNITION_HARD_DEADLINE_MS = 59_000;
+export const DEFAULT_RECOGNITION_PREFLIGHT_DEADLINE_MS = 12_500;
+export const DEFAULT_RECOGNITION_EXECUTION_DEADLINE_MS = 42_500;
 export const DEFAULT_RECOGNITION_RESPONSE_RESERVE_MS = 2_500;
 export const DEFAULT_LOW_VALUE_FALLBACK_CUTOFF_MS = 45_000;
 export const DEFAULT_MIN_RECOGNITION_STAGE_MS = 500;
@@ -31,6 +35,8 @@ const SANITIZED_STAGE_NAMES = Object.freeze(new Set([
   "generic_provider",
   "family_retry",
   "local_ocr",
+  "local_ocr_map_layout",
+  "local_ocr_map_layout_completeness",
   "handwritten_retry",
   "wgs84_retry",
   "mgrs_retry",
@@ -53,6 +59,8 @@ const SANITIZED_STAGE_REASONS = Object.freeze(new Set([
   "soft_fallback_cutoff",
   "insufficient_remaining_budget",
   "provider_admission_budget_insufficient",
+  "provider_attempt_limit_reached",
+  "local_ocr_attempt_limit_reached",
   "stage_timeout",
   "not_started"
 ]));
@@ -96,6 +104,23 @@ const USAGE_COMMIT_STATES = Object.freeze(new Set([
   "FAILED"
 ]));
 const RECOGNITION_BUDGET_PHASES = Object.freeze(new Set(Object.values(RECOGNITION_BUDGET_PHASE)));
+const ACQUISITION_ROUTE_REASONS = Object.freeze(new Set([
+  "UNCLASSIFIED",
+  "GENERIC_PRIMARY",
+  "SPECIALIZED_FAMILY_PRIMARY",
+  "WGS84_STRUCTURED_PRIMARY",
+  "WGS84_SINGLE_POINT_PRIMARY",
+  "LOCAL_OCR_EVIDENCE_ONLY",
+  "FAIL_CLOSED"
+]));
+const ACQUISITION_TERMINAL_STATES = Object.freeze(new Set([
+  "NOT_COMPLETED",
+  "COMPLETED",
+  "FAILED_CLOSED",
+  "BUDGET_EXHAUSTED",
+  "TIMED_OUT",
+  "ABORTED"
+]));
 
 function sanitizeEnum(value, allowed, sentinel) {
   return allowed.has(value) ? value : sentinel;
@@ -124,6 +149,18 @@ function getUploadSizeBucket(size) {
   if (bytes <= 4 * 1024 * 1024) return "LE_4_MIB";
   if (bytes <= 12 * 1024 * 1024) return "LE_12_MIB";
   return "GT_12_MIB";
+}
+
+function getDurationBucket(value) {
+  const durationMs = Number(value);
+  if (!Number.isFinite(durationMs) || durationMs < 0) return "UNLISTED_DURATION";
+  if (durationMs <= 1_000) return "LE_1S";
+  if (durationMs <= 5_000) return "LE_5S";
+  if (durationMs <= 15_000) return "LE_15S";
+  if (durationMs <= 30_000) return "LE_30S";
+  if (durationMs <= 45_000) return "LE_45S";
+  if (durationMs <= 60_000) return "LE_60S";
+  return "GT_60S";
 }
 
 const recognitionDeadlineStorage = new AsyncLocalStorage();
@@ -170,6 +207,8 @@ export class RecognitionBudget {
     signal,
     startedAt = Date.now(),
     deadlineMs = DEFAULT_RECOGNITION_HARD_DEADLINE_MS,
+    preflightDeadlineMs = DEFAULT_RECOGNITION_PREFLIGHT_DEADLINE_MS,
+    executionDeadlineMs = DEFAULT_RECOGNITION_EXECUTION_DEADLINE_MS,
     responseReserveMs = DEFAULT_RECOGNITION_RESPONSE_RESERVE_MS,
     lowValueFallbackCutoffMs = DEFAULT_LOW_VALUE_FALLBACK_CUTOFF_MS,
     now = () => Date.now(),
@@ -181,6 +220,16 @@ export class RecognitionBudget {
     this.startedAt = startedAt;
     this.deadlineMs = deadlineMs;
     this.hardDeadlineAt = startedAt + deadlineMs;
+    this.preflightDeadlineMs = Math.min(
+      Math.max(1, Number(preflightDeadlineMs) || DEFAULT_RECOGNITION_PREFLIGHT_DEADLINE_MS),
+      Math.max(1, Math.floor(deadlineMs * 0.25))
+    );
+    this.executionDeadlineMs = Math.min(
+      Math.max(1, Number(executionDeadlineMs) || DEFAULT_RECOGNITION_EXECUTION_DEADLINE_MS),
+      Math.max(1, deadlineMs - this.preflightDeadlineMs)
+    );
+    this.preflightDeadlineAt = startedAt + this.preflightDeadlineMs;
+    this.executionDeadlineAt = null;
     this.responseReserveMs = responseReserveMs;
     this.lowValueFallbackCutoffMs = Math.min(lowValueFallbackCutoffMs, deadlineMs);
     this.softFallbackCutoffAt = startedAt + this.lowValueFallbackCutoffMs;
@@ -203,12 +252,15 @@ export class RecognitionBudget {
     this.uploadSizeBucket = "UNLISTED_UPLOAD_SIZE_BUCKET";
     this.providerAttempted = false;
     this.providerAttemptCount = 0;
+    this.localOcrAttemptCount = 0;
     this.providerCompletionState = "NOT_STARTED";
     this.providerUsageObserved = false;
     this.providerCostState = "NOT_INCURRED";
     this.userUsageConsumed = false;
     this.usageCommitState = "NOT_STARTED";
     this.initialUploadStage = null;
+    this.acquisitionRouteReason = "UNCLASSIFIED";
+    this.acquisitionTerminalState = "NOT_COMPLETED";
   }
 
   elapsedMs() {
@@ -216,6 +268,13 @@ export class RecognitionBudget {
   }
 
   remainingMs() {
+    const phaseDeadlineAt = this.budgetPhase === RECOGNITION_BUDGET_PHASE.EXECUTION
+      ? this.executionDeadlineAt
+      : this.preflightDeadlineAt;
+    return Math.max(0, Math.min(this.hardDeadlineAt, phaseDeadlineAt || this.hardDeadlineAt) - this.now());
+  }
+
+  overallRemainingMs() {
     return Math.max(0, this.hardDeadlineAt - this.now());
   }
 
@@ -252,10 +311,36 @@ export class RecognitionBudget {
 
   beginExecutionPhase() {
     if (this.budgetPhase === RECOGNITION_BUDGET_PHASE.EXECUTION) return false;
+    if (this.isAborted()) {
+      this.recordSkippedStage("pre_route", "request_aborted", "aborted");
+      throw createRecognitionBudgetError("Recognition request aborted before execution could start.", {
+        code: RECOGNITION_DEADLINE_CODE,
+        reason: "request_aborted",
+        stageName: "pre_route"
+      });
+    }
+    if (this.responseSentAt !== null) {
+      this.recordSkippedStage("pre_route", "response_already_sent", "skipped");
+      throw createRecognitionBudgetError("Recognition response was already sent.", {
+        reason: "response_already_sent",
+        stageName: "pre_route"
+      });
+    }
+    if (this.now() >= Math.min(this.preflightDeadlineAt, this.hardDeadlineAt)) {
+      this.recordSkippedStage("pre_route", "insufficient_remaining_budget", "skipped");
+      throw createRecognitionBudgetError("Recognition preflight budget was exhausted before execution.", {
+        reason: "insufficient_remaining_budget",
+        stageName: "pre_route"
+      });
+    }
     this.preflightCompletedAt = this.elapsedMs();
     this.executionStartedAt = this.now();
-    this.softFallbackCutoffAt = Math.min(
+    this.executionDeadlineAt = Math.min(
       this.hardDeadlineAt,
+      this.executionStartedAt + this.executionDeadlineMs
+    );
+    this.softFallbackCutoffAt = Math.min(
+      this.executionDeadlineAt,
       this.executionStartedAt + this.lowValueFallbackCutoffMs
     );
     this.budgetPhase = RECOGNITION_BUDGET_PHASE.EXECUTION;
@@ -267,6 +352,14 @@ export class RecognitionBudget {
     minRequiredMs = DEFAULT_MIN_RECOGNITION_STAGE_MS,
     lowValue = false
   } = {}) {
+    if (this.providerAttemptCount >= 1) {
+      this.recordSkippedStage(stageName, "provider_attempt_limit_reached", "skipped");
+      throw createRecognitionBudgetError("Provider attempt limit reached for this recognition request.", {
+        code: RECOGNITION_PROVIDER_ATTEMPT_LIMIT_CODE,
+        reason: "provider_attempt_limit_reached",
+        stageName
+      });
+    }
     const providerAndPostProcessingMinimum = Math.max(DEFAULT_MIN_RECOGNITION_STAGE_MS, Number(minRequiredMs) || 0)
       + this.postProviderReserveMs;
     try {
@@ -297,6 +390,12 @@ export class RecognitionBudget {
   }
 
   markProviderAttempted() {
+    if (this.providerAttemptCount >= 1) {
+      throw createRecognitionBudgetError("Provider attempt limit reached for this recognition request.", {
+        code: RECOGNITION_PROVIDER_ATTEMPT_LIMIT_CODE,
+        reason: "provider_attempt_limit_reached"
+      });
+    }
     this.providerAttempted = true;
     this.providerAttemptCount += 1;
     this.providerCompletionState = "NOT_STARTED";
@@ -307,6 +406,40 @@ export class RecognitionBudget {
     this.providerCompletionState = sanitizeEnum(state, PROVIDER_COMPLETION_STATES, "FAILED");
     this.providerUsageObserved = this.providerUsageObserved || usageObserved === true;
     this.providerCostState = this.providerUsageObserved ? "USAGE_REPORTED" : "POSSIBLY_INCURRED";
+  }
+
+  assertCanStartLocalOcr({
+    stageName = "local_ocr",
+    minRequiredMs = DEFAULT_MIN_RECOGNITION_STAGE_MS,
+    lowValue = false
+  } = {}) {
+    if (this.localOcrAttemptCount >= 1) {
+      this.recordSkippedStage(stageName, "local_ocr_attempt_limit_reached", "skipped");
+      throw createRecognitionBudgetError("Local OCR evidence attempt limit reached for this recognition request.", {
+        code: RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_CODE,
+        reason: "local_ocr_attempt_limit_reached",
+        stageName
+      });
+    }
+    this.assertCanContinue({ stageName, minRequiredMs, lowValue });
+    this.localOcrAttemptCount += 1;
+    return true;
+  }
+
+  setAcquisitionRouteReason(reason) {
+    this.acquisitionRouteReason = sanitizeEnum(
+      String(reason || "").trim(),
+      ACQUISITION_ROUTE_REASONS,
+      "UNCLASSIFIED"
+    );
+  }
+
+  setAcquisitionTerminalState(state) {
+    this.acquisitionTerminalState = sanitizeEnum(
+      String(state || "").trim(),
+      ACQUISITION_TERMINAL_STATES,
+      "FAILED_CLOSED"
+    );
   }
 
   markUserUsageConsumed(consumed = true) {
@@ -428,6 +561,18 @@ export class RecognitionBudget {
     this.responseCode = normalizedResponseCode === null
       ? null
       : sanitizeEnum(normalizedResponseCode, SANITIZED_RESPONSE_CODES, "UNLISTED_RESPONSE_CODE");
+    const statusCode = Number(httpStatus);
+    if (this.responseCode === RECOGNITION_DEADLINE_CODE || statusCode === 504) {
+      this.setAcquisitionTerminalState("TIMED_OUT");
+    } else if (this.responseCode === RECOGNITION_BUDGET_CODE) {
+      this.setAcquisitionTerminalState("BUDGET_EXHAUSTED");
+    } else if (this.isAborted()) {
+      this.setAcquisitionTerminalState("ABORTED");
+    } else if (statusCode >= 200 && statusCode < 400) {
+      this.setAcquisitionTerminalState("COMPLETED");
+    } else {
+      this.setAcquisitionTerminalState("FAILED_CLOSED");
+    }
     const event = {
       id: this.nextStageId++,
       requestId: this.requestId,
@@ -495,6 +640,28 @@ export class RecognitionBudget {
     if (this.handlerCompletedAt === null) this.handlerCompletedAt = this.elapsedMs();
     for (const event of this.events) event.handlerCompleted = true;
     if (this.traceEnabled) console.log("[RecognitionLedger]", this.toSanitizedLedger());
+    if (this.traceEnabled) console.log("[RecognitionAcquisition]", this.toSanitizedAcquisitionDiagnostic());
+  }
+
+  toSanitizedAcquisitionDiagnostic() {
+    const executionElapsedMs = this.executionStartedAt === null
+      ? 0
+      : Math.max(0, this.now() - this.executionStartedAt);
+    return Object.freeze({
+      schemaVersion: "recognition_acquisition_liveness_v1",
+      stageNames: Object.freeze(Array.from(new Set(
+        this.events.map(event => this.sanitizeStageEvent(event).stageName)
+      ))),
+      routeReason: sanitizeEnum(this.acquisitionRouteReason, ACQUISITION_ROUTE_REASONS, "UNCLASSIFIED"),
+      timingBucket: getDurationBucket(executionElapsedMs),
+      providerCallCount: Math.min(1, Math.max(0, Number(this.providerAttemptCount) || 0)),
+      localOcrCallCount: Math.min(1, Math.max(0, Number(this.localOcrAttemptCount) || 0)),
+      terminalState: sanitizeEnum(
+        this.acquisitionTerminalState,
+        ACQUISITION_TERMINAL_STATES,
+        "FAILED_CLOSED"
+      )
+    });
   }
 
   toSanitizedTrace() {

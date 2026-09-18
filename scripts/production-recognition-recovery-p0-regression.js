@@ -17,6 +17,7 @@ import * as primaryRouting from "../server/recognition/family-primary-routing.js
 import * as dmsSourceStructure from "../server/recognition/dms-source-structure.js";
 import * as familyRetryPolicy from "../server/recognition/family-retry-policy.js";
 import * as candidateSelection from "../server/recognition/candidate-selection.js";
+import * as structuredCoordinateBoundary from "../server/structured-coordinate-boundary.js";
 import {
   COORDINATE_CONFIRMATION_STATUS,
   COORDINATE_DECISION_STATE,
@@ -33,6 +34,7 @@ import {
   collapseExactRepeatedCoordinateSequence,
   extractMadagascarCadastralRows,
   getIndonesiaUtm50Info,
+  getWgs84SinglePointEvidence,
   hasMadagascarMapGridTickTakeover,
   hasStrongPrintedProjectedTableEvidence
 } from "../server/recognition/family-primary-routing.js";
@@ -45,7 +47,7 @@ const replay = JSON.parse(await readFile(path.join(root, "release-governance/p0-
 const releaseGate = JSON.parse(await readFile(path.join(root, "release-governance/p0-release-gate-governance.json"), "utf8"));
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
 // Execute the actual runtime function declarations without app startup or Provider I/O.
-const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, utmToWgs84,
+const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, ...structuredCoordinateBoundary, utmToWgs84,
   isRecognitionRequestId, Buffer, crypto,
   process: { env: {} }, setTimeout: () => ({ unref() {} }) });
 const declarations = [];
@@ -462,6 +464,154 @@ test("recognition completeness makes single points complete and terminal Provide
     assert.equal(terminal.allowFamilyProviderRetry, false);
     assert.equal(terminal.allowLocalOcrEvidence, true);
   }
+});
+
+test("generic labeled WGS84 decimal and DMS single-point contracts preserve source representation", () => {
+  const decimal = getWgs84SinglePointEvidence([
+    "WGS84 Single Point",
+    "longitude | 121.24681012",
+    "latitude | -12.13579111"
+  ].join("\n"));
+  assert.equal(decimal.matched, true);
+  assert.equal(decimal.coordinateFormat, "WGS84_DECIMAL");
+  assert.equal(decimal.coordinateLine, "121.24681012,-12.13579111");
+  assert.equal(decimal.normalizedCoordinateLine, "121.24681012,-12.13579111");
+  assert.equal(decimal.originalLongitude, "121.24681012");
+  assert.equal(decimal.originalLatitude, "-12.13579111");
+  assert.equal(decimal.originalLongitudeLabel, "longitude");
+  assert.equal(decimal.originalLatitudeLabel, "latitude");
+  assert.equal(decimal.coordinateType, "decimal_latlon");
+  assert.equal(decimal.precisionMode, "wgs84-single-point-decimal");
+  assert.equal(decimal.geometryType, "point");
+  assert.equal(decimal.forceRequiresReview, true);
+  assert.equal(decimal.requiresReview, true);
+
+  const dms = getWgs84SinglePointEvidence([
+    "WGS84 Single Point",
+    `longitude DMS | 121°14'48.52\"E`,
+    `latitude DMS | 12°08'08.84\"S`
+  ].join("\n"));
+  assert.equal(dms.matched, true);
+  assert.equal(dms.coordinateFormat, "WGS84_DMS");
+  assert.match(dms.coordinateLine, /121°14'48\.52\"E,12°08'08\.84\"S/);
+  assert.equal(dms.originalLongitude, `121°14'48.52\"E`);
+  assert.equal(dms.originalLatitude, `12°08'08.84\"S`);
+  assert.equal(dms.originalLongitudeLabel, "longitude DMS");
+  assert.equal(dms.originalLatitudeLabel, "latitude DMS");
+  assert.match(dms.normalizedCoordinateLine, /^121\.2468\d*,-12\.1357\d*$/);
+  assert.equal(dms.coordinateType, "decimal_latlon");
+  assert.equal(dms.precisionMode, "wgs84-single-point-dms");
+  assert.equal(dms.geometryType, "point");
+  assert.equal(dms.forceRequiresReview, true);
+
+  const directionalDecimal = getWgs84SinglePointEvidence(
+    "WGS84 Single Point\n西经 | -121.2\n南纬 | -12.1"
+  );
+  assert.equal(directionalDecimal.matched, true);
+  assert.equal(directionalDecimal.coordinateFormat, "WGS84_DECIMAL");
+  const directionalDms = getWgs84SinglePointEvidence(
+    `WGS84 Single Point\n东经 | 121°14'48.52\"E\n北纬 | 12°08'08.84\"N`
+  );
+  assert.equal(directionalDms.matched, true);
+  assert.equal(directionalDms.coordinateFormat, "WGS84_DMS");
+});
+
+test("single-point contract fails closed for unlabeled ambiguous projected and multi-value evidence", () => {
+  for (const text of [
+    "121.24681012,-12.13579111",
+    "WGS84 Single Point\nlongitude | 121.2\nlatitude | -12.1\nlatitude | -12.2",
+    "WGS84 Single Point\nEasting | 321000\nNorthing | 8650000\nUTM 50S",
+    "WGS84 Single Point\nlongitude | 181.2\nlatitude | -12.1",
+    "WGS84 Single Point\nlongitude DMS | 121°14'48.52\"\nlatitude DMS | 12°08'08.84\"",
+    "WGS84 Single Point\nlongitude | 121.2\nlatitude | -12.1\nother | 35.1,83.2",
+    "WGS84 Single Point\nlongitude | 121.2\nlatitude | -12.1\nlocation 2 | 122.0,-13.0",
+    "ordinary report preface\nWGS84 Single Point\nlongitude | 121.2\nlatitude | -12.1\nreport footer",
+    `WGS84 Single Point\nlongitude DMS | 121°14'48.52\"E 122°00'00.00\"E\nlatitude DMS | 12°08'08.84\"S`,
+    "WGS84 Single Point\n东经 | -121.2\n纬度 | -12.1",
+    `WGS84 Single Point\n东经 | 121°14'48.52\"W\n纬度 | 12°08'08.84\"S`,
+    "WGS84 Single Point\nlongitude DMS | 121.2\nlatitude DMS | -12.1",
+    `WGS84 Single Point\nlongitude DMS | 121°14'48.52\"E\nlatitude | 12°08'08.84\"S`
+  ]) {
+    const evidence = getWgs84SinglePointEvidence(text);
+    assert.equal(evidence.matched, false, text);
+    assert.equal(evidence.coordinateLine, "", text);
+    assert.equal(evidence.normalizedCoordinateLine, "", text);
+    assert.equal(evidence.requiresReview, true, text);
+  }
+});
+
+test("single-point decimal and DMS bindings reach an actual Point parser but remain Finalizer blocked", () => {
+  for (const rawText of [
+    "WGS84 Single Point\nlongitude | 121.24681012\nlatitude | -12.13579111",
+    `WGS84 Single Point\nlongitude DMS | 121°14'48.52\"E\nlatitude DMS | 12°08'08.84\"S`
+  ]) {
+    const evidence = getWgs84SinglePointEvidence(rawText);
+    assert.equal(evidence.matched, true);
+    const payload = {
+      success: true,
+      model: "offline-synthetic",
+      rawText,
+      coordinates: evidence.normalizedCoordinateLine,
+      precisionMode: evidence.precisionMode,
+      wgs84SinglePointEvidence: evidence,
+      parserTrace: [`WGS84_SINGLE_POINT:${evidence.coordinateFormat}`]
+    };
+    assert.equal(runtime.inferCoordinateEngineV2Type(payload), "decimal_latlon");
+    const point = runtime.parseCoordinateEngineV2PointLine(
+      payload.coordinates,
+      evidence.coordinateType,
+      0
+    );
+    assert.ok(Number.isFinite(point.lon));
+    assert.ok(Number.isFinite(point.lat));
+    assert.equal(runtime.getCoordinateEngineV2Geometry([point]), "point");
+    assert.equal(evidence.geometryType, "point");
+    assert.notEqual(evidence.geometryType, "line");
+
+    const engine = {
+      schema_version: "coordinate_engine_v2",
+      coordinate_type: evidence.coordinateType,
+      precision_mode: evidence.precisionMode,
+      groups: [{
+        group_id: "wgs84_single_point",
+        group_name: "WGS84 single-point review candidate",
+        points: [point],
+        geometry_type: "point",
+        confidence: 0.8,
+        requires_review: true,
+        kml_ready: false,
+        warnings: []
+      }],
+      requires_review: true,
+      kml_ready: false,
+      warnings: []
+    };
+    const response = buildCoordinateVerificationResponse(payload, engine);
+    assert.equal(response.coordinateEngineV2.coordinate_type, "decimal_latlon");
+    assert.equal(response.coordinateEngineV2.requires_review, true);
+    assert.equal(response.coordinateEngineV2.groups[0].geometry_type, "point");
+    assert.equal(response.finalizedCoordinateResult.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+    assert.equal(response.finalizedCoordinateResult.geometry, null);
+    assert.equal(response.finalizedCoordinateResult.kmlReady, false);
+    assert.equal(consumeFinalizedGeometry(response.finalizedCoordinateResult, geometry => geometry).consumed, false);
+  }
+});
+
+test("production source installs the one-shot single-point acquisition contract before generic parsing", () => {
+  assert.match(serverSource, /WGS84 单点快速采集合同/);
+  assert.match(serverSource, /WGS84 Single Point/);
+  assert.ok(
+    serverSource.indexOf("const wgs84SinglePointEvidence = getWgs84SinglePointEvidence(rawText)")
+      < serverSource.indexOf("coordinates = wgs84SinglePointEvidence.normalizedCoordinateLine"),
+    "single-point evidence must replace only the generic normalized candidate"
+  );
+  assert.match(serverSource, /setAcquisitionRouteReason\("WGS84_SINGLE_POINT_PRIMARY"\)/);
+  assert.match(serverSource, /wgs84SinglePointEvidence\.precisionMode/);
+  assert.match(serverSource, /wgs84SinglePointEvidence\.coordinateType/);
+  assert.match(serverSource, /wgs84SinglePointEvidence\.forceRequiresReview/);
+  assert.match(serverSource, /recognitionBudget\?\.providerAttemptCount \|\| 0\) >= 1/);
+  assert.match(serverSource, /RECOGNITION_PROVIDER:one_shot_retry_blocked/);
+  assert.doesNotMatch(serverSource, /98\.67370605|26\.34265281/);
 });
 
 const polygon = Object.freeze({
