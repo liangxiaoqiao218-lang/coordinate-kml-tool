@@ -92,10 +92,13 @@ import { buildCoordinateVerificationResponse as buildCoordinateVerificationRespo
 import {
   buildEvidenceAcquisition,
   classifyProviderLayoutRoles,
+  createLocalOcrMapLayoutRows,
   createServerClassifiedLayoutRows,
   createTrustedLayoutAttestation,
+  extractLocalOcrLayoutLines,
   extractProviderLayoutCandidates,
   getProductionProviderLayoutClassifierProfile,
+  isLocalOcrMapLayoutCandidate,
   PROVIDER_LAYOUT_PRODUCTION_QUALIFICATION_RESPONSE_CONTRACT,
   ProviderLayoutProductionQualificationGrantRuntime,
   ProviderLayoutProfileQualificationRuntime,
@@ -8158,6 +8161,65 @@ async function runLocalOcrFallback(imageBuffer, reason = "", {
   }
 }
 
+async function runLocalOcrMapLayoutClassification({
+  imageBuffer,
+  imageIdentity,
+  coordinateEngineV2,
+  resultRevision = 1,
+  stageName = "local_ocr_map_layout",
+  stageCapMs = 7_000,
+  minRequiredMs = 2_500
+} = {}) {
+  if (!imageBuffer || !imageIdentity
+    || !isLocalOcrMapLayoutCandidate({ coordinateEngineV2 })) return null;
+  const budget = getRecognitionBudget();
+  if (budget && !budget.canStartStage(minRequiredMs, { lowValue: false })) {
+    budget.recordSkippedStage(stageName, "insufficient_remaining_budget", "skipped");
+    return null;
+  }
+  const effectiveTimeoutMs = budget ? budget.effectiveTimeout(stageCapMs) : stageCapMs;
+  if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < minRequiredMs) {
+    budget?.recordSkippedStage(stageName, "insufficient_remaining_budget", "skipped");
+    return null;
+  }
+  const stageEvent = budget?.stageStarted(stageName, {
+    configuredTimeoutMs: stageCapMs,
+    effectiveTimeoutMs
+  });
+  let stageResult = "success";
+  try {
+    const result = await runCancellableOcrJob({
+      createWorker: () => Tesseract.createWorker("eng", 1, {
+        logger: () => {},
+        errorHandler: () => {}
+      }),
+      image: imageBuffer,
+      recognizeOutput: { text: true, blocks: true },
+      signal: getRecognitionDeadlineSignal(),
+      timeoutMs: effectiveTimeoutMs,
+      deadlineCode: RECOGNITION_DEADLINE_CODE,
+      timeoutCode: RECOGNITION_BUDGET_CODE
+    });
+    const lines = extractLocalOcrLayoutLines(result, imageIdentity);
+    return createLocalOcrMapLayoutRows({
+      lines,
+      imageIdentity,
+      coordinateEngineV2,
+      resultRevision
+    });
+  } catch (error) {
+    stageResult = error?.code === RECOGNITION_DEADLINE_CODE
+      ? "aborted"
+      : error?.code === RECOGNITION_BUDGET_CODE
+        ? "timeout"
+        : "failed";
+    if (error?.code === RECOGNITION_DEADLINE_CODE) throw error;
+    return null;
+  } finally {
+    budget?.stageCompleted(stageEvent, { result: stageResult });
+  }
+}
+
 function buildManualTextCoordinateResult(text) {
   const value = String(text || "").trim();
   const dmsLines = extractDmsCoordinateLines(value);
@@ -13514,6 +13576,23 @@ function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = 
   const normalizedRevision = Number.isSafeInteger(revision) && revision > 0 ? revision : 1;
   if (!payload.trustedLayoutAttestation
     && payload.imageMetadata
+    && Array.isArray(payload.localOcrStructuredLayoutRows)) {
+    const trustedLayoutAttestation = createTrustedLayoutAttestation({
+      imageIdentity: payload.imageMetadata,
+      observations: payload.localOcrStructuredLayoutRows,
+      coordinateEngineV2: engine,
+      resultRevision: normalizedRevision
+    });
+    if (trustedLayoutAttestation) {
+      Object.defineProperty(payload, "trustedLayoutAttestation", {
+        value: trustedLayoutAttestation,
+        enumerable: false,
+        configurable: true
+      });
+    }
+  }
+  if (!payload.trustedLayoutAttestation
+    && payload.imageMetadata
     && Array.isArray(payload.providerLayoutCandidates)) {
     const providerLayoutClassificationOutcome = classifyProviderLayoutRoles({
       profile: getProductionProviderLayoutClassifierProfile(),
@@ -13718,6 +13797,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
   let coordinateImageIdentity = null;
   let providerLayoutCandidates = [];
   let providerLayoutResponseId = "";
+  let localOcrStructuredLayoutRows = null;
   let responseCommitPromise = null;
   const sendRecognitionJson = res.json.bind(res);
   const runBudgetedStage = async (stageName, action) => {
@@ -13753,6 +13833,13 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
           });
           Object.defineProperty(payload, "providerLayoutResponseId", {
             value: providerLayoutResponseId,
+            enumerable: false,
+            configurable: true
+          });
+        }
+        if (Array.isArray(localOcrStructuredLayoutRows)) {
+          Object.defineProperty(payload, "localOcrStructuredLayoutRows", {
+            value: localOcrStructuredLayoutRows,
             enumerable: false,
             configurable: true
           });
@@ -14023,7 +14110,10 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
 
     if (!regressionTestMode.active) {
       const usageStatus = await runBudgetedStage("usage_eligibility", async () => {
-        await updateSupabaseUserVisitMeta(visitorId, req);
+        // Visitor metadata is already refreshed by /api/config and is not an
+        // authorization or quota prerequisite. Keeping IP geolocation and its
+        // database writes out of the recognition critical path prevents an
+        // unrelated analytics dependency from consuming the Provider budget.
         return checkUsage(visitorId, "convert");
       });
       checkedCoordinateUsageStatus = usageStatus;
@@ -15008,12 +15098,19 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           parserTrace: ["WGS84_STRONG_ROUTE_EVIDENCE", "WGS84_TABLE:specialized_primary", "WGS84_TABLE:accepted"],
           quota: consumeResult.quota
         };
+        const wgs84PrimaryEngine = buildCoordinateEngineV2ShadowResult(wgs84PrimaryPayload, {
+          fileName: uploadedFileName,
+          rawHint: coordinateEngineV2ContextHint
+        });
+        localOcrStructuredLayoutRows = await runLocalOcrMapLayoutClassification({
+          imageBuffer: req.file.buffer,
+          imageIdentity: coordinateImageIdentity,
+          coordinateEngineV2: wgs84PrimaryEngine,
+          resultRevision: 1
+        });
         return res.json(buildCoordinateVerificationResponse(
           wgs84PrimaryPayload,
-          buildCoordinateEngineV2ShadowResult(wgs84PrimaryPayload, {
-            fileName: uploadedFileName,
-            rawHint: coordinateEngineV2ContextHint
-          })
+          wgs84PrimaryEngine
         ));
       } catch (wgs84PrimaryError) {
         if (wgs84PrimaryError?.code === RECOGNITION_DEADLINE_CODE) throw wgs84PrimaryError;
@@ -16644,6 +16741,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
+    if (!localOcrStructuredLayoutRows
+      && isLocalOcrMapLayoutCandidate({ coordinateEngineV2 })) {
+      localOcrStructuredLayoutRows = await runLocalOcrMapLayoutClassification({
+        imageBuffer: req.file.buffer,
+        imageIdentity: coordinateImageIdentity,
+        coordinateEngineV2,
+        resultRevision: 1
+      });
+    }
     let verificationResponse = buildCoordinateVerificationResponse(finalRecognitionCandidate, coordinateEngineV2);
     if (stage1FullMultisiteReviewCandidate) {
       const stage1FullMultisiteConfirmationPolicy = buildStage1FullMultisiteConfirmationPolicy({

@@ -299,6 +299,20 @@ test("production source orders Provider admission before attempt and defers usag
   const usageEligibilityIndex = serverSource.indexOf('runBudgetedStage("usage_eligibility"');
   assert.ok(usageEligibilityIndex >= 0);
   assert.ok(usageEligibilityIndex < serverSource.indexOf("beginExecutionPhase()", usageEligibilityIndex));
+  const usageEligibilityEnd = serverSource.indexOf("checkedCoordinateUsageStatus = usageStatus", usageEligibilityIndex);
+  assert.ok(usageEligibilityEnd > usageEligibilityIndex);
+  const usageEligibilitySource = serverSource.slice(usageEligibilityIndex, usageEligibilityEnd);
+  assert.match(usageEligibilitySource, /checkUsage\(visitorId, "convert"\)/);
+  assert.doesNotMatch(usageEligibilitySource, /updateSupabaseUserVisitMeta/);
+  const recognitionRouteStart = serverSource.indexOf('app.post("/api/recognize-coordinates"');
+  const recognitionRouteEnd = serverSource.indexOf('app.get("/admin"', recognitionRouteStart);
+  assert.ok(recognitionRouteStart >= 0 && recognitionRouteEnd > recognitionRouteStart);
+  const recognitionRouteSource = serverSource.slice(recognitionRouteStart, recognitionRouteEnd);
+  assert.doesNotMatch(recognitionRouteSource, /updateSupabaseUserVisitMeta/);
+  const configRouteStart = serverSource.indexOf('app.get("/api/config"');
+  const configRouteEnd = serverSource.indexOf('\n});', configRouteStart);
+  assert.ok(configRouteStart >= 0 && configRouteEnd > configRouteStart);
+  assert.match(serverSource.slice(configRouteStart, configRouteEnd), /updateSupabaseUserVisitMeta/);
   assert.match(serverSource, /createCoordinateUsageCommitController/);
   assert.match(serverSource, /assertCanContinue\(\{ stageName: "finalizer" \}\)/);
   assert.match(serverSource, /buildCoordinateVerificationResponseWithoutRecognitionBudget/);
@@ -378,6 +392,27 @@ test("synchronous OCR termination failures cannot escape or mask the primary out
     timeoutMs: 20,
     terminationTimeoutMs: 30
   }), error => error.code === "RECOGNITION_BUDGET_EXHAUSTED" && error.reason === "stage_timeout");
+});
+
+test("local OCR forwards explicitly requested structured-output options", async () => {
+  const calls = [];
+  const successful = await runCancellableOcrJob({
+    createWorker: async () => ({
+      recognize: async (...args) => {
+        calls.push(args);
+        return { data: { text: "synthetic", blocks: [] } };
+      },
+      terminate: async () => {}
+    }),
+    image: syntheticPng,
+    recognizeOptions: { rotateAuto: false },
+    recognizeOutput: { text: true, blocks: true },
+    timeoutMs: 1000
+  });
+  assert.equal(successful.data.text, "synthetic");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][1], { rotateAuto: false });
+  assert.deepEqual(calls[0][2], { text: true, blocks: true });
 });
 
 test("production route binds retry classification and fail-closed runtime guards", () => {

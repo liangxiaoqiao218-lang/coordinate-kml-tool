@@ -9,6 +9,7 @@ import {
   STRUCTURED_PROVIDER_LAYOUT_EXTRACTION_CAPABILITY,
   validateProviderLayoutRoleClassification
 } from "./provider-layout-role-classifier.js";
+import { hasLocalOcrStructuredLayoutCapability } from "./local-ocr-map-layout-classifier.js";
 
 export const TRUSTED_LAYOUT_ATTESTATION_SCHEMA_VERSION = "trusted_layout_attestation_v1";
 export const TRUSTED_ROW_BINDING_SCHEMA_VERSION = "trusted_row_binding_v1";
@@ -245,7 +246,12 @@ export function createTrustedLayoutAttestation({
       && raw.provenance_trust === "SERVER_ATTESTED"
       && raw.provenance_attestor === TRUSTED_ATTESTOR
       && /^[0-9a-f]{64}$/.test(providerResponseIdSha256 || "");
-    if ((!isSyntheticServerEvidence && !isServerClassifiedLayout)
+    const isServerClassifiedLocalOcrLayout = sourceType === "LOCAL_OCR_STRUCTURED_LAYOUT_V1"
+      && hasLocalOcrStructuredLayoutCapability(raw)
+      && raw[SERVER_PROVENANCE_ATTESTATION] === true
+      && raw.provenance_trust === "SERVER_ATTESTED"
+      && raw.provenance_attestor === TRUSTED_ATTESTOR;
+    if ((!isSyntheticServerEvidence && !isServerClassifiedLayout && !isServerClassifiedLocalOcrLayout)
       || !SOURCE_TYPE_ALLOWLIST.has(sourceType)
       || !candidate
       || !bbox

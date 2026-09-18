@@ -10,6 +10,15 @@ export const EVIDENCE_ACQUISITION_SCHEMA_VERSION = "evidence_acquisition_v1";
 
 export { buildImageTextObservations } from "./evidence-acquisition-adapter.js";
 export {
+  LOCAL_OCR_MAP_LAYOUT_CLASSIFIER_VERSION,
+  LOCAL_OCR_STRUCTURED_LAYOUT_CAPABILITY,
+  LOCAL_OCR_STRUCTURED_LAYOUT_SOURCE_TYPE,
+  createLocalOcrMapLayoutRows,
+  extractLocalOcrLayoutLines,
+  hasLocalOcrStructuredLayoutCapability,
+  isLocalOcrMapLayoutCandidate
+} from "./local-ocr-map-layout-classifier.js";
+export {
   TRUSTED_LAYOUT_ATTESTATION_CAPABILITY,
   TRUSTED_LAYOUT_ATTESTATION_SCHEMA_VERSION,
   TRUSTED_ROW_BINDING_SCHEMA_VERSION,
