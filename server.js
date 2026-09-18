@@ -15422,7 +15422,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         coordinates: "",
         precisionMode: "one-shot-acquisition-contract-review",
         requiresReview: true,
-        warning: "The one-shot acquisition output did not satisfy its pre-Provider structural contract and remains review-only.",
+        warning: "The one-shot acquisition output did not satisfy its pre-Provider structural and source-binding contract and remains review-only.",
         acquisitionContractConformance: oneShotAcquisitionConformance,
         parserTrace: [
           "ONE_SHOT_ACQUISITION_CONTRACT:review_required",

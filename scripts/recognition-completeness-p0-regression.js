@@ -5,6 +5,7 @@ import {
   assessRecognitionCompleteness
 } from "../server/recognition/recognition-completeness.js";
 import {
+  ONE_SHOT_ACQUISITION_CONFORMANCE_REASON,
   ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS,
   ONE_SHOT_STRUCTURED_FAMILY,
   classifyOneShotStructuredFamily,
@@ -295,16 +296,29 @@ test("only contract-conformant single-point evidence reaches completeness", () =
   const contract = createOneShotAcquisitionContract({ route: primary, sourceText: source });
   const conformant = validateOneShotAcquisitionContract({
     contract,
-    providerText: "Longitude: 63.500001\nLatitude: 11.500002"
+    providerText: source
   });
   assert.equal(conformant.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
   const result = assess({
-    coordinates: "63.500001,11.500002",
+    coordinates: "64.125001,12.875002",
     coordinateRowCount: conformant.counts.coordinateRowCount,
     coordinateFormat: "WGS84_DECIMAL",
     family: conformant.family
   });
   assert.equal(result.decision, RECOGNITION_COMPLETENESS_DECISION.COMPLETE_CANDIDATE);
+});
+
+test("value-fidelity mismatch remains review-only before completeness", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const primary = classifyOneShotStructuredFamily({ text: source });
+  const contract = createOneShotAcquisitionContract({ route: primary, sourceText: source });
+  const mismatch = validateOneShotAcquisitionContract({
+    contract,
+    providerText: "Longitude: 63.500001\nLatitude: 11.500002"
+  });
+  assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(mismatch.reason, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.VALUE_FIDELITY_MISMATCH);
+  assert.equal(mismatch.conformant, false);
 });
 
 test("contract mismatch is review-only before completeness and geometry", () => {
