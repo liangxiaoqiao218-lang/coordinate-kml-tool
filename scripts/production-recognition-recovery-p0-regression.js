@@ -1456,14 +1456,76 @@ test("approved replay history is immutable and cannot qualify real acquisition",
   assert.equal(releaseGate.realAcquisitionQualification.currentRemediationState, 'REAL_ACQUISITION_NOT_QUALIFIED');
 });
 
+test("one-shot structured family routing selects general contracts before Provider acquisition", () => {
+  const single = primaryRouting.classifyOneShotStructuredFamily({
+    text: "Longitude: 73.418205\nLatitude: 18.672914"
+  });
+  const grouped = primaryRouting.classifyOneShotStructuredFamily({
+    text: [
+      "GROUP A",
+      "Point | Latitude | Longitude",
+      `A | 18°40'01.10\"N | 73°25'01.10\"E`,
+      `B | 18°40'02.20\"N | 73°25'02.20\"E`,
+      "GROUP B",
+      "Point | Latitude | Longitude",
+      `A | 19°41'03.30\"N | 74°26'03.30\"E`,
+      `B | 19°41'04.40\"N | 74°26'04.40\"E`
+    ].join("\n")
+  });
+  assert.equal(single.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT);
+  assert.equal(grouped.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED);
+  assert.match(primaryRouting.buildOneShotStructuredFamilyPrompt({ family: grouped.family }), /Keep groups separate/);
+});
+
+test("one-shot structured family routing fails closed without complete structural evidence", () => {
+  const incompleteProjected = primaryRouting.classifyOneShotStructuredFamily({
+    text: "UTM coordinates\nPoint | X | Y\nA | 500100 | 2065100"
+  });
+  const metadataOnly = primaryRouting.classifyOneShotStructuredFamily({
+    text: "unclassified image",
+    fileName: "country-fixed-coordinate.png",
+    country: "Exampleland",
+    fixedCoordinate: "73.418205,18.672914"
+  });
+  assert.equal(incompleteProjected.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(incompleteProjected.reason, "projected_crs_evidence_incomplete");
+  assert.equal(metadataOnly.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(metadataOnly.matched, false);
+});
+
+test("one-shot structured server integration preserves one Provider and one local OCR boundaries", () => {
+  const routeStart = serverSource.indexOf('app.post("/api/recognize-coordinates"');
+  const classificationIndex = serverSource.indexOf("await runLocalOcrFamilyClassification", routeStart);
+  const selectedPromptIndex = serverSource.indexOf("prompt: selectedProviderPrompt", routeStart);
+  assert.ok(classificationIndex >= 0 && selectedPromptIndex > classificationIndex);
+  assert.match(serverSource, /const useKyrgyzGkPromptFirst = false/);
+  assert.match(serverSource, /const useMozambiqueGeographicPromptFirst = false/);
+  assert.match(serverSource, /providerAttemptCount \|\| 0\) >= 1/);
+  assert.match(serverSource, /oneShotLocalOcrAttempted/);
+  assert.match(serverSource, /materializeMapLayoutRowsFromFamilyEvidence/);
+  assert.match(serverSource, /prompt:\s*selectedProviderPrompt/);
+});
+
+test("one-shot structured diagnostics are bounded and redact source content", () => {
+  const start = serverSource.indexOf('console.log("One-shot structured family route:"');
+  const diagnostic = serverSource.slice(start, serverSource.indexOf("const prompt =", start));
+  assert.ok(start >= 0);
+  assert.match(diagnostic, /coordinateRowCount/);
+  assert.match(diagnostic, /localOcrCallCount/);
+  assert.doesNotMatch(diagnostic, /rawText|imageDataUrl|providerResponse|authorization|cookie|apiKey|secret/iu);
+});
+
 let passed = 0;
 const noServiceMode = process.argv.includes("--no-service");
-const selectedCases = noServiceMode
-  ? cases.filter(entry => !entry.name.startsWith("actual HTTP "))
-  : cases;
+const structuredFamilyOnly = process.argv.includes("--structured-family-only");
+const selectedCases = structuredFamilyOnly
+  ? cases.filter(entry => entry.name.startsWith("one-shot structured"))
+  : noServiceMode
+    ? cases.filter(entry => !entry.name.startsWith("actual HTTP "))
+    : cases;
 for (const entry of selectedCases) {
   await entry.fn();
   passed += 1;
   console.log(`PASS ${entry.name}`);
 }
-console.log(`Production recognition recovery P0 regression: ${passed}/${selectedCases.length} PASS${noServiceMode ? ` (${cases.length - selectedCases.length} localhost integration cases not started)` : ""}`);
+console.log(`Production recognition recovery P0 regression: ${passed}/${selectedCases.length} PASS${structuredFamilyOnly ? " (structured-family synthetic scope)" : noServiceMode ? ` (${cases.length - selectedCases.length} localhost integration cases not started)` : ""}`);

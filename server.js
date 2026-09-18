@@ -67,19 +67,19 @@ import {
 import {
   KYRGYZ_PRIMARY_STAGE_CAP_MS,
   MADAGASCAR_PRIMARY_STAGE_CAP_MS,
+  ONE_SHOT_STRUCTURED_FAMILY,
   WGS84_PRIMARY_STAGE_CAP_MS,
+  buildOneShotStructuredFamilyPrompt,
   buildMadagascarCadastralCellPolygons,
   buildPrimaryRouteDecision,
-  detectUploadTableStructure,
+  classifyOneShotStructuredFamily,
   extractMadagascarCadastralRows,
   formatIndonesiaUtm50Rows,
   getIndonesiaUtm50Info,
   getDmsDocumentEvidence,
   getPrintedProjectedDmsReference,
   hasStrongPrintedProjectedTableEvidence,
-  getMadagascarCadastralStrongRouteEvidence,
   getWgs84SinglePointEvidence,
-  getWgs84StrongRouteEvidence,
   shouldRunWgs84TimeoutRescue
 } from "./server/recognition/family-primary-routing.js";
 import { finiteNumberOrNull, hasFiniteNumericValue } from "./server/coordinate-values.js";
@@ -8223,6 +8223,97 @@ async function runLocalOcrMapLayoutClassification({
   }
 }
 
+async function runLocalOcrFamilyClassification({
+  imageBuffer,
+  imageIdentity,
+  stageName = "local_ocr",
+  stageCapMs = 7_000,
+  minRequiredMs = 2_500
+} = {}) {
+  const genericResult = () => ({
+    attempted: false,
+    route: classifyOneShotStructuredFamily(),
+    layoutLines: Object.freeze([])
+  });
+  if (!imageBuffer || !imageIdentity) return genericResult();
+
+  const budget = getRecognitionBudget();
+  if (budget) {
+    try {
+      budget.assertCanStartLocalOcr({ stageName, minRequiredMs, lowValue: false });
+    } catch (error) {
+      if (error?.code === "RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_REACHED"
+        || error?.code === RECOGNITION_BUDGET_CODE) return genericResult();
+      throw error;
+    }
+  }
+  const effectiveTimeoutMs = budget ? budget.effectiveTimeout(stageCapMs) : stageCapMs;
+  if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < minRequiredMs) {
+    budget?.recordSkippedStage(stageName, "insufficient_remaining_budget", "skipped");
+    return genericResult();
+  }
+
+  const stageEvent = budget?.stageStarted(stageName, {
+    configuredTimeoutMs: stageCapMs,
+    effectiveTimeoutMs
+  });
+  let stageResult = "success";
+  try {
+    const result = await runCancellableOcrJob({
+      createWorker: () => Tesseract.createWorker("eng", 1, {
+        logger: () => {},
+        errorHandler: () => {}
+      }),
+      image: imageBuffer,
+      recognizeOutput: { text: true, blocks: true },
+      signal: getRecognitionDeadlineSignal(),
+      timeoutMs: effectiveTimeoutMs,
+      deadlineCode: RECOGNITION_DEADLINE_CODE,
+      timeoutCode: RECOGNITION_BUDGET_CODE
+    });
+    const extractedLayoutLines = extractLocalOcrLayoutLines(result, imageIdentity);
+    const layoutLines = Object.freeze(Array.isArray(extractedLayoutLines) ? extractedLayoutLines : []);
+    return {
+      attempted: true,
+      route: classifyOneShotStructuredFamily({
+        text: result?.data?.text || "",
+        layoutLines
+      }),
+      layoutLines
+    };
+  } catch (error) {
+    stageResult = error?.code === RECOGNITION_DEADLINE_CODE
+      ? "aborted"
+      : error?.code === RECOGNITION_BUDGET_CODE
+        ? "timeout"
+        : "failed";
+    if (error?.code === RECOGNITION_DEADLINE_CODE) throw error;
+    return {
+      ...genericResult(),
+      attempted: true
+    };
+  } finally {
+    budget?.stageCompleted(stageEvent, { result: stageResult });
+  }
+}
+
+function materializeMapLayoutRowsFromFamilyEvidence({
+  layoutLines,
+  imageIdentity,
+  coordinateEngineV2,
+  resultRevision = 1
+} = {}) {
+  if (!Array.isArray(layoutLines) || layoutLines.length === 0
+    || !imageIdentity
+    || !isLocalOcrMapLayoutCandidate({ coordinateEngineV2 })) return null;
+  return createLocalOcrMapLayoutRows({
+    lines: layoutLines,
+    imageIdentity,
+    coordinateEngineV2,
+    resultRevision
+  });
+}
+
 function buildManualTextCoordinateResult(text) {
   const value = String(text || "").trim();
   const dmsLines = extractDmsCoordinateLines(value);
@@ -13808,6 +13899,9 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
   let providerLayoutCandidates = [];
   let providerLayoutResponseId = "";
   let localOcrStructuredLayoutRows = null;
+  let oneShotLocalOcrAttempted = false;
+  let oneShotLocalOcrLayoutLines = Object.freeze([]);
+  let oneShotStructuredFamilyRoute = classifyOneShotStructuredFamily();
   let responseCommitPromise = null;
   const sendRecognitionJson = res.json.bind(res);
   const runBudgetedStage = async (stageName, action) => {
@@ -14183,6 +14277,25 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     const coordinateEngineV2ContextHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || req.body?.country || req.body?.projectCountry || "");
     const coordinateRawHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || "");
     const handwrittenDmsUploadContext = hasExplicitHandwrittenDmsUploadContext(req.file, coordinateRawHint);
+    const oneShotFamilyClassification = await runLocalOcrFamilyClassification({
+      imageBuffer: req.file.buffer,
+      imageIdentity: coordinateImageIdentity
+    });
+    oneShotLocalOcrAttempted = oneShotFamilyClassification.attempted === true;
+    oneShotLocalOcrLayoutLines = oneShotFamilyClassification.layoutLines;
+    oneShotStructuredFamilyRoute = oneShotFamilyClassification.route;
+    console.log("One-shot structured family route:", {
+      family: oneShotStructuredFamilyRoute.family,
+      matched: oneShotStructuredFamilyRoute.matched,
+      reason: oneShotStructuredFamilyRoute.reason,
+      coordinateRowCount: oneShotStructuredFamilyRoute.evidence.coordinateRowCount,
+      dmsRowCount: oneShotStructuredFamilyRoute.evidence.dmsRowCount,
+      repeatedHeaderCount: oneShotStructuredFamilyRoute.evidence.repeatedHeaderCount,
+      groupHeadingCount: oneShotStructuredFamilyRoute.evidence.groupHeadingCount,
+      layoutRegionCount: oneShotStructuredFamilyRoute.evidence.layoutRegionCount,
+      ambiguousMultiPairLineCount: oneShotStructuredFamilyRoute.evidence.ambiguousMultiPairLineCount,
+      localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0
+    });
     const prompt = `你是矿业坐标识别助手。请只识别图片中的真实坐标表区域，返回紧凑的坐标行及可见的坐标结构证据。图片可能是完整文件、手机截图、扫描件、带水印图片、长表、局部表格、同一页多块矿区坐标或带菜单按钮的截图。
 
 投影坐标结构保留规则（优先于下述省略表头/点号的一般规则）：
@@ -14583,43 +14696,49 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       }
     ];
+    const selectedProviderPrompt = buildOneShotStructuredFamilyPrompt({
+      family: oneShotStructuredFamilyRoute.family,
+      noCoordinatesText
+    });
 
-    const useKyrgyzGkPromptFirst = shouldUseKyrgyzGkPromptFirst(req.file, req.body?.rawHint || req.body?.hint || "");
-    const useMozambiqueGeographicPromptFirst = !useKyrgyzGkPromptFirst && shouldUseMozambiqueGeographicPromptFirst(req.file, req.body?.rawHint || req.body?.hint || "");
+    // Legacy country/file-name selectors remain available to older parsers but
+    // no longer control the first (and only) Provider call. The primary route
+    // is selected solely from OCR-visible structure collected above.
+    const useKyrgyzGkPromptFirst = false;
+    const useMozambiqueGeographicPromptFirst = false;
     const kyrgyzPrimaryRoute = buildPrimaryRouteDecision({
       family: "kyrgyzstan_gk",
       evidence: { matched: useKyrgyzGkPromptFirst }
     });
-    const uploadRouteEvidenceInput = {
-      fileName: req.file?.originalname || "",
-      decodedFileName: Buffer.from(req.file?.originalname || "", "latin1").toString("utf8"),
-      rawHint: req.body?.rawHint || req.body?.hint || ""
-    };
-    const wgs84StrongRouteEvidence = getWgs84StrongRouteEvidence(uploadRouteEvidenceInput);
+    const wgs84StrongRouteEvidence = Object.freeze({
+      ...oneShotStructuredFamilyRoute.evidence,
+      matched: oneShotStructuredFamilyRoute.matched === true
+        && oneShotStructuredFamilyRoute.family === ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE,
+      source: "visible_structure",
+      reasons: Object.freeze([oneShotStructuredFamilyRoute.reason])
+    });
     const wgs84PrimaryRoute = buildPrimaryRouteDecision({
       family: "wgs84_table",
       evidence: wgs84StrongRouteEvidence
     });
-    const uploadTableStructure = detectUploadTableStructure(req.file?.buffer, req.file?.mimetype);
-    const madagascarStrongRouteEvidence = getMadagascarCadastralStrongRouteEvidence({
-      ...uploadRouteEvidenceInput,
-      structuralEvidence: uploadTableStructure
+    const madagascarStrongRouteEvidence = Object.freeze({
+      matched: false,
+      source: "legacy_metadata_selector_disabled",
+      reasons: Object.freeze([])
     });
     const madagascarPrimaryRoute = buildPrimaryRouteDecision({
       family: "madagascar_cadastral_grid",
       evidence: madagascarStrongRouteEvidence
     });
     recognitionBudget?.setAcquisitionRouteReason(
-      wgs84PrimaryRoute.selected
+      oneShotStructuredFamilyRoute.family === ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT
+        || wgs84PrimaryRoute.selected
         ? "WGS84_STRUCTURED_PRIMARY"
-        : kyrgyzPrimaryRoute.selected || madagascarPrimaryRoute.selected
+        : oneShotStructuredFamilyRoute.matched
           ? "SPECIALIZED_FAMILY_PRIMARY"
           : "GENERIC_PRIMARY"
     );
-    const handwrittenAvailabilityEvidence = getHandwrittenDmsTimeoutRoutingEvidence(
-      req.file,
-      req.body?.rawHint || req.body?.hint || ""
-    );
+    const handwrittenAvailabilityEvidence = Object.freeze({ shouldRetry: false });
     const availabilityCandidates = [
       {
         family: "kyrgyz_gk",
@@ -15128,10 +15247,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         };
         const wgs84PrimaryEngine = buildCoordinateEngineV2ShadowResult(wgs84PrimaryPayload, {
           fileName: uploadedFileName,
-          rawHint: coordinateEngineV2ContextHint
+          rawHint: coordinateEngineV2ContextHint,
+          forceRequiresReview: true
         });
-        localOcrStructuredLayoutRows = await runLocalOcrMapLayoutClassification({
-          imageBuffer: req.file.buffer,
+        localOcrStructuredLayoutRows = materializeMapLayoutRowsFromFamilyEvidence({
+          layoutLines: oneShotLocalOcrLayoutLines,
           imageIdentity: coordinateImageIdentity,
           coordinateEngineV2: wgs84PrimaryEngine,
           resultRevision: 1
@@ -15230,13 +15350,17 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    // Start table recognition with the visual model. OCR is only a retry/fallback because it can
-    // lose table row relationships or return bbox metadata instead of coordinate pairs.
+    // The single Provider call uses the structure-selected contract. Local OCR
+    // has already been consumed at most once for classification and is never
+    // repeated here as both classification and fallback evidence.
     const response = await callAliyunVision({
       modelName: aliyunVisionModel,
-      prompt,
+      prompt: selectedProviderPrompt,
       imageItems,
-      temperature: 0.1
+      temperature: 0.1,
+      stageName: oneShotStructuredFamilyRoute.matched ? "pre_route" : "generic_provider",
+      lowValue: false,
+      familyEvidence: oneShotStructuredFamilyRoute.matched
     });
     providerLayoutCandidates = extractProviderLayoutCandidates(response);
     providerLayoutResponseId = String(response?.id || response?.request_id || "");
@@ -16392,13 +16516,21 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         rawHint: coordinateEngineV2ContextHint
       });
       if (isLocalOcrMapLayoutCandidate({ coordinateEngineV2: completenessMapEngine })) {
-        localOcrStructuredLayoutRows = await runLocalOcrMapLayoutClassification({
-          imageBuffer: req.file.buffer,
+        localOcrStructuredLayoutRows = materializeMapLayoutRowsFromFamilyEvidence({
+          layoutLines: oneShotLocalOcrLayoutLines,
           imageIdentity: coordinateImageIdentity,
           coordinateEngineV2: completenessMapEngine,
-          resultRevision: 1,
-          stageName: "local_ocr_map_layout_completeness"
+          resultRevision: 1
         });
+        if (!localOcrStructuredLayoutRows && !oneShotLocalOcrAttempted) {
+          localOcrStructuredLayoutRows = await runLocalOcrMapLayoutClassification({
+            imageBuffer: req.file.buffer,
+            imageIdentity: coordinateImageIdentity,
+            coordinateEngineV2: completenessMapEngine,
+            resultRevision: 1,
+            stageName: "local_ocr_map_layout_completeness"
+          });
+        }
       }
     }
     const completenessSourceRoles = getCompletenessSourceRoles();
@@ -16812,6 +16944,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         || stage1FullMultisiteSafety.gateRequired
         || imageDmsFailClosedPatch?.forceRequiresReview
         || wgs84SinglePointEvidence.forceRequiresReview
+        || oneShotStructuredFamilyRoute.reviewRequired
       )
     });
     if (dmsGroupedReviewCandidate || stage1FullMultisiteSafety.gateRequired) {
@@ -16889,12 +17022,20 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
     if (!localOcrStructuredLayoutRows
       && isLocalOcrMapLayoutCandidate({ coordinateEngineV2 })) {
-      localOcrStructuredLayoutRows = await runLocalOcrMapLayoutClassification({
-        imageBuffer: req.file.buffer,
+      localOcrStructuredLayoutRows = materializeMapLayoutRowsFromFamilyEvidence({
+        layoutLines: oneShotLocalOcrLayoutLines,
         imageIdentity: coordinateImageIdentity,
         coordinateEngineV2,
         resultRevision: 1
       });
+      if (!localOcrStructuredLayoutRows && !oneShotLocalOcrAttempted) {
+        localOcrStructuredLayoutRows = await runLocalOcrMapLayoutClassification({
+          imageBuffer: req.file.buffer,
+          imageIdentity: coordinateImageIdentity,
+          coordinateEngineV2,
+          resultRevision: 1
+        });
+      }
     }
     let verificationResponse = buildCoordinateVerificationResponse(finalRecognitionCandidate, coordinateEngineV2);
     if (stage1FullMultisiteReviewCandidate) {

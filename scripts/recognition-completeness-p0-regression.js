@@ -4,6 +4,10 @@ import {
   RECOGNITION_COMPLETENESS_NEXT_ACTION,
   assessRecognitionCompleteness
 } from "../server/recognition/recognition-completeness.js";
+import {
+  ONE_SHOT_STRUCTURED_FAMILY,
+  classifyOneShotStructuredFamily
+} from "../server/recognition/family-primary-routing.js";
 
 let passed = 0;
 
@@ -56,6 +60,21 @@ test("complete single DMS candidate preserves source representation without retr
   assert.equal(result.decision, RECOGNITION_COMPLETENESS_DECISION.COMPLETE_CANDIDATE);
 });
 
+test("one-shot classifier routes labelled single DMS before completeness without family retry", () => {
+  const primary = classifyOneShotStructuredFamily({
+    text: `Longitude: 73°25'05.54\"E\nLatitude: 18°40'22.49\"N`
+  });
+  assert.equal(primary.family, ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT);
+  const result = assess({
+    coordinates: `73°25'05.54\"E,18°40'22.49\"N`,
+    coordinateRowCount: 1,
+    coordinateFormat: "DMS",
+    family: primary.family
+  });
+  assert.equal(result.allowFamilyProviderRetry, false);
+  assert.equal(result.decision, RECOGNITION_COMPLETENESS_DECISION.COMPLETE_CANDIDATE);
+});
+
 test("map search and place detail precision variants route to Point Review", () => {
   const result = assess({
     coordinates: "35.447819,83.178991\n35.4478191,83.1789913",
@@ -66,6 +85,26 @@ test("map search and place detail precision variants route to Point Review", () 
   assert.equal(result.decision, RECOGNITION_COMPLETENESS_DECISION.POINT_REVIEW_REQUIRED);
   assert.equal(result.nextAction, RECOGNITION_COMPLETENESS_NEXT_ACTION.POINT_REVIEW);
   assert.equal(result.forcePointReview, true);
+});
+
+test("map screenshot family preserves region roles for near-duplicate Point Review", () => {
+  const primary = classifyOneShotStructuredFamily({
+    text: "Search 73.41820,18.67291\nPlace details 73.418205,18.672914\nPlus Code 7JCPMC9C+5P",
+    layoutLines: [
+      { text: "Search 73.41820,18.67291", bbox: [1, 1, 101, 21] },
+      { text: "Place details 73.418205,18.672914", bbox: [1, 101, 151, 121] }
+    ]
+  });
+  assert.equal(primary.family, ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT);
+  const result = assess({
+    coordinates: "73.41820,18.67291\n73.418205,18.672914",
+    coordinateRowCount: 2,
+    sourceRoles: ["MAP_SEARCH_BOX", "MAP_PLACE_DETAILS", "MAP_PLUS_CODE"],
+    samePlaceNearDuplicate: true,
+    family: primary.family
+  });
+  assert.equal(result.decision, RECOGNITION_COMPLETENESS_DECISION.POINT_REVIEW_REQUIRED);
+  assert.equal(result.geometryInferenceAllowed, false);
 });
 
 test("distinct map locations never become an automatic merge or line", () => {
@@ -218,6 +257,18 @@ test("projected XY without datum zone hemisphere and axis order remains review-o
   });
   assert.equal(result.decision, RECOGNITION_COMPLETENESS_DECISION.REVIEW_REQUIRED);
   assert.ok(result.reasons.includes("PROJECTED_CRS_EVIDENCE_INCOMPLETE"));
+});
+
+test("projected primary route requires datum zone hemisphere and axis-order structure", () => {
+  const complete = classifyOneShotStructuredFamily({
+    text: "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nPoint | Easting | Northing\nA | 500100 | 2065100"
+  });
+  const incomplete = classifyOneShotStructuredFamily({
+    text: "Projection UTM\nPoint | X | Y\nA | 500100 | 2065100"
+  });
+  assert.equal(complete.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(incomplete.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(incomplete.matched, false);
 });
 
 test("fixed decision output contains no raw Provider response or sensitive request material", () => {
