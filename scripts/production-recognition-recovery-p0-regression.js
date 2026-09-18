@@ -8,6 +8,10 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import crypto from "node:crypto";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "../server/recognition/cancellable-ocr.js";
+import {
+  RECOGNITION_COMPLETENESS_DECISION,
+  assessRecognitionCompleteness
+} from "../server/recognition/recognition-completeness.js";
 import { createCoordinateUsageCommitController, isRecognitionRequestId } from "../server/coordinate-usage-atomicity.js";
 import * as primaryRouting from "../server/recognition/family-primary-routing.js";
 import * as dmsSourceStructure from "../server/recognition/dms-source-structure.js";
@@ -417,10 +421,47 @@ test("local OCR forwards explicitly requested structured-output options", async 
 
 test("production route binds retry classification and fail-closed runtime guards", () => {
   assert.match(serverSource, /DMS_RETRY_ROUTE_CLASSIFICATION[\s\S]*?from "\.\/server\/recognition\/dms-source-structure\.js"/);
+  assert.match(serverSource, /assessRecognitionCompleteness[\s\S]*?from "\.\/server\/recognition\/recognition-completeness\.js"/);
+  assert.match(serverSource, /authorizeRequestFamilyRetry\s*=\s*targetOwner\s*=>/);
+  assert.match(serverSource, /authorizeRequestFamilyRetry\(targetOwner\)/);
+  assert.match(serverSource, /familyEvidencePresent:\s*true/);
+  assert.match(serverSource, /sourceKind:\s*getCompletenessSourceKind\(\)/);
+  assert.match(serverSource, /sourceRoles:\s*getCompletenessSourceRoles\(\)/);
+  assert.match(serverSource, /samePlaceNearDuplicate:\s*overrides\.samePlaceNearDuplicate\s*===\s*true/);
+  assert.match(serverSource, /layoutGroups:\s*getCompletenessLayoutGroups\(\)/);
+  assert.match(serverSource, /crsEvidence:\s*getCompletenessCrsEvidence\(\)/);
+  assert.match(serverSource, /handwrittenConflict:\s*handwrittenVisionRouting\?\.reviewRequired\s*===\s*true/);
+  assert.match(serverSource, /stageName:\s*"local_ocr_map_layout_completeness"/);
+  assert.ok(
+    serverSource.indexOf("authorizeRequestFamilyRetry = targetOwner")
+      < serverSource.indexOf("prompt: dmsGroupedDirectPrompt"),
+    "unified completeness authorization must be installed before success-path family retries"
+  );
+  assert.doesNotMatch(serverSource, /function shouldRetryRecognition\s*\(/);
+  assert.doesNotMatch(serverSource, /claimDownstreamFamilyRetry\("generic_ocr"\)/);
+  assert.doesNotMatch(serverSource, /识别结果少于4行/);
   assert.match(serverSource, /COORDINATE_IMAGE_INVALID/);
   assert.match(serverSource, /errorHandler: \(\) => \{\}/);
   assert.match(serverSource, /COORDINATE_POST_PROVIDER_PROCESSING_FAILED/);
   assert.match(serverSource, /LOCAL_OCR_FAILED/);
+});
+
+test("recognition completeness makes single points complete and terminal Provider outcomes local-OCR-only", () => {
+  const single = assessRecognitionCompleteness({
+    coordinates: "98.67370605,26.34265281",
+    coordinateRowCount: 1,
+    coordinateFormat: "WGS84_DECIMAL"
+  });
+  assert.equal(single.decision, RECOGNITION_COMPLETENESS_DECISION.COMPLETE_CANDIDATE);
+  assert.equal(single.allowGenericProviderRetry, false);
+  assert.equal(single.allowLocalOcrEvidence, false);
+
+  for (const providerStatus of ["FAILED", "TIMEOUT", "UNCERTAIN"]) {
+    const terminal = assessRecognitionCompleteness({ providerStatus, localOcrAttempted: false });
+    assert.equal(terminal.allowGenericProviderRetry, false);
+    assert.equal(terminal.allowFamilyProviderRetry, false);
+    assert.equal(terminal.allowLocalOcrEvidence, true);
+  }
 });
 
 const polygon = Object.freeze({

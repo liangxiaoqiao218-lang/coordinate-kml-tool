@@ -172,6 +172,10 @@ assert.equal(version.payload.runtimeIdentity.finalizerSchemaVersion, "finalized_
 assert.equal(version.payload.runtimeIdentity.spatialResultEnabled, false);
 assert.ok(version.payload.runtimeIdentity.recognitionHardDeadlineMs < 60_000);
 const serverSource = fs.readFileSync("server.js", "utf8");
+const recognitionCompletenessSource = fs.readFileSync(
+  "server/recognition/recognition-completeness.js",
+  "utf8"
+);
 const classifierSource = fs.readFileSync("server/evidence-acquisition/provider-layout-role-classifier.js", "utf8");
 const qualificationSource = fs.readFileSync("server/evidence-acquisition/provider-layout-profile-qualification.js", "utf8");
 const productionQualificationGateSource = fs.readFileSync(
@@ -185,6 +189,15 @@ assert.match(classifierSource, /TRUSTED_LAYOUT_CLASSIFIER_EVIDENCE_MISSING/);
 assert.match(classifierSource, /return null;\s*\n}/, "Production classifier profile must remain unavailable by default");
 assert.match(serverSource, /provider-layout-profile-qualification/);
 assert.match(serverSource, /getRegressionTestMode\(req\)/);
+assert.match(serverSource, /assessRecognitionCompleteness/);
+assert.doesNotMatch(serverSource, /function shouldRetryRecognition\s*\(/);
+assert.doesNotMatch(serverSource, /claimDownstreamFamilyRetry\("generic_ocr"\)/);
+assert.match(recognitionCompletenessSource, /allowGenericProviderRetry:\s*false/);
+assert.match(recognitionCompletenessSource, /PROVIDER_TERMINAL_STATE/);
+assert.match(recognitionCompletenessSource, /ONE_LOCAL_OCR_ALLOWED/);
+assert.match(recognitionCompletenessSource, /pointCreationAllowed:\s*false/);
+assert.match(recognitionCompletenessSource, /mapCreationAllowed:\s*false/);
+assert.match(recognitionCompletenessSource, /kmlCreationAllowed:\s*false/);
 assert.match(serverSource, /responseContractId:\s*""/);
 assert.match(qualificationSource, /provider_layout_profile_qualification_v1/);
 assert.match(qualificationSource, /QUALIFICATION_CANDIDATE/);
