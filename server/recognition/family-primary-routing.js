@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const WGS84_PRIMARY_STAGE_CAP_MS = 25_000;
 export const KYRGYZ_PRIMARY_STAGE_CAP_MS = 25_000;
@@ -25,9 +25,15 @@ export const ONE_SHOT_ACQUISITION_CONFORMANCE_REASON = Object.freeze({
   HEADER_OR_CONTINUITY_MISMATCH: "HEADER_OR_CONTINUITY_MISMATCH",
   GROUP_BOUNDARY_MISMATCH: "GROUP_BOUNDARY_MISMATCH",
   MAP_ROLE_BINDING_MISMATCH: "MAP_ROLE_BINDING_MISMATCH",
-  PROJECTED_CRS_MISMATCH: "PROJECTED_CRS_MISMATCH"
+  PROJECTED_CRS_MISMATCH: "PROJECTED_CRS_MISMATCH",
+  PRIVATE_BINDING_UNAVAILABLE: "PRIVATE_BINDING_UNAVAILABLE",
+  VALUE_FIDELITY_MISMATCH: "VALUE_FIDELITY_MISMATCH",
+  ROW_PROVENANCE_MISMATCH: "ROW_PROVENANCE_MISMATCH",
+  MAP_ROLE_VALUE_MISMATCH: "MAP_ROLE_VALUE_MISMATCH",
+  PROJECTED_VALUE_MISMATCH: "PROJECTED_VALUE_MISMATCH"
 });
 const ONE_SHOT_ACQUISITION_CONTRACT_SCHEMA = "one_shot_acquisition_contract_v1";
+const privateAcquisitionBindings = new WeakMap();
 const ONE_SHOT_ACQUISITION_FORMATS = Object.freeze([
   "WGS84_DECIMAL_SINGLE_POINT",
   "DMS_SINGLE_POINT",
@@ -93,9 +99,22 @@ function parseStrictDecimalCoordinate(value, limit) {
 
 function parseStrictDmsCoordinate(value, expectedDirections) {
   const normalized = String(value || "").trim();
-  const match = normalized.match(/^\s*(\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′]\s*(\d{1,2}(?:[.,]\d+)?)\s*["″]\s*([NSEW])\s*$/iu);
-  if (!match || !expectedDirections.includes(match[4].toUpperCase())) return null;
-  return parseDmsCoordinate(normalized, expectedDirections);
+  const match = normalized.match(
+    /^\s*(\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′’]?\s*(\d{1,2}(?:[.,]\d+)?)\s*["″”]?\s*([NSEWO])\s*$/iu
+  );
+  if (!match) return null;
+  const direction = match[4].toUpperCase() === "O" ? "W" : match[4].toUpperCase();
+  const allowedDirections = String(expectedDirections || "").toUpperCase().replace(/O/gu, "W");
+  if (!allowedDirections.includes(direction)) return null;
+  const degrees = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3].replace(",", "."));
+  const limit = allowedDirections === "NS" ? 90 : 180;
+  if (!Number.isFinite(degrees) || !Number.isFinite(minutes) || !Number.isFinite(seconds)
+    || minutes >= 60 || seconds >= 60 || degrees > limit
+    || (degrees === limit && (minutes > 0 || seconds > 0))) return null;
+  return (direction === "S" || direction === "W" ? -1 : 1)
+    * (degrees + minutes / 60 + seconds / 3600);
 }
 
 function formatNormalizedCoordinate(value) {
@@ -863,8 +882,8 @@ function parseExplicitAxisHeaderLine(line, index) {
   if (!delimiter) return null;
   const fields = splitStructuredFields(source, delimiter);
   if (fields.length < 2 || fields.some(field => /\d/u.test(field))) return false;
-  const longitudeField = /^(?:longitude|lon|经度|經度|东经|東經|西经|西經)$/iu;
-  const latitudeField = /^(?:latitude|lat|纬度|緯度|北纬|北緯|南纬|南緯)$/iu;
+  const longitudeField = /^(?:longitude(?:\s+DMS)?|lon|经度|經度|东经|東經|西经|西經)$/iu;
+  const latitudeField = /^(?:latitude(?:\s+DMS)?|lat|纬度|緯度|北纬|北緯|南纬|南緯)$/iu;
   const auxiliaryField = /^(?:point|no\.?|number|row|id|label|name|点号|點號|编号|編號|序号|序號)$/iu;
   const longitudeIndexes = fields.flatMap((field, index) => longitudeField.test(field) ? [index] : []);
   const latitudeIndexes = fields.flatMap((field, index) => latitudeField.test(field) ? [index] : []);
@@ -984,8 +1003,9 @@ function analyzeBoundProjectedRows(lines, headers) {
       if (parseProjectedAxisHeaderLine(lines[index], index)) break;
       const fields = splitStructuredFields(lines[index], header.delimiter);
       const projectedValue = /^[-+]?\d{4,9}(?:[.,]\d+)?$/u;
-      const labelLooksValid = header.labelIndex === null
-        || (fields[header.labelIndex] && extractStructuredRowLabel(`${fields[header.labelIndex]} |`));
+      const labelLooksValid = header.labelIndex !== null
+        && fields[header.labelIndex]
+        && extractStructuredRowLabel(`${fields[header.labelIndex]} |`);
       const declaredAxisValues = [fields[header.eastingIndex] || "", fields[header.northingIndex] || ""];
       const projectedDataLike = fields.filter(field => projectedValue.test(field)).length >= 2
         || (fields.length === header.fieldCount && labelLooksValid && declaredAxisValues.some(Boolean))
@@ -995,7 +1015,8 @@ function analyzeBoundProjectedRows(lines, headers) {
         && fields.every(Boolean)
         && projectedValue.test(fields[header.eastingIndex])
         && projectedValue.test(fields[header.northingIndex])
-        && (header.labelIndex === null || extractStructuredRowLabel(`${fields[header.labelIndex]} |`));
+        && header.labelIndex !== null
+        && extractStructuredRowLabel(`${fields[header.labelIndex]} |`);
       if (valid) {
         count += 1;
         continue;
@@ -1432,6 +1453,325 @@ function boundedStructureCounts(values) {
   return Object.freeze(values.map(boundedStructureCount));
 }
 
+function normalizeBindingLabel(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toUpperCase();
+}
+
+function normalizeBindingDecimal(value, limit = Number.POSITIVE_INFINITY) {
+  const normalized = normalizeDecimalToken(value);
+  if (!/^[-+]?\d+(?:\.\d+)?$/u.test(normalized)) return "";
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric) || Math.abs(numeric) > limit) return "";
+  return normalized;
+}
+
+function normalizeBindingDms(value, expectedDirections) {
+  const normalized = String(value || "").normalize("NFKC").trim();
+  const match = normalized.match(
+    /^(\d{1,3})\s*[°º]\s*(\d{1,2})\s*(['′’]?)\s*(\d{1,2}(?:[.,]\d+)?)\s*(["″”]?)\s*([NSEWO])\s*$/iu
+  );
+  if (!match) return "";
+  const direction = match[6].toUpperCase() === "O" ? "W" : match[6].toUpperCase();
+  if (!expectedDirections.includes(direction)) return "";
+  const degrees = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[4].replace(",", "."));
+  const limit = expectedDirections === "NS" ? 90 : 180;
+  if (!Number.isFinite(degrees) || !Number.isFinite(minutes) || !Number.isFinite(seconds)
+    || minutes >= 60 || seconds >= 60 || degrees > limit
+    || (degrees === limit && (minutes > 0 || seconds > 0))) return "";
+  const minuteMarker = match[3] ? "'" : "";
+  const secondMarker = match[5] ? "\"" : "";
+  return `${match[1]}°${match[2]}${minuteMarker}${match[4].replace(",", ".")}${secondMarker}${direction}`;
+}
+
+function canonicalAxisValue(value, format, axis) {
+  if (format === "decimal") {
+    return normalizeBindingDecimal(value, axis === "longitude" ? 180 : 90);
+  }
+  return normalizeBindingDms(value, axis === "longitude" ? "EW" : "NS");
+}
+
+function axisTableRows(value, format) {
+  const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
+  const headers = lines.flatMap((line, index) => {
+    const header = parseExplicitAxisHeaderLine(line, index);
+    return header ? [header] : [];
+  });
+  const rows = [];
+  for (const header of headers) {
+    for (let index = header.index + 1; index < lines.length; index += 1) {
+      if (parseExplicitAxisHeaderLine(lines[index], index)) break;
+      const fields = splitStructuredFields(lines[index], header.delimiter);
+      if (fields.length !== header.fieldCount || fields.some(field => !field)) break;
+      const longitude = canonicalAxisValue(fields[header.longitudeIndex], format, "longitude");
+      const latitude = canonicalAxisValue(fields[header.latitudeIndex], format, "latitude");
+      const label = header.labelIndex === null ? String(rows.length + 1) : normalizeBindingLabel(fields[header.labelIndex]);
+      if (!longitude || !latitude || !label) break;
+      rows.push(Object.freeze({ label, longitude, latitude }));
+    }
+  }
+  return Object.freeze(rows);
+}
+
+function singlePointIdentity(value, format) {
+  const longitudeEntry = getSingleLabeledEntry(
+    value,
+    /^(?:longitude(?:\s+DMS)?|lon|经度|經度|東經|东经|西經|西经)$/iu
+  );
+  const latitudeEntry = getSingleLabeledEntry(
+    value,
+    /^(?:latitude(?:\s+DMS)?|lat|纬度|緯度|北纬|北緯|南纬|南緯)$/iu
+  );
+  if (longitudeEntry && latitudeEntry) {
+    const coordinateFormat = format === "DMS_SINGLE_POINT" ? "dms" : "decimal";
+    const longitude = canonicalAxisValue(longitudeEntry.value, coordinateFormat, "longitude");
+    const latitude = canonicalAxisValue(latitudeEntry.value, coordinateFormat, "latitude");
+    return longitude && latitude
+      ? Object.freeze([`LONGITUDE:${longitude}`, `LATITUDE:${latitude}`])
+      : Object.freeze([]);
+  }
+  const rows = axisTableRows(value, format === "DMS_SINGLE_POINT" ? "dms" : "decimal");
+  return rows.length === 1
+    ? Object.freeze([`LONGITUDE:${rows[0].longitude}`, `LATITUDE:${rows[0].latitude}`])
+    : Object.freeze([]);
+}
+
+function tableIdentity(value, format) {
+  return Object.freeze(axisTableRows(value, format).map((row, index) => (
+    `${index}:${row.label}:${row.longitude}:${row.latitude}`
+  )));
+}
+
+function normalizeGroupHeading(value) {
+  const normalized = normalizeBindingLabel(value)
+    .replace(/^GROUP\s*[|:#-]?\s*/u, "")
+    .replace(/^(?:SITE|SITES|AREA|MINING AREA|矿区|礦區)\s*[|:#-]?\s*/u, "");
+  return normalized || "REPEATED_HEADER_BOUNDARY";
+}
+
+function groupedDmsIdentity(value) {
+  const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
+  const providerStyle = lines.some(line => /^GROUP\s*\|/iu.test(line));
+  const tokens = [];
+  let groupIndex = -1;
+  let groupHeading = "";
+  let header = null;
+  let rowIndex = 0;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (providerStyle && /^GROUP\s*\|/iu.test(line)) {
+      groupIndex += 1;
+      groupHeading = normalizeGroupHeading(line.split("|").slice(1).join("|"));
+      header = null;
+      rowIndex = 0;
+      continue;
+    }
+    if (!providerStyle && /^(?:group|site|sites|area|mining\s+area|矿区|礦區)\s*(?:[|:#-]\s*)?[A-Z0-9_-]+\s*$/iu.test(line)) {
+      groupIndex += 1;
+      groupHeading = normalizeGroupHeading(line);
+      header = null;
+      rowIndex = 0;
+      continue;
+    }
+    if (providerStyle && /^HEADER\s*\|/iu.test(line)) {
+      header = "PROVIDER";
+      continue;
+    }
+    const parsedHeader = parseExplicitAxisHeaderLine(line, index);
+    if (!providerStyle && parsedHeader) {
+      if (groupIndex < 0 || (header && groupHeading === "REPEATED_HEADER_BOUNDARY")) {
+        groupIndex += 1;
+        groupHeading = "REPEATED_HEADER_BOUNDARY";
+        rowIndex = 0;
+      }
+      header = parsedHeader;
+      continue;
+    }
+
+    let label = "";
+    let latitude = "";
+    let longitude = "";
+    if (providerStyle && /^POINT\s*\|/iu.test(line)) {
+      const fields = splitStructuredFields(line, "|");
+      if (fields.length === 4) {
+        label = normalizeBindingLabel(fields[1]);
+        latitude = normalizeBindingDms(fields[2], "NS");
+        longitude = normalizeBindingDms(fields[3], "EW");
+      }
+    } else if (!providerStyle && header && header !== "PROVIDER") {
+      const fields = splitStructuredFields(line, header.delimiter);
+      if (fields.length === header.fieldCount) {
+        label = header.labelIndex === null ? String(rowIndex + 1) : normalizeBindingLabel(fields[header.labelIndex]);
+        latitude = normalizeBindingDms(fields[header.latitudeIndex], "NS");
+        longitude = normalizeBindingDms(fields[header.longitudeIndex], "EW");
+      }
+    }
+    if (label && latitude && longitude && groupIndex >= 0) {
+      tokens.push(`${groupIndex}:${groupHeading}:${rowIndex}:${label}:${longitude}:${latitude}`);
+      rowIndex += 1;
+    }
+  }
+  return Object.freeze(tokens);
+}
+
+function decimalLexemesInLine(value) {
+  return (String(value || "").match(/[-+]?\d{1,3}(?:[.,]\d+)/gu) || [])
+    .map(token => normalizeBindingDecimal(token, 180))
+    .filter(Boolean);
+}
+
+function mapRoleIdentity(value) {
+  const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
+  const roles = new Map();
+  for (const line of lines) {
+    const upper = line.toUpperCase();
+    const role = /^MAP_SEARCH_BOX\s*\|/u.test(upper)
+      || /\b(?:SEARCH|RECHERCHER|BUSCAR)\b/u.test(upper) || /搜索|搜尋/u.test(line)
+      ? "MAP_SEARCH_BOX"
+      : /^MAP_PLACE_DETAILS\s*\|/u.test(upper)
+        || /\b(?:DETAILS?|PLACE|LOCATION|ADDRESS|DIRECTIONS?)\b/u.test(upper) || /地点|地點|位置|地址|路线|路線/u.test(line)
+        ? "MAP_PLACE_DETAILS"
+        : /^PLUS_CODE\s*\|/u.test(upper) || /\bPLUS\s*CODE\b/u.test(upper)
+          ? "PLUS_CODE"
+          : "";
+    if (!role || roles.has(role)) continue;
+    if (role === "PLUS_CODE") {
+      const plusCode = line.match(/\b[A-Z0-9]{4,12}\+[A-Z0-9]{2,}\b/iu)?.[0]
+        ?.toUpperCase();
+      if (plusCode) roles.set(role, plusCode);
+      continue;
+    }
+    const coordinates = decimalLexemesInLine(line);
+    if (coordinates.length === 2) roles.set(role, coordinates.join(","));
+  }
+  return Object.freeze(["MAP_SEARCH_BOX", "MAP_PLACE_DETAILS", "PLUS_CODE"]
+    .filter(role => roles.has(role))
+    .map(role => `${role}:${roles.get(role)}`));
+}
+
+function projectedIdentityRows(value) {
+  const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
+  const providerPointRows = lines.flatMap((line, index) => {
+    const fields = splitStructuredFields(line, "|");
+    if (fields.length !== 4 || !/^POINT$/iu.test(fields[0])) return [];
+    const first = normalizeBindingDecimal(fields[2]);
+    const second = normalizeBindingDecimal(fields[3]);
+    const label = normalizeBindingLabel(fields[1]);
+    return first && second && label ? [`POINT:${index}:${label}:${first}:${second}`] : [];
+  });
+  const sourceRows = [];
+  const headers = lines.flatMap((line, index) => {
+    const header = parseProjectedAxisHeaderLine(line, index);
+    return header ? [header] : [];
+  });
+  for (const header of headers) {
+    for (let index = header.index + 1; index < lines.length; index += 1) {
+      if (parseProjectedAxisHeaderLine(lines[index], index)) break;
+      const fields = splitStructuredFields(lines[index], header.delimiter);
+      if (fields.length !== header.fieldCount || fields.some(field => !field)) break;
+      const label = header.labelIndex === null ? "" : normalizeBindingLabel(fields[header.labelIndex]);
+      const firstAxisIndex = Math.min(header.eastingIndex, header.northingIndex);
+      const secondAxisIndex = Math.max(header.eastingIndex, header.northingIndex);
+      const first = normalizeBindingDecimal(fields[firstAxisIndex]);
+      const second = normalizeBindingDecimal(fields[secondAxisIndex]);
+      if (!label || !first || !second) break;
+      sourceRows.push(`POINT:${sourceRows.length}:${label}:${first}:${second}`);
+    }
+  }
+  const mgrsRows = lines.flatMap((line, index) => {
+    const match = line.match(
+      /^\s*MGRS\s*[|:]\s*([1-9]|[1-5]\d|60)([C-HJ-NP-X])\s*[|]\s*([A-HJ-NP-Z]{2})\s*[|]\s*(\d{1,5})\s*[|]\s*(\d{1,5})\s*$/iu
+    );
+    if (!match || match[4].length !== match[5].length) return [];
+    return [`MGRS:${index}:${Number(match[1])}${match[2].toUpperCase()}:${match[3].toUpperCase()}:${match[4]}:${match[5]}`];
+  });
+  const pointRows = providerPointRows.length > 0 ? providerPointRows : sourceRows;
+  return Object.freeze([...pointRows.map((row, index) => row.replace(/^POINT:\d+:/u, `POINT:${index}:`)),
+    ...mgrsRows.map((row, index) => row.replace(/^MGRS:\d+:/u, `MGRS:${index}:`))]);
+}
+
+function valueIdentityForFamily(family, format, value) {
+  switch (family) {
+    case ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT:
+      return singlePointIdentity(value, format);
+    case ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE:
+      return tableIdentity(value, "decimal");
+    case ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE:
+      return tableIdentity(value, "dms");
+    case ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED:
+      return groupedDmsIdentity(value);
+    case ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT:
+      return mapRoleIdentity(value);
+    case ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE:
+      return projectedIdentityRows(value);
+    default:
+      return Object.freeze([]);
+  }
+}
+
+function bindingMismatchReason(family) {
+  if (family === ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT) {
+    return ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.MAP_ROLE_VALUE_MISMATCH;
+  }
+  if (family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE) {
+    return ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_VALUE_MISMATCH;
+  }
+  if ([
+    ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE,
+    ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE,
+    ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
+  ].includes(family)) {
+    return ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.ROW_PROVENANCE_MISMATCH;
+  }
+  return ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.VALUE_FIDELITY_MISMATCH;
+}
+
+function createPrivateAcquisitionBinding({ family, format, sourceText, expectedRowCount }) {
+  const identity = valueIdentityForFamily(family, format, sourceText);
+  const expectedCount = family === ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT
+    ? 2
+    : family === ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT
+      ? 3
+      : boundedStructureCount(expectedRowCount);
+  const available = identity.length > 0 && (expectedCount === 0 || identity.length === expectedCount);
+  const key = randomBytes(32);
+  const digest = available
+    ? createHmac("sha256", key).update(JSON.stringify({ family, format, identity }), "utf8").digest()
+    : Buffer.alloc(0);
+  return Object.freeze({ available, family, format, expectedCount, key, digest });
+}
+
+function validatePrivateAcquisitionBinding({ contract, payload, providerText }) {
+  const binding = privateAcquisitionBindings.get(contract);
+  if (!binding?.available || binding.family !== payload.family || binding.format !== payload.format) {
+    return Object.freeze({
+      conformant: false,
+      reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PRIVATE_BINDING_UNAVAILABLE
+    });
+  }
+  const identity = valueIdentityForFamily(payload.family, payload.format, providerText);
+  const expectedCount = binding.expectedCount;
+  if (identity.length === 0 || (expectedCount > 0 && identity.length !== expectedCount)) {
+    return Object.freeze({ conformant: false, reason: bindingMismatchReason(payload.family) });
+  }
+  const actualDigest = createHmac("sha256", binding.key)
+    .update(JSON.stringify({ family: payload.family, format: payload.format, identity }), "utf8")
+    .digest();
+  const conformant = binding.digest.length === actualDigest.length && timingSafeEqual(binding.digest, actualDigest);
+  return Object.freeze({
+    conformant,
+    reason: conformant
+      ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
+      : bindingMismatchReason(payload.family)
+  });
+}
+
 function extractGroupedDmsStructure(value = "") {
   const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
   const explicitCounts = [];
@@ -1668,10 +2008,19 @@ export function createOneShotAcquisitionContract({ route, sourceText = "" } = {}
       crs
     }
   });
-  return Object.freeze({
+  const contract = Object.freeze({
     ...payload,
     contractDigest: sha256BoundedIdentity(JSON.stringify(payload))
   });
+  privateAcquisitionBindings.set(contract, createPrivateAcquisitionBinding({
+    family,
+    format: payload.format,
+    sourceText,
+    expectedRowCount: family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE
+      ? payload.structure.projectedCoordinateRowCount
+      : payload.structure.coordinateRowCount
+  }));
+  return contract;
 }
 
 function buildAcquisitionConformanceResult({ contract, status, reason, counts = {} }) {
@@ -1688,6 +2037,33 @@ function buildAcquisitionConformanceResult({ contract, status, reason, counts = 
       projectedCoordinateRowCount: boundedStructureCount(counts.projectedCoordinateRowCount),
       crsFieldCount: boundedStructureCount(counts.crsFieldCount)
     })
+  });
+}
+
+function buildStructurallyValidatedConformanceResult({
+  contract,
+  payload,
+  providerText,
+  structuralConformant,
+  structuralReason,
+  counts = {}
+}) {
+  if (!structuralConformant) {
+    return buildAcquisitionConformanceResult({
+      contract: payload,
+      status: ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
+      reason: structuralReason,
+      counts
+    });
+  }
+  const privateConformance = validatePrivateAcquisitionBinding({ contract, payload, providerText });
+  return buildAcquisitionConformanceResult({
+    contract: payload,
+    status: privateConformance.conformant
+      ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
+      : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
+    reason: privateConformance.reason,
+    counts
   });
 }
 
@@ -1801,16 +2177,14 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
     const groupsMatch = evidence.groupBoundaryCount === payload.structure.groupBoundaryCount
       && evidence.repeatedHeaderCount === payload.structure.groupBoundaryCount
       && JSON.stringify(evidence.groupRowCounts) === JSON.stringify(payload.structure.groupRowCounts);
-    return buildAcquisitionConformanceResult({
-      contract: payload,
-      status: evidence.closed && rowsMatch && groupsMatch
-        ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
-        : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
-      reason: evidence.closed && rowsMatch && groupsMatch
-        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
-        : groupsMatch
-          ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH
-          : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GROUP_BOUNDARY_MISMATCH,
+    return buildStructurallyValidatedConformanceResult({
+      contract,
+      payload,
+      providerText,
+      structuralConformant: evidence.closed && rowsMatch && groupsMatch,
+      structuralReason: groupsMatch
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH
+        : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GROUP_BOUNDARY_MISMATCH,
       counts
     });
   }
@@ -1820,14 +2194,12 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
     const conformant = payload.structure.mapUiRolesBound
       && evidence.closed
       && evidence.coordinateRowCount === payload.structure.coordinateRowCount;
-    return buildAcquisitionConformanceResult({
-      contract: payload,
-      status: conformant
-        ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
-        : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
-      reason: conformant
-        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
-        : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.MAP_ROLE_BINDING_MISMATCH,
+    return buildStructurallyValidatedConformanceResult({
+      contract,
+      payload,
+      providerText,
+      structuralConformant: conformant,
+      structuralReason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.MAP_ROLE_BINDING_MISMATCH,
       counts: evidence
     });
   }
@@ -1838,16 +2210,14 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
     const conformant = evidence.closed
       && identityMatch
       && evidence.projectedCoordinateRowCount === payload.structure.projectedCoordinateRowCount;
-    return buildAcquisitionConformanceResult({
-      contract: payload,
-      status: conformant
-        ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
-        : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
-      reason: conformant
-        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
-        : identityMatch
-          ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH
-          : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH,
+    return buildStructurallyValidatedConformanceResult({
+      contract,
+      payload,
+      providerText,
+      structuralConformant: conformant,
+      structuralReason: identityMatch
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH
+        : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH,
       counts: evidence
     });
   }
@@ -1860,18 +2230,16 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
   const headerCountMatches = !payload.structure.headerRequired
     || providerRoute.evidence.repeatedHeaderCount === payload.structure.repeatedHeaderCount;
   const conformant = sameFamily && formatMatches && rowCountMatches && headerCountMatches;
-  return buildAcquisitionConformanceResult({
-    contract: payload,
-    status: conformant
-      ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
-      : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
-    reason: conformant
-      ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
-      : !sameFamily || !formatMatches
-        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.FAMILY_MISMATCH
-        : !headerCountMatches
-          ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.HEADER_OR_CONTINUITY_MISMATCH
-          : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH,
+  return buildStructurallyValidatedConformanceResult({
+    contract,
+    payload,
+    providerText,
+    structuralConformant: conformant,
+    structuralReason: !sameFamily || !formatMatches
+      ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.FAMILY_MISMATCH
+      : !headerCountMatches
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.HEADER_OR_CONTINUITY_MISMATCH
+        : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH,
     counts: {
       coordinateRowCount: providerRoute.evidence.coordinateRowCount,
       repeatedHeaderCount: providerRoute.evidence.repeatedHeaderCount,

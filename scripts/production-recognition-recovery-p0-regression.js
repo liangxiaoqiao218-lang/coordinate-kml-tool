@@ -1521,6 +1521,10 @@ test("one-shot structured acquisition contract rejects post-Provider family drif
   const contract = primaryRouting.createOneShotAcquisitionContract({ route, sourceText: source });
   const conformant = primaryRouting.validateOneShotAcquisitionContract({
     contract,
+    providerText: source
+  });
+  const valueDrifted = primaryRouting.validateOneShotAcquisitionContract({
+    contract,
     providerText: "Longitude: 63.500001\nLatitude: 11.500002"
   });
   const drifted = primaryRouting.validateOneShotAcquisitionContract({
@@ -1528,6 +1532,11 @@ test("one-shot structured acquisition contract rejects post-Provider family drif
     providerText: "Longitude: 63.500001\nLatitude: 11.500002\n64.1000 | 12.2000"
   });
   assert.equal(conformant.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  assert.equal(valueDrifted.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(
+    valueDrifted.reason,
+    primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.VALUE_FIDELITY_MISMATCH
+  );
   assert.equal(drifted.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
 });
 
