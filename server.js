@@ -10,6 +10,7 @@ import { inflateSync } from "node:zlib";
 import Tesseract from "tesseract.js";
 import { applyMiningJudgeabilityGate } from "./server/mining-judgeability.js";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
+import { assessRecognitionCompleteness } from "./server/recognition/recognition-completeness.js";
 import {
   canonicalizeCoordinateImageUpload,
   createCoordinateImageIdentity,
@@ -7360,10 +7361,6 @@ function countCoordinateRows(text) {
       .length;
 }
 
-function shouldRetryRecognition(rawText, coordinates) {
-  return countCoordinateRows(coordinates) < 4;
-}
-
 function shouldRetryBftmRecognition(rawText, coordinates) {
   const rawAnalysis = analyzeBftmProjectedPairs(rawText);
   const coordinateAnalysis = analyzeBftmProjectedPairs(coordinates);
@@ -13561,7 +13558,8 @@ app.delete(
  *   longitude,latitude,0. This sits below DMS/MGRS/special grids and above ordinary text fallback.
  * - Decimal lon/lat: plain decimal polygon path only; never enter cadastral grid mode.
  * - Multi-table and Point A-Z tables: visual understanding first so table boundaries and row order survive.
- * - OCR: use only for low-row-count retry or fallback, never as the main flow for table coordinates.
+ * - OCR: use only for one bounded empty/failed-result evidence read or an explicitly typed family retry;
+ *   coordinate count alone never authorizes Provider retry, fallback, or geometry inference.
  *
  * Backend rules are guardrails only: validate coordinates, reject bbox pollution, reject X,X / Y,Y
  * column-pairing errors, and extract from clear text. Do not try to reconstruct table rows from
@@ -13964,8 +13962,11 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
   const parserTrace = ["OCR"];
   let stage1ProviderSucceeded = false;
   let activeFamilyOwner = null;
+  let authorizeRequestFamilyRetry = null;
   const requestRetryOrchestrator = createDmsGroupedRetryOrchestrator({ parserTrace });
   const claimRequestRetry = targetOwner => {
+    if (typeof authorizeRequestFamilyRetry === "function"
+      && authorizeRequestFamilyRetry(targetOwner) !== true) return false;
     const claimed = requestRetryOrchestrator.claim(targetOwner);
     if (claimed) activeFamilyOwner = requestRetryOrchestrator.snapshot().activeFamilyOwner;
     return claimed;
@@ -14222,10 +14223,6 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
 1063 | 59 | 143
 
 无法识别有效坐标时，只输出：${noCoordinatesText}`;
-    const retryPrompt = `${prompt}
-
-重要重试要求：
-上一次识别结果少于 4 行。请重新完整检查整张图片，不要只读取第一块坐标表。必须寻找同一页里的第二组、第三组坐标；如果有多段 1、2、3、4 编号，每段都要输出，并在段与段之间保留一个空行。`;
     const bftmRetryPrompt = `${prompt}
 
 BFTM / X-Y table retry:
@@ -15369,6 +15366,76 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       hint: coordinateRawHint,
       explicitHandwrittenSignal: handwrittenDmsUploadContext
     });
+    const getCompletenessSourceRoles = () => Array.from(new Set([
+      ...providerLayoutCandidates.map(candidate => String(candidate?.source_role || "").trim().toUpperCase()),
+      ...(Array.isArray(localOcrStructuredLayoutRows)
+        ? localOcrStructuredLayoutRows.map(row => String(row?.source_role || "").trim().toUpperCase())
+        : [])
+    ].filter(Boolean)));
+    const getCompletenessLayoutGroups = () => {
+      const groups = Array.isArray(initialDmsGroupedInfo?.groups) ? initialDmsGroupedInfo.groups : [];
+      return groups.map(group => ({
+        rowCount: Number(group?.rowCount ?? group?.rows?.length ?? 0),
+        expectedRowCount: Number.isInteger(Number(group?.expectedRowCount))
+          ? Number(group.expectedRowCount)
+          : null,
+        complete: group?.complete !== false
+      }));
+    };
+    const getCompletenessSourceKind = () => {
+      const value = String(rawText || "");
+      if (countCoordinateRows(coordinates) > 0) return "COORDINATE_EVIDENCE";
+      if (/\b(?:equation|formula|calculation|report|summary)\b|(?:方程|公式|计算报告|普通报告)/iu.test(value)) {
+        return /\b(?:equation|formula|calculation)\b|(?:方程|公式|计算)/iu.test(value)
+          ? "MATH_EXPRESSION"
+          : "ORDINARY_REPORT";
+      }
+      return "UNKNOWN";
+    };
+    const getCompletenessCrsEvidence = () => {
+      const text = `${rawText}\n${coordinates}`;
+      return {
+        datum: /\b(?:WGS\s*84|WGS\s*1984|EPSG\s*:\s*\d+)\b/iu.test(text) ? "EXPLICIT_DATUM" : "",
+        zone: /\b(?:ZONE|ZONA|FUSO)\s*\d{1,2}[A-Z]?\b|\bUTM\s*\d{1,2}[NS]?\b/iu.test(text) ? "EXPLICIT_ZONE" : "",
+        hemisphere: /\b(?:NORTH|SOUTH|NORTE|SUL|HEMISPHERE)\b|\bUTM\s*\d{1,2}[NS]\b/iu.test(text) ? "EXPLICIT_HEMISPHERE" : "",
+        axisOrder: /\b(?:EASTING|NORTHING|X\s*[,/|;-]\s*Y|Y\s*[,/|;-]\s*X)\b/iu.test(text) ? "EXPLICIT_AXIS_ORDER" : ""
+      };
+    };
+    const buildCompletenessInput = (overrides = {}) => ({
+      rawText,
+      coordinates,
+      coordinateRowCount: countCoordinateRows(coordinates),
+      sourceKind: getCompletenessSourceKind(),
+      sourceRoles: getCompletenessSourceRoles(),
+      samePlaceNearDuplicate: overrides.samePlaceNearDuplicate === true,
+      family: overrides.family || "",
+      structure: {
+        tableHeaderPresent: /(?:经度|纬度|longitude|latitude|\blon\b|\blat\b|\bpoint\b|\bnord\b|\best\b|\beasting\b|\bnorthing\b)/iu.test(String(rawText || "")),
+        expectedRowCount: overrides.expectedRowCount,
+        missingRowCount: overrides.missingRowCount,
+        brokenRowCount: overrides.brokenRowCount,
+        incomplete: overrides.incomplete === true,
+        familyEvidencePresent: overrides.familyEvidencePresent === true
+      },
+      layoutGroups: getCompletenessLayoutGroups(),
+      crsEvidence: getCompletenessCrsEvidence(),
+      handwrittenConflict: handwrittenVisionRouting?.reviewRequired === true,
+      providerStatus: overrides.providerStatus || "SUCCESS",
+      localOcrAttempted: overrides.localOcrAttempted === true
+    });
+    authorizeRequestFamilyRetry = targetOwner => {
+      const family = String(targetOwner || "").trim().toLowerCase();
+      const assessment = assessRecognitionCompleteness(buildCompletenessInput({
+        family,
+        incomplete: true,
+        familyEvidencePresent: true
+      }));
+      const allowed = assessment.allowFamilyProviderRetry === true && assessment.retryFamily === family;
+      if (!allowed) {
+        parserTrace.push(`RECOGNITION_COMPLETENESS:family_retry_blocked(${family || "unknown"})`);
+      }
+      return allowed;
+    };
     const dmsRetryOwnership = classifyDmsRetryOwnership({
       isImageInput: Boolean(req.file),
       routePriority: structuredDmsRoutePriority,
@@ -16276,37 +16343,70 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
 
-    if (!dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates) && claimDownstreamFamilyRetry("generic_ocr")) {
-      try {
-        console.log("阿里云OCR识别结果少于4行，使用旧版多组坐标规则重试。");
-        const retryResponse = await callAliyunVision({
-          modelName: aliyunOcrModel,
-          prompt: retryPrompt,
-          imageItems,
-          temperature: 0,
-          stageName: "family_retry",
-          lowValue: true,
-          familyEvidence: true
+    let completenessMapEngine = null;
+    if (!localOcrStructuredLayoutRows && req.file?.buffer) {
+      completenessMapEngine = buildCoordinateEngineV2ShadowResult({
+        rawText,
+        coordinates,
+        precisionMode: dmsAccepted ? "dms-coordinates" : "wgs84-decimal",
+        parserTrace: [...parserTrace]
+      }, {
+        fileName: uploadedFileName,
+        rawHint: coordinateEngineV2ContextHint
+      });
+      if (isLocalOcrMapLayoutCandidate({ coordinateEngineV2: completenessMapEngine })) {
+        localOcrStructuredLayoutRows = await runLocalOcrMapLayoutClassification({
+          imageBuffer: req.file.buffer,
+          imageIdentity: coordinateImageIdentity,
+          coordinateEngineV2: completenessMapEngine,
+          resultRevision: 1,
+          stageName: "local_ocr_map_layout_completeness"
         });
-        const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
-        const retryCoordinates = extractCoordinateLines(retryRawText);
-
-        if (countCoordinateRows(retryCoordinates) > countCoordinateRows(coordinates)) {
-          rawText = retryRawText;
-          coordinates = retryCoordinates;
-          usedModel = `${aliyunOcrModel}+complete-retry`;
-          warning = extractRecognitionWarning(retryRawText) || warning;
-        }
-      } catch (retryError) {
-        if (isRecognitionStopError(retryError)) throw retryError;
-        console.error("阿里云OCR重试失败", { reason: "PROVIDER_RETRY_ERROR" });
       }
     }
+    const completenessSourceRoles = getCompletenessSourceRoles();
+    const completenessSamePlaceNearDuplicate = Boolean(
+      completenessMapEngine
+      && isLocalOcrMapLayoutCandidate({ coordinateEngineV2: completenessMapEngine })
+      && completenessSourceRoles.includes("MAP_SEARCH_BOX")
+      && completenessSourceRoles.includes("MAP_PLACE_DETAILS")
+    );
+    const recognitionCompleteness = assessRecognitionCompleteness(buildCompletenessInput({
+      family: dmsGroupedAccepted
+        ? "dms_grouped"
+        : pointAzDmsTableAccepted
+          ? "point_az_dms_table"
+          : handwrittenDms.isHandwrittenDms
+            ? "handwritten_dms"
+            : bftmAccepted
+              ? "bftm"
+              : cadastralGrid.isCadastralGrid
+                ? "cadastral_grid"
+                : mgrs.isMgrs
+                  ? "mgrs"
+                  : kyrgyzGk.isKyrgyzGk
+                    ? "kyrgyz_gk"
+                    : mozambiqueGeographicTable.isMozambiqueGeographicTable
+                      ? "mozambique_geographic"
+                      : wgs84TableCoordinates.isWgs84TableCoordinates
+                        ? "wgs84_table"
+                        : "",
+      providerStatus: "SUCCESS",
+      localOcrAttempted: false,
+      samePlaceNearDuplicate: completenessSamePlaceNearDuplicate
+    }));
+    console.log("Recognition completeness routing", {
+      decision: recognitionCompleteness.decision,
+      nextAction: recognitionCompleteness.nextAction,
+      coordinateRowCount: recognitionCompleteness.evidence.coordinateRowCount,
+      allowGenericProviderRetry: recognitionCompleteness.allowGenericProviderRetry,
+      allowLocalOcrEvidence: recognitionCompleteness.allowLocalOcrEvidence
+    });
 
-    if (!dmsGroupedRetryBoundaryFailure && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && shouldRetryRecognition(rawText, coordinates)) {
+    if (!dmsGroupedRetryBoundaryFailure && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && recognitionCompleteness.allowLocalOcrEvidence) {
       try {
-        console.log("阿里云识别结果较少，尝试备用OCR对比。");
-        const fallback = await runLocalOcrFallback(req.file.buffer, "阿里云识别结果较少");
+        console.log("Provider result has no parsed coordinate candidate; collecting one bounded local OCR evidence result.");
+        const fallback = await runLocalOcrFallback(req.file.buffer, "provider_empty_result");
 
         if (countCoordinateRows(fallback.coordinates) > countCoordinateRows(coordinates)) {
           rawText = fallback.rawText;
@@ -16314,14 +16414,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           usedModel = `${aliyunOcrModel}+local-ocr-fallback`;
           warning = fallback.warning;
         } else if (!warning) {
-          warning = "阿里云识别结果较少，请人工核对。";
+          warning = "Provider与本地OCR均未返回稳定坐标证据，请人工核对。";
         }
       } catch (fallbackError) {
         if (isRecognitionStopError(fallbackError)) throw fallbackError;
         if (fallbackError?.code === LOCAL_OCR_FAILURE_CODE) throw fallbackError;
         console.error("备用OCR失败", { reason: "LOCAL_OCR_ERROR" });
         if (!warning) {
-          warning = "阿里云识别结果较少，请人工核对。";
+          warning = "本地OCR证据采集失败，请人工核对。";
         }
       }
     }
@@ -16849,6 +16949,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       let wgs84TimeoutRetryAttempted = false;
       let handwrittenTimeoutRoutingEvidence = null;
       const isAliyunTimeout = error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT";
+      const providerTerminalCompleteness = assessRecognitionCompleteness({
+        rawText: "",
+        coordinates: "",
+        coordinateRowCount: 0,
+        providerStatus: isAliyunTimeout ? "TIMEOUT" : "FAILED",
+        localOcrAttempted: false
+      });
       const timeoutRoutingHint = req.body?.rawHint || req.body?.hint || "";
       const timeoutMozambiqueTypeLock = getMozambiqueTypeLockEvidence(req.file, timeoutRoutingHint, {
         detectorMatched: shouldUseMozambiqueGeographicPromptFirst(req.file, timeoutRoutingHint)
@@ -16904,7 +17011,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       }
 
-      if (isAliyunTimeout && aliyunApiKey && req.file && handwrittenTimeoutRoutingEvidence?.shouldRetry
+      if (providerTerminalCompleteness.allowFamilyProviderRetry && isAliyunTimeout && aliyunApiKey && req.file && handwrittenTimeoutRoutingEvidence?.shouldRetry
         && claimRequestRetry(RETRY_OWNER_FAMILY.HANDWRITTEN_DMS)) {
         const handwrittenDmsDebug = {
           handwrittenDmsRetryStarted: true,
@@ -17009,7 +17116,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         req.file,
         req.body?.rawHint || req.body?.hint || ""
       );
-      if (isAliyunTimeout && aliyunApiKey && req.file && hasKyrgyzTimeoutEvidence
+      if (providerTerminalCompleteness.allowFamilyProviderRetry && isAliyunTimeout && aliyunApiKey && req.file && hasKyrgyzTimeoutEvidence
         && claimRequestRetry("kyrgyz_gk")) {
         try {
           console.log("Aliyun timed out; retrying Kyrgyzstan GK visual table extraction before local OCR fallback.");
@@ -17102,7 +17209,8 @@ If the table is not readable, output only: ${noCoordinatesText}`;
       }
 
       if (
-        isAliyunTimeout
+        providerTerminalCompleteness.allowFamilyProviderRetry
+        && isAliyunTimeout
         && aliyunApiKey
         && req.file
         && shouldRunWgs84TimeoutRescue({ localOcrAttempted: timeoutRoutingOcrAttempted })
@@ -17364,7 +17472,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       let bftmLongTable = getBftmLongTableInfo(fallback.rawText, fallback.coordinates);
       let bftmIncompleteWarning = makeBftmIncompleteWarning(bftmLongTable);
 
-      if (!fallbackCadastralGrid.isCadastralGrid && !fallbackMgrs.isMgrs && !fallbackMozambiqueGeographicTable.isMozambiqueGeographicTable && !fallbackWgs84TableCoordinates.isWgs84TableCoordinates && !fallbackChatCoordinates.isChatCoordinates && !fallbackKyrgyzGk.isKyrgyzGk && bftmIncompleteWarning && aliyunApiKey && req.file
+      if (providerTerminalCompleteness.allowFamilyProviderRetry && !fallbackCadastralGrid.isCadastralGrid && !fallbackMgrs.isMgrs && !fallbackMozambiqueGeographicTable.isMozambiqueGeographicTable && !fallbackWgs84TableCoordinates.isWgs84TableCoordinates && !fallbackChatCoordinates.isChatCoordinates && !fallbackKyrgyzGk.isKyrgyzGk && bftmIncompleteWarning && aliyunApiKey && req.file
         && claimRequestRetry("bftm")) {
         try {
           console.log("BFTM long table fallback is incomplete, retrying Aliyun visual table extraction once.");
@@ -17419,7 +17527,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         || countDmsCoordinateRows(fallback.coordinates) > 0;
 
       if (
-        (error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT")
+        providerTerminalCompleteness.allowFamilyProviderRetry
+        && (error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT")
         && aliyunApiKey
         && req.file
         && !fallbackHasStableCoordinateResult
