@@ -67,12 +67,14 @@ import {
 import {
   KYRGYZ_PRIMARY_STAGE_CAP_MS,
   MADAGASCAR_PRIMARY_STAGE_CAP_MS,
+  ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS,
   ONE_SHOT_STRUCTURED_FAMILY,
   WGS84_PRIMARY_STAGE_CAP_MS,
   buildOneShotStructuredFamilyPrompt,
   buildMadagascarCadastralCellPolygons,
   buildPrimaryRouteDecision,
   classifyOneShotStructuredFamily,
+  createOneShotAcquisitionContract,
   extractMadagascarCadastralRows,
   formatIndonesiaUtm50Rows,
   getIndonesiaUtm50Info,
@@ -80,7 +82,8 @@ import {
   getPrintedProjectedDmsReference,
   hasStrongPrintedProjectedTableEvidence,
   getWgs84SinglePointEvidence,
-  shouldRunWgs84TimeoutRescue
+  shouldRunWgs84TimeoutRescue,
+  validateOneShotAcquisitionContract
 } from "./server/recognition/family-primary-routing.js";
 import { finiteNumberOrNull, hasFiniteNumericValue } from "./server/coordinate-values.js";
 import { COORDINATE_REVIEW_REASON_CODE, deriveCoordinateReviewReason } from "./server/coordinate-review-reason.js";
@@ -8230,11 +8233,15 @@ async function runLocalOcrFamilyClassification({
   stageCapMs = 7_000,
   minRequiredMs = 2_500
 } = {}) {
-  const genericResult = () => ({
-    attempted: false,
-    route: classifyOneShotStructuredFamily(),
-    layoutLines: Object.freeze([])
-  });
+  const genericResult = () => {
+    const route = classifyOneShotStructuredFamily();
+    return {
+      attempted: false,
+      route,
+      contract: createOneShotAcquisitionContract({ route }),
+      layoutLines: Object.freeze([])
+    };
+  };
   if (!imageBuffer || !imageIdentity) return genericResult();
 
   const budget = getRecognitionBudget();
@@ -8273,12 +8280,15 @@ async function runLocalOcrFamilyClassification({
     });
     const extractedLayoutLines = extractLocalOcrLayoutLines(result, imageIdentity);
     const layoutLines = Object.freeze(Array.isArray(extractedLayoutLines) ? extractedLayoutLines : []);
+    const sourceText = result?.data?.text || "";
+    const route = classifyOneShotStructuredFamily({
+      text: sourceText,
+      layoutLines
+    });
     return {
       attempted: true,
-      route: classifyOneShotStructuredFamily({
-        text: result?.data?.text || "",
-        layoutLines
-      }),
+      route,
+      contract: createOneShotAcquisitionContract({ route, sourceText }),
       layoutLines
     };
   } catch (error) {
@@ -13902,6 +13912,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
   let oneShotLocalOcrAttempted = false;
   let oneShotLocalOcrLayoutLines = Object.freeze([]);
   let oneShotStructuredFamilyRoute = classifyOneShotStructuredFamily();
+  let oneShotAcquisitionContract = createOneShotAcquisitionContract({ route: oneShotStructuredFamilyRoute });
   let responseCommitPromise = null;
   const sendRecognitionJson = res.json.bind(res);
   const runBudgetedStage = async (stageName, action) => {
@@ -14284,6 +14295,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     oneShotLocalOcrAttempted = oneShotFamilyClassification.attempted === true;
     oneShotLocalOcrLayoutLines = oneShotFamilyClassification.layoutLines;
     oneShotStructuredFamilyRoute = oneShotFamilyClassification.route;
+    oneShotAcquisitionContract = oneShotFamilyClassification.contract;
     console.log("One-shot structured family route:", {
       family: oneShotStructuredFamilyRoute.family,
       matched: oneShotStructuredFamilyRoute.matched,
@@ -15380,6 +15392,49 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     }
 
     let rawText = response.choices?.[0]?.message?.content || "";
+    const oneShotAcquisitionConformance = validateOneShotAcquisitionContract({
+      contract: oneShotAcquisitionContract,
+      providerText: rawText
+    });
+    console.log("One-shot acquisition conformance:", {
+      family: oneShotAcquisitionConformance.family,
+      status: oneShotAcquisitionConformance.status,
+      reason: oneShotAcquisitionConformance.reason,
+      coordinateRowCount: oneShotAcquisitionConformance.counts.coordinateRowCount,
+      repeatedHeaderCount: oneShotAcquisitionConformance.counts.repeatedHeaderCount,
+      groupBoundaryCount: oneShotAcquisitionConformance.counts.groupBoundaryCount,
+      mapRoleCount: oneShotAcquisitionConformance.counts.mapRoleCount,
+      projectedCoordinateRowCount: oneShotAcquisitionConformance.counts.projectedCoordinateRowCount,
+      crsFieldCount: oneShotAcquisitionConformance.counts.crsFieldCount,
+      providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+      localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0,
+      terminalState: oneShotAcquisitionConformance.status === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
+        ? "CANDIDATE_EVIDENCE_ALLOWED"
+        : "REVIEW_REQUIRED"
+    });
+    if (oneShotAcquisitionConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
+      const contractReviewPayload = {
+        success: false,
+        reason: "acquisition_contract_review_required",
+        code: "ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED",
+        model: aliyunVisionModel,
+        rawText: "",
+        coordinates: "",
+        precisionMode: "one-shot-acquisition-contract-review",
+        requiresReview: true,
+        warning: "The one-shot acquisition output did not satisfy its pre-Provider structural contract and remains review-only.",
+        acquisitionContractConformance: oneShotAcquisitionConformance,
+        parserTrace: [
+          "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
+          `ONE_SHOT_ACQUISITION_CONTRACT:${oneShotAcquisitionConformance.reason}`
+        ]
+      };
+      const contractReviewEngine = buildCoordinateEngineV2ShadowResult(contractReviewPayload, {
+        forceRequiresReview: true,
+        rawHint: ""
+      });
+      return res.json(buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine));
+    }
     const stage1HandwrittenCandidateInput = formatHandwrittenDmsRawRows(rawText);
     retainP0QualificationAcquisition(req, response, recognitionBudget);
     let coordinates = extractCoordinateLines(rawText);

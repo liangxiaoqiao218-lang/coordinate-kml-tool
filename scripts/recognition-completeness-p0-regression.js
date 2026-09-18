@@ -5,8 +5,11 @@ import {
   assessRecognitionCompleteness
 } from "../server/recognition/recognition-completeness.js";
 import {
+  ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS,
   ONE_SHOT_STRUCTURED_FAMILY,
-  classifyOneShotStructuredFamily
+  classifyOneShotStructuredFamily,
+  createOneShotAcquisitionContract,
+  validateOneShotAcquisitionContract
 } from "../server/recognition/family-primary-routing.js";
 
 let passed = 0;
@@ -284,6 +287,48 @@ test("fixed decision output contains no raw Provider response or sensitive reque
   assert.doesNotMatch(serialized, /secret-provider-text|Bearer secret|secret-cookie|secret-key/);
   assert.equal(Object.hasOwn(result, "rawText"), false);
   assert.equal(Object.hasOwn(result, "coordinates"), false);
+});
+
+test("only contract-conformant single-point evidence reaches completeness", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const primary = classifyOneShotStructuredFamily({ text: source });
+  const contract = createOneShotAcquisitionContract({ route: primary, sourceText: source });
+  const conformant = validateOneShotAcquisitionContract({
+    contract,
+    providerText: "Longitude: 63.500001\nLatitude: 11.500002"
+  });
+  assert.equal(conformant.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  const result = assess({
+    coordinates: "63.500001,11.500002",
+    coordinateRowCount: conformant.counts.coordinateRowCount,
+    coordinateFormat: "WGS84_DECIMAL",
+    family: conformant.family
+  });
+  assert.equal(result.decision, RECOGNITION_COMPLETENESS_DECISION.COMPLETE_CANDIDATE);
+});
+
+test("contract mismatch is review-only before completeness and geometry", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const primary = classifyOneShotStructuredFamily({ text: source });
+  const contract = createOneShotAcquisitionContract({ route: primary, sourceText: source });
+  const mismatch = validateOneShotAcquisitionContract({
+    contract,
+    providerText: "Longitude: 63.500001\nLatitude: 11.500002\n64.1000 | 12.2000"
+  });
+  assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(mismatch.conformant, false);
+  assert.equal(Object.hasOwn(mismatch, "geometryInferenceAllowed"), false);
+});
+
+test("generic review contract cannot become complete from Provider text alone", () => {
+  const primary = classifyOneShotStructuredFamily({ text: "ordinary report" });
+  const contract = createOneShotAcquisitionContract({ route: primary, sourceText: "ordinary report" });
+  const mismatch = validateOneShotAcquisitionContract({
+    contract,
+    providerText: "Longitude: 63.500001\nLatitude: 11.500002"
+  });
+  assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(mismatch.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
 });
 
 console.log(`Recognition completeness P0 regression: ${passed}/${passed} PASS`);

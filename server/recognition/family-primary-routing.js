@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const WGS84_PRIMARY_STAGE_CAP_MS = 25_000;
 export const KYRGYZ_PRIMARY_STAGE_CAP_MS = 25_000;
 export const MADAGASCAR_PRIMARY_STAGE_CAP_MS = 25_000;
@@ -10,6 +12,32 @@ export const ONE_SHOT_STRUCTURED_FAMILY = Object.freeze({
   MAP_SCREENSHOT: "map_screenshot",
   PROJECTED_CRS_TABLE: "projected_crs_table"
 });
+export const ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS = Object.freeze({
+  CONFORMANT: "CONFORMANT",
+  REVIEW_REQUIRED: "REVIEW_REQUIRED"
+});
+export const ONE_SHOT_ACQUISITION_CONFORMANCE_REASON = Object.freeze({
+  CONFORMANT: "CONFORMANT",
+  CONTRACT_INVALID: "CONTRACT_INVALID",
+  GENERIC_REVIEW_ONLY: "GENERIC_REVIEW_ONLY",
+  FAMILY_MISMATCH: "FAMILY_MISMATCH",
+  STRUCTURE_COUNT_MISMATCH: "STRUCTURE_COUNT_MISMATCH",
+  HEADER_OR_CONTINUITY_MISMATCH: "HEADER_OR_CONTINUITY_MISMATCH",
+  GROUP_BOUNDARY_MISMATCH: "GROUP_BOUNDARY_MISMATCH",
+  MAP_ROLE_BINDING_MISMATCH: "MAP_ROLE_BINDING_MISMATCH",
+  PROJECTED_CRS_MISMATCH: "PROJECTED_CRS_MISMATCH"
+});
+const ONE_SHOT_ACQUISITION_CONTRACT_SCHEMA = "one_shot_acquisition_contract_v1";
+const ONE_SHOT_ACQUISITION_FORMATS = Object.freeze([
+  "WGS84_DECIMAL_SINGLE_POINT",
+  "DMS_SINGLE_POINT",
+  "WGS84_DECIMAL_TABLE",
+  "DMS_TABLE",
+  "DMS_GROUPED",
+  "MAP_UI_ROLES",
+  "PROJECTED_CRS_TABLE",
+  "GENERIC_REVIEW"
+]);
 // Same angular tolerance as the approved isolated Indonesia UTM verifier.
 export const INDONESIA_PROJECTED_DMS_TOLERANCE = 1e-6;
 
@@ -1390,6 +1418,468 @@ export function classifyOneShotStructuredFamily({ text = "", layoutLines = [] } 
   });
 }
 
+function sha256BoundedIdentity(value) {
+  return createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+}
+
+function boundedStructureCount(value) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric >= 0 && numeric <= 10_000 ? numeric : 0;
+}
+
+function boundedStructureCounts(values) {
+  if (!Array.isArray(values) || values.length > 256) return Object.freeze([]);
+  return Object.freeze(values.map(boundedStructureCount));
+}
+
+function extractGroupedDmsStructure(value = "") {
+  const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
+  const explicitCounts = [];
+  let activeGroup = -1;
+  for (const line of lines) {
+    if (/^(?:group|site|sites|area|mining\s+area|矿区|礦區)\s*(?:[|:#-]\s*)?[A-Z0-9_-]+\s*$/iu.test(line)) {
+      explicitCounts.push(0);
+      activeGroup = explicitCounts.length - 1;
+      continue;
+    }
+    if (activeGroup >= 0 && countDmsComponents(line) === 2 && countDecimalComponents(line) === 0) {
+      explicitCounts[activeGroup] += 1;
+    }
+  }
+  if (explicitCounts.length > 0) {
+    return Object.freeze({ mode: "EXPLICIT_GROUP_HEADINGS", rowCounts: boundedStructureCounts(explicitCounts) });
+  }
+  const headerCounts = [];
+  let activeHeader = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (parseExplicitAxisHeaderLine(lines[index], index)) {
+      headerCounts.push(0);
+      activeHeader = headerCounts.length - 1;
+      continue;
+    }
+    if (activeHeader >= 0 && countDmsComponents(lines[index]) === 2 && countDecimalComponents(lines[index]) === 0) {
+      headerCounts[activeHeader] += 1;
+    }
+  }
+  return Object.freeze({
+    mode: headerCounts.length > 1 ? "REPEATED_HEADERS" : "NONE",
+    rowCounts: boundedStructureCounts(headerCounts)
+  });
+}
+
+function getAcquisitionFormat(family, evidence = {}, sourceText = "") {
+  switch (family) {
+    case ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT:
+      return boundedStructureCount(evidence.dmsRowCount) === 1 || countDmsComponents(sourceText) > 0
+        ? "DMS_SINGLE_POINT"
+        : "WGS84_DECIMAL_SINGLE_POINT";
+    case ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE:
+      return "WGS84_DECIMAL_TABLE";
+    case ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE:
+      return "DMS_TABLE";
+    case ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED:
+      return "DMS_GROUPED";
+    case ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT:
+      return "MAP_UI_ROLES";
+    case ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE:
+      return "PROJECTED_CRS_TABLE";
+    default:
+      return "GENERIC_REVIEW";
+  }
+}
+
+function normalizeProjectedDatumIdentity(value) {
+  const normalized = String(value || "").replace(/[^A-Z0-9]/giu, "").toUpperCase();
+  if (!normalized) return Object.freeze({ datumClass: "", datumIdentityDigest: "" });
+  if (normalized.includes("WGS84") || normalized.includes("WGS1984")) {
+    return Object.freeze({ datumClass: "WGS84", datumIdentityDigest: sha256BoundedIdentity("WGS84") });
+  }
+  if (normalized.includes("NAD83")) {
+    return Object.freeze({ datumClass: "NAD83", datumIdentityDigest: sha256BoundedIdentity("NAD83") });
+  }
+  return Object.freeze({ datumClass: "OTHER_EXPLICIT", datumIdentityDigest: sha256BoundedIdentity(normalized) });
+}
+
+function extractProjectedContractIdentity(value = "") {
+  const text = normalizeCoordinateEvidenceText(value);
+  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+  const datumTokens = [];
+  const zones = [];
+  const hemispheres = [];
+  const axisOrders = [];
+  const epsgCodes = [];
+  for (const line of lines) {
+    for (const match of line.matchAll(/\bEPSG\s*[:#|=-]?\s*(\d{4,6})\b/giu)) {
+      epsgCodes.push(Number(match[1]));
+    }
+    for (const match of line.matchAll(/\bDatum\s*[:#|=-]?\s*([A-Z][A-Z0-9 _-]{1,30})/giu)) {
+      datumTokens.push(match[1].trim());
+    }
+    if (/^CRS\s*\|/iu.test(line)) {
+      const crsValue = line.split("|").slice(1).join(" ").trim();
+      if (crsValue) datumTokens.push(crsValue);
+    }
+    if (/\bWGS\s*(?:84|1984)\b/iu.test(line)) datumTokens.push("WGS84");
+    if (/\bNAD\s*83\b/iu.test(line)) datumTokens.push("NAD83");
+    for (const match of line.matchAll(/\b(?:ZONE|ZONA|FUSO)\s*(?:\||[:#=-])?\s*(\d{1,2})([NS])?\b/giu)) {
+      zones.push(Number(match[1]));
+      if (match[2]) hemispheres.push(match[2].toUpperCase());
+    }
+    for (const match of line.matchAll(/\bUTM\s*(\d{1,2})([NS])\b/giu)) {
+      zones.push(Number(match[1]));
+      hemispheres.push(match[2].toUpperCase());
+    }
+    for (const match of line.matchAll(/^MGRS\s*[|:]\s*(\d{1,2})([C-HJ-NP-X])\b/giu)) {
+      zones.push(Number(match[1]));
+      hemispheres.push(hemisphereFromLatitudeBand(match[2]));
+    }
+    const hemisphereMatch = line.match(/^(?:HEMISPHERE\s*[|:=]\s*|(?:NORTH|SOUTH)(?:ERN)?\s+HEMISPHERE\s*$)(N|S|NORTH|SOUTH)?/iu);
+    if (hemisphereMatch) {
+      const token = String(hemisphereMatch[1] || line).toUpperCase();
+      if (/\bN(?:ORTH)?\b/u.test(token)) hemispheres.push("N");
+      if (/\bS(?:OUTH)?\b/u.test(token)) hemispheres.push("S");
+    }
+    const header = parseProjectedAxisHeaderLine(line, 0);
+    if (header) {
+      axisOrders.push(header.eastingIndex < header.northingIndex ? "EASTING_NORTHING" : "NORTHING_EASTING");
+    }
+    if (/^AXIS(?:_|\s+)ORDER\b/iu.test(line)) {
+      const upper = line.toUpperCase();
+      const eastingIndex = Math.max(upper.indexOf("EASTING"), upper.search(/\bX\b/u));
+      const northingIndex = Math.max(upper.indexOf("NORTHING"), upper.search(/\bY\b/u));
+      if (eastingIndex >= 0 && northingIndex >= 0) {
+        axisOrders.push(eastingIndex < northingIndex ? "EASTING_NORTHING" : "NORTHING_EASTING");
+      }
+    }
+  }
+  for (const code of epsgCodes) {
+    if (code >= 32601 && code <= 32660) {
+      datumTokens.push("WGS84");
+      zones.push(code - 32600);
+      hemispheres.push("N");
+    } else if (code >= 32701 && code <= 32760) {
+      datumTokens.push("WGS84");
+      zones.push(code - 32700);
+      hemispheres.push("S");
+    }
+  }
+  const datumIdentities = datumTokens.map(normalizeProjectedDatumIdentity).filter(item => item.datumClass);
+  const datumClasses = [...new Set(datumIdentities.map(item => item.datumClass))];
+  const datumDigests = [...new Set(datumIdentities.map(item => item.datumIdentityDigest))];
+  const validZones = [...new Set(zones.filter(zone => Number.isInteger(zone) && zone >= 1 && zone <= 60))];
+  const validHemispheres = [...new Set(hemispheres.filter(value => value === "N" || value === "S"))];
+  const validAxisOrders = [...new Set(axisOrders.filter(Boolean))];
+  const identity = Object.freeze({
+    datumClass: datumClasses.length === 1 ? datumClasses[0] : "",
+    datumIdentityDigest: datumDigests.length === 1 ? datumDigests[0] : "",
+    zone: validZones.length === 1 ? validZones[0] : null,
+    hemisphere: validHemispheres.length === 1 ? validHemispheres[0] : "",
+    axisOrder: validAxisOrders.length === 1 ? validAxisOrders[0] : "",
+    complete: datumClasses.length === 1
+      && datumDigests.length === 1
+      && validZones.length === 1
+      && validHemispheres.length === 1
+      && validAxisOrders.length === 1
+  });
+  return identity;
+}
+
+function acquisitionContractPayload(contract = {}) {
+  const structure = contract?.structure || {};
+  const crs = structure?.crs || {};
+  return Object.freeze({
+    schemaVersion: ONE_SHOT_ACQUISITION_CONTRACT_SCHEMA,
+    family: Object.values(ONE_SHOT_STRUCTURED_FAMILY).includes(contract?.family)
+      ? contract.family
+      : ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW,
+    selected: contract?.selected === true,
+    format: ONE_SHOT_ACQUISITION_FORMATS.includes(contract?.format)
+      ? contract.format
+      : "GENERIC_REVIEW",
+    structure: Object.freeze({
+      coordinateRowCount: boundedStructureCount(structure.coordinateRowCount),
+      repeatedHeaderCount: boundedStructureCount(structure.repeatedHeaderCount),
+      groupBoundaryCount: boundedStructureCount(structure.groupBoundaryCount),
+      groupRowCounts: boundedStructureCounts(structure.groupRowCounts),
+      groupBoundaryMode: ["NONE", "EXPLICIT_GROUP_HEADINGS", "REPEATED_HEADERS"].includes(structure.groupBoundaryMode)
+        ? structure.groupBoundaryMode
+        : "NONE",
+      layoutRegionCount: boundedStructureCount(structure.layoutRegionCount),
+      projectedCoordinateRowCount: boundedStructureCount(structure.projectedCoordinateRowCount),
+      headerRequired: structure.headerRequired === true,
+      rowContinuityRequired: structure.rowContinuityRequired === true,
+      groupBoundaryRequired: structure.groupBoundaryRequired === true,
+      mapUiRolesBound: structure.mapUiRolesBound === true,
+      crs: Object.freeze({
+        datumClass: ["WGS84", "NAD83", "OTHER_EXPLICIT"].includes(crs.datumClass)
+          ? crs.datumClass
+          : "",
+        datumIdentityDigest: /^[a-f0-9]{64}$/u.test(String(crs.datumIdentityDigest || ""))
+          ? String(crs.datumIdentityDigest)
+          : "",
+        zone: Number.isInteger(crs.zone) && crs.zone >= 1 && crs.zone <= 60 ? crs.zone : null,
+        hemisphere: crs.hemisphere === "N" || crs.hemisphere === "S" ? crs.hemisphere : "",
+        axisOrder: ["EASTING_NORTHING", "NORTHING_EASTING"].includes(crs.axisOrder) ? crs.axisOrder : "",
+        complete: crs.complete === true
+      })
+    })
+  });
+}
+
+export function createOneShotAcquisitionContract({ route, sourceText = "" } = {}) {
+  const family = Object.values(ONE_SHOT_STRUCTURED_FAMILY).includes(route?.family)
+    ? route.family
+    : ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW;
+  const evidence = route?.evidence || {};
+  const crs = family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE
+    ? extractProjectedContractIdentity(sourceText)
+    : Object.freeze({ datumClass: "", datumIdentityDigest: "", zone: null, hemisphere: "", axisOrder: "", complete: false });
+  const groupedDmsStructure = family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
+    ? extractGroupedDmsStructure(sourceText)
+    : Object.freeze({ mode: "NONE", rowCounts: Object.freeze([]) });
+  const payload = acquisitionContractPayload({
+    family,
+    selected: route?.matched === true,
+    format: getAcquisitionFormat(family, evidence, sourceText),
+    structure: {
+      coordinateRowCount: evidence.coordinateRowCount,
+      repeatedHeaderCount: evidence.repeatedHeaderCount,
+      groupBoundaryCount: Math.max(
+        boundedStructureCount(evidence.groupHeadingCount),
+        boundedStructureCount(evidence.repeatedHeaderCount)
+      ),
+      groupRowCounts: groupedDmsStructure.rowCounts,
+      groupBoundaryMode: groupedDmsStructure.mode,
+      layoutRegionCount: evidence.layoutRegionCount,
+      projectedCoordinateRowCount: evidence.projectedCoordinateRowCount,
+      headerRequired: [
+        ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE,
+        ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE,
+        ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
+      ].includes(family),
+      rowContinuityRequired: [
+        ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE,
+        ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE,
+        ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
+      ].includes(family),
+      groupBoundaryRequired: family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED,
+      mapUiRolesBound: family === ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT
+        && boundedStructureCount(evidence.layoutRegionCount) >= 2,
+      crs
+    }
+  });
+  return Object.freeze({
+    ...payload,
+    contractDigest: sha256BoundedIdentity(JSON.stringify(payload))
+  });
+}
+
+function buildAcquisitionConformanceResult({ contract, status, reason, counts = {} }) {
+  return Object.freeze({
+    family: String(contract?.family || ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW),
+    status,
+    reason,
+    conformant: status === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT,
+    counts: Object.freeze({
+      coordinateRowCount: boundedStructureCount(counts.coordinateRowCount),
+      repeatedHeaderCount: boundedStructureCount(counts.repeatedHeaderCount),
+      groupBoundaryCount: boundedStructureCount(counts.groupBoundaryCount),
+      mapRoleCount: boundedStructureCount(counts.mapRoleCount),
+      projectedCoordinateRowCount: boundedStructureCount(counts.projectedCoordinateRowCount),
+      crsFieldCount: boundedStructureCount(counts.crsFieldCount)
+    })
+  });
+}
+
+function parseGroupedDmsProviderEvidence(text) {
+  const lines = normalizeCoordinateEvidenceText(text).split("\n").map(line => line.trim()).filter(Boolean);
+  const groups = lines.filter(line => /^GROUP\s*\|\s*\S/iu.test(line));
+  const headers = lines.filter(line => /^HEADER\s*\|\s*\S/iu.test(line));
+  const groupRowCounts = [];
+  const groupLabels = [];
+  let activeGroup = -1;
+  let closedGroupStructure = true;
+  const points = lines.filter(line => {
+    if (/^GROUP\s*\|\s*\S/iu.test(line)) {
+      groupRowCounts.push(0);
+      groupLabels.push(new Set());
+      activeGroup = groupRowCounts.length - 1;
+      return false;
+    }
+    const fields = splitStructuredFields(line, "|");
+    if (fields.length !== 4 || !/^POINT$/iu.test(fields[0]) || !fields[1]) return false;
+    const valid = Number.isFinite(parseStrictDmsCoordinate(fields[2], "NS"))
+      && Number.isFinite(parseStrictDmsCoordinate(fields[3], "EWO"));
+    if (!valid || activeGroup < 0 || groupLabels[activeGroup].has(fields[1])) {
+      closedGroupStructure = false;
+      return false;
+    }
+    groupLabels[activeGroup].add(fields[1]);
+    groupRowCounts[activeGroup] += 1;
+    return true;
+  });
+  const coordinateBearingLines = lines.filter(line => countDmsComponents(line) > 0 || countDecimalComponents(line) > 0);
+  return Object.freeze({
+    coordinateRowCount: points.length,
+    groupBoundaryCount: groups.length,
+    groupRowCounts: boundedStructureCounts(groupRowCounts),
+    repeatedHeaderCount: headers.length,
+    closed: closedGroupStructure && points.length === coordinateBearingLines.length && groups.length === headers.length
+  });
+}
+
+function parseMapProviderEvidence(text) {
+  const lines = normalizeCoordinateEvidenceText(text).split("\n").map(line => line.trim()).filter(Boolean);
+  const search = lines.filter(line => /^MAP_SEARCH_BOX\s*\|/iu.test(line) && hasExactlyOneDecimalCoordinatePair(line));
+  const details = lines.filter(line => /^MAP_PLACE_DETAILS\s*\|/iu.test(line) && hasExactlyOneDecimalCoordinatePair(line));
+  const plusCodes = lines.filter(line => /^PLUS_CODE\s*\|\s*\S/iu.test(line));
+  const coordinateBearingLines = lines.filter(line => countDmsComponents(line) > 0 || countDecimalComponents(line) > 0);
+  return Object.freeze({
+    coordinateRowCount: search.length + details.length,
+    mapRoleCount: (search.length === 1 ? 1 : 0) + (details.length === 1 ? 1 : 0) + (plusCodes.length === 1 ? 1 : 0),
+    closed: search.length === 1 && details.length === 1 && plusCodes.length === 1
+      && coordinateBearingLines.length === 2
+  });
+}
+
+function parseProjectedProviderEvidence(text) {
+  const lines = normalizeCoordinateEvidenceText(text).split("\n").map(line => line.trim()).filter(Boolean);
+  const pointRows = lines.filter(line => {
+    const fields = splitStructuredFields(line, "|");
+    return fields.length === 4 && /^POINT$/iu.test(fields[0]) && Boolean(fields[1])
+      && /^[-+]?\d{4,9}(?:[.,]\d+)?$/u.test(fields[2])
+      && /^[-+]?\d{4,9}(?:[.,]\d+)?$/u.test(fields[3]);
+  });
+  const mgrsRows = lines.map(parseStrictMgrsCoordinateLine).filter(Boolean);
+  const coordinateBearingLines = lines.filter(line => (
+    /^POINT\s*\|/iu.test(line) || /^MGRS\s*[|:]/iu.test(line)
+  ));
+  const identity = extractProjectedContractIdentity(text);
+  const crsFieldCount = [identity.datumClass, identity.zone, identity.hemisphere, identity.axisOrder]
+    .filter(value => value !== "" && value !== null).length;
+  return Object.freeze({
+    projectedCoordinateRowCount: pointRows.length + mgrsRows.length,
+    crsFieldCount,
+    identity,
+    closed: pointRows.length + mgrsRows.length === coordinateBearingLines.length && identity.complete
+  });
+}
+
+function projectedIdentityMatches(expected, actual) {
+  return expected?.complete === true && actual?.complete === true
+    && expected.datumClass === actual.datumClass
+    && expected.datumIdentityDigest === actual.datumIdentityDigest
+    && expected.zone === actual.zone
+    && expected.hemisphere === actual.hemisphere
+    && expected.axisOrder === actual.axisOrder;
+}
+
+export function validateOneShotAcquisitionContract({ contract, providerText = "" } = {}) {
+  const payload = acquisitionContractPayload(contract);
+  const validContract = contract?.schemaVersion === ONE_SHOT_ACQUISITION_CONTRACT_SCHEMA
+    && /^[a-f0-9]{64}$/u.test(String(contract?.contractDigest || ""))
+    && contract.contractDigest === sha256BoundedIdentity(JSON.stringify(payload));
+  if (!validContract) {
+    return buildAcquisitionConformanceResult({
+      contract: payload,
+      status: ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
+      reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONTRACT_INVALID
+    });
+  }
+  if (!payload.selected || payload.family === ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW) {
+    return buildAcquisitionConformanceResult({
+      contract: payload,
+      status: ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
+      reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY
+    });
+  }
+
+  if (payload.family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED) {
+    const evidence = parseGroupedDmsProviderEvidence(providerText);
+    const counts = evidence;
+    const rowsMatch = evidence.coordinateRowCount === payload.structure.coordinateRowCount;
+    const groupsMatch = evidence.groupBoundaryCount === payload.structure.groupBoundaryCount
+      && evidence.repeatedHeaderCount === payload.structure.groupBoundaryCount
+      && JSON.stringify(evidence.groupRowCounts) === JSON.stringify(payload.structure.groupRowCounts);
+    return buildAcquisitionConformanceResult({
+      contract: payload,
+      status: evidence.closed && rowsMatch && groupsMatch
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
+        : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
+      reason: evidence.closed && rowsMatch && groupsMatch
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
+        : groupsMatch
+          ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH
+          : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GROUP_BOUNDARY_MISMATCH,
+      counts
+    });
+  }
+
+  if (payload.family === ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT) {
+    const evidence = parseMapProviderEvidence(providerText);
+    const conformant = payload.structure.mapUiRolesBound
+      && evidence.closed
+      && evidence.coordinateRowCount === payload.structure.coordinateRowCount;
+    return buildAcquisitionConformanceResult({
+      contract: payload,
+      status: conformant
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
+        : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
+      reason: conformant
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
+        : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.MAP_ROLE_BINDING_MISMATCH,
+      counts: evidence
+    });
+  }
+
+  if (payload.family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE) {
+    const evidence = parseProjectedProviderEvidence(providerText);
+    const identityMatch = projectedIdentityMatches(payload.structure.crs, evidence.identity);
+    const conformant = evidence.closed
+      && identityMatch
+      && evidence.projectedCoordinateRowCount === payload.structure.projectedCoordinateRowCount;
+    return buildAcquisitionConformanceResult({
+      contract: payload,
+      status: conformant
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
+        : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
+      reason: conformant
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
+        : identityMatch
+          ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH
+          : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH,
+      counts: evidence
+    });
+  }
+
+  const providerRoute = classifyOneShotStructuredFamily({ text: providerText });
+  const sameFamily = providerRoute.matched === true && providerRoute.family === payload.family;
+  const providerFormat = getAcquisitionFormat(providerRoute.family, providerRoute.evidence, providerText);
+  const formatMatches = providerFormat === payload.format;
+  const rowCountMatches = providerRoute.evidence.coordinateRowCount === payload.structure.coordinateRowCount;
+  const headerCountMatches = !payload.structure.headerRequired
+    || providerRoute.evidence.repeatedHeaderCount === payload.structure.repeatedHeaderCount;
+  const conformant = sameFamily && formatMatches && rowCountMatches && headerCountMatches;
+  return buildAcquisitionConformanceResult({
+    contract: payload,
+    status: conformant
+      ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
+      : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
+    reason: conformant
+      ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
+      : !sameFamily || !formatMatches
+        ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.FAMILY_MISMATCH
+        : !headerCountMatches
+          ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.HEADER_OR_CONTINUITY_MISMATCH
+          : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH,
+    counts: {
+      coordinateRowCount: providerRoute.evidence.coordinateRowCount,
+      repeatedHeaderCount: providerRoute.evidence.repeatedHeaderCount,
+      groupBoundaryCount: providerRoute.evidence.groupHeadingCount
+    }
+  });
+}
+
 export function buildOneShotStructuredFamilyPrompt({
   family = ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW,
   noCoordinatesText = "NO_COORDINATES_FOUND"
@@ -1423,7 +1913,7 @@ Then output every visible row in its original order.`;
     case ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED:
       return `Read every labelled DMS group in this image.${commonRules}
 For each visible group output:
-GROUP | <exact visible group heading>
+GROUP | <exact visible group heading, or REPEATED_HEADER_BOUNDARY when the boundary is only a repeated header>
 HEADER | <exact visible coordinate header>
 POINT | <exact row label> | <original latitude DMS> | <original longitude DMS>
 Keep groups separate and never connect points across groups.`;
@@ -1441,8 +1931,10 @@ CRS | <datum or EPSG text>
 ZONE | <zone text>
 HEMISPHERE | <hemisphere text>
 AXIS_ORDER | <visible axis order>
-Then output every row as:
-POINT | <label> | <first axis value> | <second axis value>`;
+For an Easting/Northing or X/Y table, output every row as:
+POINT | <label> | <first axis value> | <second axis value>
+For MGRS, output every row as:
+MGRS | <zone and latitude band> | <grid square> | <easting digits> | <northing digits>`;
     default:
       return `Read only visible coordinate-structure evidence from this image.${commonRules}
 The family is not reliably classified. Preserve visible coordinate headers, row labels, original values, source-region labels, repeated headers, group boundaries, and explicit CRS text without choosing a family.
