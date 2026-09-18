@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
 import {
   ONE_SHOT_ACQUISITION_CONFORMANCE_REASON,
   ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS,
@@ -26,6 +27,43 @@ import {
 const tests = [];
 const test = (id, name, fn) => tests.push({ id, name, fn });
 const route = (text, layoutLines = []) => classifyOneShotStructuredFamily({ text, layoutLines });
+
+function makeBmp(width = 1200, height = 2400, marker = 0) {
+  const rowBytes = Math.floor(((24 * width) + 31) / 32) * 4;
+  const pixelBytes = rowBytes * height;
+  const buffer = Buffer.alloc(54 + pixelBytes, marker);
+  buffer.write("BM", 0, "ascii");
+  buffer.writeUInt32LE(buffer.length, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(width, 18);
+  buffer.writeInt32LE(height, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  buffer.writeUInt32LE(pixelBytes, 34);
+  return buffer;
+}
+
+const syntheticImageBuffer = makeBmp();
+const syntheticImageIdentity = createCoordinateImageIdentity(
+  { buffer: syntheticImageBuffer, mimetype: "image/bmp", size: syntheticImageBuffer.length },
+  { requestId: "one-shot-spatial-source-provenance", page: 1 }
+);
+
+function syntheticLayoutLines(text, { page = 1, resultRevision = 1, overlap = false, reverseVisualOrder = false } = {}) {
+  return String(text).split("\n").filter(Boolean).map((lineText, index) => {
+    const visualIndex = reverseVisualOrder ? Math.max(0, String(text).split("\n").filter(Boolean).length - index - 1) : index;
+    const top = overlap ? 20 : 20 + (visualIndex * 42);
+    return {
+      text: lineText,
+      bbox: [20, top, 1120, top + 24],
+      confidence: 0.99,
+      local_line_index: index,
+      page,
+      resultRevision
+    };
+  });
+}
 
 test("R01", "labelled decimal single point selects one-shot single-point route", () => {
   const result = route("Longitude: 73.418205\nLatitude: 18.672914");
@@ -760,9 +798,18 @@ test("R16", "sanitized diagnostics contain only bounded route evidence", async (
   assert.match(diagnostic, /localOcrCallCount/);
 });
 
-function contractFor(text, layoutLines = []) {
-  const selectedRoute = route(text, layoutLines);
-  return createOneShotAcquisitionContract({ route: selectedRoute, sourceText: text });
+function contractFor(text, layoutLines = null, options = {}) {
+  const effectiveLayoutLines = Array.isArray(layoutLines) && layoutLines.length > 0
+    ? layoutLines
+    : syntheticLayoutLines(text, options);
+  const selectedRoute = route(text, effectiveLayoutLines);
+  return createOneShotAcquisitionContract({
+    route: selectedRoute,
+    sourceText: text,
+    layoutLines: effectiveLayoutLines,
+    imageIdentity: options.imageIdentity || syntheticImageIdentity,
+    resultRevision: options.resultRevision || 1
+  });
 }
 
 function assertConformant(contract, providerText) {
@@ -927,10 +974,7 @@ test("R21", "grouped DMS contract preserves repeated headers and group boundarie
 
 test("R22", "map roles require pre-bound local layout and cannot be forged by Provider text", () => {
   const source = "Search 64.1250,12.8750\nPlace details 64.125001,12.875002\nPlus Code 7JCPTEST+5P";
-  const layoutLines = [
-    { text: "Search 64.1250,12.8750", bbox: [1, 1, 101, 21] },
-    { text: "Place details 64.125001,12.875002", bbox: [1, 101, 151, 121] }
-  ];
+  const layoutLines = syntheticLayoutLines(source);
   const provider = "MAP_SEARCH_BOX | 64.1250,12.8750\nMAP_PLACE_DETAILS | 64.125001,12.875002\nPLUS_CODE | 7JCPTEST+5P";
   assertConformant(contractFor(source, layoutLines), provider);
   assertReview(
@@ -1041,6 +1085,153 @@ test("R26", "contract diagnostics expose bounded enums and counts only", async (
   assert.ok(start >= 0);
   assert.match(diagnostic, /family|status|reason|counts|providerCallCount|localOcrCallCount|terminalState/);
   assert.doesNotMatch(diagnostic, /rawText|providerRawText|imageDataUrl|authorization|cookie|apiKey|secret|headers/iu);
+});
+
+test("R27", "selected family without canonical OCR spatial capability fails closed", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const selectedRoute = route(source);
+  const contract = createOneShotAcquisitionContract({ route: selectedRoute, sourceText: source });
+  const result = assertReview(
+    contract,
+    source,
+    ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE
+  );
+  assert.equal(result.counts.sourceRegionCount, 0);
+});
+
+test("R28", "decimal and DMS single points bind canonical image page revision rows and regions", () => {
+  for (const source of [
+    "Longitude: 64.125001\nLatitude: 12.875002",
+    `Longitude: 64°07'30.00"E\nLatitude: 12°52'30.00"N`
+  ]) {
+    const result = assertConformant(contractFor(source), source);
+    assert.ok(result.counts.sourceRegionCount >= 1);
+  }
+});
+
+test("R29", "page revision overlap bounds and reading-order ambiguity fail spatial provenance closed", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const invalidLayouts = [
+    syntheticLayoutLines(source, { page: 2 }),
+    syntheticLayoutLines(source, { resultRevision: 2 }),
+    syntheticLayoutLines(source, { overlap: true }),
+    syntheticLayoutLines(source, { reverseVisualOrder: true }),
+    syntheticLayoutLines(source).map((line, index) => index === 0 ? { ...line, bbox: [-1, 20, 100, 40] } : line),
+    syntheticLayoutLines(source).map((line, index, lines) => ({
+      ...line,
+      text: lines[lines.length - index - 1].text
+    }))
+  ];
+  for (const layoutLines of invalidLayouts) {
+    const contract = contractFor(source, layoutLines);
+    assertReview(contract, source, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE);
+  }
+});
+
+test("R30", "identical visible values in distinct rows retain distinct spatial identities", () => {
+  const source = [
+    "Point | Longitude | Latitude",
+    "A | 64.1001 | 12.8001",
+    "B | 64.1001 | 12.8001",
+    "C | 64.2003 | 12.9003"
+  ].join("\n");
+  const contract = contractFor(source);
+  const result = assertConformant(contract, source);
+  assert.equal(result.counts.coordinateRowCount, 3);
+  assert.equal(result.counts.sourceRegionCount, 4);
+  assertReview(contract, source.replace("B |", "A |"));
+});
+
+test("R31", "repeated headers keep independent source segments without resetting row provenance", () => {
+  const source = [
+    "Point | Latitude | Longitude",
+    `A | 12°01'01.00"N | 64°01'01.00"E`,
+    `B | 12°01'02.00"N | 64°01'02.00"E`,
+    "Point | Latitude | Longitude",
+    `A | 13°01'01.00"N | 65°01'01.00"E`,
+    `B | 13°01'02.00"N | 65°01'02.00"E`
+  ].join("\n");
+  const provider = [
+    "GROUP | REPEATED_HEADER_BOUNDARY", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 12°01'01.00"N | 64°01'01.00"E`,
+    `POINT | B | 12°01'02.00"N | 64°01'02.00"E`,
+    "GROUP | REPEATED_HEADER_BOUNDARY", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 13°01'01.00"N | 65°01'01.00"E`,
+    `POINT | B | 13°01'02.00"N | 65°01'02.00"E`
+  ].join("\n");
+  const result = assertConformant(contractFor(source), provider);
+  assert.equal(result.counts.sourceRegionCount, 6);
+});
+
+test("R31B", "grouped DMS rows cannot retain authority after crossing source regions", () => {
+  const source = [
+    "GROUP A", "Point | Latitude | Longitude",
+    `A | 12°01'01.00"N | 64°01'01.00"E`,
+    `B | 12°01'02.00"N | 64°01'02.00"E`,
+    "GROUP B", "Point | Latitude | Longitude",
+    `A | 13°01'01.00"N | 65°01'01.00"E`,
+    `B | 13°01'02.00"N | 65°01'02.00"E`
+  ].join("\n");
+  const layoutLines = syntheticLayoutLines(source);
+  [layoutLines[2].text, layoutLines[6].text] = [layoutLines[6].text, layoutLines[2].text];
+  const contract = contractFor(source, layoutLines);
+  const provider = [
+    "GROUP | A", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 12°01'01.00"N | 64°01'01.00"E`, `POINT | B | 12°01'02.00"N | 64°01'02.00"E`,
+    "GROUP | B", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 13°01'01.00"N | 65°01'01.00"E`, `POINT | B | 13°01'02.00"N | 65°01'02.00"E`
+  ].join("\n");
+  assertReview(contract, provider, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE);
+});
+
+test("R32", "map and projected families require private source regions without exposing them publicly", () => {
+  const mapSource = "Search 64.1250,12.8750\nPlace details 64.125001,12.875002\nPlus Code 7JCPTEST+5P";
+  const mapProvider = "MAP_SEARCH_BOX | 64.1250,12.8750\nMAP_PLACE_DETAILS | 64.125001,12.875002\nPLUS_CODE | 7JCPTEST+5P";
+  const projectedSource = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nPoint | Easting | Northing\nA | 500100 | 2065100";
+  const projectedProvider = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nAXIS_ORDER | EASTING | NORTHING\nPOINT | A | 500100 | 2065100";
+  for (const [source, provider] of [[mapSource, mapProvider], [projectedSource, projectedProvider]]) {
+    const contract = contractFor(source);
+    assertConformant(contract, provider);
+    const serialized = JSON.stringify(contract);
+    assert.doesNotMatch(serialized, /asset_|image_sha256|bbox|sourceRegion|64\.1250|500100/u);
+  }
+});
+
+test("R32B", "map role names and values cannot retain authority after source regions are exchanged", () => {
+  const source = "Search 64.1250,12.8750\nPlace details 64.125001,12.875002\nPlus Code 7JCPTEST+5P";
+  const provider = "MAP_SEARCH_BOX | 64.1250,12.8750\nMAP_PLACE_DETAILS | 64.125001,12.875002\nPLUS_CODE | 7JCPTEST+5P";
+  const layoutLines = syntheticLayoutLines(source);
+  [layoutLines[0].text, layoutLines[1].text] = [layoutLines[1].text, layoutLines[0].text];
+  assertReview(
+    contractFor(source, layoutLines),
+    provider,
+    ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE
+  );
+});
+
+test("R32C", "projected CRS and values cannot retain authority after row regions are exchanged", () => {
+  const source = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nPoint | Easting | Northing\nA | 500100 | 2065100";
+  const provider = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nAXIS_ORDER | EASTING | NORTHING\nPOINT | A | 500100 | 2065100";
+  const layoutLines = syntheticLayoutLines(source);
+  [layoutLines[1].text, layoutLines[2].text] = [layoutLines[2].text, layoutLines[1].text];
+  assertReview(
+    contractFor(source, layoutLines),
+    provider,
+    ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE
+  );
+});
+
+test("R33", "server binds spatial capability before Provider and emits only a bounded region count", async () => {
+  const source = await readFile(new URL("../server.js", import.meta.url), "utf8");
+  const classification = source.slice(
+    source.indexOf("async function runLocalOcrFamilyClassification"),
+    source.indexOf("function materializeMapLayoutRowsFromFamilyEvidence")
+  );
+  assert.match(classification, /createOneShotAcquisitionContract\(\{[\s\S]*layoutLines,[\s\S]*imageIdentity,[\s\S]*resultRevision:\s*1/);
+  const start = source.indexOf('console.log("One-shot acquisition conformance:"');
+  const diagnostic = source.slice(start, source.indexOf("if (oneShotAcquisitionConformance.status", start));
+  assert.match(diagnostic, /sourceRegionCount/);
+  assert.doesNotMatch(diagnostic, /image_sha256|request_asset_id|bbox|spatialIdentity|privateBinding/iu);
 });
 
 let passed = 0;

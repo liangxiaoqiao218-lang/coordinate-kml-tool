@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
 import {
   RECOGNITION_COMPLETENESS_DECISION,
   RECOGNITION_COMPLETENESS_NEXT_ACTION,
@@ -14,6 +15,50 @@ import {
 } from "../server/recognition/family-primary-routing.js";
 
 let passed = 0;
+
+function makeBmp(width = 800, height = 1200) {
+  const rowBytes = Math.floor(((24 * width) + 31) / 32) * 4;
+  const pixelBytes = rowBytes * height;
+  const buffer = Buffer.alloc(54 + pixelBytes);
+  buffer.write("BM", 0, "ascii");
+  buffer.writeUInt32LE(buffer.length, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(width, 18);
+  buffer.writeInt32LE(height, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  buffer.writeUInt32LE(pixelBytes, 34);
+  return buffer;
+}
+
+const syntheticImageBuffer = makeBmp();
+const syntheticImageIdentity = createCoordinateImageIdentity(
+  { buffer: syntheticImageBuffer, mimetype: "image/bmp", size: syntheticImageBuffer.length },
+  { requestId: "recognition-completeness-spatial-provenance", page: 1 }
+);
+
+function layoutFor(text) {
+  return String(text).split("\n").filter(Boolean).map((lineText, index) => ({
+    text: lineText,
+    bbox: [20, 20 + (index * 40), 760, 44 + (index * 40)],
+    local_line_index: index,
+    page: 1,
+    resultRevision: 1
+  }));
+}
+
+function contractFor(source) {
+  const layoutLines = layoutFor(source);
+  const primary = classifyOneShotStructuredFamily({ text: source, layoutLines });
+  return createOneShotAcquisitionContract({
+    route: primary,
+    sourceText: source,
+    layoutLines,
+    imageIdentity: syntheticImageIdentity,
+    resultRevision: 1
+  });
+}
 
 function verifyAuthorityBoundary(result) {
   assert.equal(result.allowGenericProviderRetry, false);
@@ -292,8 +337,7 @@ test("fixed decision output contains no raw Provider response or sensitive reque
 
 test("only contract-conformant single-point evidence reaches completeness", () => {
   const source = "Longitude: 64.125001\nLatitude: 12.875002";
-  const primary = classifyOneShotStructuredFamily({ text: source });
-  const contract = createOneShotAcquisitionContract({ route: primary, sourceText: source });
+  const contract = contractFor(source);
   const conformant = validateOneShotAcquisitionContract({
     contract,
     providerText: source
@@ -310,8 +354,7 @@ test("only contract-conformant single-point evidence reaches completeness", () =
 
 test("value-fidelity mismatch remains review-only before completeness", () => {
   const source = "Longitude: 64.125001\nLatitude: 12.875002";
-  const primary = classifyOneShotStructuredFamily({ text: source });
-  const contract = createOneShotAcquisitionContract({ route: primary, sourceText: source });
+  const contract = contractFor(source);
   const mismatch = validateOneShotAcquisitionContract({
     contract,
     providerText: "Longitude: 63.500001\nLatitude: 11.500002"
@@ -323,8 +366,7 @@ test("value-fidelity mismatch remains review-only before completeness", () => {
 
 test("contract mismatch is review-only before completeness and geometry", () => {
   const source = "Longitude: 64.125001\nLatitude: 12.875002";
-  const primary = classifyOneShotStructuredFamily({ text: source });
-  const contract = createOneShotAcquisitionContract({ route: primary, sourceText: source });
+  const contract = contractFor(source);
   const mismatch = validateOneShotAcquisitionContract({
     contract,
     providerText: "Longitude: 63.500001\nLatitude: 11.500002\n64.1000 | 12.2000"
@@ -343,6 +385,17 @@ test("generic review contract cannot become complete from Provider text alone", 
   });
   assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
   assert.equal(mismatch.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+});
+
+test("missing private spatial provenance is review-only before completeness and geometry", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const primary = classifyOneShotStructuredFamily({ text: source });
+  const contract = createOneShotAcquisitionContract({ route: primary, sourceText: source });
+  const mismatch = validateOneShotAcquisitionContract({ contract, providerText: source });
+  assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(mismatch.reason, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE);
+  assert.equal(mismatch.counts.sourceRegionCount, 0);
+  assert.equal(Object.hasOwn(mismatch, "geometryInferenceAllowed"), false);
 });
 
 console.log(`Recognition completeness P0 regression: ${passed}/${passed} PASS`);
