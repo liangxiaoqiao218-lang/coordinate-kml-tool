@@ -1,6 +1,15 @@
 export const WGS84_PRIMARY_STAGE_CAP_MS = 25_000;
 export const KYRGYZ_PRIMARY_STAGE_CAP_MS = 25_000;
 export const MADAGASCAR_PRIMARY_STAGE_CAP_MS = 25_000;
+export const ONE_SHOT_STRUCTURED_FAMILY = Object.freeze({
+  GENERIC_REVIEW: "generic_review",
+  WGS84_SINGLE_POINT: "wgs84_single_point",
+  WGS84_TABLE: "wgs84_table",
+  DMS_TABLE: "dms_table",
+  DMS_GROUPED: "dms_grouped",
+  MAP_SCREENSHOT: "map_screenshot",
+  PROJECTED_CRS_TABLE: "projected_crs_table"
+});
 // Same angular tolerance as the approved isolated Indonesia UTM verifier.
 export const INDONESIA_PROJECTED_DMS_TOLERANCE = 1e-6;
 
@@ -745,6 +754,703 @@ export function buildPrimaryRouteDecision({ family, evidence } = {}) {
     genericSkippedReason: selected ? `${String(family || evidence?.family || "family")}_specialized_primary_selected` : "",
     failClosedOnSpecializedFailure: selected
   });
+}
+
+function countMatches(value, pattern) {
+  return Array.from(String(value || "").matchAll(pattern)).length;
+}
+
+function countDecimalComponents(value) {
+  const withoutDms = String(value || "").replace(
+    /\d{1,3}\s*[°º]\s*\d{1,2}\s*['′’]?\s*\d{1,2}(?:[.,]\d+)?\s*["″”]?\s*(?:N|S|E|W|O)\b/giu,
+    " "
+  );
+  return (withoutDms.match(/[-+]?\d{1,3}(?:[.,]\d+)/gu) || []).length;
+}
+
+function hasExactlyOneDecimalCoordinatePair(value) {
+  return countDecimalComponents(value) === 2;
+}
+
+function countDmsComponents(value) {
+  return countMatches(
+    value,
+    /\d{1,3}\s*[°º]\s*\d{1,2}\s*['′’]?\s*\d{1,2}(?:[.,]\d+)?\s*["″”]?\s*(?:N|S|E|W|O)\b/giu
+  );
+}
+
+function getLineText(line) {
+  return normalizeCoordinateEvidenceText(
+    typeof line === "string" ? line : line?.text || line?.rawText || ""
+  ).trim();
+}
+
+function getFiniteLayoutBox(line) {
+  const box = line?.bbox || line?.box || line?.source_bbox || {};
+  if (Array.isArray(box)) {
+    const [x0, y0, x1, y1] = box.map(Number);
+    return [x0, y0, x1, y1].every(Number.isFinite) && x1 > x0 && y1 > y0
+      ? Object.freeze({ x0, y0, x1, y1 })
+      : null;
+  }
+  const x0 = Number(box.x0 ?? box.left ?? box.x);
+  const y0 = Number(box.y0 ?? box.top ?? box.y);
+  const x1 = Number(box.x1 ?? (Number.isFinite(x0) ? x0 + Number(box.width) : NaN));
+  const y1 = Number(box.y1 ?? (Number.isFinite(y0) ? y0 + Number(box.height) : NaN));
+  return [x0, y0, x1, y1].every(Number.isFinite) && x1 > x0 && y1 > y0
+    ? Object.freeze({ x0, y0, x1, y1 })
+    : null;
+}
+
+function isFiniteLayoutBox(line) {
+  return getFiniteLayoutBox(line) !== null;
+}
+
+function layoutBoxesAreDistinctAndNonOverlapping(leftLine, rightLine) {
+  const left = getFiniteLayoutBox(leftLine);
+  const right = getFiniteLayoutBox(rightLine);
+  if (!left || !right) return false;
+  const intersectionWidth = Math.min(left.x1, right.x1) - Math.max(left.x0, right.x0);
+  const intersectionHeight = Math.min(left.y1, right.y1) - Math.max(left.y0, right.y0);
+  return intersectionWidth <= 0 || intersectionHeight <= 0;
+}
+
+function extractStructuredRowLabel(line) {
+  return String(line || "").match(
+    /^\s*(?:point\s*)?([A-Z]|\d{1,3})\s*(?:(?:\.(?!\d))|[|):;,\-]|\s)/iu
+  )?.[1]?.toUpperCase() || "";
+}
+
+function splitStructuredFields(line, delimiter) {
+  return String(line || "").split(delimiter).map(field => field.trim());
+}
+
+function parseExplicitAxisHeaderLine(line, index) {
+  const source = String(line || "");
+  const delimiter = source.includes("|") ? "|"
+    : source.includes("\t") ? "\t"
+      : source.includes(";") ? ";"
+        : source.includes(",") ? ","
+          : "";
+  if (!delimiter) return null;
+  const fields = splitStructuredFields(source, delimiter);
+  if (fields.length < 2 || fields.some(field => /\d/u.test(field))) return false;
+  const longitudeField = /^(?:longitude|lon|经度|經度|东经|東經|西经|西經)$/iu;
+  const latitudeField = /^(?:latitude|lat|纬度|緯度|北纬|北緯|南纬|南緯)$/iu;
+  const auxiliaryField = /^(?:point|no\.?|number|row|id|label|name|点号|點號|编号|編號|序号|序號)$/iu;
+  const longitudeIndexes = fields.flatMap((field, index) => longitudeField.test(field) ? [index] : []);
+  const latitudeIndexes = fields.flatMap((field, index) => latitudeField.test(field) ? [index] : []);
+  const auxiliaryIndexes = fields.flatMap((field, fieldIndex) => auxiliaryField.test(field) ? [fieldIndex] : []);
+  if (longitudeIndexes.length !== 1 || latitudeIndexes.length !== 1) return null;
+  if (Math.abs(longitudeIndexes[0] - latitudeIndexes[0]) !== 1) return null;
+  if (auxiliaryIndexes.length > 1 || fields.length !== 2 + auxiliaryIndexes.length) return null;
+  if (!fields.every(field => longitudeField.test(field) || latitudeField.test(field) || auxiliaryField.test(field))) return null;
+  return Object.freeze({
+    index,
+    delimiter,
+    fieldCount: fields.length,
+    longitudeIndex: longitudeIndexes[0],
+    latitudeIndex: latitudeIndexes[0],
+    labelIndex: auxiliaryIndexes[0] ?? null
+  });
+}
+
+function structuredLabelsAreContinuous(entries) {
+  const labels = entries.map(entry => entry.label);
+  if (labels.length === 0 || labels.some(label => !label)) return false;
+  if (labels.every(label => /^\d{1,3}$/u.test(label))) {
+    const numbers = labels.map(Number);
+    return numbers.every((value, index) => index === 0 || value === numbers[index - 1] + 1);
+  }
+  if (labels.every(label => /^[A-Z]$/u.test(label))) {
+    return labels.every((value, index) => index === 0
+      || value.charCodeAt(0) === labels[index - 1].charCodeAt(0) + 1);
+  }
+  return false;
+}
+
+function parseBoundCoordinateRow({ line, index, header, format }) {
+  const fields = splitStructuredFields(line, header.delimiter);
+  if (fields.length !== header.fieldCount || fields.some(field => !field)) return null;
+  const longitudeValue = fields[header.longitudeIndex];
+  const latitudeValue = fields[header.latitudeIndex];
+  if (format === "decimal") {
+    if (!parseStrictDecimalCoordinate(longitudeValue, 180)
+      || !parseStrictDecimalCoordinate(latitudeValue, 90)) return null;
+  } else {
+    const strictLongitudeDms = /^\d{1,3}\s*[°º]\s*\d{1,2}\s*['′’]?\s*\d{1,2}(?:[.,]\d+)?\s*["″”]?\s*(?:E|W|O)$/iu;
+    const strictLatitudeDms = /^\d{1,3}\s*[°º]\s*\d{1,2}\s*['′’]?\s*\d{1,2}(?:[.,]\d+)?\s*["″”]?\s*(?:N|S)$/iu;
+    if (!strictLongitudeDms.test(longitudeValue) || !strictLatitudeDms.test(latitudeValue)) return null;
+  }
+  const label = header.labelIndex === null ? "" : extractStructuredRowLabel(`${fields[header.labelIndex]} |`);
+  if (header.labelIndex !== null && !label) return null;
+  return Object.freeze({ index, line, label });
+}
+
+function collectBoundCoordinateSegments({ lines, headers, format }) {
+  return headers.map(header => {
+    const rows = [];
+    for (let index = header.index + 1; index < lines.length; index += 1) {
+      const row = parseBoundCoordinateRow({ line: lines[index], index, header, format });
+      if (!row) break;
+      rows.push(row);
+    }
+    return Object.freeze({ headerIndex: header.index, rows: Object.freeze(rows) });
+  }).filter(segment => segment.rows.length > 0);
+}
+
+function isClosedAxisValueLine(line, axis) {
+  const longitudeLabel = /^(?:longitude|lon|经度|經度|东经|東經|西经|西經)$/iu;
+  const latitudeLabel = /^(?:latitude|lat|纬度|緯度|北纬|北緯|南纬|南緯)$/iu;
+  const match = String(line || "").match(/^\s*([^:=|]+?)\s*[:=|]\s*(\S(?:.*\S)?)\s*$/u);
+  if (!match) return false;
+  const label = match[1].trim();
+  const value = match[2].trim();
+  const labelMatches = axis === "longitude" ? longitudeLabel.test(label) : latitudeLabel.test(label);
+  if (!labelMatches) return false;
+  const expectation = getDirectionalLabelExpectation(label, axis);
+  const decimal = parseStrictDecimalCoordinate(value, axis === "longitude" ? 180 : 90);
+  if (decimal) return isDecimalDirectionCompatible(decimal, expectation);
+  const dms = parseStrictDmsCoordinate(value, axis === "longitude" ? "EWO" : "NS");
+  return Number.isFinite(dms) && isDmsDirectionCompatible(value, expectation);
+}
+
+function isClosedProjectedAxisValueLine(line) {
+  return /^\s*(?:Easting|Northing|X|Y)\s*[:=|]\s*[-+]?\d+(?:[.,]\d+)?\s*$/iu.test(String(line || ""));
+}
+
+function parseProjectedAxisHeaderLine(line, index) {
+  const source = String(line || "");
+  const delimiter = source.includes("|") ? "|"
+    : source.includes("\t") ? "\t"
+      : source.includes(";") ? ";"
+        : source.includes(",") ? ","
+          : "";
+  if (!delimiter) return null;
+  const fields = splitStructuredFields(source, delimiter);
+  const eastingField = /^(?:Easting|X)$/iu;
+  const northingField = /^(?:Northing|Y)$/iu;
+  const auxiliaryField = /^(?:point|no\.?|number|row|id|label|name|点号|點號|编号|編號|序号|序號)$/iu;
+  const eastingIndexes = fields.flatMap((field, fieldIndex) => eastingField.test(field) ? [fieldIndex] : []);
+  const northingIndexes = fields.flatMap((field, fieldIndex) => northingField.test(field) ? [fieldIndex] : []);
+  const auxiliaryIndexes = fields.flatMap((field, fieldIndex) => auxiliaryField.test(field) ? [fieldIndex] : []);
+  if (eastingIndexes.length !== 1 || northingIndexes.length !== 1) return null;
+  if (Math.abs(eastingIndexes[0] - northingIndexes[0]) !== 1) return null;
+  if (auxiliaryIndexes.length > 1 || fields.length !== 2 + auxiliaryIndexes.length) return null;
+  if (!fields.every(field => eastingField.test(field) || northingField.test(field) || auxiliaryField.test(field))) return null;
+  return Object.freeze({
+    index,
+    delimiter,
+    fieldCount: fields.length,
+    eastingIndex: eastingIndexes[0],
+    northingIndex: northingIndexes[0],
+    labelIndex: auxiliaryIndexes[0] ?? null
+  });
+}
+
+function analyzeBoundProjectedRows(lines, headers) {
+  let count = 0;
+  let conflictCount = 0;
+  for (const header of headers) {
+    for (let index = header.index + 1; index < lines.length; index += 1) {
+      if (parseProjectedAxisHeaderLine(lines[index], index)) break;
+      const fields = splitStructuredFields(lines[index], header.delimiter);
+      const projectedValue = /^[-+]?\d{4,9}(?:[.,]\d+)?$/u;
+      const labelLooksValid = header.labelIndex === null
+        || (fields[header.labelIndex] && extractStructuredRowLabel(`${fields[header.labelIndex]} |`));
+      const declaredAxisValues = [fields[header.eastingIndex] || "", fields[header.northingIndex] || ""];
+      const projectedDataLike = fields.filter(field => projectedValue.test(field)).length >= 2
+        || (fields.length === header.fieldCount && labelLooksValid && declaredAxisValues.some(Boolean))
+        || lines[index].includes(header.delimiter)
+        || /\p{N}/u.test(lines[index]);
+      const valid = fields.length === header.fieldCount
+        && fields.every(Boolean)
+        && projectedValue.test(fields[header.eastingIndex])
+        && projectedValue.test(fields[header.northingIndex])
+        && (header.labelIndex === null || extractStructuredRowLabel(`${fields[header.labelIndex]} |`));
+      if (valid) {
+        count += 1;
+        continue;
+      }
+      if (projectedDataLike) {
+        conflictCount += 1;
+        continue;
+      }
+      break;
+    }
+  }
+  return Object.freeze({ count, conflictCount });
+}
+
+function hemisphereFromLatitudeBand(value) {
+  const band = String(value || "").toUpperCase();
+  if (!/^[C-HJ-NP-X]$/u.test(band)) return "";
+  return band >= "N" ? "N" : "S";
+}
+
+function parseStrictMgrsCoordinateLine(line) {
+  const match = String(line || "").match(
+    /^\s*MGRS\s*[|:]\s*([1-9]|[1-5]\d|60)([C-HJ-NP-X])\s*[|]\s*([A-HJ-NP-Z]{2})\s*[|]\s*(\d{1,5})\s*[|]\s*(\d{1,5})\s*$/iu
+  );
+  if (!match || match[4].length !== match[5].length) return null;
+  return Object.freeze({
+    zone: Number(match[1]),
+    band: match[2].toUpperCase(),
+    hemisphere: hemisphereFromLatitudeBand(match[2]),
+    gridSquare: match[3].toUpperCase(),
+    precisionDigits: match[4].length
+  });
+}
+
+function collectProjectedCrsSignals(lines, mgrsCoordinates) {
+  const zones = [];
+  const hemispheres = [];
+  const datumIdentities = [];
+  const epsgCodes = [];
+  let invalidZoneSuffix = false;
+  let invalidCrsField = false;
+  for (const line of lines) {
+    const metadataFields = String(line || "").split(/[|;]/u).map(field => field.trim()).filter(Boolean);
+    for (const field of metadataFields) {
+      if (/\bDatum\b/iu.test(field)) {
+        const match = field.match(/^Datum\s*[:=-]?\s*(WGS\s*[-_ ]?84|NAD\s*[-_ ]?83|[A-Z][A-Z0-9_-]{2,20})$/iu);
+        if (match) datumIdentities.push(match[1].replace(/[-_\s]+/gu, "").toUpperCase());
+        else invalidCrsField = true;
+      }
+      if (/\bEPSG\b/iu.test(field)) {
+        const match = field.match(/^EPSG\s*[:#-]?\s*(\d{4,6})$/iu);
+        if (match) epsgCodes.push(Number(match[1]));
+        else invalidCrsField = true;
+      }
+      if (/\b(?:zone|zona|fuso)\b/iu.test(field)) {
+        const match = field.match(/^(?:zone|zona|fuso)\s*[:#-]?\s*(\d{1,2})([A-Z])?$/iu);
+        if (!match) {
+          invalidCrsField = true;
+        } else {
+          const zone = Number(match[1]);
+          zones.push(zone);
+          const suffix = String(match[2] || "").toUpperCase();
+          if (suffix === "N" || suffix === "S") hemispheres.push(suffix);
+          else if (suffix) {
+            const hemisphere = hemisphereFromLatitudeBand(suffix);
+            if (hemisphere) hemispheres.push(hemisphere);
+            else invalidZoneSuffix = true;
+          }
+        }
+      }
+      if (/\b(?:hemisphere|northern\s+hemisphere|southern\s+hemisphere|north\s+hemisphere|south\s+hemisphere)\b/iu.test(field)) {
+        if (/^(?:northern|north)\s+hemisphere$/iu.test(field)
+          || /^hemisphere\s*[:=-]?\s*(?:N|north)$/iu.test(field)) hemispheres.push("N");
+        else if (/^(?:southern|south)\s+hemisphere$/iu.test(field)
+          || /^hemisphere\s*[:=-]?\s*(?:S|south)$/iu.test(field)) hemispheres.push("S");
+        else invalidCrsField = true;
+      }
+    }
+    for (const match of line.matchAll(/(?:^|[|;]\s*)UTM\s*(\d{1,2})([NS])(?:\s*$|\s*[|;])/giu)) {
+      zones.push(Number(match[1]));
+      hemispheres.push(match[2].toUpperCase());
+    }
+  }
+  for (const coordinate of mgrsCoordinates) {
+    zones.push(coordinate.zone);
+    hemispheres.push(coordinate.hemisphere);
+  }
+  const uniqueEpsgCodes = [...new Set(epsgCodes)];
+  let epsgSupported = uniqueEpsgCodes.length <= 1;
+  for (const code of uniqueEpsgCodes) {
+    if (code >= 32601 && code <= 32660) {
+      datumIdentities.push("WGS84");
+      zones.push(code - 32600);
+      hemispheres.push("N");
+    } else if (code >= 32701 && code <= 32760) {
+      datumIdentities.push("WGS84");
+      zones.push(code - 32700);
+      hemispheres.push("S");
+    } else {
+      epsgSupported = false;
+    }
+  }
+  const uniqueDatumIdentities = [...new Set(datumIdentities)];
+  const validZones = zones.length > 0 && zones.every(zone => Number.isInteger(zone) && zone >= 1 && zone <= 60);
+  const oneZone = validZones && new Set(zones).size === 1;
+  const boundedHemispheres = hemispheres.filter(Boolean);
+  const oneHemisphere = boundedHemispheres.length > 0 && new Set(boundedHemispheres).size === 1;
+  const datumEvidence = uniqueDatumIdentities.length > 0;
+  const crsIdentityConsistent = datumEvidence && uniqueDatumIdentities.length === 1
+    && uniqueEpsgCodes.length <= 1 && epsgSupported;
+  const conflicting = invalidZoneSuffix
+    || invalidCrsField
+    || zones.some(zone => !Number.isInteger(zone) || zone < 1 || zone > 60)
+    || (zones.length > 0 && new Set(zones).size > 1)
+    || (boundedHemispheres.length > 0 && new Set(boundedHemispheres).size > 1)
+    || uniqueDatumIdentities.length > 1
+    || uniqueEpsgCodes.length > 1
+    || !epsgSupported;
+  return Object.freeze({
+    datumEvidence,
+    zoneEvidence: validZones,
+    hemisphereEvidence: boundedHemispheres.length > 0,
+    conflicting,
+    consistent: oneZone && oneHemisphere && crsIdentityConsistent && !invalidZoneSuffix && !invalidCrsField
+  });
+}
+
+function buildOneShotFamilyResult({ family, matched, reason, evidence = {} }) {
+  return Object.freeze({
+    family,
+    matched: matched === true,
+    reviewRequired: true,
+    reason,
+    evidence: Object.freeze({
+      coordinateRowCount: Math.max(0, Number(evidence.coordinateRowCount) || 0),
+      dmsRowCount: Math.max(0, Number(evidence.dmsRowCount) || 0),
+      repeatedHeaderCount: Math.max(0, Number(evidence.repeatedHeaderCount) || 0),
+      groupHeadingCount: Math.max(0, Number(evidence.groupHeadingCount) || 0),
+      layoutRegionCount: Math.max(0, Number(evidence.layoutRegionCount) || 0),
+      ambiguousMultiPairLineCount: Math.max(0, Number(evidence.ambiguousMultiPairLineCount) || 0),
+      conflictingCoordinateLineCount: Math.max(0, Number(evidence.conflictingCoordinateLineCount) || 0),
+      projectedCoordinateRowCount: Math.max(0, Number(evidence.projectedCoordinateRowCount) || 0),
+      projectedConflictLineCount: Math.max(0, Number(evidence.projectedConflictLineCount) || 0),
+      projectedEvidenceComplete: evidence.projectedEvidenceComplete === true
+    })
+  });
+}
+
+// Classifies only OCR-visible structure. It deliberately ignores file names,
+// countries, fixture IDs and coordinate values as family-selection signals.
+export function classifyOneShotStructuredFamily({ text = "", layoutLines = [] } = {}) {
+  const normalizedText = normalizeCoordinateEvidenceText(text);
+  const layout = Array.isArray(layoutLines) ? layoutLines : [];
+  const layoutText = layout.map(getLineText).filter(Boolean);
+  const textLines = normalizedText.split("\n").map(line => line.trim()).filter(Boolean);
+  // OCR text and layout lines describe the same pixels. Count one source only
+  // so duplicated OCR representations cannot manufacture repeated headers or
+  // restarted row labels. Layout boxes remain available for region evidence.
+  const lines = textLines.length > 0 ? textLines : layoutText;
+  const joined = lines.join("\n");
+  const decimalPairEntries = lines.flatMap((line, index) => (
+    countDmsComponents(line) === 0 && hasExactlyOneDecimalCoordinatePair(line)
+      ? [Object.freeze({ index, line, label: extractStructuredRowLabel(line) })]
+      : []
+  ));
+  const dmsPairEntries = lines.flatMap((line, index) => (
+    countDmsComponents(line) === 2 && countDecimalComponents(line) === 0
+      ? [Object.freeze({ index, line, label: extractStructuredRowLabel(line) })]
+      : []
+  ));
+  const decimalPairRows = decimalPairEntries.map(entry => entry.line);
+  const dmsPairRows = dmsPairEntries.map(entry => entry.line);
+  const ambiguousMultiPairLineCount = lines.filter(line => {
+    const dmsComponentCount = countDmsComponents(line);
+    const decimalComponentCount = countDecimalComponents(line);
+    return dmsComponentCount > 2
+      || decimalComponentCount > 2
+      || (dmsComponentCount > 0 && decimalComponentCount > 0);
+  }).length;
+  const decimalEvidenceLineCount = lines.filter(line => countDecimalComponents(line) > 0).length;
+  const dmsEvidenceLineCount = lines.filter(line => countDmsComponents(line) > 0).length;
+  const coordinateEvidenceLineCount = lines.filter(line => (
+    countDmsComponents(line) > 0 || countDecimalComponents(line) > 0
+  )).length;
+  const conflictingCoordinateLineCount = lines.filter(line => {
+    const dmsComponentCount = countDmsComponents(line);
+    const decimalComponentCount = countDecimalComponents(line);
+    if (dmsComponentCount === 0 && decimalComponentCount === 0) return false;
+    return !(dmsComponentCount === 0 && decimalComponentCount === 2)
+      && !(dmsComponentCount === 2 && decimalComponentCount === 0);
+  }).length;
+  const coordinateRowCount = decimalPairRows.length + dmsPairRows.length;
+  const axisHeaders = lines.flatMap((line, index) => {
+    const header = parseExplicitAxisHeaderLine(line, index);
+    return header ? [header] : [];
+  });
+  const axisHeaderIndexes = axisHeaders.map(header => header.index);
+  const repeatedHeaderCount = axisHeaders.length;
+  const groupHeadingCount = lines.filter(line => (
+    /^(?:group|site|sites|area|mining\s+area|矿区|礦區)\s*(?:[|:#-]\s*)?[A-Z0-9_-]+\s*$/iu.test(line)
+  )).length;
+  const boundDecimalSegments = collectBoundCoordinateSegments({
+    lines,
+    headers: axisHeaders,
+    format: "decimal"
+  });
+  const boundDmsSegments = collectBoundCoordinateSegments({
+    lines,
+    headers: axisHeaders,
+    format: "dms"
+  });
+  const boundDecimalRows = boundDecimalSegments.flatMap(segment => segment.rows);
+  const boundDmsRows = boundDmsSegments.flatMap(segment => segment.rows);
+  const rowLabels = [...boundDecimalRows, ...boundDmsRows].map(entry => entry.label).filter(Boolean);
+  const hasLabelRestart = new Set(rowLabels).size < rowLabels.length;
+  const hasLongitudeAxis = lines.some(line => /(?:longitude|\blon\b|经度|經度|东经|東經|西经|西經)/iu.test(line));
+  const hasLatitudeAxis = lines.some(line => /(?:latitude|\blat\b|纬度|緯度|北纬|北緯|南纬|南緯)/iu.test(line));
+  const hasAxisHeader = axisHeaderIndexes.length > 0;
+  const longitudeValueLineIndexes = lines.flatMap((line, index) => (
+    isClosedAxisValueLine(line, "longitude") ? [index] : []
+  ));
+  const latitudeValueLineIndexes = lines.flatMap((line, index) => (
+    isClosedAxisValueLine(line, "latitude") ? [index] : []
+  ));
+
+  const plusCode = /\b(?:plus\s*code|open\s*location\s*code)\b|\b[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,}\b/iu.test(joined);
+  const searchRole = /\b(?:search|rechercher|buscar)\b|搜索|搜尋/iu.test(joined);
+  const detailRole = /\b(?:details?|place|location|address|directions?)\b|地点|地點|位置|地址|路线|路線/iu.test(joined);
+  const coordinateLayoutLines = layout.filter(line => hasExactlyOneDecimalCoordinatePair(getLineText(line)) && isFiniteLayoutBox(line));
+  const layoutRegionCount = coordinateLayoutLines.length;
+  const searchLayoutLines = coordinateLayoutLines.filter(line => {
+    const lineText = getLineText(line);
+    return (/\b(?:search|rechercher|buscar)\b|搜索|搜尋/iu.test(lineText)) && textLines.includes(lineText);
+  });
+  const detailLayoutLines = coordinateLayoutLines.filter(line => {
+    const lineText = getLineText(line);
+    return (/\b(?:details?|place|location|address|directions?)\b|地点|地點|位置|地址|路线|路線/iu.test(lineText))
+      && textLines.includes(lineText);
+  });
+  const hasBoundDistinctMapRegions = searchLayoutLines.some(searchLine => (
+    detailLayoutLines.some(detailLine => (
+      searchLine !== detailLine
+      && getLineText(searchLine) !== getLineText(detailLine)
+      && layoutBoxesAreDistinctAndNonOverlapping(searchLine, detailLine)
+    ))
+  ));
+  const projectedAxisEvidenceLineCount = lines.filter(isClosedProjectedAxisValueLine).length;
+  const projectedAxisHeaders = lines.flatMap((line, index) => {
+    const header = parseProjectedAxisHeaderLine(line, index);
+    return header ? [header] : [];
+  });
+  const projectedRowAnalysis = analyzeBoundProjectedRows(lines, projectedAxisHeaders);
+  const boundProjectedRowCount = projectedRowAnalysis.count;
+  const mgrsLikeLines = lines.filter(line => /^\s*MGRS\s*[|:]\s*\d/iu.test(line));
+  const strictMgrsCoordinates = mgrsLikeLines.map(parseStrictMgrsCoordinateLine).filter(Boolean);
+  const strictMgrsCoordinateRowCount = strictMgrsCoordinates.length;
+  const projectedCoordinateRowCount = boundProjectedRowCount + strictMgrsCoordinateRowCount;
+  const projectedConflictLineCount = projectedRowAnalysis.conflictCount
+    + projectedAxisEvidenceLineCount
+    + (mgrsLikeLines.length - strictMgrsCoordinateRowCount);
+  const projectedKeyword = /\b(?:UTM|MGRS|EPSG|datum|projection|projected|Easting|Northing)\b|投影|坐标系|座標系/iu.test(joined)
+    || projectedAxisEvidenceLineCount > 0
+    || projectedAxisHeaders.length > 0
+    || boundProjectedRowCount > 0;
+  const projectedCrsSignals = collectProjectedCrsSignals(lines, strictMgrsCoordinates);
+  const axisOrderEvidence = projectedAxisHeaders.length > 0 || lines.some(line => (
+    /^\s*Axis\s+order\s*[:=]?\s*(?:Easting\s*[|,;]\s*Northing|X\s*[|,;]\s*Y)\s*$/iu.test(line)
+  ));
+  const projectedEvidenceComplete = projectedCrsSignals.datumEvidence
+    && projectedCrsSignals.zoneEvidence
+    && projectedCrsSignals.hemisphereEvidence
+    && projectedCrsSignals.consistent
+    && axisOrderEvidence
+    && projectedCoordinateRowCount > 0
+    && projectedConflictLineCount === 0;
+  const decimalFamilyHasConflict = ambiguousMultiPairLineCount > 0
+    || conflictingCoordinateLineCount > 0
+    || dmsEvidenceLineCount > 0;
+  const dmsFamilyHasConflict = ambiguousMultiPairLineCount > 0
+    || conflictingCoordinateLineCount > 0
+    || decimalEvidenceLineCount > 0;
+  if (projectedKeyword) {
+    const mixedMapAndProjectedStructure = plusCode || searchRole || detailRole;
+    return buildOneShotFamilyResult({
+      family: projectedEvidenceComplete && !mixedMapAndProjectedStructure
+        ? ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE
+        : ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW,
+      matched: projectedEvidenceComplete && !mixedMapAndProjectedStructure,
+      reason: mixedMapAndProjectedStructure
+        ? "mixed_map_and_projected_structure"
+        : projectedEvidenceComplete
+          ? "explicit_projected_crs_structure"
+          : projectedCrsSignals.conflicting || projectedConflictLineCount > 0
+            ? "projected_crs_evidence_inconsistent"
+            : "projected_crs_evidence_incomplete",
+      evidence: {
+        coordinateRowCount,
+        ambiguousMultiPairLineCount,
+        conflictingCoordinateLineCount,
+        projectedCoordinateRowCount,
+        projectedConflictLineCount,
+        projectedEvidenceComplete
+      }
+    });
+  }
+  if (plusCode && searchRole && detailRole && decimalPairRows.length >= 2 && layoutRegionCount >= 2
+    && hasBoundDistinctMapRegions && !decimalFamilyHasConflict) {
+    return buildOneShotFamilyResult({
+      family: ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT,
+      matched: true,
+      reason: "map_search_detail_plus_code_structure",
+      evidence: {
+        coordinateRowCount,
+        layoutRegionCount,
+        ambiguousMultiPairLineCount,
+        conflictingCoordinateLineCount
+      }
+    });
+  }
+
+  const allDecimalRowsBoundAndLabeled = boundDecimalRows.length === decimalPairEntries.length
+    && boundDecimalRows.every(entry => entry.label)
+    && boundDecimalSegments.every(segment => structuredLabelsAreContinuous(segment.rows));
+  const allDmsRowsBoundAndLabeled = boundDmsRows.length === dmsPairEntries.length
+    && boundDmsRows.every(entry => entry.label)
+    && boundDmsSegments.every(segment => structuredLabelsAreContinuous(segment.rows));
+  if (!dmsFamilyHasConflict && dmsPairRows.length >= 4 && allDmsRowsBoundAndLabeled
+    && boundDmsSegments.length >= 2
+    && ((repeatedHeaderCount >= 2 && hasLabelRestart) || groupHeadingCount >= 2)) {
+    return buildOneShotFamilyResult({
+      family: ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED,
+      matched: true,
+      reason: "repeated_headers_or_group_boundaries_with_dms_rows",
+      evidence: {
+        coordinateRowCount,
+        dmsRowCount: dmsPairRows.length,
+        repeatedHeaderCount,
+        groupHeadingCount,
+        ambiguousMultiPairLineCount,
+        conflictingCoordinateLineCount
+      }
+    });
+  }
+
+  if (!dmsFamilyHasConflict && dmsPairRows.length >= 3 && hasAxisHeader
+    && allDmsRowsBoundAndLabeled && boundDmsRows.length >= 3) {
+    return buildOneShotFamilyResult({
+      family: ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE,
+      matched: true,
+      reason: "labeled_dms_table_structure",
+      evidence: {
+        coordinateRowCount,
+        dmsRowCount: dmsPairRows.length,
+        repeatedHeaderCount,
+        ambiguousMultiPairLineCount,
+        conflictingCoordinateLineCount
+      }
+    });
+  }
+
+  const singleAxisLinesCandidate = longitudeValueLineIndexes.length === 1
+    && latitudeValueLineIndexes.length === 1
+    && longitudeValueLineIndexes[0] !== latitudeValueLineIndexes[0]
+    && decimalPairRows.length === 0
+    && dmsPairRows.length === 0
+    && coordinateEvidenceLineCount === 2
+    && conflictingCoordinateLineCount === 2
+    && ambiguousMultiPairLineCount === 0
+    && repeatedHeaderCount <= 1
+    && groupHeadingCount === 0;
+  const singleHeaderRowCandidate = hasAxisHeader
+    && decimalPairRows.length + dmsPairRows.length === 1
+    && boundDecimalRows.length + boundDmsRows.length === 1
+    && repeatedHeaderCount === 1
+    && groupHeadingCount === 0
+    && conflictingCoordinateLineCount === 0
+    && ambiguousMultiPairLineCount === 0;
+  const singlePointCandidate = singleAxisLinesCandidate || singleHeaderRowCandidate;
+  if (singlePointCandidate) {
+    return buildOneShotFamilyResult({
+      family: ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT,
+      matched: true,
+      reason: "single_labeled_axis_pair",
+      evidence: {
+        coordinateRowCount: Math.max(1, coordinateRowCount),
+        ambiguousMultiPairLineCount,
+        conflictingCoordinateLineCount
+      }
+    });
+  }
+
+  if (!decimalFamilyHasConflict && hasAxisHeader && decimalPairRows.length >= 3
+    && allDecimalRowsBoundAndLabeled && boundDecimalRows.length >= 3) {
+    return buildOneShotFamilyResult({
+      family: ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE,
+      matched: true,
+      reason: "labeled_decimal_table_structure",
+      evidence: {
+        coordinateRowCount,
+        repeatedHeaderCount,
+        ambiguousMultiPairLineCount,
+        conflictingCoordinateLineCount
+      }
+    });
+  }
+
+  return buildOneShotFamilyResult({
+    family: ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW,
+    matched: false,
+    reason: "strong_structure_not_established",
+    evidence: {
+      coordinateRowCount,
+      dmsRowCount: dmsPairRows.length,
+      repeatedHeaderCount,
+      groupHeadingCount,
+      layoutRegionCount,
+      ambiguousMultiPairLineCount,
+      conflictingCoordinateLineCount
+    }
+  });
+}
+
+export function buildOneShotStructuredFamilyPrompt({
+  family = ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW,
+  noCoordinatesText = "NO_COORDINATES_FOUND"
+} = {}) {
+  const commonRules = `
+Use only structure visibly present in the image. Never infer a family, CRS, axis order, direction, missing row, group, or coordinate from a country, filename, historical sample, or numeric range.
+Preserve every visible row label, original coordinate notation, decimal precision, repeated header, and group boundary.
+Do not convert DMS or projected coordinates. Do not infer geometry. Do not output bbox, confidence, prose, markdown, or unrelated text.
+For a specifically requested family, if its structure is not visibly complete, output only: ${noCoordinatesText}
+For the generic review contract, output that same text only when no coordinate-bearing structure is visible.`;
+
+  switch (family) {
+    case ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT:
+      return `Read one clearly labelled WGS84 point from this image.${commonRules}
+Output exactly three lines:
+WGS84 Single Point
+longitude | <original visible longitude value>
+latitude | <original visible latitude value>`;
+    case ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE:
+      return `Read the complete labelled WGS84 decimal coordinate table in this image.${commonRules}
+Output:
+WGS84 Longitude Latitude Table
+label | longitude | latitude
+Then output every visible row in its original order.`;
+    case ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE:
+      return `Read the complete labelled DMS coordinate table in this image.${commonRules}
+Output:
+DMS Coordinate Table
+label | latitude DMS | longitude DMS
+Then output every visible row in its original order.`;
+    case ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED:
+      return `Read every labelled DMS group in this image.${commonRules}
+For each visible group output:
+GROUP | <exact visible group heading>
+HEADER | <exact visible coordinate header>
+POINT | <exact row label> | <original latitude DMS> | <original longitude DMS>
+Keep groups separate and never connect points across groups.`;
+    case ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT:
+      return `Read only the coordinate-bearing regions in this map screenshot.${commonRules}
+Output each visible source region separately:
+MAP_SEARCH_BOX | <original visible coordinate text>
+MAP_PLACE_DETAILS | <original visible coordinate text>
+PLUS_CODE | <original visible Plus Code>
+Do not merge values or choose a preferred precision.`;
+    case ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE:
+      return `Read the complete projected-coordinate table and its explicit CRS evidence.${commonRules}
+Output the visibly supported metadata first:
+CRS | <datum or EPSG text>
+ZONE | <zone text>
+HEMISPHERE | <hemisphere text>
+AXIS_ORDER | <visible axis order>
+Then output every row as:
+POINT | <label> | <first axis value> | <second axis value>`;
+    default:
+      return `Read only visible coordinate-structure evidence from this image.${commonRules}
+The family is not reliably classified. Preserve visible coordinate headers, row labels, original values, source-region labels, repeated headers, group boundaries, and explicit CRS text without choosing a family.
+Output:
+UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE
+Then transcribe only the visible coordinate-bearing lines in original order.
+This output must remain review-only.`;
+  }
 }
 
 export function shouldRunWgs84TimeoutRescue({ localOcrAttempted = false } = {}) {
