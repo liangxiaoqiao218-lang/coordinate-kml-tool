@@ -37,6 +37,147 @@ function normalizeDecimalToken(value) {
   return String(value || "").trim().replace(/,/g, ".").replace(/\s+/g, "");
 }
 
+function getSingleLabeledEntry(text, labels) {
+  const matches = [];
+  for (const line of normalizeCoordinateEvidenceText(text).split("\n")) {
+    const match = line.match(/^\s*([^|:=]+?)\s*[|:=]\s*(.+?)\s*$/u);
+    if (!match || !labels.test(match[1])) continue;
+    matches.push(Object.freeze({ label: match[1].trim(), value: match[2].trim() }));
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function parseStrictDecimalCoordinate(value, limit) {
+  const normalized = normalizeDecimalToken(value);
+  if (!/^[-+]?\d{1,3}(?:\.\d+)?$/.test(normalized)) return null;
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && Math.abs(numeric) <= limit ? normalized : null;
+}
+
+function parseStrictDmsCoordinate(value, expectedDirections) {
+  const normalized = String(value || "").trim();
+  const match = normalized.match(/^\s*(\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′]\s*(\d{1,2}(?:[.,]\d+)?)\s*["″]\s*([NSEW])\s*$/iu);
+  if (!match || !expectedDirections.includes(match[4].toUpperCase())) return null;
+  return parseDmsCoordinate(normalized, expectedDirections);
+}
+
+function formatNormalizedCoordinate(value) {
+  return Number(value).toFixed(10).replace(/\.?0+$/u, "");
+}
+
+function getDirectionalLabelExpectation(label, axis) {
+  const normalized = String(label || "").replace(/\s+/gu, "");
+  if (axis === "longitude") {
+    if (/^(?:東經|东经)$/u.test(normalized)) return "E";
+    if (/^(?:西經|西经)$/u.test(normalized)) return "W";
+  }
+  if (axis === "latitude") {
+    if (/^(?:北緯|北纬)$/u.test(normalized)) return "N";
+    if (/^(?:南緯|南纬)$/u.test(normalized)) return "S";
+  }
+  return "";
+}
+
+function isDecimalDirectionCompatible(value, expectation) {
+  if (!expectation) return true;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return false;
+  return ["E", "N"].includes(expectation) ? numeric >= 0 : numeric <= 0;
+}
+
+function isDmsDirectionCompatible(value, expectation) {
+  if (!expectation) return true;
+  const direction = String(value || "").trim().match(/([NSEW])\s*$/iu)?.[1]?.toUpperCase() || "";
+  return direction === expectation;
+}
+
+export function getWgs84SinglePointEvidence(value = "") {
+  const text = normalizeCoordinateEvidenceText(value);
+  const rejected = reason => Object.freeze({
+    matched: false,
+    family: "wgs84_single_point",
+    coordinateFormat: "",
+    coordinateLine: "",
+    normalizedCoordinateLine: "",
+    originalLongitude: "",
+    originalLatitude: "",
+    originalLongitudeLabel: "",
+    originalLatitudeLabel: "",
+    coordinateType: "",
+    precisionMode: "",
+    geometryType: "",
+    forceRequiresReview: false,
+    requiresReview: true,
+    reason
+  });
+  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+  if (lines.length !== 3 || !/^WGS84\s+Single\s+Point$/iu.test(lines[0])) {
+    return rejected("closed_contract_line_set_invalid");
+  }
+  if (/\b(?:UTM|MGRS|Easting|Northing|EPSG\s*:\s*(?!4326\b)\d+|projected|projection)\b/iu.test(text)) {
+    return rejected("projected_crs_conflict");
+  }
+  const longitudeEntry = getSingleLabeledEntry(text, /^(?:longitude(?:\s+DMS)?|lon|经度|經度|東經|东经|西經|西经)$/iu);
+  const latitudeEntry = getSingleLabeledEntry(text, /^(?:latitude(?:\s+DMS)?|lat|纬度|緯度|北纬|北緯|南纬|南緯)$/iu);
+  if (!longitudeEntry || !latitudeEntry) return rejected("exact_axis_labels_missing_or_duplicated");
+  const longitude = longitudeEntry.value;
+  const latitude = latitudeEntry.value;
+  const longitudeDmsLabel = /\bDMS\b/iu.test(longitudeEntry.label);
+  const latitudeDmsLabel = /\bDMS\b/iu.test(latitudeEntry.label);
+  if (longitudeDmsLabel !== latitudeDmsLabel) return rejected("coordinate_label_format_mismatch");
+  const longitudeDirection = getDirectionalLabelExpectation(longitudeEntry.label, "longitude");
+  const latitudeDirection = getDirectionalLabelExpectation(latitudeEntry.label, "latitude");
+
+  const decimalLongitude = parseStrictDecimalCoordinate(longitude, 180);
+  const decimalLatitude = parseStrictDecimalCoordinate(latitude, 90);
+  if (!longitudeDmsLabel && decimalLongitude && decimalLatitude
+    && isDecimalDirectionCompatible(decimalLongitude, longitudeDirection)
+    && isDecimalDirectionCompatible(decimalLatitude, latitudeDirection)) {
+    return Object.freeze({
+      matched: true,
+      family: "wgs84_single_point",
+      coordinateFormat: "WGS84_DECIMAL",
+      coordinateLine: `${decimalLongitude},${decimalLatitude}`,
+      normalizedCoordinateLine: `${decimalLongitude},${decimalLatitude}`,
+      originalLongitude: longitude,
+      originalLatitude: latitude,
+      originalLongitudeLabel: longitudeEntry.label,
+      originalLatitudeLabel: latitudeEntry.label,
+      coordinateType: "decimal_latlon",
+      precisionMode: "wgs84-single-point-decimal",
+      geometryType: "point",
+      forceRequiresReview: true,
+      requiresReview: true,
+      reason: "explicit_labeled_decimal_single_point"
+    });
+  }
+
+  const dmsLongitude = parseStrictDmsCoordinate(longitude, "EW");
+  const dmsLatitude = parseStrictDmsCoordinate(latitude, "NS");
+  if (Number.isFinite(dmsLongitude) && Number.isFinite(dmsLatitude)
+    && isDmsDirectionCompatible(longitude, longitudeDirection)
+    && isDmsDirectionCompatible(latitude, latitudeDirection)) {
+    return Object.freeze({
+      matched: true,
+      family: "wgs84_single_point",
+      coordinateFormat: "WGS84_DMS",
+      coordinateLine: `${longitude},${latitude}`,
+      normalizedCoordinateLine: `${formatNormalizedCoordinate(dmsLongitude)},${formatNormalizedCoordinate(dmsLatitude)}`,
+      originalLongitude: longitude,
+      originalLatitude: latitude,
+      originalLongitudeLabel: longitudeEntry.label,
+      originalLatitudeLabel: latitudeEntry.label,
+      coordinateType: "decimal_latlon",
+      precisionMode: "wgs84-single-point-dms",
+      geometryType: "point",
+      forceRequiresReview: true,
+      requiresReview: true,
+      reason: "explicit_labeled_dms_single_point"
+    });
+  }
+  return rejected("coordinate_format_or_axis_range_invalid");
+}
+
 function normalizeMadagascarCellId(value) {
   return String(value || "")
     .trim()

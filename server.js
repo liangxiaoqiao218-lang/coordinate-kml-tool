@@ -78,6 +78,7 @@ import {
   getPrintedProjectedDmsReference,
   hasStrongPrintedProjectedTableEvidence,
   getMadagascarCadastralStrongRouteEvidence,
+  getWgs84SinglePointEvidence,
   getWgs84StrongRouteEvidence,
   shouldRunWgs84TimeoutRescue
 } from "./server/recognition/family-primary-routing.js";
@@ -8109,7 +8110,7 @@ async function runLocalOcrFallback(imageBuffer, reason = "", {
   lowValue = true
 } = {}) {
   const budget = getRecognitionBudget();
-  budget?.assertCanContinue({ stageName, minRequiredMs, lowValue });
+  budget?.assertCanStartLocalOcr({ stageName, minRequiredMs, lowValue });
   const effectiveTimeoutMs = budget ? budget.effectiveTimeout(stageCapMs) : stageCapMs;
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < minRequiredMs) {
     const error = new Error("Insufficient remaining budget for local OCR.");
@@ -8170,9 +8171,14 @@ async function runLocalOcrMapLayoutClassification({
   if (!imageBuffer || !imageIdentity
     || !isLocalOcrMapLayoutCandidate({ coordinateEngineV2 })) return null;
   const budget = getRecognitionBudget();
-  if (budget && !budget.canStartStage(minRequiredMs, { lowValue: false })) {
-    budget.recordSkippedStage(stageName, "insufficient_remaining_budget", "skipped");
-    return null;
+  if (budget) {
+    try {
+      budget.assertCanStartLocalOcr({ stageName, minRequiredMs, lowValue: false });
+    } catch (error) {
+      if (error?.code === "RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_REACHED"
+        || error?.code === RECOGNITION_BUDGET_CODE) return null;
+      throw error;
+    }
   }
   const effectiveTimeoutMs = budget ? budget.effectiveTimeout(stageCapMs) : stageCapMs;
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < minRequiredMs) {
@@ -8739,7 +8745,13 @@ function inferCoordinateEngineV2Type(payload = {}) {
   if (precisionMode === "handwritten-dms-coordinates") {
     return "handwritten_dms_experimental";
   }
-  if (precisionMode === "wgs84-table-coordinates" || precisionMode === "wgs84-chat-coordinates" || payload.wgs84TableCoordinates?.isWgs84TableCoordinates || payload.chatCoordinates?.isChatCoordinates) {
+  if (precisionMode === "wgs84-table-coordinates"
+    || precisionMode === "wgs84-chat-coordinates"
+    || precisionMode === "wgs84-single-point-decimal"
+    || precisionMode === "wgs84-single-point-dms"
+    || payload.wgs84TableCoordinates?.isWgs84TableCoordinates
+    || payload.chatCoordinates?.isChatCoordinates
+    || payload.wgs84SinglePointEvidence?.matched === true) {
     return "decimal_latlon";
   }
   if (/dms|point-az-dms-table|french-perimeter-dms-prose/.test(precisionMode)) {
@@ -13965,6 +13977,11 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
   let authorizeRequestFamilyRetry = null;
   const requestRetryOrchestrator = createDmsGroupedRetryOrchestrator({ parserTrace });
   const claimRequestRetry = targetOwner => {
+    if ((recognitionBudget?.providerAttemptCount || 0) >= 1) {
+      recognitionBudget?.recordSkippedStage("family_retry", "provider_attempt_limit_reached", "skipped");
+      parserTrace.push(`RECOGNITION_PROVIDER:one_shot_retry_blocked(${String(targetOwner || "unknown")})`);
+      return false;
+    }
     if (typeof authorizeRequestFamilyRetry === "function"
       && authorizeRequestFamilyRetry(targetOwner) !== true) return false;
     const claimed = requestRetryOrchestrator.claim(targetOwner);
@@ -14171,6 +14188,13 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
 投影坐标结构保留规则（优先于下述省略表头/点号的一般规则）：
 仅当原图实际可见时，逐字保留与坐标相关的 projection / CRS 标题、UTM zone 文字、X/Y 或 Easting/Northing 表头，以及有结构意义的点号/行号。按原顺序输出紧凑管道分隔表：点号 | X | Y；如同时可见 DMS Latitude/Longitude 列，保留为：点号 | X | Y | Latitude DMS | Longitude DMS。不要只取 DMS 而丢弃同一表内 X/Y；不得在 acquisition 中把投影坐标换算为经纬度。
 只保留可见的坐标结构，不转写无关正文，不解释。缺失的 CRS、UTM zone、表头或数值必须保持缺失；不得从国家、文件名、已知样本或坐标数值推断补造。
+
+WGS84 单点快速采集合同：
+仅当图片清楚显示同一个地点、明确的 Longitude/Latitude、Lon/Lat、经度/纬度或东经/北纬轴标签，并且每个轴只有一个可复核值时，输出以下固定结构：
+WGS84 Single Point
+longitude | <原图可见的经度十进制度或带 E/W 的原始 DMS>
+latitude | <原图可见的纬度十进制度或带 N/S 的原始 DMS>
+必须保留原始小数位、度分秒符号和方向。不得交换轴，不得把无标签数字、Plus Code、海拔、日期、距离、像素、bbox、UTM、MGRS、Easting/Northing 或投影 X/Y 代入此合同。存在两个地点、多个互不相同的坐标候选、轴标签缺失、方向缺失或语义不明确时不得输出此合同。
 
 必须忽略：
 水印、背景字、页眉页脚、表格线、手机状态栏、底部菜单、Annoter、Tourner、Rechercher、Partager、Hectares、签名、正文段落、图片像素位置、文字框坐标、识别框坐标和碎数字。
@@ -14585,6 +14609,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       family: "madagascar_cadastral_grid",
       evidence: madagascarStrongRouteEvidence
     });
+    recognitionBudget?.setAcquisitionRouteReason(
+      wgs84PrimaryRoute.selected
+        ? "WGS84_STRUCTURED_PRIMARY"
+        : kyrgyzPrimaryRoute.selected || madagascarPrimaryRoute.selected
+          ? "SPECIALIZED_FAMILY_PRIMARY"
+          : "GENERIC_PRIMARY"
+    );
     const handwrittenAvailabilityEvidence = getHandwrittenDmsTimeoutRoutingEvidence(
       req.file,
       req.body?.rawHint || req.body?.hint || ""
@@ -15228,6 +15259,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const stage1HandwrittenCandidateInput = formatHandwrittenDmsRawRows(rawText);
     retainP0QualificationAcquisition(req, response, recognitionBudget);
     let coordinates = extractCoordinateLines(rawText);
+    const wgs84SinglePointEvidence = getWgs84SinglePointEvidence(rawText);
+    if (wgs84SinglePointEvidence.matched) {
+      coordinates = wgs84SinglePointEvidence.normalizedCoordinateLine;
+      recognitionBudget?.setAcquisitionRouteReason("WGS84_SINGLE_POINT_PRIMARY");
+      parserTrace.push(`WGS84_SINGLE_POINT:${wgs84SinglePointEvidence.coordinateFormat}`);
+    }
     const initialBftmCoordinateRepair = normalizeBftmProjectedCoordinateText(coordinates);
     if (initialBftmCoordinateRepair.changed && initialBftmCoordinateRepair.rowCount >= 4) {
       coordinates = initialBftmCoordinateRepair.text;
@@ -16372,8 +16409,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       && completenessSourceRoles.includes("MAP_PLACE_DETAILS")
     );
     const recognitionCompleteness = assessRecognitionCompleteness(buildCompletenessInput({
-      family: dmsGroupedAccepted
-        ? "dms_grouped"
+      family: wgs84SinglePointEvidence.matched
+        ? "wgs84_single_point"
+        : dmsGroupedAccepted
+          ? "dms_grouped"
         : pointAzDmsTableAccepted
           ? "point_az_dms_table"
           : handwrittenDms.isHandwrittenDms
@@ -16406,6 +16445,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     if (!dmsGroupedRetryBoundaryFailure && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && recognitionCompleteness.allowLocalOcrEvidence) {
       try {
         console.log("Provider result has no parsed coordinate candidate; collecting one bounded local OCR evidence result.");
+        recognitionBudget?.setAcquisitionRouteReason("LOCAL_OCR_EVIDENCE_ONLY");
         const fallback = await runLocalOcrFallback(req.file.buffer, "provider_empty_result");
 
         if (countCoordinateRows(fallback.coordinates) > countCoordinateRows(coordinates)) {
@@ -16627,8 +16667,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       });
     }
 
-    const finalPrecisionMode = dmsGroupedAccepted
-      ? "dms-grouped-coordinates"
+    const finalPrecisionMode = wgs84SinglePointEvidence.matched
+      ? wgs84SinglePointEvidence.precisionMode
+      : dmsGroupedAccepted
+        ? "dms-grouped-coordinates"
       : frenchPerimeterDms.isFrenchPerimeterDms
         ? "french-perimeter-dms-prose"
         : pointAzDmsTableAccepted
@@ -16670,6 +16712,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       frenchPerimeterDms,
       wgs84TableCoordinates,
       chatCoordinates,
+      wgs84SinglePointEvidence,
       kyrgyzGk,
       bftmLongTable,
       handwrittenVisionRouting: buildPartialMultisiteSafeVisionRouting({
@@ -16761,11 +16804,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       rawHint: coordinateEngineV2ContextHint,
       lockedCoordinateType: dmsGroupedReviewCandidate || stage1FullMultisiteReviewCandidate
         ? "standard_dms_table"
+        : wgs84SinglePointEvidence.matched
+          ? wgs84SinglePointEvidence.coordinateType
         : undefined,
       forceRequiresReview: Boolean(
         dmsGroupedReviewCandidate
         || stage1FullMultisiteSafety.gateRequired
         || imageDmsFailClosedPatch?.forceRequiresReview
+        || wgs84SinglePointEvidence.forceRequiresReview
       )
     });
     if (dmsGroupedReviewCandidate || stage1FullMultisiteSafety.gateRequired) {
@@ -16943,6 +16989,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       if (!req.file) {
         throw error;
       }
+      recognitionBudget?.setAcquisitionRouteReason("LOCAL_OCR_EVIDENCE_ONLY");
 
       let timeoutRoutingOcrFallback = null;
       let timeoutRoutingOcrAttempted = false;

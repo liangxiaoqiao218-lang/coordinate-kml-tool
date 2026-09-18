@@ -5,6 +5,8 @@ import {
   RECOGNITION_BUDGET_CODE,
   RECOGNITION_BUDGET_PHASE,
   RECOGNITION_DEADLINE_CODE,
+  RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_CODE,
+  RECOGNITION_PROVIDER_ATTEMPT_LIMIT_CODE,
   getRecognitionDeadlineContext,
   recognitionDeadlineMiddleware
 } from "../server/coordinate-finalizer/recognition-deadline.js";
@@ -14,7 +16,7 @@ import { isFamilyRetryAllowed } from "../server/recognition/family-retry-policy.
 const tests = [];
 const test = (id, name, fn) => tests.push({ id, name, fn });
 
-function makeBudget({ nowMs = 0, deadlineMs = 55_000, reserveMs = 2_500 } = {}) {
+function makeBudget({ nowMs = 0, deadlineMs = 55_000, reserveMs = 2_500, beginExecution = true } = {}) {
   let current = nowMs;
   const controller = new AbortController();
   const budget = new RecognitionBudget({
@@ -27,40 +29,45 @@ function makeBudget({ nowMs = 0, deadlineMs = 55_000, reserveMs = 2_500 } = {}) 
     trace: false,
     requestId: "sr08f-regression"
   });
+  if (beginExecution) budget.beginExecutionPhase();
   return { budget, controller, setNow(value) { current = value; } };
 }
 
 test("B01", "80s cap is clipped to remaining budget minus reserve", () => {
-  const { budget } = makeBudget({ nowMs: 15_000 });
-  assert.equal(budget.remainingMs(), 40_000);
-  assert.equal(budget.effectiveTimeout(80_000), 37_500);
+  const { budget } = makeBudget({ nowMs: 10_000 });
+  assert.equal(budget.remainingMs(), 42_500);
+  assert.equal(budget.effectiveTimeout(80_000), 40_000);
 });
 
 test("B02", "10s remaining never yields an 80s timeout", () => {
-  const { budget } = makeBudget({ nowMs: 45_000 });
+  const { budget, setNow } = makeBudget();
+  setNow(32_500);
   assert.equal(budget.effectiveTimeout(80_000), 7_500);
 });
 
 test("B03", "stage is rejected below minimum usable budget", () => {
-  const { budget } = makeBudget({ nowMs: 52_250 });
+  const { budget, setNow } = makeBudget();
+  setNow(39_750);
   assert.equal(budget.canStartStage(500), false);
   assert.throws(() => budget.assertCanContinue({ stageName: "family_retry" }), { code: RECOGNITION_BUDGET_CODE });
 });
 
 test("B04", "low-value fallback is rejected at 45s cutoff", () => {
-  const { budget } = makeBudget({ nowMs: 45_000 });
+  const { budget, setNow } = makeBudget();
+  setNow(42_500);
   assert.equal(budget.canStartStage(500, { lowValue: true }), false);
   assert.throws(() => budget.assertCanContinue({ stageName: "local_ocr", lowValue: true }), { code: RECOGNITION_BUDGET_CODE });
 });
 
 test("B05", "required stage may use only remaining bounded time", () => {
-  const { budget } = makeBudget({ nowMs: 40_000 });
+  const { budget, setNow } = makeBudget();
+  setNow(30_000);
   budget.assertCanContinue({ stageName: "verification", minRequiredMs: 500 });
-  assert.equal(budget.effectiveTimeout(80_000), 12_500);
+  assert.equal(budget.effectiveTimeout(80_000), 10_000);
 });
 
 test("B06", "ingress preflight and recognition execution use separate phase clocks under one hard deadline", () => {
-  const { budget, setNow } = makeBudget();
+  const { budget, setNow } = makeBudget({ beginExecution: false });
   budget.startIngressUpload();
   setNow(7_000);
   budget.completeIngressUpload();
@@ -77,15 +84,16 @@ test("B06", "ingress preflight and recognition execution use separate phase cloc
   assert.equal(ledger.executionElapsedMs, 5_000);
   assert.equal(ledger.overallElapsedMs, 17_000);
   assert.equal(budget.deadlineMs, 55_000);
+  assert.equal(budget.remainingMs(), 37_500);
 });
 
 test("B07", "preflight time does not prematurely trigger the execution fallback cutoff", () => {
-  const { budget, setNow } = makeBudget();
-  setNow(20_000);
+  const { budget, setNow } = makeBudget({ beginExecution: false });
+  setNow(10_000);
   budget.beginExecutionPhase();
   setNow(45_000);
   assert.doesNotThrow(() => budget.assertCanContinue({ stageName: "local_ocr", lowValue: true }));
-  setNow(55_000);
+  setNow(52_500);
   assert.throws(
     () => budget.assertCanContinue({ stageName: "local_ocr", lowValue: true }),
     error => error.code === RECOGNITION_BUDGET_CODE && error.reason === "soft_fallback_cutoff"
@@ -94,8 +102,7 @@ test("B07", "preflight time does not prematurely trigger the execution fallback 
 
 test("B08", "Provider admission reserves parsing Finalizer and response time and fails before attempt", () => {
   const { budget, setNow } = makeBudget();
-  budget.beginExecutionPhase();
-  setNow(50_800);
+  setNow(39_000);
   assert.throws(
     () => budget.assertCanStartProvider({ stageName: "generic_provider", minRequiredMs: 500 }),
     error => error.code === RECOGNITION_BUDGET_CODE
@@ -108,9 +115,81 @@ test("B08", "Provider admission reserves parsing Finalizer and response time and
 
 test("B09", "Provider timeout excludes post-Provider and response reserves", () => {
   const { budget, setNow } = makeBudget();
-  budget.beginExecutionPhase();
-  setNow(20_000);
-  assert.equal(budget.effectiveProviderTimeout(80_000), 31_000);
+  setNow(10_000);
+  assert.equal(budget.effectiveProviderTimeout(80_000), 28_500);
+});
+
+test("B10", "preflight elapsed time cannot consume the fixed execution allowance", () => {
+  const early = makeBudget({ beginExecution: false });
+  early.setNow(1_000);
+  early.budget.beginExecutionPhase();
+  const late = makeBudget({ beginExecution: false });
+  late.setNow(12_000);
+  late.budget.beginExecutionPhase();
+  assert.equal(early.budget.remainingMs(), 42_500);
+  assert.equal(late.budget.remainingMs(), 42_500);
+});
+
+test("B10A", "expired preflight cannot mint a fresh execution budget or enter Provider", () => {
+  const { budget, setNow } = makeBudget({ beginExecution: false });
+  setNow(12_501);
+  assert.throws(
+    () => budget.beginExecutionPhase(),
+    error => error.code === RECOGNITION_BUDGET_CODE
+      && error.reason === "insufficient_remaining_budget"
+  );
+  assert.equal(budget.budgetPhase, RECOGNITION_BUDGET_PHASE.INGRESS_PREFLIGHT);
+  assert.equal(budget.executionStartedAt, null);
+  assert.equal(budget.providerAttemptCount, 0);
+  assert.throws(
+    () => budget.assertCanStartProvider({ stageName: "generic_provider" }),
+    error => error.code === RECOGNITION_BUDGET_CODE
+  );
+});
+
+test("B11", "the request-scoped Provider boundary rejects every second call before attempt", () => {
+  const { budget } = makeBudget();
+  budget.assertCanStartProvider({ stageName: "generic_provider" });
+  budget.markProviderAttempted();
+  budget.markProviderCompleted({ state: "FAILED" });
+  assert.throws(
+    () => budget.assertCanStartProvider({ stageName: "wgs84_retry" }),
+    error => error.code === RECOGNITION_PROVIDER_ATTEMPT_LIMIT_CODE
+      && error.reason === "provider_attempt_limit_reached"
+  );
+  assert.equal(budget.providerAttemptCount, 1);
+});
+
+test("B12", "Provider failure permits at most one bounded local OCR evidence attempt", () => {
+  const { budget } = makeBudget();
+  assert.equal(budget.assertCanStartLocalOcr({ stageName: "local_ocr" }), true);
+  assert.throws(
+    () => budget.assertCanStartLocalOcr({ stageName: "local_ocr_map_layout" }),
+    error => error.code === RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_CODE
+      && error.reason === "local_ocr_attempt_limit_reached"
+  );
+  assert.equal(budget.localOcrAttemptCount, 1);
+});
+
+test("B13", "fixed acquisition diagnostic exposes only bounded enums buckets and counts", () => {
+  const { budget, setNow } = makeBudget();
+  budget.setAcquisitionRouteReason("WGS84_SINGLE_POINT_PRIMARY");
+  budget.assertCanStartProvider({ stageName: "generic_provider" });
+  budget.markProviderAttempted();
+  budget.markProviderCompleted({ state: "SUCCEEDED", usageObserved: true });
+  setNow(4_000);
+  budget.markResponseSent({ httpStatus: 200, responseCode: "OK" });
+  const diagnostic = budget.toSanitizedAcquisitionDiagnostic();
+  assert.deepEqual(Object.keys(diagnostic).sort(), [
+    "localOcrCallCount", "providerCallCount", "routeReason", "schemaVersion",
+    "stageNames", "terminalState", "timingBucket"
+  ].sort());
+  assert.equal(diagnostic.routeReason, "WGS84_SINGLE_POINT_PRIMARY");
+  assert.equal(diagnostic.timingBucket, "LE_5S");
+  assert.equal(diagnostic.providerCallCount, 1);
+  assert.equal(diagnostic.localOcrCallCount, 0);
+  assert.equal(diagnostic.terminalState, "COMPLETED");
+  assert.doesNotMatch(JSON.stringify(diagnostic).toLowerCase(), /rawtext|coordinate|header|cookie|secret|api_key|error/);
 });
 
 test("A01-A06", "hard deadline sends 504 and prevents every later recognition stage", async () => {
@@ -133,6 +212,7 @@ test("A01-A06", "hard deadline sends 504 and prevents every later recognition st
   assert.equal(response.body.usageConsumed, false);
   assert.equal(response.body.retryAllowed, true);
   assert.equal(context.signal.aborted, true);
+  assert.equal(context.budget.toSanitizedAcquisitionDiagnostic().terminalState, "TIMED_OUT");
   const eventCount = context.budget.events.length;
   for (const stageName of ["generic_provider", "local_ocr", "family_retry", "finalizer"]) {
     assert.throws(() => context.budget.assertCanContinue({ stageName }), { code: RECOGNITION_DEADLINE_CODE });
