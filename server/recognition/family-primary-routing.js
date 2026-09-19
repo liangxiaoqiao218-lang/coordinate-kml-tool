@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { isCanonicalCoordinateImageIdentity } from "./coordinate-image-safety.js";
 
 export const WGS84_PRIMARY_STAGE_CAP_MS = 25_000;
 export const KYRGYZ_PRIMARY_STAGE_CAP_MS = 25_000;
@@ -27,6 +28,7 @@ export const ONE_SHOT_ACQUISITION_CONFORMANCE_REASON = Object.freeze({
   MAP_ROLE_BINDING_MISMATCH: "MAP_ROLE_BINDING_MISMATCH",
   PROJECTED_CRS_MISMATCH: "PROJECTED_CRS_MISMATCH",
   PRIVATE_BINDING_UNAVAILABLE: "PRIVATE_BINDING_UNAVAILABLE",
+  SPATIAL_PROVENANCE_UNAVAILABLE: "SPATIAL_PROVENANCE_UNAVAILABLE",
   VALUE_FIDELITY_MISMATCH: "VALUE_FIDELITY_MISMATCH",
   ROW_PROVENANCE_MISMATCH: "ROW_PROVENANCE_MISMATCH",
   MAP_ROLE_VALUE_MISMATCH: "MAP_ROLE_VALUE_MISMATCH",
@@ -1732,43 +1734,253 @@ function bindingMismatchReason(family) {
   return ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.VALUE_FIDELITY_MISMATCH;
 }
 
-function createPrivateAcquisitionBinding({ family, format, sourceText, expectedRowCount }) {
+function normalizedSpatialLineText(value) {
+  return normalizeCoordinateEvidenceText(value).replace(/\s+/gu, " ").trim();
+}
+
+function normalizePrivateSourceRegion(line, imageIdentity) {
+  if (!line || typeof line !== "object") return null;
+  const text = normalizedSpatialLineText(getLineText(line));
+  const box = getFiniteLayoutBox(line);
+  const localLineIndex = Number(line.local_line_index ?? line.localLineIndex);
+  const declaredPage = line.page === undefined ? imageIdentity.page : Number(line.page);
+  const declaredRevision = line.resultRevision === undefined
+    ? null
+    : Number(line.resultRevision);
+  if (!text || !box || !Number.isSafeInteger(localLineIndex) || localLineIndex < 0
+    || !Number.isInteger(declaredPage) || declaredPage !== imageIdentity.page
+    || (declaredRevision !== null && (!Number.isSafeInteger(declaredRevision) || declaredRevision <= 0))
+    || box.x0 < 0 || box.y0 < 0 || box.x1 > imageIdentity.width || box.y1 > imageIdentity.height) {
+    return null;
+  }
+  const roundedBox = Object.freeze({
+    x0: Math.round(box.x0),
+    y0: Math.round(box.y0),
+    x1: Math.round(box.x1),
+    y1: Math.round(box.y1)
+  });
+  if (roundedBox.x1 <= roundedBox.x0 || roundedBox.y1 <= roundedBox.y0) return null;
+  return Object.freeze({
+    text,
+    textDigest: sha256BoundedIdentity(text),
+    localLineIndex,
+    declaredPage,
+    declaredRevision,
+    box: roundedBox
+  });
+}
+
+function privateSourceRegionsOverlap(left, right) {
+  const intersectionWidth = Math.min(left.box.x1, right.box.x1) - Math.max(left.box.x0, right.box.x0);
+  const intersectionHeight = Math.min(left.box.y1, right.box.y1) - Math.max(left.box.y0, right.box.y0);
+  return intersectionWidth > 0 && intersectionHeight > 0;
+}
+
+function privateSpatialLineIsRelevant(family, text) {
+  if (countDmsComponents(text) > 0 || countDecimalComponents(text) > 0) return true;
+  if (parseExplicitAxisHeaderLine(text, 0) || parseProjectedAxisHeaderLine(text, 0)) return true;
+  if (family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
+    && /^(?:group|site|sites|area|mining\s+area|矿区|礦區)\b/iu.test(text)) return true;
+  if (family === ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT) {
+    return /\b(?:search|rechercher|buscar|details?|place|location|address|directions?|plus\s*code)\b/iu.test(text)
+      || /搜索|搜尋|地点|地點|位置|地址|路线|路線/u.test(text)
+      || /\b[A-Z0-9]{4,12}\+[A-Z0-9]{2,}\b/iu.test(text);
+  }
+  if (family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE) {
+    return /\b(?:CRS|EPSG|Datum|UTM|MGRS|Zone|Zona|Fuso|Hemisphere|Axis(?:_|\s+)Order|Easting|Northing)\b/iu.test(text)
+      || /^\s*(?:POINT|MGRS)\s*[|:]/iu.test(text)
+      || (/[|;\t]/u.test(text) && /\d{4,}/u.test(text));
+  }
+  return /^(?:longitude|latitude|lon|lat|经度|經度|纬度|緯度|东经|東經|西经|西經|北纬|北緯|南纬|南緯)\b/iu.test(text);
+}
+
+function minimumPrivateSourceRegionCount({ family, expectedRowCount, groupBoundaryCount }) {
+  const rows = boundedStructureCount(expectedRowCount);
+  switch (family) {
+    case ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT:
+      return 1;
+    case ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE:
+    case ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE:
+      return rows > 0 ? rows + 1 : 0;
+    case ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED:
+      return rows > 0 ? rows + Math.max(2, boundedStructureCount(groupBoundaryCount)) : 0;
+    case ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT:
+      return 3;
+    case ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE:
+      return rows > 0 ? rows + 1 : 0;
+    default:
+      return 0;
+  }
+}
+
+function createPrivateSpatialProvenance({
+  family,
+  sourceText,
+  layoutLines,
+  imageIdentity,
+  resultRevision,
+  expectedRowCount,
+  groupBoundaryCount
+}) {
+  const revision = Number(resultRevision);
+  if (!isCanonicalCoordinateImageIdentity(imageIdentity)
+    || !Number.isSafeInteger(revision) || revision <= 0
+    || !Array.isArray(layoutLines) || layoutLines.length === 0 || layoutLines.length > 256) {
+    return Object.freeze({ available: false, sourceRegionCount: 0, identity: Object.freeze([]) });
+  }
+  const expectedRelevantLines = normalizeCoordinateEvidenceText(sourceText)
+    .split("\n")
+    .map(normalizedSpatialLineText)
+    .filter(text => text && privateSpatialLineIsRelevant(family, text));
+  const sourceLines = new Set(expectedRelevantLines);
+  const normalized = layoutLines.map(line => normalizePrivateSourceRegion(line, imageIdentity));
+  if (normalized.some(region => !region)) {
+    return Object.freeze({ available: false, sourceRegionCount: 0, identity: Object.freeze([]) });
+  }
+  const regions = normalized.filter(region => sourceLines.has(region.text)
+    && privateSpatialLineIsRelevant(family, region.text));
+  const minimumCount = minimumPrivateSourceRegionCount({ family, expectedRowCount, groupBoundaryCount });
+  if (minimumCount <= 0 || regions.length < minimumCount
+    || new Set(regions.map(region => region.localLineIndex)).size !== regions.length
+    || regions.some(region => region.declaredRevision !== null && region.declaredRevision !== revision)) {
+    return Object.freeze({ available: false, sourceRegionCount: boundedStructureCount(regions.length), identity: Object.freeze([]) });
+  }
+  for (let left = 0; left < regions.length; left += 1) {
+    for (let right = left + 1; right < regions.length; right += 1) {
+      if (privateSourceRegionsOverlap(regions[left], regions[right])) {
+        return Object.freeze({ available: false, sourceRegionCount: boundedStructureCount(regions.length), identity: Object.freeze([]) });
+      }
+    }
+  }
+  const lineOrder = [...regions].sort((left, right) => left.localLineIndex - right.localLineIndex);
+  const visualOrder = [...regions].sort((left, right) => (
+    left.box.y0 - right.box.y0 || left.box.x0 - right.box.x0 || left.localLineIndex - right.localLineIndex
+  ));
+  if (lineOrder.length !== expectedRelevantLines.length
+    || lineOrder.some((region, index) => region !== visualOrder[index]
+      || region.text !== expectedRelevantLines[index])) {
+    return Object.freeze({ available: false, sourceRegionCount: boundedStructureCount(regions.length), identity: Object.freeze([]) });
+  }
+  const hasExplicitGroupHeadings = family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
+    && lineOrder.some(region => /^(?:group|site|sites|area|mining\s+area|矿区|礦區)\b/iu.test(region.text));
+  let sourceGroupIndex = 0;
+  const regionIdentities = lineOrder.map((region, index) => {
+    const startsExplicitGroup = family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
+      && /^(?:group|site|sites|area|mining\s+area|矿区|礦區)\b/iu.test(region.text);
+    const startsRepeatedTableSegment = [
+      ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE,
+      ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE,
+      ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
+    ].includes(family)
+      && (!hasExplicitGroupHeadings || family !== ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED)
+      && Boolean(parseExplicitAxisHeaderLine(region.text, 0));
+    if (index > 0 && (startsExplicitGroup || startsRepeatedTableSegment)) sourceGroupIndex += 1;
+    return `REGION:${index}:G${sourceGroupIndex}:${region.localLineIndex}:${region.box.x0},${region.box.y0},${region.box.x1},${region.box.y1}:${region.textDigest}`;
+  });
+  const identity = Object.freeze([
+    `IMAGE:${imageIdentity.image_sha256}:${imageIdentity.request_asset_id}:${imageIdentity.page}:${imageIdentity.width}x${imageIdentity.height}:R${revision}`,
+    ...regionIdentities
+  ]);
+  return Object.freeze({
+    available: true,
+    sourceRegionCount: boundedStructureCount(regions.length),
+    identity
+  });
+}
+
+function createPrivateAcquisitionBinding({
+  family,
+  format,
+  sourceText,
+  expectedRowCount,
+  groupBoundaryCount,
+  layoutLines,
+  imageIdentity,
+  resultRevision
+}) {
   const identity = valueIdentityForFamily(family, format, sourceText);
   const expectedCount = family === ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT
     ? 2
     : family === ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT
       ? 3
       : boundedStructureCount(expectedRowCount);
-  const available = identity.length > 0 && (expectedCount === 0 || identity.length === expectedCount);
+  const valueAvailable = identity.length > 0 && (expectedCount === 0 || identity.length === expectedCount);
+  const spatial = createPrivateSpatialProvenance({
+    family,
+    sourceText,
+    layoutLines,
+    imageIdentity,
+    resultRevision,
+    expectedRowCount,
+    groupBoundaryCount
+  });
+  const available = valueAvailable && spatial.available;
   const key = randomBytes(32);
   const digest = available
-    ? createHmac("sha256", key).update(JSON.stringify({ family, format, identity }), "utf8").digest()
+    ? createHmac("sha256", key).update(JSON.stringify({
+      family,
+      format,
+      identity,
+      spatialIdentity: spatial.identity
+    }), "utf8").digest()
     : Buffer.alloc(0);
-  return Object.freeze({ available, family, format, expectedCount, key, digest });
+  return Object.freeze({
+    available,
+    valueAvailable,
+    spatialAvailable: spatial.available,
+    sourceRegionCount: spatial.sourceRegionCount,
+    spatialIdentity: spatial.identity,
+    family,
+    format,
+    expectedCount,
+    key,
+    digest
+  });
 }
 
 function validatePrivateAcquisitionBinding({ contract, payload, providerText }) {
   const binding = privateAcquisitionBindings.get(contract);
-  if (!binding?.available || binding.family !== payload.family || binding.format !== payload.format) {
+  if (!binding || binding.family !== payload.family || binding.format !== payload.format) {
     return Object.freeze({
       conformant: false,
-      reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PRIVATE_BINDING_UNAVAILABLE
+      reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PRIVATE_BINDING_UNAVAILABLE,
+      sourceRegionCount: 0
     });
   }
+  if (!binding.spatialAvailable) return Object.freeze({
+    conformant: false,
+    reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE,
+    sourceRegionCount: binding.sourceRegionCount
+  });
+  if (!binding.valueAvailable || !binding.available) return Object.freeze({
+    conformant: false,
+    reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PRIVATE_BINDING_UNAVAILABLE,
+    sourceRegionCount: binding.sourceRegionCount
+  });
   const identity = valueIdentityForFamily(payload.family, payload.format, providerText);
   const expectedCount = binding.expectedCount;
   if (identity.length === 0 || (expectedCount > 0 && identity.length !== expectedCount)) {
-    return Object.freeze({ conformant: false, reason: bindingMismatchReason(payload.family) });
+    return Object.freeze({
+      conformant: false,
+      reason: bindingMismatchReason(payload.family),
+      sourceRegionCount: binding.sourceRegionCount
+    });
   }
   const actualDigest = createHmac("sha256", binding.key)
-    .update(JSON.stringify({ family: payload.family, format: payload.format, identity }), "utf8")
+    .update(JSON.stringify({
+      family: payload.family,
+      format: payload.format,
+      identity,
+      spatialIdentity: binding.spatialIdentity
+    }), "utf8")
     .digest();
   const conformant = binding.digest.length === actualDigest.length && timingSafeEqual(binding.digest, actualDigest);
   return Object.freeze({
     conformant,
     reason: conformant
       ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
-      : bindingMismatchReason(payload.family)
+      : bindingMismatchReason(payload.family),
+    sourceRegionCount: binding.sourceRegionCount
   });
 }
 
@@ -1966,7 +2178,13 @@ function acquisitionContractPayload(contract = {}) {
   });
 }
 
-export function createOneShotAcquisitionContract({ route, sourceText = "" } = {}) {
+export function createOneShotAcquisitionContract({
+  route,
+  sourceText = "",
+  layoutLines = [],
+  imageIdentity = null,
+  resultRevision = 1
+} = {}) {
   const family = Object.values(ONE_SHOT_STRUCTURED_FAMILY).includes(route?.family)
     ? route.family
     : ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW;
@@ -2016,6 +2234,10 @@ export function createOneShotAcquisitionContract({ route, sourceText = "" } = {}
     family,
     format: payload.format,
     sourceText,
+    groupBoundaryCount: payload.structure.groupBoundaryCount,
+    layoutLines,
+    imageIdentity,
+    resultRevision,
     expectedRowCount: family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE
       ? payload.structure.projectedCoordinateRowCount
       : payload.structure.coordinateRowCount
@@ -2035,7 +2257,8 @@ function buildAcquisitionConformanceResult({ contract, status, reason, counts = 
       groupBoundaryCount: boundedStructureCount(counts.groupBoundaryCount),
       mapRoleCount: boundedStructureCount(counts.mapRoleCount),
       projectedCoordinateRowCount: boundedStructureCount(counts.projectedCoordinateRowCount),
-      crsFieldCount: boundedStructureCount(counts.crsFieldCount)
+      crsFieldCount: boundedStructureCount(counts.crsFieldCount),
+      sourceRegionCount: boundedStructureCount(counts.sourceRegionCount)
     })
   });
 }
@@ -2063,7 +2286,10 @@ function buildStructurallyValidatedConformanceResult({
       ? ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
       : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED,
     reason: privateConformance.reason,
-    counts
+    counts: {
+      ...counts,
+      sourceRegionCount: privateConformance.sourceRegionCount
+    }
   });
 }
 

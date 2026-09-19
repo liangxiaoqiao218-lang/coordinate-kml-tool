@@ -8288,7 +8288,13 @@ async function runLocalOcrFamilyClassification({
     return {
       attempted: true,
       route,
-      contract: createOneShotAcquisitionContract({ route, sourceText }),
+      contract: createOneShotAcquisitionContract({
+        route,
+        sourceText,
+        layoutLines,
+        imageIdentity,
+        resultRevision: 1
+      }),
       layoutLines
     };
   } catch (error) {
@@ -15406,6 +15412,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       mapRoleCount: oneShotAcquisitionConformance.counts.mapRoleCount,
       projectedCoordinateRowCount: oneShotAcquisitionConformance.counts.projectedCoordinateRowCount,
       crsFieldCount: oneShotAcquisitionConformance.counts.crsFieldCount,
+      sourceRegionCount: oneShotAcquisitionConformance.counts.sourceRegionCount,
       providerCallCount: recognitionBudget?.providerAttemptCount || 0,
       localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0,
       terminalState: oneShotAcquisitionConformance.status === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT

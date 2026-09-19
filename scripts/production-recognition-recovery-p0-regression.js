@@ -7,6 +7,7 @@ import vm from "node:vm";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import crypto from "node:crypto";
+import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "../server/recognition/cancellable-ocr.js";
 import {
   RECOGNITION_COMPLETENESS_DECISION,
@@ -66,6 +67,49 @@ vm.runInContext('let p0QualificationAcquisition = null; let p0QualificationAcqui
 const structuredText = replay.records.find(record => record.caseId === "indonesia-dms-real-001").approvedAcquisitionLines.join("\n");
 const observedText = replay.realAcquisitionObservations[0].observedFinalRawTextLines.join("\n");
 const syntheticPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+
+function makeSpatialBmp(width = 900, height = 1400) {
+  const rowBytes = Math.floor(((24 * width) + 31) / 32) * 4;
+  const pixelBytes = rowBytes * height;
+  const buffer = Buffer.alloc(54 + pixelBytes);
+  buffer.write("BM", 0, "ascii");
+  buffer.writeUInt32LE(buffer.length, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(width, 18);
+  buffer.writeInt32LE(height, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  buffer.writeUInt32LE(pixelBytes, 34);
+  return buffer;
+}
+
+const spatialBmp = makeSpatialBmp();
+const syntheticSpatialIdentity = createCoordinateImageIdentity(
+  { buffer: spatialBmp, mimetype: "image/bmp", size: spatialBmp.length },
+  { requestId: "production-recovery-spatial-provenance", page: 1 }
+);
+
+function spatialLayoutFor(text, overrides = {}) {
+  return String(text).split("\n").filter(Boolean).map((lineText, index) => ({
+    text: lineText,
+    bbox: [20, 20 + (index * 42), 860, 44 + (index * 42)],
+    local_line_index: index,
+    page: overrides.page ?? 1,
+    resultRevision: overrides.resultRevision ?? 1
+  }));
+}
+
+function spatialContractFor(source, layoutLines = spatialLayoutFor(source)) {
+  const route = primaryRouting.classifyOneShotStructuredFamily({ text: source, layoutLines });
+  return primaryRouting.createOneShotAcquisitionContract({
+    route,
+    sourceText: source,
+    layoutLines,
+    imageIdentity: syntheticSpatialIdentity,
+    resultRevision: 1
+  });
+}
 if (process.argv[2] === '--http-candidate') {
   const { default: http } = await import('node:http');
   let acquisitions = 0;
@@ -1504,6 +1548,11 @@ test("one-shot structured server integration preserves one Provider and one loca
   assert.match(serverSource, /oneShotLocalOcrAttempted/);
   assert.match(serverSource, /materializeMapLayoutRowsFromFamilyEvidence/);
   assert.match(serverSource, /prompt:\s*selectedProviderPrompt/);
+  const familyFunction = serverSource.slice(
+    serverSource.indexOf("async function runLocalOcrFamilyClassification"),
+    serverSource.indexOf("function materializeMapLayoutRowsFromFamilyEvidence")
+  );
+  assert.match(familyFunction, /createOneShotAcquisitionContract\(\{[\s\S]*layoutLines,[\s\S]*imageIdentity,[\s\S]*resultRevision:\s*1/);
 });
 
 test("one-shot structured diagnostics are bounded and redact source content", () => {
@@ -1517,8 +1566,7 @@ test("one-shot structured diagnostics are bounded and redact source content", ()
 
 test("one-shot structured acquisition contract rejects post-Provider family drift", () => {
   const source = "Longitude: 64.125001\nLatitude: 12.875002";
-  const route = primaryRouting.classifyOneShotStructuredFamily({ text: source });
-  const contract = primaryRouting.createOneShotAcquisitionContract({ route, sourceText: source });
+  const contract = spatialContractFor(source);
   const conformant = primaryRouting.validateOneShotAcquisitionContract({
     contract,
     providerText: source
@@ -1569,7 +1617,36 @@ test("one-shot structured conformance diagnostics remain bounded", () => {
   const diagnostic = serverSource.slice(start, serverSource.indexOf("if (oneShotAcquisitionConformance.status", start));
   assert.ok(start >= 0);
   assert.match(diagnostic, /family|status|reason|counts|providerCallCount|localOcrCallCount|terminalState/);
+  assert.match(diagnostic, /sourceRegionCount/);
   assert.doesNotMatch(diagnostic, /rawText|providerRawText|imageDataUrl|authorization|cookie|apiKey|secret|headers/iu);
+  assert.doesNotMatch(diagnostic, /image_sha256|request_asset_id|bbox|spatialIdentity|privateBinding/iu);
+});
+
+test("one-shot structured spatial capability rejects missing page and overlapping regions", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const route = primaryRouting.classifyOneShotStructuredFamily({ text: source });
+  const missing = primaryRouting.createOneShotAcquisitionContract({ route, sourceText: source });
+  const wrongPage = spatialContractFor(source, spatialLayoutFor(source, { page: 2 }));
+  const overlappingLines = spatialLayoutFor(source).map((line, index) => ({
+    ...line,
+    bbox: [20, 20 + (index * 5), 860, 60 + (index * 5)]
+  }));
+  const overlap = spatialContractFor(source, overlappingLines);
+  for (const contract of [missing, wrongPage, overlap]) {
+    const result = primaryRouting.validateOneShotAcquisitionContract({ contract, providerText: source });
+    assert.equal(result.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+    assert.equal(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE);
+  }
+});
+
+test("one-shot structured public contract and diagnostics redact private spatial provenance", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const contract = spatialContractFor(source);
+  const serialized = JSON.stringify(contract);
+  assert.doesNotMatch(serialized, /64\.125001|12\.875002|asset_|image_sha256|bbox|sourceRegion|spatialIdentity/u);
+  const result = primaryRouting.validateOneShotAcquisitionContract({ contract, providerText: source });
+  assert.equal(result.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  assert.ok(result.counts.sourceRegionCount >= 1);
 });
 
 let passed = 0;
