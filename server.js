@@ -15225,6 +15225,49 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           recognitionBudget,
           aliyunVisionModel
         );
+        const wgs84PrimaryConformance = validateOneShotAcquisitionContract({
+          contract: oneShotAcquisitionContract,
+          providerText: wgs84PrimaryRawText
+        });
+        console.log("One-shot WGS84 primary acquisition conformance:", {
+          family: wgs84PrimaryConformance.family,
+          status: wgs84PrimaryConformance.status,
+          reason: wgs84PrimaryConformance.reason,
+          coordinateRowCount: wgs84PrimaryConformance.counts.coordinateRowCount,
+          repeatedHeaderCount: wgs84PrimaryConformance.counts.repeatedHeaderCount,
+          sourceRegionCount: wgs84PrimaryConformance.counts.sourceRegionCount,
+          observedCandidateCount: wgs84PrimaryConformance.counts.observedCandidateCount,
+          boundCandidateCount: wgs84PrimaryConformance.counts.boundCandidateCount,
+          unassignedCandidateCount: wgs84PrimaryConformance.counts.unassignedCandidateCount,
+          providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+          localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0,
+          terminalState: wgs84PrimaryConformance.status === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
+            ? "CANDIDATE_EVIDENCE_ALLOWED"
+            : "REVIEW_REQUIRED"
+        });
+        if (wgs84PrimaryConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
+          const contractReviewPayload = {
+            success: false,
+            reason: "acquisition_contract_review_required",
+            code: "ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED",
+            model: `${aliyunVisionModel}+wgs84-table-primary`,
+            rawText: "",
+            coordinates: "",
+            precisionMode: "one-shot-acquisition-contract-review",
+            requiresReview: true,
+            warning: "The WGS84 primary output did not satisfy its pre-Provider structure, value, source, and observation-set contract and remains review-only.",
+            acquisitionContractConformance: wgs84PrimaryConformance,
+            parserTrace: [
+              "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
+              `ONE_SHOT_ACQUISITION_CONTRACT:${wgs84PrimaryConformance.reason}`
+            ]
+          };
+          const contractReviewEngine = buildCoordinateEngineV2ShadowResult(contractReviewPayload, {
+            forceRequiresReview: true,
+            rawHint: ""
+          });
+          return res.json(buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine));
+        }
         const wgs84PrimaryInfo = getWgs84TableCoordinatesInfo(wgs84PrimaryRawText, {
           preserveDuplicatePoints: true
         });
@@ -15413,6 +15456,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       projectedCoordinateRowCount: oneShotAcquisitionConformance.counts.projectedCoordinateRowCount,
       crsFieldCount: oneShotAcquisitionConformance.counts.crsFieldCount,
       sourceRegionCount: oneShotAcquisitionConformance.counts.sourceRegionCount,
+      observedCandidateCount: oneShotAcquisitionConformance.counts.observedCandidateCount,
+      boundCandidateCount: oneShotAcquisitionConformance.counts.boundCandidateCount,
+      unassignedCandidateCount: oneShotAcquisitionConformance.counts.unassignedCandidateCount,
       providerCallCount: recognitionBudget?.providerAttemptCount || 0,
       localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0,
       terminalState: oneShotAcquisitionConformance.status === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT

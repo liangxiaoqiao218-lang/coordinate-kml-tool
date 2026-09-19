@@ -1234,6 +1234,236 @@ test("R33", "server binds spatial capability before Provider and emits only a bo
   assert.doesNotMatch(diagnostic, /image_sha256|request_asset_id|bbox|spatialIdentity|privateBinding/iu);
 });
 
+test("R34", "single-point observation set binds every locally observed candidate exactly once", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const result = assertConformant(contractFor(source), source);
+  assert.equal(result.counts.observedCandidateCount, 2);
+  assert.equal(result.counts.boundCandidateCount, 2);
+  assert.equal(result.counts.unassignedCandidateCount, 0);
+});
+
+test("R35", "an extra locally observed coordinate candidate cannot remain unassigned", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const layoutLines = syntheticLayoutLines(source);
+  layoutLines.push({
+    text: "Z | 65.5000 | 13.5000",
+    bbox: [20, 104, 1120, 128],
+    confidence: 0.99,
+    local_line_index: 2,
+    page: 1,
+    resultRevision: 1
+  });
+  const result = assertReview(
+    contractFor(source, layoutLines),
+    source,
+    ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE
+  );
+  assert.equal(result.counts.observedCandidateCount, 3);
+  assert.equal(result.counts.boundCandidateCount, 2);
+  assert.equal(result.counts.unassignedCandidateCount, 1);
+});
+
+test("R36", "a duplicate local observation cannot be assigned twice", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const layoutLines = syntheticLayoutLines(source);
+  layoutLines.push({
+    ...layoutLines[1],
+    bbox: [20, 104, 1120, 128],
+    local_line_index: 2
+  });
+  const result = assertReview(
+    contractFor(source, layoutLines),
+    source,
+    ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE
+  );
+  assert.equal(result.counts.unassignedCandidateCount, 1);
+});
+
+test("R37", "cross-family local observations make a selected map family ambiguous", () => {
+  const source = "Search 64.1250,12.8750\nPlace details 64.125001,12.875002\nPlus Code 7JCPTEST+5P";
+  const provider = "MAP_SEARCH_BOX | 64.1250,12.8750\nMAP_PLACE_DETAILS | 64.125001,12.875002\nPLUS_CODE | 7JCPTEST+5P";
+  const layoutLines = syntheticLayoutLines(source);
+  layoutLines.push({
+    text: "A | 500100 | 2065100",
+    bbox: [20, 146, 1120, 170],
+    confidence: 0.99,
+    local_line_index: 3,
+    page: 1,
+    resultRevision: 1
+  });
+  const result = assertReview(
+    contractFor(source, layoutLines),
+    provider,
+    ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_AMBIGUOUS
+  );
+  assert.equal(result.counts.observedCandidateCount, 4);
+  assert.equal(result.counts.boundCandidateCount, 3);
+  assert.equal(result.counts.unassignedCandidateCount, 1);
+});
+
+test("R38", "twenty-row tables expose exact complete observation coverage", () => {
+  const rows = Array.from({ length: 20 }, (_, index) => `${index + 1} | ${(61 + index / 1000).toFixed(4)} | ${(14 + index / 1000).toFixed(4)}`);
+  const source = ["No | Longitude | Latitude", ...rows].join("\n");
+  const result = assertConformant(contractFor(source), source);
+  assert.equal(result.counts.observedCandidateCount, 21);
+  assert.equal(result.counts.boundCandidateCount, 21);
+  assert.equal(result.counts.unassignedCandidateCount, 0);
+});
+
+test("R39", "repeated headers preserve independent segments in the complete observation set", () => {
+  const source = [
+    "Point | Latitude | Longitude",
+    `A | 12°01'01.00"N | 64°01'01.00"E`,
+    `B | 12°01'02.00"N | 64°01'02.00"E`,
+    "Point | Latitude | Longitude",
+    `A | 13°01'01.00"N | 65°01'01.00"E`,
+    `B | 13°01'02.00"N | 65°01'02.00"E`
+  ].join("\n");
+  const provider = [
+    "GROUP | REPEATED_HEADER_BOUNDARY", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 12°01'01.00"N | 64°01'01.00"E`,
+    `POINT | B | 12°01'02.00"N | 64°01'02.00"E`,
+    "GROUP | REPEATED_HEADER_BOUNDARY", "HEADER | Point | Latitude | Longitude",
+    `POINT | A | 13°01'01.00"N | 65°01'01.00"E`,
+    `POINT | B | 13°01'02.00"N | 65°01'02.00"E`
+  ].join("\n");
+  const result = assertConformant(contractFor(source), provider);
+  assert.equal(result.counts.observedCandidateCount, 6);
+  assert.equal(result.counts.boundCandidateCount, 6);
+  assert.equal(result.counts.unassignedCandidateCount, 0);
+});
+
+test("R40", "projected observations reject an additional unassigned projected row", () => {
+  const source = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nPoint | Easting | Northing\nA | 500100 | 2065100";
+  const provider = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nAXIS_ORDER | EASTING | NORTHING\nPOINT | A | 500100 | 2065100";
+  const exact = assertConformant(contractFor(source), provider);
+  assert.equal(exact.counts.observedCandidateCount, 5);
+  assert.equal(exact.counts.unassignedCandidateCount, 0);
+  const layoutLines = syntheticLayoutLines(source);
+  layoutLines.push({
+    text: "B | 500200 | 2065200",
+    bbox: [20, 146, 1120, 170],
+    confidence: 0.99,
+    local_line_index: 3,
+    page: 1,
+    resultRevision: 1
+  });
+  const mismatch = assertReview(
+    contractFor(source, layoutLines),
+    provider,
+    ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE
+  );
+  assert.equal(mismatch.counts.unassignedCandidateCount, 1);
+});
+
+test("R41", "observation diagnostics expose bounded counts without candidate content", async () => {
+  const source = await readFile(new URL("../server.js", import.meta.url), "utf8");
+  const start = source.indexOf('console.log("One-shot acquisition conformance:"');
+  const diagnostic = source.slice(start, source.indexOf("if (oneShotAcquisitionConformance.status", start));
+  assert.match(diagnostic, /observedCandidateCount/);
+  assert.match(diagnostic, /boundCandidateCount/);
+  assert.match(diagnostic, /unassignedCandidateCount/);
+  assert.doesNotMatch(diagnostic, /candidateText|observationIdentity|sourceRegionIdentity|bbox|imageDataUrl/iu);
+});
+
+test("R42", "a locally observed duplicate map role cannot be omitted by Provider output", () => {
+  const source = [
+    "Search 64.1250,12.8750",
+    "Place details 64.125001,12.875002",
+    "Plus Code 7JCPTEST+5P",
+    "Plus Code 7JCPTEST+5P"
+  ].join("\n");
+  const provider = [
+    "MAP_SEARCH_BOX | 64.1250,12.8750",
+    "MAP_PLACE_DETAILS | 64.125001,12.875002",
+    "PLUS_CODE | 7JCPTEST+5P"
+  ].join("\n");
+  const contract = contractFor(source);
+  assert.equal(contract.family, ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT);
+  const result = assertReview(contract, provider);
+  assert.notEqual(result.reason, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT);
+});
+
+test("R43", "a duplicate local CRS observation cannot be compressed into one Provider field", () => {
+  const source = [
+    "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N",
+    "Datum WGS 84",
+    "Point | Easting | Northing",
+    "A | 500100 | 2065100"
+  ].join("\n");
+  const provider = [
+    "CRS | WGS 84",
+    "ZONE | 43N",
+    "HEMISPHERE | N",
+    "AXIS_ORDER | EASTING | NORTHING",
+    "POINT | A | 500100 | 2065100"
+  ].join("\n");
+  const result = assertReview(
+    contractFor(source),
+    provider,
+    ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE
+  );
+  assert.equal(result.counts.unassignedCandidateCount, 1);
+});
+
+test("R44", "WGS84 specialized primary validates the contract before coordinate parsing or usage consumption", async () => {
+  const source = await readFile(new URL("../server.js", import.meta.url), "utf8");
+  const blockStart = source.indexOf("if (wgs84PrimaryRoute.selected)");
+  const blockEnd = source.indexOf("if (madagascarPrimaryRoute.selected)", blockStart);
+  const block = source.slice(blockStart, blockEnd);
+  const validationIndex = block.indexOf("validateOneShotAcquisitionContract");
+  const parserIndex = block.indexOf("getWgs84TableCoordinatesInfo");
+  const usageIndex = block.indexOf("consumeCoordinateUsage");
+  assert.ok(validationIndex >= 0);
+  assert.ok(parserIndex > validationIndex);
+  assert.ok(usageIndex > validationIndex);
+  assert.match(block, /ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED/);
+});
+
+test("R45", "moving a repeated WGS84 header boundary changes row segment identity", () => {
+  const source = [
+    "Point | Longitude | Latitude",
+    "A | 64.1001 | 12.1001",
+    "B | 64.1002 | 12.1002",
+    "Point | Longitude | Latitude",
+    "C | 65.1001 | 13.1001",
+    "D | 65.1002 | 13.1002"
+  ].join("\n");
+  const provider = [
+    "WGS84 Longitude Latitude Table",
+    "Point | Longitude | Latitude",
+    "A | 64.1001 | 12.1001",
+    "Point | Longitude | Latitude",
+    "B | 64.1002 | 12.1002",
+    "C | 65.1001 | 13.1001",
+    "D | 65.1002 | 13.1002"
+  ].join("\n");
+  const contract = contractFor(source);
+  assert.equal(contract.family, ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE);
+  assert.equal(contract.structure.repeatedHeaderCount, 2);
+  assertReview(contract, provider, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.ROW_PROVENANCE_MISMATCH);
+});
+
+test("R46", "an empty DMS group fails closed before a Provider can replace its heading", () => {
+  const source = [
+    "GROUP A",
+    "Point | Latitude | Longitude",
+    "GROUP B",
+    "Point | Latitude | Longitude",
+    `B1 | 13°01'01.00"N | 65°01'01.00"E`
+  ].join("\n");
+  const provider = [
+    "GROUP | X",
+    "HEADER | Point | Latitude | Longitude",
+    "GROUP | B",
+    "HEADER | Point | Latitude | Longitude",
+    `POINT | B1 | 13°01'01.00"N | 65°01'01.00"E`
+  ].join("\n");
+  const contract = contractFor(source);
+  assert.equal(contract.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assertReview(contract, provider, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY);
+});
+
 let passed = 0;
 for (const entry of tests) {
   try {
