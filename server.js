@@ -112,6 +112,10 @@ import {
   executeProviderLayoutProductionQualificationProbe,
   isProviderLayoutQualificationReadAllowed
 } from "./server/evidence-acquisition/index.js";
+import {
+  LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
+  normalizeLocalOcrStructuredEvidence
+} from "./server/evidence-acquisition/local-ocr-map-layout-classifier.js";
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
@@ -8279,8 +8283,16 @@ async function runLocalOcrFamilyClassification({
       timeoutCode: RECOGNITION_BUDGET_CODE
     });
     const extractedLayoutLines = extractLocalOcrLayoutLines(result, imageIdentity);
-    const layoutLines = Object.freeze(Array.isArray(extractedLayoutLines) ? extractedLayoutLines : []);
-    const sourceText = result?.data?.text || "";
+    const normalizedLocalEvidence = normalizeLocalOcrStructuredEvidence({
+      sourceText: result?.data?.text || "",
+      layoutLines: extractedLayoutLines
+    });
+    const normalizationComplete = normalizedLocalEvidence.status
+      === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE;
+    const layoutLines = normalizationComplete
+      ? normalizedLocalEvidence.layoutLines
+      : Object.freeze([]);
+    const sourceText = normalizationComplete ? normalizedLocalEvidence.text : "";
     const route = classifyOneShotStructuredFamily({
       text: sourceText,
       layoutLines
