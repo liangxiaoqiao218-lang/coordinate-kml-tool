@@ -40,12 +40,19 @@ import {
   hasStrongPrintedProjectedTableEvidence
 } from "../server/recognition/family-primary-routing.js";
 import { utmToWgs84 } from "../server/projection/utm.js";
+import {
+  LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
+  normalizeLocalOcrStructuredEvidence
+} from "../server/evidence-acquisition/local-ocr-map-layout-classifier.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const structuredFamilyOnly = process.argv.includes("--structured-family-only");
 const goldenPath = path.join(root, "regression-samples", "production-recognition-recovery-p0", "golden-records.json");
-const golden = JSON.parse(await readFile(goldenPath, "utf8"));
-const replay = JSON.parse(await readFile(path.join(root, "release-governance/p0-deterministic-replay-manifest.json"), "utf8"));
-const releaseGate = JSON.parse(await readFile(path.join(root, "release-governance/p0-release-gate-governance.json"), "utf8"));
+// The structured-family-only path is synthetic and must not read historical
+// recovery fixtures, replay manifests, or production qualification records.
+const golden = structuredFamilyOnly ? null : JSON.parse(await readFile(goldenPath, "utf8"));
+const replay = structuredFamilyOnly ? null : JSON.parse(await readFile(path.join(root, "release-governance/p0-deterministic-replay-manifest.json"), "utf8"));
+const releaseGate = structuredFamilyOnly ? null : JSON.parse(await readFile(path.join(root, "release-governance/p0-release-gate-governance.json"), "utf8"));
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
 // Execute the actual runtime function declarations without app startup or Provider I/O.
 const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, ...structuredCoordinateBoundary, utmToWgs84,
@@ -64,8 +71,8 @@ for (const name of ['noCoordinatesText', 'MGRS_BANDS', 'MGRS_COLUMN_SETS', 'MGRS
   vm.runInContext(serverSource.match(new RegExp(`^const ${name} = .+;$`, 'm'))[0], runtime);
 }
 vm.runInContext('let p0QualificationAcquisition = null; let p0QualificationAcquisitionUsed = false; const aliyunBaseURL = "http://127.0.0.1:1/v1";', runtime);
-const structuredText = replay.records.find(record => record.caseId === "indonesia-dms-real-001").approvedAcquisitionLines.join("\n");
-const observedText = replay.realAcquisitionObservations[0].observedFinalRawTextLines.join("\n");
+const structuredText = structuredFamilyOnly ? "" : replay.records.find(record => record.caseId === "indonesia-dms-real-001").approvedAcquisitionLines.join("\n");
+const observedText = structuredFamilyOnly ? "" : replay.realAcquisitionObservations[0].observedFinalRawTextLines.join("\n");
 const syntheticPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 function makeSpatialBmp(width = 900, height = 1400) {
@@ -1788,9 +1795,95 @@ test("one-shot structured repeated-header segments reject boundary migration", (
   assert.equal(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.ROW_PROVENANCE_MISMATCH);
 });
 
+test("one-shot structured word-box normalization is synthetic and fixture-independent", () => {
+  if (structuredFamilyOnly) {
+    assert.equal(golden, null);
+    assert.equal(replay, null);
+    assert.equal(releaseGate, null);
+  }
+  assert.match(serverSource, /normalizeLocalOcrStructuredEvidence/);
+  const rows = [
+    ["Point", "Longitude", "Latitude"],
+    ["A", "61.1001", "14.1001"],
+    ["B", "61.1002", "14.1002"],
+    ["C", "61.1003", "14.1003"]
+  ];
+  const layoutLines = rows.map((fields, lineIndex) => ({
+    text: fields.join(" "),
+    bbox: [20, 20 + (lineIndex * 40), 860, 44 + (lineIndex * 40)],
+    confidence: 96,
+    words: fields.flatMap((field, fieldIndex) => String(field).split(/\s+/u).map((word, wordIndex) => ({
+      text: word,
+      bbox: [30 + (fieldIndex * 270) + (wordIndex * 64), 20 + (lineIndex * 40),
+        80 + (fieldIndex * 270) + (wordIndex * 64), 44 + (lineIndex * 40)],
+      confidence: 96
+    }))),
+    word_structure_valid: true,
+    local_line_index: lineIndex,
+    page: 1,
+    resultRevision: 1
+  }));
+  const normalized = normalizeLocalOcrStructuredEvidence({
+    sourceText: rows.map(row => row.join(" ")).join("\n"),
+    layoutLines
+  });
+  const selected = primaryRouting.classifyOneShotStructuredFamily(normalized);
+  assert.equal(selected.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE);
+  assert.equal(selected.matched, true);
+  assert.equal(selected.evidence.coordinateRowCount, 3);
+});
+
+test("one-shot structured normalization rejects incomplete OCR coverage before routing", () => {
+  assert.match(serverSource, /normalizationComplete/);
+  assert.match(serverSource, /LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS\.COMPLETE/);
+  const rows = [
+    ["Point", "Longitude", "Latitude"],
+    ["S", "69.4301", "24.5201"],
+    ["T", "69.4302", "24.5202"],
+    ["U", "69.4303", "24.5203"]
+  ];
+  const layoutLines = rows.map((fields, lineIndex) => ({
+    text: fields.join(" "),
+    bbox: [20, 20 + (lineIndex * 40), 860, 44 + (lineIndex * 40)],
+    confidence: 96,
+    words: fields.map((field, fieldIndex) => ({
+      text: String(field),
+      bbox: [30 + (fieldIndex * 270), 20 + (lineIndex * 40),
+        110 + (fieldIndex * 270), 44 + (lineIndex * 40)],
+      confidence: 96
+    })),
+    word_structure_valid: true,
+    local_line_index: lineIndex,
+    page: 1,
+    resultRevision: 1
+  }));
+  const normalized = normalizeLocalOcrStructuredEvidence({
+    sourceText: `${rows.map(row => row.join(" ")).join("\n")}\nV 69.4304 24.5204`,
+    layoutLines
+  });
+  assert.equal(normalized.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+  assert.equal(normalized.text, "");
+  assert.equal(normalized.layoutLines.length, 0);
+  const selected = primaryRouting.classifyOneShotStructuredFamily(normalized);
+  assert.equal(selected.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(selected.matched, false);
+
+  const invalidHeader = normalizeLocalOcrStructuredEvidence({
+    sourceText: rows.map(row => row.join(" | ")).join("\n"),
+    layoutLines: layoutLines.map((line, index) => ({
+      ...line,
+      text: rows[index].join(" | "),
+      words: index === 0 ? [] : line.words,
+      word_structure_valid: index !== 0
+    }))
+  });
+  assert.equal(invalidHeader.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+  assert.equal(primaryRouting.classifyOneShotStructuredFamily(invalidHeader).family,
+    primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+});
+
 let passed = 0;
 const noServiceMode = process.argv.includes("--no-service");
-const structuredFamilyOnly = process.argv.includes("--structured-family-only");
 const selectedCases = structuredFamilyOnly
   ? cases.filter(entry => entry.name.startsWith("one-shot structured"))
   : noServiceMode

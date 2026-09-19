@@ -9,6 +9,20 @@ export const LOCAL_OCR_STRUCTURED_LAYOUT_SOURCE_TYPE = "LOCAL_OCR_STRUCTURED_LAY
 export const LOCAL_OCR_MAP_LAYOUT_CLASSIFIER_VERSION = "local_ocr_map_layout_classifier_v2";
 export const LOCAL_OCR_STRUCTURED_LAYOUT_CAPABILITY = Symbol("LOCAL_OCR_STRUCTURED_LAYOUT_CAPABILITY");
 
+export const LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS = Object.freeze({
+  COMPLETE: "COMPLETE",
+  INCOMPLETE: "INCOMPLETE"
+});
+
+export const LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON = Object.freeze({
+  COMPLETE_COVERAGE: "COMPLETE_COVERAGE",
+  SOURCE_LAYOUT_COVERAGE_MISMATCH: "SOURCE_LAYOUT_COVERAGE_MISMATCH",
+  INVALID_READING_ORDER: "INVALID_READING_ORDER",
+  INVALID_LINE_REGION: "INVALID_LINE_REGION",
+  UNTRUSTED_WORD_STRUCTURE: "UNTRUSTED_WORD_STRUCTURE",
+  WORD_TEXT_MISMATCH: "WORD_TEXT_MISMATCH"
+});
+
 const TRUSTED_ATTESTOR = "SERVER_LAYOUT_CLASSIFIER_V2";
 const ROLE_REGION = Object.freeze({
   MAP_SEARCH_BOX: "MAP_SEARCH_BOX_REGION",
@@ -85,6 +99,387 @@ export function extractLocalOcrLayoutLines(result = {}, imageIdentity) {
     })
     .filter(Boolean);
   return Object.freeze(lines);
+}
+
+const STRUCTURED_FIELD_DEFINITIONS = Object.freeze([
+  Object.freeze({ kind: "label", phrases: Object.freeze(["point", "no", "no.", "number", "row", "id", "label", "name"]) }),
+  Object.freeze({ kind: "longitude", phrases: Object.freeze(["longitude", "longitude dms", "lon"]) }),
+  Object.freeze({ kind: "latitude", phrases: Object.freeze(["latitude", "latitude dms", "lat"]) }),
+  Object.freeze({ kind: "easting", phrases: Object.freeze(["easting", "x"]) }),
+  Object.freeze({ kind: "northing", phrases: Object.freeze(["northing", "y"]) })
+]);
+
+function normalizedWordText(value) {
+  return text(value).replace(/[：]/gu, ":").replace(/\s+/gu, " ").toLowerCase();
+}
+
+function finiteWordBox(word) {
+  const box = Array.isArray(word?.bbox) ? word.bbox.map(Number) : [];
+  return box.length === 4 && box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1]
+    ? box
+    : null;
+}
+
+function finiteLineBox(line) {
+  const box = Array.isArray(line?.bbox) ? line.bbox.map(Number) : [];
+  return box.length === 4 && box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1]
+    ? box
+    : null;
+}
+
+function boxesOverlap(left, right) {
+  return Math.max(left[0], right[0]) < Math.min(left[2], right[2])
+    && Math.max(left[1], right[1]) < Math.min(left[3], right[3]);
+}
+
+function normalizedCoverageText(value) {
+  return text(value).replace(/\s+/gu, " ");
+}
+
+function compactCoverageText(value) {
+  return normalizedCoverageText(value).replace(/\s+/gu, "");
+}
+
+function boundedCount(value) {
+  return Math.max(0, Math.min(256, Number(value) || 0));
+}
+
+function incompleteStructuredEvidence(reason, sourceLineCount, layoutLineCount) {
+  return Object.freeze({
+    text: "",
+    layoutLines: Object.freeze([]),
+    status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+    reason,
+    sourceLineCount: boundedCount(sourceLineCount),
+    layoutLineCount: boundedCount(layoutLineCount)
+  });
+}
+
+function trustedLineWords(line) {
+  if (line?.word_structure_valid !== true || !Array.isArray(line?.words) || line.words.length === 0) return null;
+  const words = line.words.map(word => {
+    const bbox = finiteWordBox(word);
+    const value = text(word?.text);
+    const confidence = Number(word?.confidence);
+    return bbox && value && Number.isFinite(confidence) && confidence >= 30
+      ? Object.freeze({ text: value, bbox, confidence })
+      : null;
+  });
+  if (words.some(word => !word)) return null;
+  const ordered = [...words].sort((left, right) => left.bbox[0] - right.bbox[0] || left.bbox[1] - right.bbox[1]);
+  if (ordered.some((word, index) => index > 0 && word.bbox[0] < ordered[index - 1].bbox[2])) return null;
+  return Object.freeze(ordered);
+}
+
+function semanticFieldForPhrase(value) {
+  const normalized = normalizedWordText(value);
+  return STRUCTURED_FIELD_DEFINITIONS.find(definition => definition.phrases.includes(normalized))?.kind || "";
+}
+
+function partitionSemanticHeader(words) {
+  if (!Array.isArray(words) || words.length < 2 || words.length > 8) return null;
+  const partitions = [];
+  const visit = (offset, fields) => {
+    if (offset === words.length) {
+      partitions.push(fields);
+      return;
+    }
+    for (let length = 1; length <= 2 && offset + length <= words.length; length += 1) {
+      const selected = words.slice(offset, offset + length);
+      const kind = semanticFieldForPhrase(selected.map(word => word.text).join(" "));
+      if (!kind) continue;
+      visit(offset + length, [...fields, Object.freeze({
+        kind,
+        text: selected.map(word => word.text).join(" "),
+        x0: selected[0].bbox[0],
+        x1: selected[selected.length - 1].bbox[2]
+      })]);
+    }
+  };
+  visit(0, []);
+  const valid = partitions.filter(fields => {
+    const kinds = fields.map(field => field.kind);
+    const geographic = kinds.filter(kind => kind === "longitude").length === 1
+      && kinds.filter(kind => kind === "latitude").length === 1;
+    const projected = kinds.filter(kind => kind === "easting").length === 1
+      && kinds.filter(kind => kind === "northing").length === 1;
+    return (geographic !== projected)
+      && kinds.filter(kind => kind === "label").length <= 1
+      && fields.length === 2 + kinds.filter(kind => kind === "label").length;
+  });
+  return valid.length === 1 ? Object.freeze(valid[0]) : null;
+}
+
+function coordinateLikeField(value, projected) {
+  const source = text(value);
+  if (!source || /[A-Za-z]{4,}/u.test(source.replace(/(?:longitude|latitude|easting|northing)/giu, ""))) return false;
+  if (projected) return /^[-+]?\d{4,9}(?:[.,]\d+)?$/u.test(source.replace(/\s+/gu, ""));
+  return /\d/u.test(source) && (/[-+]?\d{1,3}(?:[.,]\d{3,12})?/u.test(source)
+    || /\d{1,3}\s*[°º]/u.test(source));
+}
+
+function canonicalizeRowByHeader(words, header) {
+  const centers = header.map(field => (field.x0 + field.x1) / 2);
+  const boundaries = centers.slice(0, -1).map((center, index) => (center + centers[index + 1]) / 2);
+  const columns = header.map(() => []);
+  for (const word of words) {
+    const center = (word.bbox[0] + word.bbox[2]) / 2;
+    const columnIndex = boundaries.findIndex(boundary => center < boundary);
+    columns[columnIndex < 0 ? columns.length - 1 : columnIndex].push(word);
+  }
+  if (columns.some(column => column.length === 0)) return "";
+  const values = columns.map(column => column.map(word => word.text).join(" ").trim());
+  const projected = header.some(field => field.kind === "easting" || field.kind === "northing");
+  const labelIndex = header.findIndex(field => field.kind === "label");
+  if (labelIndex >= 0 && !/^(?:[A-Z]|\d{1,3})$/iu.test(values[labelIndex])) return "";
+  for (let index = 0; index < header.length; index += 1) {
+    if (index === labelIndex || !coordinateLikeField(values[index], projected)) continue;
+    const otherAxisIndex = header.findIndex((field, candidateIndex) => candidateIndex !== index && field.kind !== "label");
+    if (otherAxisIndex >= 0 && coordinateLikeField(values[otherAxisIndex], projected)) return values.join(" | ");
+  }
+  return "";
+}
+
+function unionLayoutLines(lines, canonicalText) {
+  const boxes = lines.map(line => Array.isArray(line?.bbox) ? line.bbox.map(Number) : null);
+  if (boxes.some(box => !box || box.length !== 4 || !box.every(Number.isFinite))) return null;
+  const indexes = lines.flatMap(line => Array.isArray(line?.source_line_indexes)
+    ? line.source_line_indexes
+    : [Number(line?.local_line_index)]);
+  if (indexes.some(index => !Number.isSafeInteger(index) || index < 0)) return null;
+  return Object.freeze({
+    ...lines[0],
+    text: canonicalText,
+    bbox: Object.freeze([
+      Math.min(...boxes.map(box => box[0])),
+      Math.min(...boxes.map(box => box[1])),
+      Math.max(...boxes.map(box => box[2])),
+      Math.max(...boxes.map(box => box[3]))
+    ]),
+    confidence: Math.min(...lines.map(line => Number(line?.confidence) || 0)),
+    words: Object.freeze(lines.flatMap(line => Array.isArray(line?.words) ? line.words : [])),
+    word_structure_valid: true,
+    local_line_index: Math.min(...indexes),
+    source_line_indexes: Object.freeze([...new Set(indexes)].sort((left, right) => left - right))
+  });
+}
+
+function layoutLinesAreAdjacent(labelLine, valueLine) {
+  const left = Array.isArray(labelLine?.bbox) ? labelLine.bbox.map(Number) : [];
+  const right = Array.isArray(valueLine?.bbox) ? valueLine.bbox.map(Number) : [];
+  if (left.length !== 4 || right.length !== 4 || ![...left, ...right].every(Number.isFinite)) return false;
+  const leftHeight = left[3] - left[1];
+  const rightHeight = right[3] - right[1];
+  const gap = right[1] - left[3];
+  const overlap = Math.max(0, Math.min(left[2], right[2]) - Math.max(left[0], right[0]));
+  const minimumWidth = Math.min(left[2] - left[0], right[2] - right[0]);
+  return right[1] >= left[1]
+    && gap <= Math.max(leftHeight, rightHeight) * 3
+    && gap >= 0
+    && (overlap >= minimumWidth * 0.2
+      || Math.abs((left[0] + left[2]) - (right[0] + right[2])) <= Math.max(left[2] - left[0], right[2] - right[0]) * 2);
+}
+
+function roleLabel(value) {
+  const normalized = normalizedWordText(value);
+  if (/^(?:search|rechercher|buscar|搜索|搜尋)$/iu.test(normalized)) return "Search";
+  if (/^(?:place\s+details?|location\s+details?|details?|place|location|address|directions?|地点|地點|位置|地址|路线|路線)$/iu.test(normalized)) return "Place details";
+  return "";
+}
+
+function axisLabel(value) {
+  const normalized = normalizedWordText(value);
+  const kind = semanticFieldForPhrase(normalized);
+  if (kind === "longitude") return "Longitude";
+  if (kind === "latitude") return "Latitude";
+  if (kind === "easting") return "Easting";
+  if (kind === "northing") return "Northing";
+  return "";
+}
+
+function projectedPointLabel(value) {
+  return text(value).match(/^Point\s*[:#-]?\s*([A-Z]|\d{1,3})$/iu)?.[1]?.toUpperCase() || "";
+}
+
+function coordinateOnlyText(value, projected = false) {
+  const source = text(value);
+  if (projected) return /^[-+]?\d{4,9}(?:[.,]\d+)?$/u.test(source.replace(/\s+/gu, "")) ? source : "";
+  const decimalPair = /^[-+]?\d{1,3}(?:[.,]\d{3,12})?\s*,\s*[-+]?\d{1,3}(?:[.,]\d{3,12})?$/u;
+  const singleDecimal = /^[-+]?\d{1,3}(?:[.,]\d{3,12})?$/u;
+  const dms = /^\d{1,3}\s*[°º]\s*\d{1,2}(?:\s*['′’])?\s*\d{1,2}(?:[.,]\d+)?(?:\s*["″”])?\s*[NSEWO]$/iu;
+  return decimalPair.test(source) || singleDecimal.test(source) || dms.test(source) ? source : "";
+}
+
+// Reconstructs only structures already supported by trustworthy OCR word boxes.
+// It never supplies a missing label, value, CRS field, row or map role.
+export function normalizeLocalOcrStructuredEvidence({ sourceText = "", layoutLines = [] } = {}) {
+  const sourceLines = String(sourceText || "").split(/\r?\n/u)
+    .map(normalizedCoverageText)
+    .filter(Boolean);
+  if (!Array.isArray(layoutLines) || sourceLines.length === 0 || sourceLines.length > 256
+    || layoutLines.length === 0 || layoutLines.length > 256
+    || sourceLines.length !== layoutLines.length) {
+    return incompleteStructuredEvidence(
+      LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+      sourceLines.length,
+      Array.isArray(layoutLines) ? layoutLines.length : 0
+    );
+  }
+  const ordered = [...layoutLines].sort((left, right) => (
+    Number(left?.local_line_index) - Number(right?.local_line_index)
+  ));
+  const indexes = ordered.map(line => Number(line?.local_line_index));
+  if (indexes.some(index => !Number.isSafeInteger(index) || index < 0)
+    || new Set(indexes).size !== indexes.length) {
+    return incompleteStructuredEvidence(
+      LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.INVALID_READING_ORDER,
+      sourceLines.length,
+      ordered.length
+    );
+  }
+  const lineBoxes = ordered.map(finiteLineBox);
+  if (lineBoxes.some(box => !box)
+    || lineBoxes.some((box, index) => lineBoxes.slice(index + 1).some(other => boxesOverlap(box, other)))) {
+    return incompleteStructuredEvidence(
+      LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.INVALID_LINE_REGION,
+      sourceLines.length,
+      ordered.length
+    );
+  }
+  const orderedWords = ordered.map(trustedLineWords);
+  if (orderedWords.some(words => !words)) {
+    return incompleteStructuredEvidence(
+      LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.UNTRUSTED_WORD_STRUCTURE,
+      sourceLines.length,
+      ordered.length
+    );
+  }
+  const coverageMatches = ordered.every((line, index) => {
+    const rawText = normalizedCoverageText(line?.text);
+    const wordsText = orderedWords[index].map(word => word.text).join(" ");
+    const lineBox = lineBoxes[index];
+    const wordsInsideLine = orderedWords[index].every(word => (
+      word.bbox[0] >= lineBox[0] && word.bbox[1] >= lineBox[1]
+      && word.bbox[2] <= lineBox[2] && word.bbox[3] <= lineBox[3]
+    ));
+    return rawText === sourceLines[index]
+      && compactCoverageText(rawText) === compactCoverageText(wordsText)
+      && wordsInsideLine;
+  });
+  if (!coverageMatches) {
+    return incompleteStructuredEvidence(
+      LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.WORD_TEXT_MISMATCH,
+      sourceLines.length,
+      ordered.length
+    );
+  }
+  const logical = [];
+  for (let index = 0; index < ordered.length; index += 1) {
+    const line = ordered[index];
+    const words = orderedWords[index];
+    const rawText = text(line?.text);
+    const joinedWords = words.map(word => word.text).join(" ").trim();
+    const compactWords = words.map(word => word.text).join("").replace(/\s+/gu, "");
+    const next = ordered[index + 1];
+    const nextWords = trustedLineWords(next);
+    const nextText = nextWords ? nextWords.map(word => word.text).join(" ").trim() : "";
+    const projectedLabel = projectedPointLabel(joinedWords);
+    if (projectedLabel && index + 4 < ordered.length) {
+      const candidateLines = ordered.slice(index, index + 5);
+      const candidateTexts = candidateLines.map(candidate => {
+        const candidateWords = trustedLineWords(candidate);
+        return candidateWords ? candidateWords.map(word => word.text).join(" ").trim() : "";
+      });
+      const firstAxis = axisLabel(candidateTexts[1]);
+      const firstValue = coordinateOnlyText(candidateTexts[2], true);
+      const secondAxis = axisLabel(candidateTexts[3]);
+      const secondValue = coordinateOnlyText(candidateTexts[4], true);
+      const adjacent = candidateLines.slice(0, -1).every((candidate, candidateIndex) => (
+        layoutLinesAreAdjacent(candidate, candidateLines[candidateIndex + 1])
+      ));
+      if (adjacent && [firstAxis, secondAxis].sort().join("|") === "Easting|Northing"
+        && firstValue && secondValue) {
+        const merged = unionLayoutLines(candidateLines,
+          `POINT | ${projectedLabel} | ${firstAxis.toUpperCase()}=${firstValue} | ${secondAxis.toUpperCase()}=${secondValue}`);
+        if (merged) {
+          logical.push(merged);
+          index += 4;
+          continue;
+        }
+      }
+    }
+    const explicitAxis = axisLabel(joinedWords);
+    const explicitRole = roleLabel(joinedWords);
+    const nextProjectedValue = coordinateOnlyText(nextText, ["Easting", "Northing"].includes(explicitAxis));
+    const nextCoordinateValue = coordinateOnlyText(nextText, false);
+    if (nextWords && layoutLinesAreAdjacent(line, next) && explicitAxis
+      && (nextProjectedValue || nextCoordinateValue)) {
+      const merged = unionLayoutLines([line, next], `${explicitAxis}: ${nextProjectedValue || nextCoordinateValue}`);
+      if (merged) {
+        logical.push(merged);
+        index += 1;
+        continue;
+      }
+    }
+    if (nextWords && layoutLinesAreAdjacent(line, next) && explicitRole && /^[-+]?\d{1,3}(?:\.\d{4,12})?\s*,\s*[-+]?\d{1,3}(?:\.\d{4,12})?$/u.test(nextText)) {
+      const merged = unionLayoutLines([line, next], `${explicitRole} ${nextText}`);
+      if (merged) {
+        logical.push(merged);
+        index += 1;
+        continue;
+      }
+    }
+    const inlineAxis = axisLabel(words[0]?.text);
+    const inlineValue = coordinateOnlyText(words.slice(1).map(word => word.text).join(" "), ["Easting", "Northing"].includes(inlineAxis));
+    if (inlineAxis && inlineValue) {
+      logical.push(Object.freeze({ ...line, text: `${inlineAxis}: ${inlineValue}` }));
+      continue;
+    }
+    const header = partitionSemanticHeader(words);
+    if (header) {
+      logical.push(Object.freeze({
+        ...line,
+        text: header.map(field => field.text).join(" | "),
+        structured_header: header
+      }));
+      continue;
+    }
+    const mgrs = compactWords.match(/^MGRS([1-9]|[1-5]\d|60)([C-HJ-NP-X])([A-HJ-NP-Z]{2})(\d{1,5})(\d{1,5})$/iu);
+    if (mgrs && mgrs[4].length === mgrs[5].length) {
+      logical.push(Object.freeze({ ...line, text: `MGRS | ${mgrs[1]}${mgrs[2]} | ${mgrs[3]} | ${mgrs[4]} | ${mgrs[5]}` }));
+      continue;
+    }
+    logical.push(Object.freeze({ ...line, text: rawText }));
+  }
+
+  let activeHeader = null;
+  const normalized = logical.map(line => {
+    const header = Array.isArray(line?.structured_header) ? line.structured_header : null;
+    if (header) {
+      activeHeader = header;
+      const { structured_header: ignored, ...publicLine } = line;
+      return Object.freeze(publicLine);
+    }
+    const words = trustedLineWords(line);
+    if (activeHeader && words) {
+      const canonicalRow = canonicalizeRowByHeader(words, activeHeader);
+      if (canonicalRow) return Object.freeze({ ...line, text: canonicalRow });
+    }
+    if (/^(?:location\s+group|group|site|sites|area|mining\s+area|矿区|礦區)\b/iu.test(text(line?.text))) {
+      activeHeader = null;
+    } else if (!/\d/u.test(text(line?.text))) {
+      activeHeader = null;
+    }
+    return line;
+  });
+  return Object.freeze({
+    text: normalized.map(line => text(line?.text)).filter(Boolean).join("\n"),
+    layoutLines: Object.freeze(normalized),
+    status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE,
+    reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.COMPLETE_COVERAGE,
+    sourceLineCount: boundedCount(sourceLines.length),
+    layoutLineCount: boundedCount(ordered.length)
+  });
 }
 
 function decimalToken(value) {
