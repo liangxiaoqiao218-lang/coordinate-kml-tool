@@ -1618,8 +1618,9 @@ test("one-shot structured conformance diagnostics remain bounded", () => {
   assert.ok(start >= 0);
   assert.match(diagnostic, /family|status|reason|counts|providerCallCount|localOcrCallCount|terminalState/);
   assert.match(diagnostic, /sourceRegionCount/);
+  assert.match(diagnostic, /observedCandidateCount|boundCandidateCount|unassignedCandidateCount/);
   assert.doesNotMatch(diagnostic, /rawText|providerRawText|imageDataUrl|authorization|cookie|apiKey|secret|headers/iu);
-  assert.doesNotMatch(diagnostic, /image_sha256|request_asset_id|bbox|spatialIdentity|privateBinding/iu);
+  assert.doesNotMatch(diagnostic, /image_sha256|request_asset_id|bbox|spatialIdentity|observationIdentity|candidateText|privateBinding/iu);
 });
 
 test("one-shot structured spatial capability rejects missing page and overlapping regions", () => {
@@ -1647,6 +1648,144 @@ test("one-shot structured public contract and diagnostics redact private spatial
   const result = primaryRouting.validateOneShotAcquisitionContract({ contract, providerText: source });
   assert.equal(result.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
   assert.ok(result.counts.sourceRegionCount >= 1);
+});
+
+test("one-shot structured observation set requires exact one-to-one candidate coverage", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const exact = primaryRouting.validateOneShotAcquisitionContract({
+    contract: spatialContractFor(source),
+    providerText: source
+  });
+  assert.equal(exact.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  assert.deepEqual([
+    exact.counts.observedCandidateCount,
+    exact.counts.boundCandidateCount,
+    exact.counts.unassignedCandidateCount
+  ], [2, 2, 0]);
+
+  const layoutLines = spatialLayoutFor(source);
+  layoutLines.push({
+    text: "Z | 65.5000 | 13.5000",
+    bbox: [20, 104, 860, 128],
+    local_line_index: 2,
+    page: 1,
+    resultRevision: 1
+  });
+  const incomplete = primaryRouting.validateOneShotAcquisitionContract({
+    contract: spatialContractFor(source, layoutLines),
+    providerText: source
+  });
+  assert.equal(incomplete.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(
+    incomplete.reason,
+    primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE
+  );
+  assert.deepEqual([
+    incomplete.counts.observedCandidateCount,
+    incomplete.counts.boundCandidateCount,
+    incomplete.counts.unassignedCandidateCount
+  ], [3, 2, 1]);
+});
+
+test("one-shot structured map authority rejects a cross-family observed candidate", () => {
+  const source = "Search 64.1250,12.8750\nPlace details 64.125001,12.875002\nPlus Code 7JCPTEST+5P";
+  const provider = "MAP_SEARCH_BOX | 64.1250,12.8750\nMAP_PLACE_DETAILS | 64.125001,12.875002\nPLUS_CODE | 7JCPTEST+5P";
+  const layoutLines = spatialLayoutFor(source);
+  layoutLines.push({
+    text: "A | 500100 | 2065100",
+    bbox: [20, 146, 860, 170],
+    local_line_index: 3,
+    page: 1,
+    resultRevision: 1
+  });
+  const result = primaryRouting.validateOneShotAcquisitionContract({
+    contract: spatialContractFor(source, layoutLines),
+    providerText: provider
+  });
+  assert.equal(result.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_AMBIGUOUS);
+  assert.equal(result.counts.unassignedCandidateCount, 1);
+});
+
+test("one-shot structured projected authority rejects an unassigned projected row", () => {
+  const source = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nPoint | Easting | Northing\nA | 500100 | 2065100";
+  const provider = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nAXIS_ORDER | EASTING | NORTHING\nPOINT | A | 500100 | 2065100";
+  const layoutLines = spatialLayoutFor(source);
+  layoutLines.push({
+    text: "B | 500200 | 2065200",
+    bbox: [20, 146, 860, 170],
+    local_line_index: 3,
+    page: 1,
+    resultRevision: 1
+  });
+  const result = primaryRouting.validateOneShotAcquisitionContract({
+    contract: spatialContractFor(source, layoutLines),
+    providerText: provider
+  });
+  assert.equal(result.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE);
+  assert.equal(result.counts.unassignedCandidateCount, 1);
+});
+
+test("one-shot structured Provider coverage rejects a locally duplicated map role", () => {
+  const source = [
+    "Search 64.1250,12.8750",
+    "Place details 64.125001,12.875002",
+    "Plus Code 7JCPTEST+5P",
+    "Plus Code 7JCPTEST+5P"
+  ].join("\n");
+  const provider = [
+    "MAP_SEARCH_BOX | 64.1250,12.8750",
+    "MAP_PLACE_DETAILS | 64.125001,12.875002",
+    "PLUS_CODE | 7JCPTEST+5P"
+  ].join("\n");
+  const result = primaryRouting.validateOneShotAcquisitionContract({
+    contract: spatialContractFor(source),
+    providerText: provider
+  });
+  assert.equal(result.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.notEqual(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT);
+});
+
+test("one-shot structured WGS84 specialized route gates parsing and usage behind conformance", () => {
+  const blockStart = serverSource.indexOf("if (wgs84PrimaryRoute.selected)");
+  const blockEnd = serverSource.indexOf("if (madagascarPrimaryRoute.selected)", blockStart);
+  const block = serverSource.slice(blockStart, blockEnd);
+  const conformance = block.indexOf("validateOneShotAcquisitionContract");
+  assert.ok(conformance >= 0);
+  assert.ok(block.indexOf("getWgs84TableCoordinatesInfo") > conformance);
+  assert.ok(block.indexOf("consumeCoordinateUsage") > conformance);
+  assert.match(block, /ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED/);
+  assert.doesNotMatch(
+    block.slice(block.indexOf('console.log("One-shot WGS84 primary acquisition conformance:"'), block.indexOf("if (wgs84PrimaryConformance.status")),
+    /rawText|providerRawText|imageDataUrl|authorization|cookie|apiKey|secret|headers|bbox|observationIdentity/iu
+  );
+});
+
+test("one-shot structured repeated-header segments reject boundary migration", () => {
+  const source = [
+    "Point | Longitude | Latitude",
+    "A | 64.1001 | 12.1001",
+    "B | 64.1002 | 12.1002",
+    "Point | Longitude | Latitude",
+    "C | 65.1001 | 13.1001",
+    "D | 65.1002 | 13.1002"
+  ].join("\n");
+  const provider = [
+    "WGS84 Longitude Latitude Table",
+    "Point | Longitude | Latitude",
+    "A | 64.1001 | 12.1001",
+    "Point | Longitude | Latitude",
+    "B | 64.1002 | 12.1002",
+    "C | 65.1001 | 13.1001",
+    "D | 65.1002 | 13.1002"
+  ].join("\n");
+  const result = primaryRouting.validateOneShotAcquisitionContract({
+    contract: spatialContractFor(source),
+    providerText: provider
+  });
+  assert.equal(result.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.ROW_PROVENANCE_MISMATCH);
 });
 
 let passed = 0;

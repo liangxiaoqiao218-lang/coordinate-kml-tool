@@ -48,8 +48,7 @@ function layoutFor(text) {
   }));
 }
 
-function contractFor(source) {
-  const layoutLines = layoutFor(source);
+function contractFor(source, layoutLines = layoutFor(source)) {
   const primary = classifyOneShotStructuredFamily({ text: source, layoutLines });
   return createOneShotAcquisitionContract({
     route: primary,
@@ -395,6 +394,82 @@ test("missing private spatial provenance is review-only before completeness and 
   assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
   assert.equal(mismatch.reason, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE);
   assert.equal(mismatch.counts.sourceRegionCount, 0);
+  assert.equal(Object.hasOwn(mismatch, "geometryInferenceAllowed"), false);
+});
+
+test("an unassigned local observation is review-only before completeness and geometry", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const layoutLines = layoutFor(source);
+  layoutLines.push({
+    text: "Z | 65.5000 | 13.5000",
+    bbox: [20, 100, 760, 124],
+    local_line_index: 2,
+    page: 1,
+    resultRevision: 1
+  });
+  const mismatch = validateOneShotAcquisitionContract({
+    contract: contractFor(source, layoutLines),
+    providerText: source
+  });
+  assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(mismatch.reason, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE);
+  assert.equal(mismatch.counts.observedCandidateCount, 3);
+  assert.equal(mismatch.counts.boundCandidateCount, 2);
+  assert.equal(mismatch.counts.unassignedCandidateCount, 1);
+  assert.equal(Object.hasOwn(mismatch, "geometryInferenceAllowed"), false);
+});
+
+test("complete observation counts do not carry candidate text values or regions", () => {
+  const source = "Longitude: 64.125001\nLatitude: 12.875002";
+  const result = validateOneShotAcquisitionContract({ contract: contractFor(source), providerText: source });
+  assert.equal(result.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  assert.deepEqual({
+    observed: result.counts.observedCandidateCount,
+    bound: result.counts.boundCandidateCount,
+    unassigned: result.counts.unassignedCandidateCount
+  }, { observed: 2, bound: 2, unassigned: 0 });
+  assert.doesNotMatch(JSON.stringify(result), /64\.125001|12\.875002|bbox|observationIdentity|candidateText/iu);
+});
+
+test("Provider cannot omit a duplicate locally observed map-role candidate", () => {
+  const source = [
+    "Search 64.1250,12.8750",
+    "Place details 64.125001,12.875002",
+    "Plus Code 7JCPTEST+5P",
+    "Plus Code 7JCPTEST+5P"
+  ].join("\n");
+  const provider = [
+    "MAP_SEARCH_BOX | 64.1250,12.8750",
+    "MAP_PLACE_DETAILS | 64.125001,12.875002",
+    "PLUS_CODE | 7JCPTEST+5P"
+  ].join("\n");
+  const mismatch = validateOneShotAcquisitionContract({ contract: contractFor(source), providerText: provider });
+  assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.notEqual(mismatch.reason, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT);
+  assert.equal(Object.hasOwn(mismatch, "geometryInferenceAllowed"), false);
+});
+
+test("moved repeated-header boundary remains review-only before geometry", () => {
+  const source = [
+    "Point | Longitude | Latitude",
+    "A | 64.1001 | 12.1001",
+    "B | 64.1002 | 12.1002",
+    "Point | Longitude | Latitude",
+    "C | 65.1001 | 13.1001",
+    "D | 65.1002 | 13.1002"
+  ].join("\n");
+  const provider = [
+    "WGS84 Longitude Latitude Table",
+    "Point | Longitude | Latitude",
+    "A | 64.1001 | 12.1001",
+    "Point | Longitude | Latitude",
+    "B | 64.1002 | 12.1002",
+    "C | 65.1001 | 13.1001",
+    "D | 65.1002 | 13.1002"
+  ].join("\n");
+  const mismatch = validateOneShotAcquisitionContract({ contract: contractFor(source), providerText: provider });
+  assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  assert.equal(mismatch.reason, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.ROW_PROVENANCE_MISMATCH);
   assert.equal(Object.hasOwn(mismatch, "geometryInferenceAllowed"), false);
 });
 

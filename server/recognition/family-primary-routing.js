@@ -29,6 +29,8 @@ export const ONE_SHOT_ACQUISITION_CONFORMANCE_REASON = Object.freeze({
   PROJECTED_CRS_MISMATCH: "PROJECTED_CRS_MISMATCH",
   PRIVATE_BINDING_UNAVAILABLE: "PRIVATE_BINDING_UNAVAILABLE",
   SPATIAL_PROVENANCE_UNAVAILABLE: "SPATIAL_PROVENANCE_UNAVAILABLE",
+  OBSERVATION_SET_INCOMPLETE: "OBSERVATION_SET_INCOMPLETE",
+  OBSERVATION_SET_AMBIGUOUS: "OBSERVATION_SET_AMBIGUOUS",
   VALUE_FIDELITY_MISMATCH: "VALUE_FIDELITY_MISMATCH",
   ROW_PROVENANCE_MISMATCH: "ROW_PROVENANCE_MISMATCH",
   MAP_ROLE_VALUE_MISMATCH: "MAP_ROLE_VALUE_MISMATCH",
@@ -1544,9 +1546,30 @@ function singlePointIdentity(value, format) {
 }
 
 function tableIdentity(value, format) {
-  return Object.freeze(axisTableRows(value, format).map((row, index) => (
-    `${index}:${row.label}:${row.longitude}:${row.latitude}`
-  )));
+  const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
+  const tokens = [];
+  let segmentIndex = -1;
+  let rowIndex = 0;
+  let header = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const parsedHeader = parseExplicitAxisHeaderLine(lines[index], index);
+    if (parsedHeader) {
+      segmentIndex += 1;
+      rowIndex = 0;
+      header = parsedHeader;
+      continue;
+    }
+    if (!header || segmentIndex < 0) continue;
+    const fields = splitStructuredFields(lines[index], header.delimiter);
+    if (fields.length !== header.fieldCount || fields.some(field => !field)) continue;
+    const longitude = canonicalAxisValue(fields[header.longitudeIndex], format, "longitude");
+    const latitude = canonicalAxisValue(fields[header.latitudeIndex], format, "latitude");
+    const label = header.labelIndex === null ? String(rowIndex + 1) : normalizeBindingLabel(fields[header.labelIndex]);
+    if (!longitude || !latitude || !label) continue;
+    tokens.push(`${segmentIndex}:${rowIndex}:${label}:${longitude}:${latitude}`);
+    rowIndex += 1;
+  }
+  return Object.freeze(tokens);
 }
 
 function normalizeGroupHeading(value) {
@@ -1622,6 +1645,24 @@ function groupedDmsIdentity(value) {
   return Object.freeze(tokens);
 }
 
+function groupedDmsHeadingIdentity(value, groupBoundaryMode) {
+  const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
+  const providerHeadings = lines
+    .filter(line => /^GROUP\s*\|/iu.test(line))
+    .map(line => normalizeGroupHeading(line.split("|").slice(1).join("|")));
+  if (providerHeadings.length > 0) return Object.freeze(providerHeadings);
+  const explicitHeadings = lines
+    .filter(line => /^(?:group|site|sites|area|mining\s+area|矿区|礦區)\s*(?:[|:#-]\s*)?[A-Z0-9_-]+\s*$/iu.test(line))
+    .map(normalizeGroupHeading);
+  if (explicitHeadings.length > 0) return Object.freeze(explicitHeadings);
+  if (groupBoundaryMode === "REPEATED_HEADERS") {
+    return Object.freeze(lines
+      .filter((line, index) => Boolean(parseExplicitAxisHeaderLine(line, index)))
+      .map(() => "REPEATED_HEADER_BOUNDARY"));
+  }
+  return Object.freeze([]);
+}
+
 function decimalLexemesInLine(value) {
   return (String(value || "").match(/[-+]?\d{1,3}(?:[.,]\d+)/gu) || [])
     .map(token => normalizeBindingDecimal(token, 180))
@@ -1630,7 +1671,7 @@ function decimalLexemesInLine(value) {
 
 function mapRoleIdentity(value) {
   const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
-  const roles = new Map();
+  const roles = [];
   for (const line of lines) {
     const upper = line.toUpperCase();
     const role = /^MAP_SEARCH_BOX\s*\|/u.test(upper)
@@ -1642,19 +1683,17 @@ function mapRoleIdentity(value) {
         : /^PLUS_CODE\s*\|/u.test(upper) || /\bPLUS\s*CODE\b/u.test(upper)
           ? "PLUS_CODE"
           : "";
-    if (!role || roles.has(role)) continue;
+    if (!role) continue;
     if (role === "PLUS_CODE") {
       const plusCode = line.match(/\b[A-Z0-9]{4,12}\+[A-Z0-9]{2,}\b/iu)?.[0]
         ?.toUpperCase();
-      if (plusCode) roles.set(role, plusCode);
+      if (plusCode) roles.push(`${role}:${plusCode}`);
       continue;
     }
     const coordinates = decimalLexemesInLine(line);
-    if (coordinates.length === 2) roles.set(role, coordinates.join(","));
+    if (coordinates.length === 2) roles.push(`${role}:${coordinates.join(",")}`);
   }
-  return Object.freeze(["MAP_SEARCH_BOX", "MAP_PLACE_DETAILS", "PLUS_CODE"]
-    .filter(role => roles.has(role))
-    .map(role => `${role}:${roles.get(role)}`));
+  return Object.freeze(roles);
 }
 
 function projectedIdentityRows(value) {
@@ -1776,22 +1815,95 @@ function privateSourceRegionsOverlap(left, right) {
   return intersectionWidth > 0 && intersectionHeight > 0;
 }
 
-function privateSpatialLineIsRelevant(family, text) {
-  if (countDmsComponents(text) > 0 || countDecimalComponents(text) > 0) return true;
-  if (parseExplicitAxisHeaderLine(text, 0) || parseProjectedAxisHeaderLine(text, 0)) return true;
-  if (family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
-    && /^(?:group|site|sites|area|mining\s+area|矿区|礦區)\b/iu.test(text)) return true;
-  if (family === ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT) {
-    return /\b(?:search|rechercher|buscar|details?|place|location|address|directions?|plus\s*code)\b/iu.test(text)
-      || /搜索|搜尋|地点|地點|位置|地址|路线|路線/u.test(text)
-      || /\b[A-Z0-9]{4,12}\+[A-Z0-9]{2,}\b/iu.test(text);
+function privateObservationKinds(text) {
+  const normalized = normalizedSpatialLineText(text);
+  if (!normalized) return Object.freeze([]);
+  const upper = normalized.toUpperCase();
+  const decimalCount = countDecimalComponents(normalized);
+  const dmsCount = countDmsComponents(normalized);
+  if (/^PLUS_CODE\s*\|/u.test(upper)
+    || /\bPLUS\s*CODE\b/u.test(upper)
+    || /\b[A-Z0-9]{4,12}\+[A-Z0-9]{2,}\b/iu.test(normalized)) return Object.freeze(["MAP_PLUS_CODE"]);
+  if ((/^MAP_SEARCH_BOX\s*\|/u.test(upper)
+    || /\b(?:SEARCH|RECHERCHER|BUSCAR)\b/u.test(upper)
+    || /搜索|搜尋/u.test(normalized)) && decimalCount === 2) return Object.freeze(["MAP_SEARCH_BOX"]);
+  if ((/^MAP_PLACE_DETAILS\s*\|/u.test(upper)
+    || /\b(?:DETAILS?|PLACE|LOCATION|ADDRESS|DIRECTIONS?)\b/u.test(upper)
+    || /地点|地點|位置|地址|路线|路線/u.test(normalized)) && decimalCount === 2) return Object.freeze(["MAP_PLACE_DETAILS"]);
+  if (/^(?:group|site|sites|area|mining\s+area|矿区|礦區)\b/iu.test(normalized)) return Object.freeze(["GROUP_HEADING"]);
+  if (parseExplicitAxisHeaderLine(normalized, 0)) return Object.freeze(["AXIS_HEADER"]);
+  if (/^\s*MGRS\s*[|:]\s*\d/iu.test(normalized)) return Object.freeze(["PROJECTED_ROW"]);
+  const projectedKinds = [];
+  if (/\b(?:CRS|EPSG|Datum|UTM|Projection|Projected)\b/iu.test(normalized)) projectedKinds.push("PROJECTED_DATUM");
+  if (/\b(?:Zone|Zona|Fuso)\b/iu.test(normalized)) projectedKinds.push("PROJECTED_ZONE");
+  if (/\bHemisphere\b/iu.test(normalized)) projectedKinds.push("PROJECTED_HEMISPHERE");
+  if (parseProjectedAxisHeaderLine(normalized, 0)
+    || /^\s*Axis\s+order\s*[:=]?/iu.test(normalized)) projectedKinds.push("PROJECTED_AXIS_ORDER");
+  if (projectedKinds.length > 0) return Object.freeze(projectedKinds);
+  if (isClosedProjectedAxisValueLine(normalized)) return Object.freeze(["PROJECTED_AXIS_VALUE"]);
+  const projectedDelimiter = normalized.includes("|") ? "|"
+    : normalized.includes("\t") ? "\t"
+      : normalized.includes(";") ? ";"
+        : "";
+  const projectedFields = projectedDelimiter ? splitStructuredFields(normalized, projectedDelimiter) : [];
+  if (projectedDelimiter
+    && extractStructuredRowLabel(normalized)
+    && projectedFields.filter(field => /^[-+]?\d{4,9}(?:[.,]\d+)?$/u.test(field)).length >= 2) {
+    return Object.freeze(["PROJECTED_ROW"]);
   }
-  if (family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE) {
-    return /\b(?:CRS|EPSG|Datum|UTM|MGRS|Zone|Zona|Fuso|Hemisphere|Axis(?:_|\s+)Order|Easting|Northing)\b/iu.test(text)
-      || /^\s*(?:POINT|MGRS)\s*[|:]/iu.test(text)
-      || (/[|;\t]/u.test(text) && /\d{4,}/u.test(text));
+  if (isClosedAxisValueLine(normalized, "longitude") || isClosedAxisValueLine(normalized, "latitude")) {
+    return Object.freeze(["AXIS_VALUE"]);
   }
-  return /^(?:longitude|latitude|lon|lat|经度|經度|纬度|緯度|东经|東經|西经|西經|北纬|北緯|南纬|南緯)\b/iu.test(text);
+  if (decimalCount > 0 || dmsCount > 0) {
+    if ((decimalCount > 0 && dmsCount > 0) || decimalCount > 2 || dmsCount > 2
+      || (decimalCount !== 2 && dmsCount !== 2)) return Object.freeze(["AMBIGUOUS_COORDINATE"]);
+    return Object.freeze(["COORDINATE_ROW"]);
+  }
+  return Object.freeze([]);
+}
+
+function privateObservationKindAllowedForFamily(family, kind) {
+  const allowed = {
+    [ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT]: new Set(["AXIS_VALUE", "AXIS_HEADER", "COORDINATE_ROW"]),
+    [ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE]: new Set(["AXIS_HEADER", "COORDINATE_ROW"]),
+    [ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE]: new Set(["AXIS_HEADER", "COORDINATE_ROW"]),
+    [ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED]: new Set(["GROUP_HEADING", "AXIS_HEADER", "COORDINATE_ROW"]),
+    [ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT]: new Set(["MAP_SEARCH_BOX", "MAP_PLACE_DETAILS", "MAP_PLUS_CODE"]),
+    [ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE]: new Set([
+      "PROJECTED_DATUM",
+      "PROJECTED_ZONE",
+      "PROJECTED_HEMISPHERE",
+      "PROJECTED_AXIS_ORDER",
+      "PROJECTED_AXIS_VALUE",
+      "PROJECTED_ROW"
+    ])
+  };
+  return allowed[family]?.has(kind) === true;
+}
+
+function privateObservationCoverageIdentity({ family, format, value, structure = {} }) {
+  const valueIdentity = valueIdentityForFamily(family, format, value);
+  const tokens = [];
+  if ([ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE, ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE].includes(family)) {
+    for (let index = 0; index < boundedStructureCount(structure.repeatedHeaderCount); index += 1) {
+      tokens.push(`HEADER:${index}`);
+    }
+  } else if (family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED) {
+    groupedDmsHeadingIdentity(value, structure.groupBoundaryMode)
+      .forEach((heading, index) => tokens.push(`GROUP:${index}:${heading}`));
+    if (structure.groupBoundaryMode !== "REPEATED_HEADERS") {
+      for (let index = 0; index < boundedStructureCount(structure.repeatedHeaderCount); index += 1) {
+        tokens.push(`HEADER:${index}`);
+      }
+    }
+  } else if (family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE) {
+    const crs = structure.crs || structure.identity || {};
+    if (crs.datumClass && crs.datumIdentityDigest) tokens.push(`DATUM:${crs.datumClass}:${crs.datumIdentityDigest}`);
+    if (Number.isInteger(crs.zone)) tokens.push(`ZONE:${crs.zone}`);
+    if (crs.hemisphere) tokens.push(`HEMISPHERE:${crs.hemisphere}`);
+    if (crs.axisOrder) tokens.push(`AXIS_ORDER:${crs.axisOrder}`);
+  }
+  return Object.freeze([...tokens, ...valueIdentity.map(item => `VALUE:${item}`)]);
 }
 
 function minimumPrivateSourceRegionCount({ family, expectedRowCount, groupBoundaryCount }) {
@@ -1820,71 +1932,153 @@ function createPrivateSpatialProvenance({
   imageIdentity,
   resultRevision,
   expectedRowCount,
-  groupBoundaryCount
+  groupBoundaryCount,
+  observationCoverageCount
 }) {
+  const unavailable = ({
+    sourceRegionCount = 0,
+    observedCandidateCount = 0,
+    boundCandidateCount = 0,
+    unassignedCandidateCount = 0,
+    ambiguous = false
+  } = {}) => Object.freeze({
+    available: false,
+    spatialAvailable: false,
+    observationAvailable: false,
+    observationAmbiguous: ambiguous,
+    sourceRegionCount: boundedStructureCount(sourceRegionCount),
+    observedCandidateCount: boundedStructureCount(observedCandidateCount),
+    boundCandidateCount: boundedStructureCount(boundCandidateCount),
+    unassignedCandidateCount: boundedStructureCount(unassignedCandidateCount),
+    identity: Object.freeze([]),
+    observationIdentity: Object.freeze([])
+  });
   const revision = Number(resultRevision);
   if (!isCanonicalCoordinateImageIdentity(imageIdentity)
     || !Number.isSafeInteger(revision) || revision <= 0
     || !Array.isArray(layoutLines) || layoutLines.length === 0 || layoutLines.length > 256) {
-    return Object.freeze({ available: false, sourceRegionCount: 0, identity: Object.freeze([]) });
+    return unavailable();
   }
-  const expectedRelevantLines = normalizeCoordinateEvidenceText(sourceText)
+  const expectedCandidates = normalizeCoordinateEvidenceText(sourceText)
     .split("\n")
     .map(normalizedSpatialLineText)
-    .filter(text => text && privateSpatialLineIsRelevant(family, text));
-  const sourceLines = new Set(expectedRelevantLines);
+    .filter(Boolean)
+    .flatMap(text => privateObservationKinds(text)
+      .map((kind, subIndex) => Object.freeze({ text, kind, subIndex })));
   const normalized = layoutLines.map(line => normalizePrivateSourceRegion(line, imageIdentity));
   if (normalized.some(region => !region)) {
-    return Object.freeze({ available: false, sourceRegionCount: 0, identity: Object.freeze([]) });
+    return unavailable();
   }
-  const regions = normalized.filter(region => sourceLines.has(region.text)
-    && privateSpatialLineIsRelevant(family, region.text));
+  const candidateRegions = normalized.filter(region => privateObservationKinds(region.text).length > 0);
+  const candidates = candidateRegions.flatMap(region => privateObservationKinds(region.text)
+    .map((kind, subIndex) => Object.freeze({ region, kind, subIndex })));
+  const observedCandidateCount = boundedStructureCount(candidates.length);
+  let boundCandidateCount = 0;
+  const comparisonLength = Math.min(candidates.length, expectedCandidates.length);
+  for (let index = 0; index < comparisonLength; index += 1) {
+    const observed = candidates[index];
+    const expected = expectedCandidates[index];
+    if (observed.region.text === expected.text
+      && observed.kind === expected.kind
+      && privateObservationKindAllowedForFamily(family, observed.kind)) boundCandidateCount += 1;
+  }
+  const unassignedCandidateCount = Math.max(
+    candidates.length - boundCandidateCount,
+    expectedCandidates.length - boundCandidateCount,
+    Math.abs(expectedCandidates.length - boundedStructureCount(observationCoverageCount))
+  );
+  const observationAmbiguous = candidates.some(candidate => candidate.kind === "AMBIGUOUS_COORDINATE")
+    || expectedCandidates.some(candidate => candidate.kind === "AMBIGUOUS_COORDINATE")
+    || candidates.some(candidate => !privateObservationKindAllowedForFamily(family, candidate.kind))
+    || expectedCandidates.some(candidate => !privateObservationKindAllowedForFamily(family, candidate.kind));
   const minimumCount = minimumPrivateSourceRegionCount({ family, expectedRowCount, groupBoundaryCount });
-  if (minimumCount <= 0 || regions.length < minimumCount
-    || new Set(regions.map(region => region.localLineIndex)).size !== regions.length
-    || regions.some(region => region.declaredRevision !== null && region.declaredRevision !== revision)) {
-    return Object.freeze({ available: false, sourceRegionCount: boundedStructureCount(regions.length), identity: Object.freeze([]) });
+  if (minimumCount <= 0 || candidateRegions.length < minimumCount
+    || new Set(candidateRegions.map(region => region.localLineIndex)).size !== candidateRegions.length
+    || candidateRegions.some(region => region.declaredRevision !== null && region.declaredRevision !== revision)) {
+    return unavailable({
+      sourceRegionCount: candidateRegions.length,
+      observedCandidateCount,
+      boundCandidateCount,
+      unassignedCandidateCount,
+      ambiguous: observationAmbiguous
+    });
   }
-  for (let left = 0; left < regions.length; left += 1) {
-    for (let right = left + 1; right < regions.length; right += 1) {
-      if (privateSourceRegionsOverlap(regions[left], regions[right])) {
-        return Object.freeze({ available: false, sourceRegionCount: boundedStructureCount(regions.length), identity: Object.freeze([]) });
+  for (let left = 0; left < candidateRegions.length; left += 1) {
+    for (let right = left + 1; right < candidateRegions.length; right += 1) {
+      if (privateSourceRegionsOverlap(candidateRegions[left], candidateRegions[right])) {
+        return unavailable({
+          sourceRegionCount: candidateRegions.length,
+          observedCandidateCount,
+          boundCandidateCount,
+          unassignedCandidateCount,
+          ambiguous: observationAmbiguous
+        });
       }
     }
   }
-  const lineOrder = [...regions].sort((left, right) => left.localLineIndex - right.localLineIndex);
-  const visualOrder = [...regions].sort((left, right) => (
+  const regionLineOrder = [...candidateRegions].sort((left, right) => left.localLineIndex - right.localLineIndex);
+  const regionVisualOrder = [...candidateRegions].sort((left, right) => (
     left.box.y0 - right.box.y0 || left.box.x0 - right.box.x0 || left.localLineIndex - right.localLineIndex
   ));
-  if (lineOrder.length !== expectedRelevantLines.length
-    || lineOrder.some((region, index) => region !== visualOrder[index]
-      || region.text !== expectedRelevantLines[index])) {
-    return Object.freeze({ available: false, sourceRegionCount: boundedStructureCount(regions.length), identity: Object.freeze([]) });
+  const visualOrderValid = regionLineOrder.every((region, index) => region === regionVisualOrder[index]);
+  const lineOrder = regionLineOrder.flatMap(region => privateObservationKinds(region.text)
+    .map((kind, subIndex) => Object.freeze({ region, kind, subIndex })));
+  const sameCandidateCount = lineOrder.length === expectedCandidates.length;
+  const sourceOrderValid = sameCandidateCount && lineOrder.every((candidate, index) => (
+    candidate.region.text === expectedCandidates[index].text
+      && candidate.kind === expectedCandidates[index].kind
+      && candidate.subIndex === expectedCandidates[index].subIndex
+  ));
+  if (!visualOrderValid || (sameCandidateCount && !sourceOrderValid)) {
+    return unavailable({
+      sourceRegionCount: candidateRegions.length,
+      observedCandidateCount,
+      boundCandidateCount,
+      unassignedCandidateCount,
+      ambiguous: observationAmbiguous
+    });
   }
   const hasExplicitGroupHeadings = family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
-    && lineOrder.some(region => /^(?:group|site|sites|area|mining\s+area|矿区|礦區)\b/iu.test(region.text));
+    && lineOrder.some(candidate => candidate.kind === "GROUP_HEADING");
   let sourceGroupIndex = 0;
-  const regionIdentities = lineOrder.map((region, index) => {
-    const startsExplicitGroup = family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
-      && /^(?:group|site|sites|area|mining\s+area|矿区|礦區)\b/iu.test(region.text);
-    const startsRepeatedTableSegment = [
+  const regionIdentities = lineOrder.map((candidate, index) => {
+    const { region, kind } = candidate;
+    const startsExplicitGroup = family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED && kind === "GROUP_HEADING";
+    const startsRepeatedTableSegment = (([
       ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE,
       ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE,
       ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
     ].includes(family)
       && (!hasExplicitGroupHeadings || family !== ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED)
-      && Boolean(parseExplicitAxisHeaderLine(region.text, 0));
+      && kind === "AXIS_HEADER")
+      || (family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE && kind === "PROJECTED_AXIS_HEADER"));
     if (index > 0 && (startsExplicitGroup || startsRepeatedTableSegment)) sourceGroupIndex += 1;
-    return `REGION:${index}:G${sourceGroupIndex}:${region.localLineIndex}:${region.box.x0},${region.box.y0},${region.box.x1},${region.box.y1}:${region.textDigest}`;
+    return `REGION:${index}:${candidate.subIndex}:${kind}:G${sourceGroupIndex}:${region.localLineIndex}:${region.box.x0},${region.box.y0},${region.box.x1},${region.box.y1}:${region.textDigest}`;
   });
   const identity = Object.freeze([
     `IMAGE:${imageIdentity.image_sha256}:${imageIdentity.request_asset_id}:${imageIdentity.page}:${imageIdentity.width}x${imageIdentity.height}:R${revision}`,
     ...regionIdentities
   ]);
+  const observationAvailable = sourceOrderValid
+    && !observationAmbiguous
+    && unassignedCandidateCount === 0
+    && expectedCandidates.length === boundedStructureCount(observationCoverageCount)
+    && boundCandidateCount === candidates.length;
+  const observationIdentity = Object.freeze([
+    `OBSERVATION_SET:${observedCandidateCount}:${boundedStructureCount(boundCandidateCount)}:${boundedStructureCount(unassignedCandidateCount)}`,
+    ...identity
+  ]);
   return Object.freeze({
-    available: true,
-    sourceRegionCount: boundedStructureCount(regions.length),
-    identity
+    available: observationAvailable,
+    spatialAvailable: true,
+    observationAvailable,
+    observationAmbiguous,
+    sourceRegionCount: boundedStructureCount(candidateRegions.length),
+    observedCandidateCount,
+    boundCandidateCount: boundedStructureCount(boundCandidateCount),
+    unassignedCandidateCount: boundedStructureCount(unassignedCandidateCount),
+    identity,
+    observationIdentity
   });
 }
 
@@ -1892,6 +2086,7 @@ function createPrivateAcquisitionBinding({
   family,
   format,
   sourceText,
+  structure,
   expectedRowCount,
   groupBoundaryCount,
   layoutLines,
@@ -1899,6 +2094,12 @@ function createPrivateAcquisitionBinding({
   resultRevision
 }) {
   const identity = valueIdentityForFamily(family, format, sourceText);
+  const observationCoverageIdentity = privateObservationCoverageIdentity({
+    family,
+    format,
+    value: sourceText,
+    structure
+  });
   const expectedCount = family === ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT
     ? 2
     : family === ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT
@@ -1912,50 +2113,94 @@ function createPrivateAcquisitionBinding({
     imageIdentity,
     resultRevision,
     expectedRowCount,
-    groupBoundaryCount
+    groupBoundaryCount,
+    observationCoverageCount: observationCoverageIdentity.length
   });
-  const available = valueAvailable && spatial.available;
+  const available = valueAvailable && spatial.spatialAvailable && spatial.observationAvailable;
   const key = randomBytes(32);
+  const valueDigest = valueAvailable
+    ? createHmac("sha256", key).update(JSON.stringify({ family, format, identity }), "utf8").digest()
+    : Buffer.alloc(0);
+  const spatialDigest = spatial.spatialAvailable
+    ? createHmac("sha256", key).update(JSON.stringify({
+      family,
+      format,
+      spatialIdentity: spatial.identity
+    }), "utf8").digest()
+    : Buffer.alloc(0);
+  const observationDigest = spatial.observationAvailable
+    ? createHmac("sha256", key).update(JSON.stringify({
+      family,
+      format,
+      observationIdentity: spatial.observationIdentity
+    }), "utf8").digest()
+    : Buffer.alloc(0);
+  const observationCoverageDigest = spatial.observationAvailable
+    ? createHmac("sha256", key).update(JSON.stringify({
+      family,
+      format,
+      observationCoverageIdentity
+    }), "utf8").digest()
+    : Buffer.alloc(0);
   const digest = available
     ? createHmac("sha256", key).update(JSON.stringify({
       family,
       format,
       identity,
-      spatialIdentity: spatial.identity
+      spatialIdentity: spatial.identity,
+      observationIdentity: spatial.observationIdentity,
+      observationCoverageIdentity
     }), "utf8").digest()
     : Buffer.alloc(0);
   return Object.freeze({
     available,
     valueAvailable,
-    spatialAvailable: spatial.available,
+    spatialAvailable: spatial.spatialAvailable,
+    observationAvailable: spatial.observationAvailable,
+    observationAmbiguous: spatial.observationAmbiguous,
     sourceRegionCount: spatial.sourceRegionCount,
+    observedCandidateCount: spatial.observedCandidateCount,
+    boundCandidateCount: spatial.boundCandidateCount,
+    unassignedCandidateCount: spatial.unassignedCandidateCount,
     spatialIdentity: spatial.identity,
+    observationIdentity: spatial.observationIdentity,
+    observationCoverageIdentity,
     family,
     format,
     expectedCount,
     key,
+    valueDigest,
+    spatialDigest,
+    observationDigest,
+    observationCoverageDigest,
     digest
   });
 }
 
-function validatePrivateAcquisitionBinding({ contract, payload, providerText }) {
+function validatePrivateAcquisitionBinding({ contract, payload, providerText, providerStructure = {} }) {
   const binding = privateAcquisitionBindings.get(contract);
+  const counts = binding ? {
+    sourceRegionCount: binding.sourceRegionCount,
+    observedCandidateCount: binding.observedCandidateCount,
+    boundCandidateCount: binding.boundCandidateCount,
+    unassignedCandidateCount: binding.unassignedCandidateCount
+  } : {
+    sourceRegionCount: 0,
+    observedCandidateCount: 0,
+    boundCandidateCount: 0,
+    unassignedCandidateCount: 0
+  };
   if (!binding || binding.family !== payload.family || binding.format !== payload.format) {
     return Object.freeze({
       conformant: false,
       reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PRIVATE_BINDING_UNAVAILABLE,
-      sourceRegionCount: 0
+      ...counts
     });
   }
-  if (!binding.spatialAvailable) return Object.freeze({
-    conformant: false,
-    reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE,
-    sourceRegionCount: binding.sourceRegionCount
-  });
-  if (!binding.valueAvailable || !binding.available) return Object.freeze({
+  if (!binding.valueAvailable) return Object.freeze({
     conformant: false,
     reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PRIVATE_BINDING_UNAVAILABLE,
-    sourceRegionCount: binding.sourceRegionCount
+    ...counts
   });
   const identity = valueIdentityForFamily(payload.family, payload.format, providerText);
   const expectedCount = binding.expectedCount;
@@ -1963,7 +2208,80 @@ function validatePrivateAcquisitionBinding({ contract, payload, providerText }) 
     return Object.freeze({
       conformant: false,
       reason: bindingMismatchReason(payload.family),
-      sourceRegionCount: binding.sourceRegionCount
+      ...counts
+    });
+  }
+  const actualValueDigest = createHmac("sha256", binding.key)
+    .update(JSON.stringify({
+      family: payload.family,
+      format: payload.format,
+      identity
+    }), "utf8")
+    .digest();
+  const valueConformant = binding.valueDigest.length === actualValueDigest.length
+    && timingSafeEqual(binding.valueDigest, actualValueDigest);
+  if (!valueConformant) return Object.freeze({
+    conformant: false,
+    reason: bindingMismatchReason(payload.family),
+    ...counts
+  });
+  if (!binding.spatialAvailable) return Object.freeze({
+    conformant: false,
+    reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE,
+    ...counts
+  });
+  const actualSpatialDigest = createHmac("sha256", binding.key)
+    .update(JSON.stringify({
+      family: payload.family,
+      format: payload.format,
+      spatialIdentity: binding.spatialIdentity
+    }), "utf8")
+    .digest();
+  if (binding.spatialDigest.length !== actualSpatialDigest.length
+    || !timingSafeEqual(binding.spatialDigest, actualSpatialDigest)) return Object.freeze({
+    conformant: false,
+    reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.SPATIAL_PROVENANCE_UNAVAILABLE,
+    ...counts
+  });
+  if (!binding.observationAvailable) return Object.freeze({
+    conformant: false,
+    reason: binding.observationAmbiguous
+      ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_AMBIGUOUS
+      : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE,
+    ...counts
+  });
+  const actualObservationDigest = createHmac("sha256", binding.key)
+    .update(JSON.stringify({
+      family: payload.family,
+      format: payload.format,
+      observationIdentity: binding.observationIdentity
+    }), "utf8")
+    .digest();
+  if (binding.observationDigest.length !== actualObservationDigest.length
+    || !timingSafeEqual(binding.observationDigest, actualObservationDigest)) return Object.freeze({
+    conformant: false,
+    reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE,
+    ...counts
+  });
+  const providerObservationCoverageIdentity = privateObservationCoverageIdentity({
+    family: payload.family,
+    format: payload.format,
+    value: providerText,
+    structure: providerStructure
+  });
+  const actualObservationCoverageDigest = createHmac("sha256", binding.key)
+    .update(JSON.stringify({
+      family: payload.family,
+      format: payload.format,
+      observationCoverageIdentity: providerObservationCoverageIdentity
+    }), "utf8")
+    .digest();
+  if (binding.observationCoverageDigest.length !== actualObservationCoverageDigest.length
+    || !timingSafeEqual(binding.observationCoverageDigest, actualObservationCoverageDigest)) {
+    return Object.freeze({
+      conformant: false,
+      reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE,
+      ...counts
     });
   }
   const actualDigest = createHmac("sha256", binding.key)
@@ -1971,7 +2289,9 @@ function validatePrivateAcquisitionBinding({ contract, payload, providerText }) 
       family: payload.family,
       format: payload.format,
       identity,
-      spatialIdentity: binding.spatialIdentity
+      spatialIdentity: binding.spatialIdentity,
+      observationIdentity: binding.observationIdentity,
+      observationCoverageIdentity: providerObservationCoverageIdentity
     }), "utf8")
     .digest();
   const conformant = binding.digest.length === actualDigest.length && timingSafeEqual(binding.digest, actualDigest);
@@ -1979,8 +2299,8 @@ function validatePrivateAcquisitionBinding({ contract, payload, providerText }) 
     conformant,
     reason: conformant
       ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.CONFORMANT
-      : bindingMismatchReason(payload.family),
-    sourceRegionCount: binding.sourceRegionCount
+      : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE,
+    ...counts
   });
 }
 
@@ -2234,6 +2554,7 @@ export function createOneShotAcquisitionContract({
     family,
     format: payload.format,
     sourceText,
+    structure: payload.structure,
     groupBoundaryCount: payload.structure.groupBoundaryCount,
     layoutLines,
     imageIdentity,
@@ -2258,7 +2579,10 @@ function buildAcquisitionConformanceResult({ contract, status, reason, counts = 
       mapRoleCount: boundedStructureCount(counts.mapRoleCount),
       projectedCoordinateRowCount: boundedStructureCount(counts.projectedCoordinateRowCount),
       crsFieldCount: boundedStructureCount(counts.crsFieldCount),
-      sourceRegionCount: boundedStructureCount(counts.sourceRegionCount)
+      sourceRegionCount: boundedStructureCount(counts.sourceRegionCount),
+      observedCandidateCount: boundedStructureCount(counts.observedCandidateCount),
+      boundCandidateCount: boundedStructureCount(counts.boundCandidateCount),
+      unassignedCandidateCount: boundedStructureCount(counts.unassignedCandidateCount)
     })
   });
 }
@@ -2279,7 +2603,15 @@ function buildStructurallyValidatedConformanceResult({
       counts
     });
   }
-  const privateConformance = validatePrivateAcquisitionBinding({ contract, payload, providerText });
+  const privateConformance = validatePrivateAcquisitionBinding({
+    contract,
+    payload,
+    providerText,
+    providerStructure: {
+      ...counts,
+      groupBoundaryMode: payload.structure.groupBoundaryMode
+    }
+  });
   return buildAcquisitionConformanceResult({
     contract: payload,
     status: privateConformance.conformant
@@ -2288,7 +2620,10 @@ function buildStructurallyValidatedConformanceResult({
     reason: privateConformance.reason,
     counts: {
       ...counts,
-      sourceRegionCount: privateConformance.sourceRegionCount
+      sourceRegionCount: privateConformance.sourceRegionCount,
+      observedCandidateCount: privateConformance.observedCandidateCount,
+      boundCandidateCount: privateConformance.boundCandidateCount,
+      unassignedCandidateCount: privateConformance.unassignedCandidateCount
     }
   });
 }
