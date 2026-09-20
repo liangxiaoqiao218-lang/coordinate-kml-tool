@@ -5233,6 +5233,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let spatialRegressionTestMode = false;
     let activeMapPreviewResponse = null;
     let activeMapPreviewCacheKey = "";
+    let agenticCoordinateController = null;
     const HANDWRITTEN_DMS_REVIEW_STATUS = Object.freeze({
       NOT_APPLICABLE: "NOT_APPLICABLE",
       PENDING: "PENDING",
@@ -5293,7 +5294,91 @@ Au值 = 纯度 × 10 后取整数</div>
       showMessage("已创建独立坐标副本；修改后将生成新结果。", false, 5000);
     }
 
-    imageInput.addEventListener("change", recognizeImage);
+    function handleAgenticCoordinateWorkspaceChange(workspace) {
+      input.value = String(workspace.currentText || "");
+      activeCoordinateEngineV2 = null;
+      activeFinalizedCoordinateResult = null;
+      activePointGeometryIntentReview = null;
+      finalizedCoordinateTextSnapshot = input.value;
+      finalizedCoordinateDirty = workspace.phase === "edited";
+      invalidateSpatialPreview();
+      refreshMapPreviewAction();
+      syncKmlActionVisualState();
+    }
+
+    async function initializeAgenticCoordinateV1() {
+      try {
+        const module = await import("/assets/agentic-coordinate/agentic-coordinate-controller.js");
+        const controller = new module.AgenticCoordinateController({
+          onChange: handleAgenticCoordinateWorkspaceChange
+        });
+        const enabled = await controller.initialize();
+        if (!enabled) return false;
+        agenticCoordinateController = controller;
+        spatialResultEnabled = true;
+        refreshMapPreviewAction();
+        return true;
+      } catch (error) {
+        console.warn("Agentic coordinate v1 initialization failed", error);
+        agenticCoordinateController = null;
+        return false;
+      }
+    }
+
+    async function recognizeImageWithAgenticCoordinate() {
+      const file = imageInput.files[0];
+      if (!file || !agenticCoordinateController?.enabled) return;
+      await loadUserConfig();
+      if (!canUse("aiOcrEnabled", "当前用户暂未开通图片识别。")) {
+        imageInput.value = "";
+        return;
+      }
+
+      imageInput.disabled = true;
+      supportPanel.style.display = "none";
+      clearUploadMessage();
+      resetHandwrittenDmsReviewState();
+      clearRecognitionSummary();
+      setCoordinateOrderReviewVisible(false);
+      showSelectedImage(file);
+      showRecognitionProgress("正在理解图片中的坐标…", "loading");
+      setDebug(`正在使用智能坐标识别\n文件名：${file.name}\n大小：${Math.round(file.size / 1024)} KB`);
+
+      try {
+        const payload = await agenticCoordinateController.recognize(file);
+        if (!payload) return;
+        const result = payload.result;
+        input.value = result.displayText;
+        coordinateOrder.value = "auto";
+        updateCadastralGridPanel();
+        input.focus();
+        coordinateUploadPanel?.classList.add("is-complete");
+        setRecognitionStatus(
+          result.resultStatus === "needs_review" ? "已识别，请核对标记内容" : "坐标已识别",
+          result.resultStatus === "needs_review" ? "warning" : "success"
+        );
+        showMessage(
+          result.resultStatus === "needs_review"
+            ? "已识别坐标；不确定内容已标记，请核对后查看地图。"
+            : "坐标已识别，可以直接查看地图或下载 KML。",
+          false,
+          COORDINATE_RECOGNITION_MESSAGE_MS
+        );
+        setDebug(`智能识别完成\n状态：${result.resultStatus}\n坐标点：${result.summary?.pointCount || 0}\n分组：${result.summary?.groupCount || 0}\n几何：${result.geometryType}\nProvider 调用：${payload.execution?.providerCallCount || 0}`);
+      } catch (error) {
+        setRecognitionStatus("识别失败", "error");
+        showUploadSupportMessage(error?.message || "未能可靠识别坐标，请重新上传更清晰的坐标区域截图。");
+      } finally {
+        imageInput.disabled = false;
+        imageInput.value = "";
+        refreshMapPreviewAction();
+      }
+    }
+
+    imageInput.addEventListener("change", () => {
+      if (agenticCoordinateController?.enabled) void recognizeImageWithAgenticCoordinate();
+      else void recognizeImage();
+    });
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
     judgeImageInput.multiple = false;
     window.addEventListener("pageshow", () => {
@@ -5302,6 +5387,10 @@ Au值 = 纯度 × 10 后取整数</div>
       setTimeout(() => { void recoverPendingCoordinateCommitOnPageShow(); }, 0);
     });
     input.addEventListener("input", () => {
+      if (agenticCoordinateController?.enabled) {
+        agenticCoordinateController.edit(input.value);
+        return;
+      }
       markCoordinateTextChanged();
       updateCadastralGridPanel();
     });
@@ -5309,6 +5398,7 @@ Au值 = 纯度 × 10 后取整数</div>
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
     loadSpatialRuntimeConfig();
+    void initializeAgenticCoordinateV1();
     loadUserQuota();
     cleanupJudgeHistoryStorage();
     renderJudgeRecent();
@@ -7052,6 +7142,16 @@ Au值 = 纯度 × 10 后取整数</div>
     function refreshMapPreviewAction() {
       if (!mapPreviewAction) return;
       const hasText = Boolean(String(input?.value || "").trim());
+      if (agenticCoordinateController?.enabled) {
+        const state = hasText ? "enabled" : "blocked";
+        mapPreviewAction.hidden = false;
+        mapPreviewAction.disabled = !hasText;
+        mapPreviewAction.dataset.state = state;
+        mapPreviewAction.setAttribute("aria-disabled", String(mapPreviewAction.disabled));
+        mapPreviewAction.textContent = "查看地图";
+        syncKmlActionVisualState();
+        return;
+      }
       const validationRequired = Boolean(activeFinalizedCoordinateResult)
         && (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || ""));
       const state = !spatialResultEnabled || !hasText
@@ -7070,6 +7170,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function coordinateKmlVisualState() {
       if (!String(input?.value || "").trim()) return "blocked";
+      if (agenticCoordinateController?.enabled) return "enabled";
       if (!activeFinalizedCoordinateResult) return "enabled";
       if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) return "validation_required";
       return activeFinalizedCoordinateResult.kmlReady === true ? "enabled" : "blocked";
@@ -7292,7 +7393,60 @@ Au值 = 纯度 × 10 后取整数</div>
       spatialResultDiagnostic.textContent = factsAvailable ? "" : "部分空间信息暂时无法计算，地图和原坐标仍可使用。";
     }
 
+    function createAgenticSpatialPayload(outcome) {
+      const geometry = outcome.map.feature.geometry;
+      const reviewRequired = outcome.result?.resultStatus === "needs_review";
+      return {
+        mapPreviewObject: {
+          schemaVersion: "map_preview_object_v1",
+          sourceResultId: `agentic-coordinate-${outcome.documentRevision}`,
+          sourceRevision: outcome.documentRevision,
+          sourceGeometryHash: outcome.map.geometryHash,
+          crs: { id: "EPSG:4326" },
+          axisOrder: "longitude_latitude",
+          geometryType: geometry.type,
+          geometry,
+          previewWarnings: reviewRequired ? ["coordinate_review_required"] : [],
+          previewEligibility: { allowed: true }
+        },
+        kmlEligibility: {
+          allowed: true,
+          kmlReady: true,
+          technicalKmlReady: true,
+          confirmationStatus: reviewRequired ? "REVIEW_REQUIRED" : "NOT_REQUIRED",
+          qualityGateStatus: reviewRequired ? "REVIEW" : "PASS",
+          decisionState: reviewRequired ? "NEEDS_REVIEW" : "USABLE",
+          kmlHash: outcome.kml.geometryHash
+        },
+        spatialFactsStatus: "unavailable",
+        spatialFacts: null,
+        regionalViewCount: 0
+      };
+    }
+
+    async function openAgenticSpatialResult() {
+      mapPreviewAction.disabled = true;
+      try {
+        const outcome = await agenticCoordinateController.finalize({ name: "GeoKit Lab Coordinate Result" });
+        const payload = createAgenticSpatialPayload(outcome);
+        activeMapPreviewResponse = payload;
+        activeMapPreviewCacheKey = `agentic:${outcome.documentRevision}:${outcome.map.geometryHash}`;
+        pages.spatialResult.dataset.spatialCacheKey = activeMapPreviewCacheKey;
+        showPage("spatialResult");
+        renderSpatialResult(payload);
+        setSpatialSheetExpanded(!window.matchMedia("(max-width: 640px)").matches);
+        await waitForSpatialLayout();
+        await globalThis.GeoKitSatelliteMap?.open(payload);
+        await syncSpatialMapViewport();
+      } catch (error) {
+        showMessage(error?.message || "当前坐标还不能形成地图，请核对坐标内容。", true, 6000);
+      } finally {
+        refreshMapPreviewAction();
+      }
+    }
+
     async function openSpatialResult() {
+      if (agenticCoordinateController?.enabled) return openAgenticSpatialResult();
       if (!spatialResultEnabled) return;
       mapPreviewAction.disabled = true;
       try {
@@ -13193,6 +13347,23 @@ ${placemarks}
 </kml>`;
     }
 
+    async function downloadAgenticCoordinateKml() {
+      const outcome = await agenticCoordinateController.finalize({ name: "GeoKit Lab Coordinate Result" });
+      const blob = new Blob([outcome.kml.content], {
+        type: "application/vnd.google-earth.kml+xml;charset=utf-8"
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `geokit-coordinate-${outcome.documentRevision}.kml`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showMessage("KML 已根据当前坐标生成。", false, 4000);
+      return outcome;
+    }
+
     async function downloadKml() {
       setKmlGenerationInProgress(true);
       try {
@@ -13219,6 +13390,16 @@ ${placemarks}
       if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。")) {
         showKmlPermissionFailure("当前账户暂未开通 KML 导出权限。");
         return;
+      }
+
+      if (agenticCoordinateController?.enabled) {
+        const usageAllowed = await consumeUsage("convert");
+        if (!usageAllowed) {
+          showKmlPermissionFailure();
+          return;
+        }
+        showRecognitionProgress("正在根据当前坐标生成 KML…", "loading");
+        return downloadAgenticCoordinateKml();
       }
 
       try {

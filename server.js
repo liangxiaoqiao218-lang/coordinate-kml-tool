@@ -13914,6 +13914,13 @@ app.post(
   }
 );
 
+app.get("/api/agentic-coordinate/v1/status", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({
+    enabled: String(process.env.AGENTIC_COORDINATE_V1_ENABLED || "").toLowerCase() === "true"
+  });
+});
+
 app.post(
   "/api/agentic-coordinate/v1/finalize",
   requireAgenticCoordinateApiEnabled,
