@@ -55,7 +55,11 @@ export function acceptAgenticCoordinateRecognition(workspace, recognitionResult)
     throw new TypeError('recognitionResult must be an object');
   }
 
-  if (!['usable', 'needs_review'].includes(recognitionResult.status)) {
+  if (recognitionResult.contractVersion !== 'agentic-coordinate-recognition/v1') {
+    throw new Error('recognitionResult uses an unsupported contract version');
+  }
+
+  if (!['usable', 'needs_review'].includes(recognitionResult.resultStatus)) {
     throw new Error('Only usable or needs_review recognition results can enter the workspace');
   }
 
@@ -66,7 +70,7 @@ export function acceptAgenticCoordinateRecognition(workspace, recognitionResult)
 
   return freezeWorkspace({
     ...workspace,
-    phase: recognitionResult.status,
+    phase: recognitionResult.resultStatus,
     documentRevision: nextDocumentRevision(workspace),
     sourceText: displayText,
     currentText: displayText,
@@ -144,4 +148,3 @@ export function getAgenticCoordinateDocument(workspace) {
     text: workspace.currentText,
   });
 }
-

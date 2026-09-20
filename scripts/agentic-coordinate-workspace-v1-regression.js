@@ -12,7 +12,7 @@ import {
 
 const recognized = {
   contractVersion: 'agentic-coordinate-recognition/v1',
-  status: 'usable',
+  resultStatus: 'usable',
   displayText: '11°28\'37.26"N, 08°40\'42.13"W\n11°28\'31.60"N, 08°40\'32.90"W',
   groups: [],
 };
@@ -98,4 +98,3 @@ assert.deepEqual(document, {
 });
 
 console.log('agentic coordinate workspace v1 regression: PASS');
-

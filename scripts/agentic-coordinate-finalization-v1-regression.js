@@ -1,0 +1,175 @@
+import assert from 'node:assert/strict';
+
+import {
+  buildAgenticKml,
+  createAgenticGeometryArtifact,
+  finalizeAgenticCoordinateDocument,
+  runAgenticCoordinateFinalization,
+} from '../server/agentic-coordinate-finalization/index.js';
+
+function providerPayload(payload) {
+  return {
+    choices: [{
+      message: {
+        content: JSON.stringify(payload),
+      },
+    }],
+  };
+}
+
+const editedPolygonPayload = {
+  success: true,
+  resultStatus: 'usable',
+  displayText: 'A 11°28\'31.26"N, 08°40\'42.13"W\nB 11°28\'31.60"N, 08°40\'32.90"W\nC 11°28\'18.01"N, 08°40\'31.01"W',
+  coordinateSystem: {
+    kind: 'geographic',
+    name: 'WGS84',
+    epsg: 'EPSG:4326',
+    status: 'identified',
+  },
+  geometryType: 'Polygon',
+  groups: [{
+    name: null,
+    points: [
+      { label: 'A', sourceText: 'A 11°28\'31.26"N, 08°40\'42.13"W', x: null, y: null, latitude: 11.47535, longitude: -8.6783694444, needsReview: false },
+      { label: 'B', sourceText: 'B 11°28\'31.60"N, 08°40\'32.90"W', x: null, y: null, latitude: 11.4754444444, longitude: -8.6758055556, needsReview: false },
+      { label: 'C', sourceText: 'C 11°28\'18.01"N, 08°40\'31.01"W', x: null, y: null, latitude: 11.4716694444, longitude: -8.6752805556, needsReview: false },
+    ],
+  }],
+  warnings: [],
+};
+
+let callCount = 0;
+const finalized = await runAgenticCoordinateFinalization({
+  currentText: editedPolygonPayload.displayText,
+  recognitionContext: {
+    displayText: editedPolygonPayload.displayText.replace('31.26', '37.26'),
+    geometryType: 'Polygon',
+  },
+  documentRevision: 7,
+  modelName: 'fake-model',
+  providerCall: async ({ prompt, imageItems, stageName }) => {
+    callCount += 1;
+    assert.match(prompt, /CURRENT TEXT \(authoritative\)/);
+    assert.match(prompt, /31\.26/);
+    assert.deepEqual(imageItems, []);
+    assert.equal(stageName, 'agentic_text_finalize');
+    return providerPayload(editedPolygonPayload);
+  },
+});
+
+assert.equal(callCount, 1);
+assert.equal(finalized.documentRevision, 7);
+assert.equal(finalized.execution.providerCallCount, 1);
+assert.equal(finalized.execution.retryCount, 0);
+assert.equal(finalized.result.groups[0].points[0].sourceText.includes('31.26'), true);
+
+const polygonArtifact = createAgenticGeometryArtifact({
+  documentRevision: finalized.documentRevision,
+  result: finalized.result,
+});
+assert.equal(polygonArtifact.geometry.type, 'Polygon');
+assert.equal(polygonArtifact.geometry.coordinates[0].length, 4);
+assert.deepEqual(
+  polygonArtifact.geometry.coordinates[0][0],
+  polygonArtifact.geometry.coordinates[0][3],
+);
+
+const kml = buildAgenticKml({ geometryArtifact: polygonArtifact, name: 'Edited & current' });
+assert.match(kml, /Edited &amp; current/);
+assert.match(kml, /-8\.6783694444,11\.47535,0/);
+
+const observations = {
+  ...finalized.result,
+  geometryType: 'MultiPoint',
+};
+const observationsArtifact = createAgenticGeometryArtifact({
+  documentRevision: 8,
+  result: observations,
+});
+assert.equal(observationsArtifact.geometry.type, 'MultiPoint');
+assert.equal(observationsArtifact.geometry.coordinates.length, 3);
+
+const siteTwo = {
+  ...finalized.result.groups[0],
+  name: 'SITE2',
+  points: finalized.result.groups[0].points.map(point => ({
+    ...point,
+    longitude: point.longitude + 0.05,
+  })),
+};
+const multiPolygon = {
+  ...finalized.result,
+  geometryType: 'MultiPolygon',
+  groups: [
+    { ...finalized.result.groups[0], name: 'SITE1' },
+    siteTwo,
+  ],
+};
+const multiPolygonArtifact = createAgenticGeometryArtifact({
+  documentRevision: 9,
+  result: multiPolygon,
+});
+assert.equal(multiPolygonArtifact.geometry.type, 'MultiPolygon');
+assert.equal(multiPolygonArtifact.geometry.coordinates.length, 2);
+
+const projected = {
+  ...finalized.result,
+  coordinateSystem: {
+    kind: 'projected',
+    name: 'UTM WGS 1984 ZONA 50S',
+    epsg: 'EPSG:32750',
+    status: 'identified',
+  },
+  groups: [{
+    name: null,
+    points: [{
+      label: '1',
+      sourceText: '1 | 778807.293 | 9721476.737',
+      x: 778807.293,
+      y: 9721476.737,
+      latitude: null,
+      longitude: null,
+      needsReview: false,
+    }],
+  }],
+};
+assert.throws(
+  () => createAgenticGeometryArtifact({ documentRevision: 10, result: projected }),
+  (error) => error.code === 'PROJECTED_CRS_TRANSFORM_REQUIRED',
+);
+
+const reused = await finalizeAgenticCoordinateDocument({
+  documentRevision: 11,
+  currentText: finalized.result.displayText,
+  sourceText: finalized.result.displayText,
+  recognitionResult: finalized.result,
+  name: 'No edit',
+  providerCall: async () => {
+    throw new Error('Provider must not be called for unchanged recognition text');
+  },
+});
+assert.equal(reused.execution.providerCallCount, 0);
+assert.equal(reused.execution.source, 'initial_recognition');
+assert.equal(reused.map.documentRevision, 11);
+assert.equal(reused.kml.documentRevision, 11);
+assert.equal(reused.map.geometryHash, reused.kml.geometryHash);
+
+let editedPipelineCalls = 0;
+const editedPipeline = await finalizeAgenticCoordinateDocument({
+  documentRevision: 12,
+  currentText: editedPolygonPayload.displayText,
+  sourceText: editedPolygonPayload.displayText.replace('31.26', '37.26'),
+  recognitionResult: finalized.result,
+  name: 'Edited once',
+  providerCall: async () => {
+    editedPipelineCalls += 1;
+    return providerPayload(editedPolygonPayload);
+  },
+});
+assert.equal(editedPipelineCalls, 1);
+assert.equal(editedPipeline.execution.providerCallCount, 1);
+assert.equal(editedPipeline.map.geometryHash, editedPipeline.kml.geometryHash);
+assert.match(editedPipeline.kml.content, /-8\.6783694444,11\.47535,0/);
+
+console.log('agentic coordinate finalization v1 regression: PASS');
