@@ -1,5 +1,6 @@
 import { normalizeAgenticCoordinateResult, runAgenticCoordinateRecognition } from './agentic-coordinate-recognition/index.js';
 import { finalizeAgenticCoordinateDocument } from './agentic-coordinate-finalization/index.js';
+import { buildAgenticCoordinateUsageAuthority } from './agentic-coordinate-usage-authority.js';
 
 function apiErrorStatus(error) {
   if (error?.code === 'PROJECTED_CRS_TRANSFORM_REQUIRED'
@@ -38,10 +39,25 @@ export function createAgenticCoordinateApi({ modelName, providerCall }) {
           modelName,
           providerCall,
         });
+        if (!outcome.result.success) {
+          res.setHeader('Cache-Control', 'no-store');
+          return res.status(422).json({
+            success: false,
+            code: 'AGENTIC_COORDINATE_NOT_RECOGNIZED',
+            message: '未能可靠识别坐标，请上传更清晰的坐标区域图片。',
+          });
+        }
+        const recognitionRequestId = String(req.agenticRecognitionRequestId || '').trim().toLowerCase();
+        const agenticCoordinateAuthority = buildAgenticCoordinateUsageAuthority({
+          recognitionRequestId,
+          result: outcome.result,
+        });
         res.setHeader('Cache-Control', 'no-store');
         return res.json({
           success: true,
+          requestId: recognitionRequestId,
           result: outcome.result,
+          agenticCoordinateAuthority,
           execution: outcome.execution,
         });
       } catch (error) {

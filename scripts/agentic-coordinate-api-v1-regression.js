@@ -56,6 +56,7 @@ const api = createAgenticCoordinateApi({
 
 const recognitionResponse = responseRecorder();
 await api.recognize({
+  agenticRecognitionRequestId: '11111111-1111-4111-8111-111111111111',
   file: {
     mimetype: 'image/png',
     buffer: Buffer.from('fake-image'),
@@ -64,6 +65,7 @@ await api.recognize({
 assert.equal(recognitionResponse.statusCode, 200);
 assert.equal(recognitionResponse.body.success, true);
 assert.equal(recognitionResponse.body.result.summary.pointCount, 3);
+assert.equal(recognitionResponse.body.agenticCoordinateAuthority.resultId, 'agentic:11111111-1111-4111-8111-111111111111');
 assert.equal(providerCalls, 1);
 
 const finalizeResponse = responseRecorder();
@@ -109,6 +111,27 @@ const missingImageResponse = responseRecorder();
 await api.recognize({}, missingImageResponse);
 assert.equal(missingImageResponse.statusCode, 400);
 assert.equal(missingImageResponse.body.success, false);
+
+const failedApi = createAgenticCoordinateApi({
+  modelName: 'fake-model',
+  providerCall: async () => providerResponse({
+    success: false,
+    resultStatus: 'failed',
+    displayText: '',
+    coordinateSystem: { kind: 'unknown', name: null, epsg: null, status: 'unknown' },
+    geometryType: 'Unknown',
+    groups: [],
+    warnings: ['No coordinate table found'],
+  }),
+});
+const failedRecognitionResponse = responseRecorder();
+await failedApi.recognize({
+  agenticRecognitionRequestId: '22222222-2222-4222-8222-222222222222',
+  file: { mimetype: 'image/png', buffer: Buffer.from('fake-image') },
+}, failedRecognitionResponse);
+assert.equal(failedRecognitionResponse.statusCode, 422);
+assert.equal(failedRecognitionResponse.body.success, false);
+assert.equal(failedRecognitionResponse.body.agenticCoordinateAuthority, undefined);
 
 const previousEnabled = process.env.AGENTIC_COORDINATE_V1_ENABLED;
 const previousAtomicReady = process.env.AGENTIC_COORDINATE_ATOMIC_USAGE_READY;

@@ -18,6 +18,7 @@ import {
 import { FAMILY_AVAILABILITY_STATUS } from "./coordinate-finalizer/family-availability-policy.js";
 import { createGeometryHash } from "./coordinate-finalizer/geometry-hash.js";
 import { validateFinalizedGeometry } from "./coordinate-finalizer/geometry-finalizer.js";
+import { evaluateAgenticCoordinateUsageAuthority } from "./agentic-coordinate-usage-authority.js";
 
 export const COORDINATE_USAGE_ATOMICITY_VERSION = "coordinate_usage_atomicity_p0_v1";
 export const COORDINATE_USAGE_SEAL_VERSION = "AES_256_GCM_V1";
@@ -371,6 +372,9 @@ function fixedError(code, details = {}) {
 }
 
 export function evaluateCoordinateUsageAuthority({ httpStatus = 200, body = null } = {}) {
+  if (body?.agenticCoordinateAuthority) {
+    return evaluateAgenticCoordinateUsageAuthority({ httpStatus, body });
+  }
   const result = body?.finalizedCoordinateResult;
   const reject = reason => Object.freeze({ eligible: false, reason, identity: null });
   if (!Number.isInteger(Number(httpStatus)) || Number(httpStatus) < 200 || Number(httpStatus) >= 300 || body?.success !== true) {

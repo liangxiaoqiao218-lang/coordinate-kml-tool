@@ -13909,9 +13909,137 @@ app.post(
   requireAgenticCoordinateApiEnabled,
   recognitionDeadlineMiddleware(),
   upload.single("image"),
-  (req, res) => {
+  async (req, res) => {
     activateRecognitionDeadlineContext(req);
-    return agenticCoordinateApi.recognize(req, res);
+    const recognitionBudget = getRecognitionBudget();
+    recognitionBudget?.setIngressMetadata({
+      runtimeCommit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null,
+      runtimeBranch: process.env.RENDER_GIT_BRANCH || process.env.GIT_BRANCH || null,
+      uploadSize: req.file?.size
+    });
+    recognitionBudget?.completeIngressUpload();
+
+    const recognitionRequestId = recognitionBudget?.requestId || "";
+    const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
+    const regressionTestMode = getRegressionTestMode(req);
+    const sessionBindingSha256 = regressionTestMode.active
+      ? null
+      : getCoordinateUsageSessionBinding(req, res, { create: true });
+    if (!visitorId || !isRecognitionRequestId(recognitionRequestId)
+      || (!regressionTestMode.active && !sessionBindingSha256)) {
+      return res.status(400).json({
+        success: false,
+        code: "AGENTIC_COORDINATE_USAGE_IDENTITY_INVALID",
+        message: "安全请求身份初始化失败，请刷新页面后重试。",
+        requestId: isRecognitionRequestId(recognitionRequestId) ? recognitionRequestId : null,
+        usageConsumed: false
+      });
+    }
+
+    let usageStatus = null;
+    if (!regressionTestMode.active) {
+      usageStatus = await checkUsage(visitorId, "convert");
+      if (!usageStatus.allowed) {
+        const limitExceeded = usageStatus.reason === "limit_exceeded";
+        return res.status(limitExceeded ? 403 : 500).json({
+          success: false,
+          reason: usageStatus.reason || "db_error",
+          code: limitExceeded ? getQuotaExhaustedCode("convert") : "CONVERT_QUOTA_CHECK_FAILED",
+          message: limitExceeded ? "今日免费坐标次数已用完，请购买次数或联系人工开通。" : "读取坐标识别次数失败，请稍后重试。",
+          quota: usageStatus.quota || null,
+          requestId: recognitionRequestId,
+          usageConsumed: false
+        });
+      }
+    }
+
+    const usageController = createCoordinateUsageCommitController({
+      regressionTestMode: regressionTestMode.active,
+      budget: recognitionBudget,
+      atomicityService: coordinateUsageAtomicity,
+      recognitionRequestId,
+      userId: visitorId,
+      sessionBindingSha256,
+      providerCostState: () => recognitionBudget?.providerCostState || "POSSIBLY_INCURRED"
+    });
+    const sendJson = res.json.bind(res);
+    let responseCommitPromise = null;
+    res.json = function agenticUsageSafeJson(body) {
+      if (responseCommitPromise) return res;
+      responseCommitPromise = (async () => {
+        if (body?.success !== true || !body?.agenticCoordinateAuthority) {
+          if (!res.headersSent) sendJson({
+            ...body,
+            requestId: recognitionRequestId,
+            usageConsumed: false
+          });
+          return res;
+        }
+        usageController.schedule({ recognitionMode: "agentic_coordinate_v1" }, usageStatus?.quota || null);
+        try {
+          const settlement = await usageController.settle({ httpStatus: res.statusCode, body });
+          if (settlement.kind === "USAGE_COMMITTED") {
+            if (!res.headersSent) sendJson({
+              ...body,
+              quota: settlement.commitResult?.quota || body.quota || null,
+              requestId: recognitionRequestId,
+              usageConsumed: true
+            });
+            return res;
+          }
+          if (settlement.kind === "UNCHARGED_RESPONSE" && settlement.authorityReason === "REGRESSION_TEST") {
+            if (!res.headersSent) sendJson(body);
+            return res;
+          }
+          if (settlement.kind === "USAGE_COMMIT_OUTCOME_UNKNOWN") {
+            res.status(503);
+            if (!res.headersSent) sendJson({
+              success: false,
+              reason: "usage_commit_outcome_unknown",
+              code: COORDINATE_USAGE_ERROR_CODE.COMMIT_OUTCOME_UNKNOWN,
+              message: "本次识别已完成，扣次状态仍在确认中。请恢复本次结果，不要重新上传图片。",
+              requestId: recognitionRequestId,
+              usageConsumed: null,
+              recoveryRequired: true,
+              retryAllowed: false
+            });
+            return res;
+          }
+          const limitExceeded = settlement.commitResult?.result === COORDINATE_USAGE_COMMIT_RESULT.QUOTA_EXHAUSTED;
+          res.status(limitExceeded ? 403 : 500);
+          if (!res.headersSent) sendJson({
+            success: false,
+            reason: limitExceeded ? "limit_exceeded" : "usage_commit_failed",
+            code: limitExceeded ? getQuotaExhaustedCode("convert") : "CONVERT_QUOTA_CONSUME_FAILED",
+            message: limitExceeded ? "今日免费坐标次数已用完，请购买次数或联系人工开通。" : "本次识别未完成，未扣除使用次数。",
+            quota: settlement.commitResult?.quota || null,
+            requestId: recognitionRequestId,
+            usageConsumed: false
+          });
+          return res;
+        } catch (error) {
+          res.status(503);
+          if (!res.headersSent) sendJson({
+            success: false,
+            reason: "usage_commit_unavailable",
+            code: error?.code || COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE,
+            message: "本次识别结果暂时无法安全提交，请稍后重试。",
+            requestId: recognitionRequestId,
+            usageConsumed: error?.code === COORDINATE_USAGE_ERROR_CODE.COMMIT_OUTCOME_UNKNOWN ? null : false,
+            recoveryRequired: error?.code === COORDINATE_USAGE_ERROR_CODE.COMMIT_OUTCOME_UNKNOWN,
+            retryAllowed: error?.code !== COORDINATE_USAGE_ERROR_CODE.COMMIT_OUTCOME_UNKNOWN
+          });
+          return res;
+        }
+      })();
+      return res;
+    };
+
+    recognitionBudget?.beginExecutionPhase();
+    req.agenticRecognitionRequestId = recognitionRequestId;
+    await agenticCoordinateApi.recognize(req, res);
+    await responseCommitPromise;
+    return res;
   }
 );
 

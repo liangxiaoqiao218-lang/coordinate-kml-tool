@@ -458,7 +458,8 @@ test("frontend and server bind one request ID to recovery without Provider repla
   assert.match(index, /sessionStorage\.setItem\(PENDING_COORDINATE_COMMIT_REQUEST_KEY, String\(value\)\.toLowerCase\(\)\)/);
   assert.match(index, /if \(!recoveryOnly\) \{\s*const recovered = await recoverCommittedCoordinateResult/);
   assert.match(index, /let responseWasRecovery = recoveryOnly/);
-  assert.match(index, /setTimeout\(\(\) => \{ void recoverPendingCoordinateCommitOnPageShow\(\); \}, 0\)/);
+  assert.match(index, /await agenticCoordinateInitializationPromise/);
+  assert.match(index, /agenticCoordinateController\?\.enabled[\s\S]*agenticCoordinateController\.recoverPending\(\)[\s\S]*recoverPendingCoordinateCommitOnPageShow\(\)/);
   assert.match(index, /async function recoverPendingCoordinateCommitOnPageShow\(\)/);
   assert.match(index, /if \(!file && !recoveryOnly\) \{\s*return;\s*\}/);
   assert.match(index, /pendingCoordinateRecoveryPromise = recognizeImage\(\)/);

@@ -14,6 +14,8 @@ assert.match(html, /agenticCoordinateController\.edit\(input\.value\)/);
 assert.match(html, /if \(agenticCoordinateController\?\.enabled\) return openAgenticSpatialResult\(\)/);
 assert.match(html, /if \(agenticCoordinateController\?\.enabled\)[\s\S]*return downloadAgenticCoordinateKml\(\)/);
 assert.match(html, /agenticCoordinateController\?\.enabled[\s\S]*consumeUsage\("convert"\)[\s\S]*downloadAgenticCoordinateKml/);
+assert.match(html, /if \(!agenticCoordinateController\.hasCommittedRecognitionUsage\(\)\)[\s\S]*consumeUsage\("convert"\)/);
+assert.match(html, /agenticCoordinateInitializationPromise[\s\S]*agenticCoordinateController\.recoverPending\(\)/);
 assert.match(html, /outcome\.map\.geometryHash[\s\S]*outcome\.kml\.geometryHash/);
 assert.match(html, /input\.value = String\(workspace\.currentText \|\| ""\)/);
 
