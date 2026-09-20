@@ -1,5 +1,6 @@
 import { convertKyrgyzGkToWgs84 } from '../projection/kyrgyz-gk.js';
 import { utmToWgs84 } from '../projection/utm.js';
+import { bftmToWgs84 } from '../projection/bftm.js';
 
 function projectionError(code, message) {
   const error = new Error(message);
@@ -45,12 +46,20 @@ function explicitKyrgyzDefinition(coordinateSystem) {
     : null;
 }
 
+function explicitBftmDefinition(coordinateSystem) {
+  if (coordinateSystem?.status !== 'identified') return null;
+  return /\bBFTM\b/i.test(String(coordinateSystem?.name || ''))
+    ? { id: 'BFTM:ITRF2008', type: 'bftm' }
+    : null;
+}
+
 export function resolveExplicitAgenticProjection(coordinateSystem) {
   if (coordinateSystem?.kind !== 'projected' || coordinateSystem?.status !== 'identified') {
     return null;
   }
   return explicitUtmDefinition(coordinateSystem)
-    || explicitKyrgyzDefinition(coordinateSystem);
+    || explicitKyrgyzDefinition(coordinateSystem)
+    || explicitBftmDefinition(coordinateSystem);
 }
 
 function transformPoint(point, definition) {
@@ -60,7 +69,9 @@ function transformPoint(point, definition) {
 
   const converted = definition.type === 'utm'
     ? utmToWgs84(definition.zone, point.x, point.y, definition.northern)
-    : convertKyrgyzGkToWgs84(point.x, point.y);
+    : definition.type === 'bftm'
+      ? bftmToWgs84(point.x, point.y)
+      : convertKyrgyzGkToWgs84(point.x, point.y);
 
   const latitude = converted?.lat ?? converted?.latitude;
   const longitude = converted?.lon ?? converted?.longitude;
@@ -102,4 +113,3 @@ export function transformAgenticCoordinateResult(result) {
     }),
   });
 }
-

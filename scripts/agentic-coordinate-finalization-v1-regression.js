@@ -199,6 +199,41 @@ assert.equal(kyrgyzTransformed.transformation.sourceCrs, 'EPSG:28413');
 assert.ok(kyrgyzTransformed.groups[0].points[0].latitude > 39);
 assert.ok(kyrgyzTransformed.groups[0].points[0].longitude > 69);
 
+const bftmResult = {
+  ...projected,
+  displayText: '1 | 658800 | 1364200\n2 | 651600 | 1364200\n3 | 651600 | 1364000',
+  coordinateSystem: {
+    kind: 'projected',
+    name: 'ITRF 2008 / Projection BFTM',
+    epsg: null,
+    status: 'identified',
+  },
+  geometryType: 'Polygon',
+  groups: [{ name: null, points: [
+    { label: '1', sourceText: '658800,1364200', x: 658800, y: 1364200, latitude: null, longitude: null, needsReview: false },
+    { label: '2', sourceText: '651600,1364200', x: 651600, y: 1364200, latitude: null, longitude: null, needsReview: false },
+    { label: '3', sourceText: '651600,1364000', x: 651600, y: 1364000, latitude: null, longitude: null, needsReview: false },
+  ] }],
+};
+const bftmTransformed = transformAgenticCoordinateResult(bftmResult);
+assert.equal(bftmTransformed.transformation.sourceCrs, 'BFTM:ITRF2008');
+assert.equal(bftmTransformed.transformation.method, 'bftm');
+assert.ok(bftmTransformed.groups[0].points.every(point => (
+  point.latitude > 12 && point.latitude < 13 && point.longitude > -2 && point.longitude < 0
+)));
+
+const bftmFinal = await finalizeAgenticCoordinateDocument({
+  documentRevision: 5,
+  currentText: bftmResult.displayText,
+  sourceText: bftmResult.displayText,
+  recognitionResult: bftmResult,
+  providerCall: async () => {
+    throw new Error('Provider must not be called for unchanged BFTM text');
+  },
+});
+assert.equal(bftmFinal.map.feature.geometry.type, 'Polygon');
+assert.equal(bftmFinal.map.geometryHash, bftmFinal.kml.geometryHash);
+
 const reused = await finalizeAgenticCoordinateDocument({
   documentRevision: 11,
   currentText: finalized.result.displayText,
