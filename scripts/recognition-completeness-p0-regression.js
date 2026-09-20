@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomInt } from "node:crypto";
 import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
 import {
   RECOGNITION_COMPLETENESS_DECISION,
@@ -618,6 +619,62 @@ test("fresh recovered DMS map and MGRS classifications remain candidate-only", (
     acceptedCandidateCount: 1,
     oneShotAcquisitionConformance: mgrsConformance
   }));
+});
+
+test("fresh map line-break drift preserves exact counts and remains candidate-only", () => {
+  const latitude = (randomInt(-700000, 700000) / 10000).toFixed(6);
+  const longitude = (randomInt(940000, 1660000) / 10000).toFixed(6);
+  const detailLatitude = (Number(latitude) + 0.000043).toFixed(6);
+  const detailLongitude = (Number(longitude) + 0.000043).toFixed(6);
+  const alphabet = "23456789CFGHJMPQRVWX";
+  const pick = limit => alphabet[randomInt(0, limit)];
+  const plusCode = `${pick(9)}${pick(18)}${Array.from({ length: 6 }, () => pick(alphabet.length)).join("")}+${pick(alphabet.length)}${pick(alphabet.length)}`;
+  const rows = [
+    ["Search"], [latitude, longitude],
+    ["Place details"], [detailLatitude, detailLongitude],
+    ["Plus Code"], [plusCode]
+  ];
+  const normalized = normalizeLocalOcrStructuredEvidence({
+    sourceText: rows.flatMap(row => row).join(" "),
+    layoutLines: wordBoxTable(rows)
+  });
+  assert.equal(normalized.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.equal(normalized.sourceLineCount, 1);
+  assert.equal(normalized.layoutLineCount, rows.length);
+  const primary = classifyOneShotStructuredFamily(normalized);
+  assert.equal(primary.family, ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT);
+  const contract = createOneShotAcquisitionContract({
+    route: primary,
+    sourceText: normalized.text,
+    layoutLines: normalized.layoutLines,
+    imageIdentity: syntheticImageIdentity,
+    resultRevision: 1
+  });
+  const conformance = validateOneShotAcquisitionContract({
+    contract,
+    providerText: [
+      `MAP_SEARCH_BOX | ${latitude}, ${longitude}`,
+      `MAP_PLACE_DETAILS | ${detailLatitude}, ${detailLongitude}`,
+      `PLUS_CODE | ${plusCode}`
+    ].join("\n")
+  });
+  assert.equal(conformance.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  assert.equal(conformance.counts.observedCandidateCount, 3);
+  assert.equal(conformance.counts.boundCandidateCount, 3);
+  assert.equal(conformance.counts.unassignedCandidateCount, 0);
+  verifyAuthorityBoundary(assessRecognitionCompleteness({
+    isImageInput: true,
+    candidateCount: 2,
+    acceptedCandidateCount: 2,
+    oneShotAcquisitionConformance: conformance
+  }));
+
+  const incomplete = normalizeLocalOcrStructuredEvidence({
+    sourceText: `${rows.flatMap(row => row).join(" ")} unseen`,
+    layoutLines: wordBoxTable(rows)
+  });
+  assert.equal(incomplete.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+  assert.equal(classifyOneShotStructuredFamily(incomplete).family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
 });
 
 console.log(`Recognition completeness P0 regression: ${passed}/${passed} PASS`);

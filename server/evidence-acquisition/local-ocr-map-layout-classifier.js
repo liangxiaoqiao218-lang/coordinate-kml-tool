@@ -141,6 +141,10 @@ function canonicalCoverageText(value) {
     .replace(/\s*([|:;,/°º'′’"″”=+()])\s*/gu, "$1");
 }
 
+function canonicalCoverageStream(values = []) {
+  return canonicalCoverageText(values.map(value => normalizedCoverageText(value)).filter(Boolean).join(" "));
+}
+
 function boundedCount(value) {
   return Math.max(0, Math.min(256, Number(value) || 0));
 }
@@ -330,8 +334,7 @@ export function normalizeLocalOcrStructuredEvidence({ sourceText = "", layoutLin
     .map(normalizedCoverageText)
     .filter(Boolean);
   if (!Array.isArray(layoutLines) || sourceLines.length === 0 || sourceLines.length > 256
-    || layoutLines.length === 0 || layoutLines.length > 256
-    || sourceLines.length !== layoutLines.length) {
+    || layoutLines.length === 0 || layoutLines.length > 256) {
     return incompleteStructuredEvidence(
       LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
       sourceLines.length,
@@ -367,7 +370,7 @@ export function normalizeLocalOcrStructuredEvidence({ sourceText = "", layoutLin
       ordered.length
     );
   }
-  const coverageMatches = ordered.every((line, index) => {
+  const wordCoverageMatches = ordered.every((line, index) => {
     const rawText = normalizedCoverageText(line?.text);
     const wordsText = orderedWords[index].map(word => word.text).join(" ");
     const lineBox = lineBoxes[index];
@@ -375,13 +378,21 @@ export function normalizeLocalOcrStructuredEvidence({ sourceText = "", layoutLin
       word.bbox[0] >= lineBox[0] && word.bbox[1] >= lineBox[1]
       && word.bbox[2] <= lineBox[2] && word.bbox[3] <= lineBox[3]
     ));
-    return canonicalCoverageText(rawText) === canonicalCoverageText(sourceLines[index])
-      && canonicalCoverageText(rawText) === canonicalCoverageText(wordsText)
+    return canonicalCoverageText(rawText) === canonicalCoverageText(wordsText)
       && wordsInsideLine;
   });
-  if (!coverageMatches) {
+  if (!wordCoverageMatches) {
     return incompleteStructuredEvidence(
       LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.WORD_TEXT_MISMATCH,
+      sourceLines.length,
+      ordered.length
+    );
+  }
+  const sourceCoverage = canonicalCoverageStream(sourceLines);
+  const layoutCoverage = canonicalCoverageStream(ordered.map(line => line?.text));
+  if (!sourceCoverage || sourceCoverage !== layoutCoverage) {
+    return incompleteStructuredEvidence(
+      LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
       sourceLines.length,
       ordered.length
     );
