@@ -13,6 +13,10 @@ import {
   createOneShotAcquisitionContract,
   validateOneShotAcquisitionContract
 } from "../server/recognition/family-primary-routing.js";
+import {
+  LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
+  normalizeLocalOcrStructuredEvidence
+} from "../server/evidence-acquisition/local-ocr-map-layout-classifier.js";
 
 let passed = 0;
 
@@ -43,6 +47,24 @@ function layoutFor(text) {
     text: lineText,
     bbox: [20, 20 + (index * 40), 760, 44 + (index * 40)],
     local_line_index: index,
+    page: 1,
+    resultRevision: 1
+  }));
+}
+
+function wordBoxTable(rows) {
+  return rows.map((fields, lineIndex) => ({
+    text: fields.join(" "),
+    bbox: [20, 20 + (lineIndex * 40), 760, 44 + (lineIndex * 40)],
+    confidence: 96,
+    words: fields.flatMap((field, fieldIndex) => String(field).split(/\s+/u).map((word, wordIndex) => ({
+      text: word,
+      bbox: [30 + (fieldIndex * 240) + (wordIndex * 64), 20 + (lineIndex * 40),
+        80 + (fieldIndex * 240) + (wordIndex * 64), 44 + (lineIndex * 40)],
+      confidence: 96
+    }))),
+    word_structure_valid: true,
+    local_line_index: lineIndex,
     page: 1,
     resultRevision: 1
   }));
@@ -471,6 +493,71 @@ test("moved repeated-header boundary remains review-only before geometry", () =>
   assert.equal(mismatch.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
   assert.equal(mismatch.reason, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.ROW_PROVENANCE_MISMATCH);
   assert.equal(Object.hasOwn(mismatch, "geometryInferenceAllowed"), false);
+});
+
+test("word-box normalized table remains candidate evidence and cannot authorize geometry", () => {
+  const rows = [
+    ["Point", "Longitude", "Latitude"],
+    ["A", "61.1001", "14.1001"],
+    ["B", "61.1002", "14.1002"],
+    ["C", "61.1003", "14.1003"]
+  ];
+  const normalized = normalizeLocalOcrStructuredEvidence({
+    sourceText: rows.map(row => row.join(" ")).join("\n"),
+    layoutLines: wordBoxTable(rows)
+  });
+  const contract = contractFor(normalized.text, normalized.layoutLines);
+  const conformance = validateOneShotAcquisitionContract({ contract, providerText: normalized.text });
+  assert.equal(conformance.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  assert.equal(conformance.counts.observedCandidateCount, 4);
+  assert.equal(conformance.counts.boundCandidateCount, 4);
+  assert.equal(conformance.counts.unassignedCandidateCount, 0);
+  const completeness = assessRecognitionCompleteness({
+    isImageInput: true,
+    candidateCount: 3,
+    acceptedCandidateCount: 3,
+    oneShotAcquisitionConformance: conformance
+  });
+  verifyAuthorityBoundary(completeness);
+});
+
+test("incomplete source-layout coverage cannot authorize family contract or geometry", () => {
+  const visibleRows = [
+    ["Point", "Longitude", "Latitude"],
+    ["N", "66.7201", "23.8101"],
+    ["P", "66.7202", "23.8102"],
+    ["Q", "66.7203", "23.8103"]
+  ];
+  const normalized = normalizeLocalOcrStructuredEvidence({
+    sourceText: `${visibleRows.map(row => row.join(" ")).join("\n")}\nR 66.7204 23.8104`,
+    layoutLines: wordBoxTable(visibleRows)
+  });
+  assert.equal(normalized.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+  const primary = classifyOneShotStructuredFamily({
+    text: normalized.text,
+    layoutLines: normalized.layoutLines
+  });
+  assert.equal(primary.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(primary.matched, false);
+  const contract = createOneShotAcquisitionContract({
+    route: primary,
+    sourceText: normalized.text,
+    layoutLines: normalized.layoutLines,
+    imageIdentity: syntheticImageIdentity,
+    resultRevision: 1
+  });
+  const conformance = validateOneShotAcquisitionContract({
+    contract,
+    providerText: "WGS84 Longitude Latitude Table\nPoint | Longitude | Latitude\nN | 66.7201 | 23.8101"
+  });
+  assert.equal(conformance.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+  const completeness = assessRecognitionCompleteness({
+    isImageInput: true,
+    candidateCount: 1,
+    acceptedCandidateCount: 1,
+    oneShotAcquisitionConformance: conformance
+  });
+  verifyAuthorityBoundary(completeness);
 });
 
 console.log(`Recognition completeness P0 regression: ${passed}/${passed} PASS`);

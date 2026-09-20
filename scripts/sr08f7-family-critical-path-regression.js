@@ -23,6 +23,11 @@ import {
   FINALIZED_COORDINATE_CRS,
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
+import {
+  LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON,
+  LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
+  normalizeLocalOcrStructuredEvidence
+} from "../server/evidence-acquisition/local-ocr-map-layout-classifier.js";
 
 const tests = [];
 const test = (id, name, fn) => tests.push({ id, name, fn });
@@ -62,6 +67,41 @@ function syntheticLayoutLines(text, { page = 1, resultRevision = 1, overlap = fa
       page,
       resultRevision
     };
+  });
+}
+
+function syntheticWordLayout(rows, { overlap = false, missingWordBox = false } = {}) {
+  return rows.map((fields, lineIndex) => {
+    const values = Array.isArray(fields) ? fields : [fields];
+    const top = overlap ? 40 + lineIndex : 40 + (lineIndex * 48);
+    const columnWidth = Math.floor(1020 / Math.max(1, values.length));
+    const words = values.flatMap((field, fieldIndex) => String(field).split(/\s+/u).filter(Boolean).map((word, wordIndex) => {
+      const x0 = 30 + (fieldIndex * columnWidth) + (wordIndex * 128);
+      return {
+        text: word,
+        bbox: missingWordBox && lineIndex === 0 && fieldIndex === 0 && wordIndex === 0
+          ? null
+          : [x0, top, x0 + Math.max(42, word.length * 11), top + 26],
+        confidence: 96
+      };
+    }));
+    return {
+      text: values.join(" "),
+      bbox: [20, top, 1120, top + 28],
+      confidence: 96,
+      words,
+      word_structure_valid: true,
+      local_line_index: lineIndex,
+      page: 1,
+      resultRevision: 1
+    };
+  });
+}
+
+function normalizedWordEvidence(rows, options = {}) {
+  return normalizeLocalOcrStructuredEvidence({
+    sourceText: rows.map(fields => (Array.isArray(fields) ? fields.join(" ") : fields)).join("\n"),
+    layoutLines: syntheticWordLayout(rows, options)
   });
 }
 
@@ -709,6 +749,226 @@ test("R09", "ordinary report, mathematics, columns, and pseudo-coordinates fail 
     assert.equal(route(text).family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
     assert.equal(route(text).matched, false);
   }
+});
+
+test("R09A", "word-box normalization classifies the complete eleven-category synthetic matrix", () => {
+  const decimalSingle = normalizedWordEvidence([
+    ["Longitude"], ["61.234567"], ["Latitude"], ["14.765432"]
+  ]);
+  const dmsSingle = normalizedWordEvidence([
+    ["Longitude"], [`61°14'04.44\"E`], ["Latitude"], [`14°45'55.56\"N`]
+  ]);
+  const fourRows = normalizedWordEvidence([
+    ["Point", "Longitude", "Latitude"],
+    ...Array.from({ length: 4 }, (_, index) => [
+      String.fromCharCode(65 + index),
+      (61.1 + index / 100).toFixed(4),
+      (14.2 + index / 100).toFixed(4)
+    ])
+  ]);
+  const longRows = normalizedWordEvidence([
+    ["No", "Longitude", "Latitude"],
+    ...Array.from({ length: 10 }, (_, index) => [String(index + 1), (62 + index / 100).toFixed(4), (15 + index / 100).toFixed(4)]),
+    ["No", "Longitude", "Latitude"],
+    ...Array.from({ length: 10 }, (_, index) => [String(index + 1), (63 + index / 100).toFixed(4), (16 + index / 100).toFixed(4)])
+  ]);
+  const groupedDms = normalizedWordEvidence([
+    ["Location Group A"],
+    ["Point", "Latitude DMS", "Longitude DMS"],
+    ["A", `14°01'01.00\"N`, `61°01'01.00\"E`],
+    ["B", `14°01'02.00\"N`, `61°01'02.00\"E`],
+    ["Location Group B"],
+    ["Point", "Latitude DMS", "Longitude DMS"],
+    ["A", `15°01'01.00\"N`, `62°01'01.00\"E`],
+    ["B", `15°01'02.00\"N`, `62°01'02.00\"E`]
+  ]);
+  const mapRoles = normalizedWordEvidence([
+    ["Search"], ["14.7654, 61.2345"],
+    ["Place details"], ["14.765432, 61.234567"],
+    ["Plus Code 8FVC9G8F+5W"]
+  ]);
+  const utm = normalizedWordEvidence([
+    ["CRS: WGS 84 / UTM zone 34N"],
+    ["Point A"], ["Easting"], ["512340"], ["Northing"], ["1634560"]
+  ]);
+  const mgrs = normalizedWordEvidence([
+    ["MGRS Datum WGS 84 Zone 34N Hemisphere N"],
+    ["Axis order X | Y"],
+    ["MGRS 34N AB 12345 67890"]
+  ]);
+  const otherProjected = normalizedWordEvidence([
+    ["Projected CRS EPSG:3857"],
+    ["Point", "Easting", "Northing"],
+    ["A", "512340", "1634560"]
+  ]);
+  const ambiguous = normalizedWordEvidence([["Coordinate candidate 14.2 maybe 61.3"]]);
+  const negative = normalizedWordEvidence([["Report 2026 area 61.3 km2 margin 14.2 percent"]]);
+
+  const expectations = [
+    [decimalSingle, ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT, true],
+    [dmsSingle, ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT, true],
+    [fourRows, ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE, true],
+    [longRows, ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE, true],
+    [groupedDms, ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED, true],
+    [mapRoles, ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT, true],
+    [utm, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE, true],
+    [mgrs, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE, true],
+    [otherProjected, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE, true],
+    [ambiguous, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW, false],
+    [negative, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW, false]
+  ];
+  assert.equal(expectations.length, 11);
+  for (const [evidence, family, matched] of expectations) {
+    const result = route(evidence.text, evidence.layoutLines);
+    assert.equal(result.family, family);
+    assert.equal(result.matched, matched);
+  }
+});
+
+test("R09B", "word-box reconstruction fails closed for missing overlapping or uncertain structure", () => {
+  const missing = normalizedWordEvidence([
+    ["Point", "Longitude", "Latitude"],
+    ["A", "61.1001", "14.1001"],
+    ["B", "61.1002", "14.1002"],
+    ["C", "61.1003", "14.1003"]
+  ], { missingWordBox: true });
+  const overlap = normalizedWordEvidence([
+    ["Longitude"], ["61.234567"], ["Latitude"], ["14.765432"]
+  ], { overlap: true });
+  const duplicateIdentityRows = [
+    ["Point", "Longitude", "Latitude"],
+    ["D", "71.6101", "25.7101"],
+    ["E", "71.6102", "25.7102"],
+    ["F", "71.6103", "25.7103"]
+  ];
+  const duplicateIdentity = normalizeLocalOcrStructuredEvidence({
+    sourceText: duplicateIdentityRows.map(row => row.join(" ")).join("\n"),
+    layoutLines: syntheticWordLayout(duplicateIdentityRows).map((line, index) => ({
+      ...line,
+      local_line_index: index === 2 ? 1 : line.local_line_index
+    }))
+  });
+  const outsideRegionRows = [["Longitude"], ["71.612345"], ["Latitude"], ["25.712345"]];
+  const outsideRegion = normalizeLocalOcrStructuredEvidence({
+    sourceText: outsideRegionRows.map(row => row.join(" ")).join("\n"),
+    layoutLines: syntheticWordLayout(outsideRegionRows).map((line, index) => ({
+      ...line,
+      words: index === 1
+        ? line.words.map(word => ({ ...word, bbox: [word.bbox[0], word.bbox[1], 1180, word.bbox[3]] }))
+        : line.words
+    }))
+  });
+  for (const evidence of [missing, overlap, duplicateIdentity, outsideRegion]) {
+    assert.equal(evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+    const result = route(evidence.text, evidence.layoutLines);
+    assert.equal(result.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+    assert.equal(result.matched, false);
+  }
+});
+
+test("R09D", "source-layout coverage gaps and delimiter fallback fail closed", () => {
+  const visibleRows = [
+    ["Point", "Longitude", "Latitude"],
+    ["K", "67.3101", "21.4101"],
+    ["L", "67.3102", "21.4102"],
+    ["M", "67.3103", "21.4103"]
+  ];
+  const sourceOnlyCandidate = "Z 68.9901 22.8801";
+  const missingLayoutLine = normalizeLocalOcrStructuredEvidence({
+    sourceText: `${visibleRows.map(row => row.join(" ")).join("\n")}\n${sourceOnlyCandidate}`,
+    layoutLines: syntheticWordLayout(visibleRows)
+  });
+  assert.equal(missingLayoutLine.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+  assert.equal(missingLayoutLine.reason, LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH);
+  assert.equal(missingLayoutLine.text, "");
+  assert.equal(missingLayoutLine.layoutLines.length, 0);
+  assert.equal(route(missingLayoutLine.text, missingLayoutLine.layoutLines).family,
+    ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+
+  const pipeRows = [
+    ["Point", "Longitude", "Latitude"],
+    ["K", "67.3101", "21.4101"],
+    ["L", "67.3102", "21.4102"],
+    ["M", "67.3103", "21.4103"]
+  ];
+  const pipeText = pipeRows.map(row => row.join(" | "));
+  for (const invalidLineIndex of [0, 2]) {
+    const layoutLines = syntheticWordLayout(pipeRows).map((line, index) => ({
+      ...line,
+      text: pipeText[index],
+      words: index === invalidLineIndex ? [] : line.words,
+      word_structure_valid: index !== invalidLineIndex
+    }));
+    const invalid = normalizeLocalOcrStructuredEvidence({
+      sourceText: pipeText.join("\n"),
+      layoutLines
+    });
+    assert.equal(invalid.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+    assert.equal(invalid.reason, LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.UNTRUSTED_WORD_STRUCTURE);
+    assert.equal(invalid.text, "");
+    const result = route(invalid.text, invalid.layoutLines);
+    assert.equal(result.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+    assert.equal(result.matched, false);
+  }
+});
+
+test("R09C", "normalized word-box evidence retains exact private observation coverage", () => {
+  const splitDms = normalizedWordEvidence([
+    ["Longitude"], [`61°14'04.44\"E`], ["Latitude"], [`14°45'55.56\"N`]
+  ]);
+  const splitDmsResult = assertConformant(
+    contractFor(splitDms.text, splitDms.layoutLines),
+    splitDms.text
+  );
+  assert.equal(splitDmsResult.counts.observedCandidateCount, 2);
+  assert.equal(splitDmsResult.counts.boundCandidateCount, 2);
+  assert.equal(splitDmsResult.counts.unassignedCandidateCount, 0);
+
+  const decimalTable = normalizedWordEvidence([
+    ["Point", "Longitude", "Latitude"],
+    ["A", "61.1001", "14.1001"],
+    ["B", "61.1002", "14.1002"],
+    ["C", "61.1003", "14.1003"]
+  ]);
+  const tableResult = assertConformant(
+    contractFor(decimalTable.text, decimalTable.layoutLines),
+    decimalTable.text
+  );
+  assert.equal(tableResult.counts.observedCandidateCount, 4);
+  assert.equal(tableResult.counts.boundCandidateCount, 4);
+  assert.equal(tableResult.counts.unassignedCandidateCount, 0);
+
+  const map = normalizedWordEvidence([
+    ["Search"], ["14.7654, 61.2345"],
+    ["Details"], ["14.765432, 61.234567"],
+    ["Plus Code 8FVC9G8F+5W"]
+  ]);
+  const mapResult = assertConformant(
+    contractFor(map.text, map.layoutLines),
+    "MAP_SEARCH_BOX | 14.7654, 61.2345\nMAP_PLACE_DETAILS | 14.765432, 61.234567\nPLUS_CODE | 8FVC9G8F+5W"
+  );
+  assert.equal(mapResult.counts.unassignedCandidateCount, 0);
+
+  const utm = normalizedWordEvidence([
+    ["CRS: WGS 84 / UTM zone 34N"],
+    ["Point A"], ["Easting"], ["512340"], ["Northing"], ["1634560"]
+  ]);
+  const projectedResult = assertConformant(
+    contractFor(utm.text, utm.layoutLines),
+    "CRS | WGS 84\nZONE | 34N\nHEMISPHERE | N\nAXIS_ORDER | EASTING | NORTHING\nPOINT | A | 512340 | 1634560"
+  );
+  assert.equal(projectedResult.counts.unassignedCandidateCount, 0);
+
+  const otherProjected = normalizedWordEvidence([
+    ["Projected CRS EPSG:3857"],
+    ["Point", "Easting", "Northing"],
+    ["A", "512340", "1634560"]
+  ]);
+  const otherProjectedResult = assertConformant(
+    contractFor(otherProjected.text, otherProjected.layoutLines),
+    "CRS | EPSG:3857\nAXIS_ORDER | EASTING | NORTHING\nPOINT | A | 512340 | 1634560"
+  );
+  assert.equal(otherProjectedResult.counts.unassignedCandidateCount, 0);
 });
 
 test("R10", "country, filename, and fixed-value metadata cannot influence classifier", () => {
