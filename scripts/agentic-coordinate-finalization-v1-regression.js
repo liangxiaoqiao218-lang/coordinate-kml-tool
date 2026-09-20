@@ -5,6 +5,7 @@ import {
   createAgenticGeometryArtifact,
   finalizeAgenticCoordinateDocument,
   runAgenticCoordinateFinalization,
+  transformAgenticCoordinateResult,
 } from '../server/agentic-coordinate-finalization/index.js';
 
 function providerPayload(payload) {
@@ -138,6 +139,65 @@ assert.throws(
   () => createAgenticGeometryArtifact({ documentRevision: 10, result: projected }),
   (error) => error.code === 'PROJECTED_CRS_TRANSFORM_REQUIRED',
 );
+
+const utm50s = transformAgenticCoordinateResult(projected);
+assert.equal(utm50s.transformation.sourceCrs, 'EPSG:32750');
+assert.equal(utm50s.transformation.targetCrs, 'EPSG:4326');
+assert.ok(utm50s.groups[0].points[0].latitude < 0);
+assert.ok(utm50s.groups[0].points[0].longitude > 110);
+const utmArtifact = createAgenticGeometryArtifact({
+  documentRevision: 10,
+  result: { ...utm50s, geometryType: 'MultiPoint' },
+});
+assert.equal(utmArtifact.geometry.type, 'MultiPoint');
+
+const utm28n = {
+  ...projected,
+  coordinateSystem: {
+    kind: 'projected',
+    name: '28N',
+    epsg: null,
+    status: 'identified',
+  },
+  geometryType: 'MultiPoint',
+  groups: [{
+    name: null,
+    points: [{
+      ...projected.groups[0].points[0],
+      sourceText: '28N | 469000 | 2229000',
+      x: 469000,
+      y: 2229000,
+    }],
+  }],
+};
+const utm28nTransformed = transformAgenticCoordinateResult(utm28n);
+assert.equal(utm28nTransformed.transformation.sourceCrs, 'EPSG:32628');
+assert.ok(utm28nTransformed.groups[0].points[0].latitude > 0);
+assert.ok(utm28nTransformed.groups[0].points[0].longitude < 0);
+
+const kyrgyz = {
+  ...projected,
+  coordinateSystem: {
+    kind: 'projected',
+    name: 'Kyrgyzstan GK',
+    epsg: 'EPSG:28413',
+    status: 'identified',
+  },
+  geometryType: 'MultiPoint',
+  groups: [{
+    name: null,
+    points: [{
+      ...projected.groups[0].points[0],
+      sourceText: '1 | 13261341 | 4607777',
+      x: 13261341,
+      y: 4607777,
+    }],
+  }],
+};
+const kyrgyzTransformed = transformAgenticCoordinateResult(kyrgyz);
+assert.equal(kyrgyzTransformed.transformation.sourceCrs, 'EPSG:28413');
+assert.ok(kyrgyzTransformed.groups[0].points[0].latitude > 39);
+assert.ok(kyrgyzTransformed.groups[0].points[0].longitude > 69);
 
 const reused = await finalizeAgenticCoordinateDocument({
   documentRevision: 11,

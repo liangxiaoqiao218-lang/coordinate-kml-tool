@@ -1,6 +1,7 @@
 import { createAgenticGeometryArtifact } from './geometry.js';
 import { buildAgenticKml } from './kml.js';
 import { runAgenticCoordinateFinalization } from './service.js';
+import { transformAgenticCoordinateResult } from './projection.js';
 
 function normalizeText(value) {
   return String(value || '').replace(/\r\n?/g, '\n');
@@ -40,9 +41,10 @@ export async function finalizeAgenticCoordinateDocument({
       providerCall,
     });
 
+  const spatialResult = transformAgenticCoordinateResult(finalized.result);
   const geometryArtifact = createAgenticGeometryArtifact({
     documentRevision,
-    result: finalized.result,
+    result: spatialResult,
   });
   const feature = Object.freeze({
     type: 'Feature',
@@ -58,6 +60,7 @@ export async function finalizeAgenticCoordinateDocument({
   return Object.freeze({
     documentRevision,
     result: finalized.result,
+    spatialResult,
     geometryArtifact,
     map: Object.freeze({
       documentRevision,
@@ -72,4 +75,3 @@ export async function finalizeAgenticCoordinateDocument({
     execution: finalized.execution,
   });
 }
-

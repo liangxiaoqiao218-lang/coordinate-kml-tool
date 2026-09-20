@@ -7,7 +7,8 @@ function geometryError(code, message) {
 }
 
 function geographicPositions(result) {
-  if (result.coordinateSystem?.kind !== 'geographic') {
+  if (result.coordinateSystem?.kind !== 'geographic'
+    && result.transformation?.status !== 'success') {
     throw geometryError(
       'PROJECTED_CRS_TRANSFORM_REQUIRED',
       'Map and KML require an identified projected-CRS transform before projected coordinates can be used',
@@ -91,4 +92,3 @@ export function createAgenticGeometryArtifact({ documentRevision, result }) {
     reviewRequired: result.resultStatus === 'needs_review',
   });
 }
-
