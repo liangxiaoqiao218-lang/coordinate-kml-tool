@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomInt } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
 import {
@@ -1999,6 +2000,99 @@ test("R47", "fresh production-classification recovery matrix preserves complete 
       .includes(conflictRoute.reason));
     assert.equal(conflictRoute.evidence.projectedEvidenceComplete, false);
   }
+});
+
+test("R48", "fresh per-run acceptance evidence tolerates OCR line-break drift without weakening word-box closure", () => {
+  const longitudeSeed = randomInt(920000, 1680000) / 10000;
+  const latitudeSeed = randomInt(-760000, 760000) / 10000;
+  const coordinate = (value, offset = 0, precision = 6) => (value + offset).toFixed(precision);
+  const zone = randomInt(10, 55);
+  const easting = randomInt(210000, 790000);
+  const northing = randomInt(1200000, 8800000);
+  const mgrsAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const olcAlphabet = "23456789CFGHJMPQRVWX";
+  const mgrsGrid = `${mgrsAlphabet[randomInt(0, mgrsAlphabet.length)]}${mgrsAlphabet[randomInt(0, mgrsAlphabet.length)]}`;
+  const mgrsDigits = String(randomInt(10000, 99999));
+  const pickOlc = limit => olcAlphabet[randomInt(0, limit)];
+  const freshPlusCode = `${pickOlc(9)}${pickOlc(18)}${Array.from({ length: 6 }, () => pickOlc(olcAlphabet.length)).join("")}+${pickOlc(olcAlphabet.length)}${pickOlc(olcAlphabet.length)}`;
+  const normalizeWithCollapsedSource = rows => normalizeLocalOcrStructuredEvidence({
+    sourceText: rows.flatMap(row => row).join(" "),
+    layoutLines: syntheticWordLayout(rows)
+  });
+  const decimalSingle = normalizeWithCollapsedSource([
+    ["Longitude"], [coordinate(longitudeSeed)], ["Latitude"], [coordinate(latitudeSeed)]
+  ]);
+  const dmsSingle = normalizeWithCollapsedSource([
+    ["Longitude"], [`${randomInt(92, 168)}°${randomInt(10, 50)}'${randomInt(10, 50)}.42\"E`],
+    ["Latitude"], [`${randomInt(11, 76)}°${randomInt(10, 50)}'${randomInt(10, 50)}.24\"N`]
+  ]);
+  const fourPointRows = [
+    ["Point", "Longitude", "Latitude"],
+    ...Array.from({ length: 4 }, (_, index) => [
+      String.fromCharCode(65 + index), coordinate(longitudeSeed, index / 100), coordinate(latitudeSeed, index / 100)
+    ])
+  ];
+  const longTableRows = [];
+  for (let index = 0; index < 20; index += 1) {
+    if (index === 0 || index === 10) longTableRows.push(["No", "Longitude", "Latitude"]);
+    longTableRows.push([
+      String((index % 10) + 1), coordinate(longitudeSeed, index / 1000), coordinate(latitudeSeed, index / 1000)
+    ]);
+  }
+  const groupedDmsRows = [
+    ["Location Group FreshA"], ["Point", "Latitude DMS", "Longitude DMS"],
+    ["A", `21°11'${randomInt(10, 50)}.11\"N`, `121°22'${randomInt(10, 50)}.22\"E`],
+    ["B", `21°11'${randomInt(10, 50)}.33\"N`, `121°22'${randomInt(10, 50)}.44\"E`],
+    ["Location Group FreshB"], ["Point", "Latitude DMS", "Longitude DMS"],
+    ["A", `22°12'${randomInt(10, 50)}.55\"N`, `122°23'${randomInt(10, 50)}.66\"E`],
+    ["B", `22°12'${randomInt(10, 50)}.77\"N`, `122°23'${randomInt(10, 50)}.88\"E`]
+  ];
+  const mapRows = [
+    ["Search"], [coordinate(latitudeSeed), coordinate(longitudeSeed)],
+    ["Place details"], [coordinate(latitudeSeed, 0.000031), coordinate(longitudeSeed, 0.000031)],
+    ["Plus Code"], [freshPlusCode]
+  ];
+  const utmRows = [
+    [`WGS 84 / UTM zone ${zone}N / EPSG:${32600 + zone}`],
+    ["Point F"], ["Easting"], [String(easting)], ["Northing"], [String(northing)]
+  ];
+  const mgrsRows = [["MGRS", `${zone}N`, mgrsGrid, mgrsDigits, String(randomInt(10000, 99999))]];
+  const otherProjectedRows = [
+    ["Projected CRS EPSG:3857"],
+    ["Point", "Easting", "Northing"], ["F", String(easting), String(randomInt(100000, 900000))]
+  ];
+  const ambiguousRows = [["Coordinate candidate", coordinate(latitudeSeed, 0, 3), "maybe", coordinate(longitudeSeed, 0, 3)]];
+  const negativeRows = [["Report", String(randomInt(2031, 2099)), "area", String(randomInt(20, 90)), "km2", "margin", String(randomInt(10, 80)), "percent"]];
+  const cases = [
+    [decimalSingle, ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT, true],
+    [dmsSingle, ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT, true],
+    [normalizeWithCollapsedSource(fourPointRows), ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE, true],
+    [normalizeWithCollapsedSource(longTableRows), ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE, true],
+    [normalizeWithCollapsedSource(groupedDmsRows), ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED, true],
+    [normalizeWithCollapsedSource(mapRows), ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT, true],
+    [normalizeWithCollapsedSource(utmRows), ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE, true],
+    [normalizeWithCollapsedSource(mgrsRows), ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE, true],
+    [normalizeWithCollapsedSource(otherProjectedRows), ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE, true],
+    [normalizeWithCollapsedSource(ambiguousRows), ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW, false],
+    [normalizeWithCollapsedSource(negativeRows), ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW, false]
+  ];
+  assert.equal(cases.length, 11);
+  for (const [evidence, family, matched] of cases) {
+    assert.equal(evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE,
+      `${family}:${evidence.reason}`);
+    assert.equal(evidence.sourceLineCount, 1);
+    if (evidence.layoutLineCount > 1) assert.notEqual(evidence.sourceLineCount, evidence.layoutLineCount);
+    const selected = route(evidence.text, evidence.layoutLines);
+    assert.equal(selected.family, family);
+    assert.equal(selected.matched, matched);
+  }
+
+  const missingCoverage = normalizeLocalOcrStructuredEvidence({
+    sourceText: `${fourPointRows.flatMap(row => row).join(" ")} unseen`,
+    layoutLines: syntheticWordLayout(fourPointRows)
+  });
+  assert.equal(missingCoverage.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+  assert.equal(missingCoverage.reason, LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH);
 });
 
 let passed = 0;

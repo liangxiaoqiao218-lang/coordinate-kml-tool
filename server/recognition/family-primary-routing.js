@@ -2910,11 +2910,25 @@ export function createOneShotAcquisitionContract({
 }
 
 function buildAcquisitionConformanceResult({ contract, status, reason, counts = {} }) {
+  const observedCandidateCount = boundedStructureCount(counts.observedCandidateCount);
+  const requestedBoundCandidateCount = boundedStructureCount(counts.boundCandidateCount);
+  const candidateCountInvariantHolds = requestedBoundCandidateCount <= observedCandidateCount;
+  const boundCandidateCount = candidateCountInvariantHolds ? requestedBoundCandidateCount : observedCandidateCount;
+  const unassignedCandidateCount = Math.max(
+    boundedStructureCount(counts.unassignedCandidateCount),
+    requestedBoundCandidateCount - observedCandidateCount
+  );
+  const effectiveStatus = candidateCountInvariantHolds
+    ? status
+    : ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED;
+  const effectiveReason = candidateCountInvariantHolds
+    ? reason
+    : ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.OBSERVATION_SET_INCOMPLETE;
   return Object.freeze({
     family: String(contract?.family || ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW),
-    status,
-    reason,
-    conformant: status === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT,
+    status: effectiveStatus,
+    reason: effectiveReason,
+    conformant: effectiveStatus === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT,
     counts: Object.freeze({
       coordinateRowCount: boundedStructureCount(counts.coordinateRowCount),
       repeatedHeaderCount: boundedStructureCount(counts.repeatedHeaderCount),
@@ -2923,9 +2937,9 @@ function buildAcquisitionConformanceResult({ contract, status, reason, counts = 
       projectedCoordinateRowCount: boundedStructureCount(counts.projectedCoordinateRowCount),
       crsFieldCount: boundedStructureCount(counts.crsFieldCount),
       sourceRegionCount: boundedStructureCount(counts.sourceRegionCount),
-      observedCandidateCount: boundedStructureCount(counts.observedCandidateCount),
-      boundCandidateCount: boundedStructureCount(counts.boundCandidateCount),
-      unassignedCandidateCount: boundedStructureCount(counts.unassignedCandidateCount)
+      observedCandidateCount,
+      boundCandidateCount,
+      unassignedCandidateCount
     })
   });
 }

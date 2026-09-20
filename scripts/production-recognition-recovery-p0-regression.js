@@ -1882,6 +1882,194 @@ test("one-shot structured normalization rejects incomplete OCR coverage before r
     primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
 });
 
+test("one-shot structured fresh per-run eleven-class acceptance is line-break tolerant and contract closed", () => {
+  const longitudeSeed = crypto.randomInt(930000, 1670000) / 10000;
+  const latitudeSeed = crypto.randomInt(-740000, 740000) / 10000;
+  const decimal = (value, offset = 0, precision = 6) => (value + offset).toFixed(precision);
+  const zone = crypto.randomInt(11, 54);
+  const easting = crypto.randomInt(220000, 780000);
+  const northing = crypto.randomInt(1300000, 8700000);
+  const mgrsLetters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const olcAlphabet = "23456789CFGHJMPQRVWX";
+  const pick = value => value[crypto.randomInt(0, value.length)];
+  const plusCode = `${pick(olcAlphabet.slice(0, 9))}${pick(olcAlphabet.slice(0, 18))}${Array.from({ length: 6 }, () => pick(olcAlphabet)).join("")}+${pick(olcAlphabet)}${pick(olcAlphabet)}`;
+  const grid = `${pick(mgrsLetters)}${pick(mgrsLetters)}`;
+  const mgrsEast = String(crypto.randomInt(10000, 99999));
+  const mgrsNorth = String(crypto.randomInt(10000, 99999));
+  const wordLayout = rows => rows.map((fields, lineIndex) => {
+    const values = Array.isArray(fields) ? fields : [fields];
+    const top = 24 + (lineIndex * 42);
+    const columnWidth = Math.floor(820 / Math.max(1, values.length));
+    const words = values.flatMap((field, fieldIndex) => {
+      let cursor = 24 + (fieldIndex * columnWidth);
+      return String(field).split(/\s+/u).filter(Boolean).map(word => {
+        const width = Math.max(38, word.length * 9);
+        const entry = { text: word, bbox: [cursor, top, cursor + width, top + 24], confidence: 97 };
+        cursor += width + 12;
+        return entry;
+      });
+    });
+    return {
+      text: values.join(" "),
+      bbox: [12, top, 888, top + 28],
+      confidence: 97,
+      words,
+      word_structure_valid: true,
+      local_line_index: lineIndex,
+      page: 1,
+      resultRevision: 1
+    };
+  });
+  const normalizeFresh = rows => normalizeLocalOcrStructuredEvidence({
+    sourceText: rows.flatMap(row => row).join(" "),
+    layoutLines: wordLayout(rows)
+  });
+  const makeCase = (rows, family, providerText, matched = true) => ({
+    evidence: normalizeFresh(rows), family, providerText, matched
+  });
+
+  const decimalSingleRows = [
+    ["Longitude"], [decimal(longitudeSeed)], ["Latitude"], [decimal(latitudeSeed)]
+  ];
+  const dmsSingleRows = [
+    ["Longitude"], [`${crypto.randomInt(93, 167)}°${crypto.randomInt(10, 50)}'${crypto.randomInt(10, 50)}.31\"E`],
+    ["Latitude"], [`${crypto.randomInt(12, 74)}°${crypto.randomInt(10, 50)}'${crypto.randomInt(10, 50)}.13\"N`]
+  ];
+  const fourPointRows = [
+    ["Point", "Longitude", "Latitude"],
+    ...Array.from({ length: 4 }, (_, index) => [
+      String.fromCharCode(65 + index), decimal(longitudeSeed, index / 100), decimal(latitudeSeed, index / 100)
+    ])
+  ];
+  const longRows = [];
+  for (let index = 0; index < 20; index += 1) {
+    if (index === 0 || index === 10) longRows.push(["No", "Longitude", "Latitude"]);
+    longRows.push([
+      String((index % 10) + 1), decimal(longitudeSeed, index / 1000), decimal(latitudeSeed, index / 1000)
+    ]);
+  }
+  const groupedRows = [
+    ["Location Group AlphaFresh"], ["Point", "Latitude DMS", "Longitude DMS"],
+    ["A", `23°11'${crypto.randomInt(10, 50)}.11\"N`, `123°21'${crypto.randomInt(10, 50)}.12\"E`],
+    ["B", `23°11'${crypto.randomInt(10, 50)}.21\"N`, `123°21'${crypto.randomInt(10, 50)}.22\"E`],
+    ["Location Group BetaFresh"], ["Point", "Latitude DMS", "Longitude DMS"],
+    ["A", `24°12'${crypto.randomInt(10, 50)}.31\"N`, `124°22'${crypto.randomInt(10, 50)}.32\"E`],
+    ["B", `24°12'${crypto.randomInt(10, 50)}.41\"N`, `124°22'${crypto.randomInt(10, 50)}.42\"E`]
+  ];
+  const mapRows = [
+    ["Search"], [decimal(latitudeSeed), decimal(longitudeSeed)],
+    ["Place details"], [decimal(latitudeSeed, 0.000037), decimal(longitudeSeed, 0.000037)],
+    ["Plus Code"], [plusCode]
+  ];
+  const utmRows = [
+    [`WGS 84 / UTM zone ${zone}N / EPSG:${32600 + zone}`],
+    ["Point F"], ["Easting"], [String(easting)], ["Northing"], [String(northing)]
+  ];
+  const mgrsRows = [
+    [`MGRS Datum WGS84 Zone ${zone}N Hemisphere N`],
+    ["Axis order X Y"],
+    ["MGRS", `${zone}N`, grid, mgrsEast, mgrsNorth]
+  ];
+  const otherProjectedRows = [
+    ["Projected CRS EPSG:3857"],
+    ["Point", "Easting", "Northing"], ["F", String(easting), String(crypto.randomInt(100000, 900000))]
+  ];
+  const groupedProvider = [
+    "GROUP | Location Group AlphaFresh", "HEADER | Point | Latitude DMS | Longitude DMS",
+    `POINT | A | ${groupedRows[2][1]} | ${groupedRows[2][2]}`,
+    `POINT | B | ${groupedRows[3][1]} | ${groupedRows[3][2]}`,
+    "GROUP | Location Group BetaFresh", "HEADER | Point | Latitude DMS | Longitude DMS",
+    `POINT | A | ${groupedRows[6][1]} | ${groupedRows[6][2]}`,
+    `POINT | B | ${groupedRows[7][1]} | ${groupedRows[7][2]}`
+  ].join("\n");
+  const mapProvider = [
+    `MAP_SEARCH_BOX | ${decimal(latitudeSeed)}, ${decimal(longitudeSeed)}`,
+    `MAP_PLACE_DETAILS | ${decimal(latitudeSeed, 0.000037)}, ${decimal(longitudeSeed, 0.000037)}`,
+    `PLUS_CODE | ${plusCode}`
+  ].join("\n");
+  const utmProvider = [
+    `CRS | WGS 84 EPSG:${32600 + zone}`, `ZONE | ${zone}N`, "HEMISPHERE | N",
+    "AXIS_ORDER | EASTING | NORTHING", `POINT | F | ${easting} | ${northing}`
+  ].join("\n");
+  const mgrsProvider = [
+    "CRS | WGS 84 MGRS", `ZONE | ${zone}N`, "HEMISPHERE | N", "AXIS_ORDER | EASTING | NORTHING",
+    `MGRS | ${zone}N | ${grid} | ${mgrsEast} | ${mgrsNorth}`
+  ].join("\n");
+  const otherProjectedProvider = [
+    "CRS | EPSG:3857", "AXIS_ORDER | EASTING | NORTHING",
+    `POINT | F | ${otherProjectedRows[2][1]} | ${otherProjectedRows[2][2]}`
+  ].join("\n");
+
+  const structured = [
+    makeCase(decimalSingleRows, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT, null),
+    makeCase(dmsSingleRows, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT, null),
+    makeCase(fourPointRows, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE, null),
+    makeCase(longRows, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE, null),
+    makeCase(groupedRows, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED, groupedProvider),
+    makeCase(mapRows, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT, mapProvider),
+    makeCase(utmRows, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE, utmProvider),
+    makeCase(mgrsRows, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE, mgrsProvider),
+    makeCase(otherProjectedRows, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE, otherProjectedProvider)
+  ];
+  for (const [caseIndex, entry] of structured.entries()) {
+    assert.equal(entry.evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE,
+      `${entry.family}:${entry.evidence.reason}`);
+    assert.equal(entry.evidence.sourceLineCount, 1);
+    assert.ok(entry.evidence.layoutLineCount > 1);
+    const selected = primaryRouting.classifyOneShotStructuredFamily(entry.evidence);
+    assert.equal(selected.family, entry.family);
+    assert.equal(selected.matched, true);
+    const contract = primaryRouting.createOneShotAcquisitionContract({
+      route: selected,
+      sourceText: entry.evidence.text,
+      layoutLines: entry.evidence.layoutLines,
+      imageIdentity: syntheticSpatialIdentity,
+      resultRevision: 1
+    });
+    if (entry.family === primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE) {
+      const providerContract = primaryRouting.createOneShotAcquisitionContract({
+        route: selected,
+        sourceText: entry.providerText,
+        layoutLines: spatialLayoutFor(entry.providerText),
+        imageIdentity: syntheticSpatialIdentity,
+        resultRevision: 1
+      });
+      assert.deepEqual(providerContract.structure.crs, contract.structure.crs,
+        `${caseIndex + 1}:projected identity drift`);
+    }
+    const conformance = primaryRouting.validateOneShotAcquisitionContract({
+      contract,
+      providerText: entry.providerText || entry.evidence.text
+    });
+    assert.equal(conformance.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT,
+      `${caseIndex + 1}:${entry.family}:${conformance.reason}`);
+    assert.equal(conformance.counts.observedCandidateCount, conformance.counts.boundCandidateCount);
+    assert.equal(conformance.counts.unassignedCandidateCount, 0);
+    console.log(`OFFLINE ACCEPTANCE class ${caseIndex + 1}: PASS`);
+  }
+
+  for (const [reviewIndex, rows] of [
+    [["Coordinate candidate", decimal(latitudeSeed, 0, 3), "maybe", decimal(longitudeSeed, 0, 3)]],
+    [["Report", String(crypto.randomInt(2032, 2098)), "distance", String(crypto.randomInt(10, 99)), "km", "pixels", String(crypto.randomInt(100, 999))]]
+  ].entries()) {
+    const evidence = normalizeFresh(rows);
+    const selected = primaryRouting.classifyOneShotStructuredFamily(evidence);
+    assert.equal(selected.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+    assert.equal(selected.matched, false);
+    const contract = primaryRouting.createOneShotAcquisitionContract({
+      route: selected,
+      sourceText: evidence.text,
+      layoutLines: evidence.layoutLines,
+      imageIdentity: syntheticSpatialIdentity,
+      resultRevision: 1
+    });
+    const conformance = primaryRouting.validateOneShotAcquisitionContract({ contract, providerText: evidence.text });
+    assert.equal(conformance.status, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.REVIEW_REQUIRED);
+    assert.equal(conformance.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY);
+    console.log(`OFFLINE ACCEPTANCE class ${reviewIndex + 10}: REVIEW`);
+  }
+});
+
 test("one-shot structured production classification recovery stays contract-bound and synthetic", () => {
   assert.match(serverSource, /format:\s*oneShotAcquisitionContract\.format/u);
   assert.match(primaryRouting.buildOneShotStructuredFamilyPrompt({
