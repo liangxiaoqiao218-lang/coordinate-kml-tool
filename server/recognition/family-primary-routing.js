@@ -1092,6 +1092,116 @@ function hemisphereFromLatitudeBand(value) {
   return band >= "N" ? "N" : "S";
 }
 
+function expectedDatumClassForEpsg(code) {
+  const value = Number(code);
+  if (value === 3395 || value === 3857
+    || (value >= 32601 && value <= 32760)) return "WGS84";
+  if (value >= 26901 && value <= 26923) return "NAD83";
+  return "";
+}
+
+function expectedGridIdentityForEpsg(code) {
+  const value = Number(code);
+  if (value >= 32601 && value <= 32660) {
+    return Object.freeze({ zone: value - 32600, hemisphere: "N" });
+  }
+  if (value >= 32701 && value <= 32760) {
+    return Object.freeze({ zone: value - 32700, hemisphere: "S" });
+  }
+  if (value >= 26901 && value <= 26923) {
+    return Object.freeze({ zone: value - 26900, hemisphere: "N" });
+  }
+  return null;
+}
+
+function datumTokensCompatibleWithEpsg(tokens, code) {
+  const visibleTokens = tokens.filter(token => {
+    const compact = String(token || "").replace(/[^A-Z0-9]/giu, "").toUpperCase();
+    return !/^EPSG\d{4,6}$/u.test(compact);
+  });
+  if (visibleTokens.length === 0) return true;
+  const expectedClass = expectedDatumClassForEpsg(code);
+  if (!expectedClass) return false;
+  return visibleTokens.every(token => normalizeProjectedDatumIdentity(token).datumClass === expectedClass);
+}
+
+function gridClaimsCompatibleWithEpsg(lines, zones, hemispheres, code) {
+  const gridClaimed = lines.some(line => /\b(?:UTM|MGRS|Zone|Zona|Fuso|Hemisphere)\b/iu.test(String(line || "")))
+    || zones.length > 0 || hemispheres.length > 0;
+  if (!gridClaimed) return true;
+  const expected = expectedGridIdentityForEpsg(code);
+  if (!expected || zones.length === 0 || hemispheres.length === 0) return false;
+  return zones.every(zone => zone === expected.zone)
+    && hemispheres.every(hemisphere => hemisphere === expected.hemisphere);
+}
+
+function projectionMethodClaims(lines) {
+  const claims = [];
+  for (const line of lines) {
+    const source = String(line || "");
+    if (/^\s*(?:Projection(?:\s+Method)?|Method|Projected\s+CRS|Projected\s+Coordinate\s+System)\s*[:|]?\s*$/iu.test(source)) {
+      claims.push("UNKNOWN");
+      continue;
+    }
+    if (!/\b(?:CRS|EPSG|Datum|Projection|Projected|Method|UTM|MGRS)\b/iu.test(source)) continue;
+    let remainder = source;
+    const methodPatterns = [
+      ["WEB_MERCATOR", /\b(?:Pseudo\s*[-_]?\s*Mercator|Web\s*[-_]?\s*Mercator)\b/giu],
+      ["TRANSVERSE_MERCATOR", /\b(?:Transverse\s*[-_]?\s*Mercator|UTM)\b/giu],
+      ["LAMBERT_CONFORMAL_CONIC", /\bLambert\s+Conformal\s+Conic\b/giu],
+      ["LAMBERT_AZIMUTHAL_EQUAL_AREA", /\bLambert\s+Azimuthal\s+Equal\s+Area\b/giu],
+      ["MOLLWEIDE", /\bMollweide\b/giu],
+      ["ALBERS_EQUAL_AREA", /\bAlbers(?:\s+Equal\s+Area)?\b/giu],
+      ["STEREOGRAPHIC", /\b(?:Polar\s+Stereographic|Stereographic)\b/giu],
+      ["OBLIQUE_MERCATOR", /\bOblique\s+Mercator\b/giu],
+      ["MERCATOR", /\bMercator\b/giu]
+    ];
+    for (const [claim, pattern] of methodPatterns) {
+      if (pattern.test(remainder)) claims.push(claim);
+      pattern.lastIndex = 0;
+      remainder = remainder.replace(pattern, " ");
+    }
+    remainder = remainder
+      .replace(/\b(?:Projected\s+CRS|Projected\s+Coordinate\s+System|Projection\s+Method|Projection|Method|CRS|Datum)\b/giu, " ")
+      .replace(/\bEPSG\s*[:#|=-]?\s*\d{4,6}\b/giu, " ")
+      .replace(/\b(?:WGS\s*(?:84|1984)|NAD\s*83|MGRS)\b/giu, " ")
+      .replace(/\b(?:Zone|Zona|Fuso)\s*[:#|=-]?\s*\d{1,2}[A-Z]?\b/giu, " ")
+      .replace(/\bHemisphere\s*[:#|=-]?\s*(?:N|S|North|South)\b/giu, " ")
+      .replace(/[^\p{L}]+/gu, " ")
+      .trim();
+    if (remainder) claims.push("UNKNOWN");
+  }
+  return claims;
+}
+
+function explicitProjectionMethodIdentity(lines) {
+  const methodLines = lines.filter(line => (
+    /^\s*(?:(?:Projection\s+Method|Method)(?:\s*[:|=]\s*|\s+)|Projection\s*[:|=]\s*)\S/iu
+      .test(String(line || ""))
+  ));
+  if (methodLines.length === 0) {
+    return Object.freeze({ present: false, value: "", complete: true });
+  }
+  const claims = projectionMethodClaims(methodLines);
+  const unique = [...new Set(claims)];
+  return Object.freeze({
+    present: true,
+    value: unique.length === 1 && unique[0] !== "UNKNOWN" ? unique[0] : "",
+    complete: claims.length === methodLines.length && unique.length === 1 && unique[0] !== "UNKNOWN"
+  });
+}
+
+function projectionMethodsCompatibleWithEpsg(lines, code) {
+  const claims = projectionMethodClaims(lines);
+  if (claims.length === 0) return true;
+  const value = Number(code);
+  let accepted = [];
+  if (value === 3857) accepted = ["WEB_MERCATOR", "MERCATOR"];
+  else if (value === 3395) accepted = ["MERCATOR"];
+  else if (expectedGridIdentityForEpsg(value)) accepted = ["TRANSVERSE_MERCATOR"];
+  return accepted.length > 0 && claims.every(claim => accepted.includes(claim));
+}
+
 function parseStrictMgrsCoordinateLine(line) {
   const match = String(line || "").match(
     /^\s*MGRS\s*[|:]\s*([1-9]|[1-5]\d|60)([C-HJ-NP-X])\s*[|]\s*([A-HJ-NP-Z]{2})\s*[|]\s*(\d{1,5})\s*[|]\s*(\d{1,5})\s*$/iu
@@ -1120,9 +1230,9 @@ function collectProjectedCrsSignals(lines, mgrsCoordinates) {
   ));
   for (const line of lines) {
     const source = String(line || "");
-    if (/\bEPSG\s*[:#=-]?\s*\d{4,6}\s*\//iu.test(source)
-      || /\b(?:zone|zona|fuso)\s*[:#=-]?\s*\d{1,2}[A-Z]?\s*\//iu.test(source)
-      || /\bHemisphere\s*[:=-]?\s*(?:N|S|North|South)\s*\//iu.test(source)) {
+    if (/\bEPSG\s*[:#=-]?\s*\d{4,6}\s*\/\s*(?:EPSG\s*[:#=-]?\s*)?\d{4,6}\b/iu.test(source)
+      || /\b(?:zone|zona|fuso)\s*[:#=-]?\s*\d{1,2}[A-Z]?\s*\/\s*(?:zone\s*)?\d{1,2}[A-Z]?\b/iu.test(source)
+      || /\bHemisphere\s*[:=-]?\s*(?:N|S|North|South)\s*\/\s*(?:N|S|North|South)\b/iu.test(source)) {
       invalidCrsField = true;
     }
     const epsgMatches = [...source.matchAll(/\bEPSG\s*[:#=-]?\s*(\d{4,6})\b/giu)];
@@ -1163,6 +1273,9 @@ function collectProjectedCrsSignals(lines, mgrsCoordinates) {
     zones.push(coordinate.zone);
     hemispheres.push(coordinate.hemisphere);
   }
+  const observedZones = [...zones];
+  const observedHemispheres = [...hemispheres];
+  if (mgrsCoordinates.length > 0 && datumIdentities.length === 0) datumIdentities.push("MGRS");
   const uniqueEpsgCodes = [...new Set(epsgCodes)];
   let epsgSupported = uniqueEpsgCodes.length <= 1;
   for (const code of uniqueEpsgCodes) {
@@ -1181,7 +1294,26 @@ function collectProjectedCrsSignals(lines, mgrsCoordinates) {
       epsgSupported = false;
     }
   }
-  const uniqueDatumIdentities = [...new Set(datumIdentities)];
+  const explicitOtherEpsgCode = explicitOtherProjectedCrs && uniqueEpsgCodes.length === 1
+    ? uniqueEpsgCodes[0]
+    : null;
+  const explicitOtherDatumCompatible = explicitOtherEpsgCode === null
+    || datumTokensCompatibleWithEpsg(datumIdentities, explicitOtherEpsgCode);
+  const explicitOtherGridCompatible = explicitOtherEpsgCode === null
+    || gridClaimsCompatibleWithEpsg(lines, zones, hemispheres, explicitOtherEpsgCode);
+  const epsgProjectionCompatible = uniqueEpsgCodes.length !== 1
+    || projectionMethodsCompatibleWithEpsg(lines, uniqueEpsgCodes[0]);
+  const expectedEpsgGrid = uniqueEpsgCodes.length === 1
+    ? expectedGridIdentityForEpsg(uniqueEpsgCodes[0])
+    : null;
+  const explicitEpsgGridIdentityComplete = !expectedEpsgGrid
+    || (observedZones.length > 0 && observedHemispheres.length > 0
+      && observedZones.every(zone => zone === expectedEpsgGrid.zone)
+      && observedHemispheres.every(hemisphere => hemisphere === expectedEpsgGrid.hemisphere));
+  const effectiveDatumIdentities = explicitOtherEpsgCode !== null
+    ? [`EPSG${explicitOtherEpsgCode}`]
+    : datumIdentities;
+  const uniqueDatumIdentities = [...new Set(effectiveDatumIdentities)];
   const validZones = zones.length > 0 && zones.every(zone => Number.isInteger(zone) && zone >= 1 && zone <= 60);
   const oneZone = validZones && new Set(zones).size === 1;
   const boundedHemispheres = hemispheres.filter(Boolean);
@@ -1199,13 +1331,19 @@ function collectProjectedCrsSignals(lines, mgrsCoordinates) {
     || (boundedHemispheres.length > 0 && new Set(boundedHemispheres).size > 1)
     || uniqueDatumIdentities.length > 1
     || uniqueEpsgCodes.length > 1
-    || !epsgSupported;
+    || !epsgSupported
+    || !explicitOtherDatumCompatible
+    || !explicitOtherGridCompatible
+    || !epsgProjectionCompatible
+    || !explicitEpsgGridIdentityComplete;
   return Object.freeze({
     datumEvidence,
     zoneEvidence: requiresGridIdentity ? validZones : explicitOtherProjectedCrs,
     hemisphereEvidence: requiresGridIdentity ? boundedHemispheres.length > 0 : explicitOtherProjectedCrs,
     conflicting,
-    consistent: crsIdentityConsistent && !invalidZoneSuffix && !invalidCrsField
+    consistent: crsIdentityConsistent && explicitOtherDatumCompatible && explicitOtherGridCompatible
+      && epsgProjectionCompatible && explicitEpsgGridIdentityComplete
+      && !invalidZoneSuffix && !invalidCrsField
       && (requiresGridIdentity ? oneZone && oneHemisphere : explicitOtherProjectedCrs),
     explicitOtherProjectedCrs
   });
@@ -1360,8 +1498,9 @@ export function classifyOneShotStructuredFamily({ text = "", layoutLines = [] } 
   const axisOrderEvidence = projectedAxisHeaders.length > 0
     || projectedAxisPairs.pairs.length > 0
     || explicitProjectedPointLines.length > 0
+    || strictMgrsCoordinateRowCount > 0
     || lines.some(line => (
-      /^\s*Axis\s+order\s*[:=]?\s*(?:Easting\s*[|,;]\s*Northing|X\s*[|,;]\s*Y)\s*$/iu.test(line)
+      /^\s*Axis\s+order\s*[:=]?\s*(?:Easting\s*(?:[|,;/]|\s)\s*Northing|X\s*(?:[|,;/]|\s)\s*Y)\s*$/iu.test(line)
     ));
   const projectedEvidenceComplete = projectedCrsSignals.datumEvidence
     && projectedCrsSignals.zoneEvidence
@@ -1928,7 +2067,13 @@ function privateObservationKinds(text) {
     return Object.freeze(["PROJECTED_AXIS_ORDER", "PROJECTED_ROW"]);
   }
   const projectedKinds = [];
-  if (/\b(?:CRS|EPSG|Datum|UTM|Projection|Projected)\b/iu.test(normalized)) projectedKinds.push("PROJECTED_DATUM");
+  const explicitMethodField = /^\s*(?:(?:Projection\s+Method|Method)(?:\s*[:|=]\s*|\s+)|Projection\s*[:|=]\s*)\S/iu
+    .test(normalized);
+  if (explicitMethodField) projectedKinds.push("PROJECTED_METHOD");
+  if (/\bEPSG\s*[:#|=-]?\s*\d{4,6}\b/iu.test(normalized)) projectedKinds.push("PROJECTED_EPSG");
+  if (!explicitMethodField && /\b(?:CRS|Datum|UTM|Projection|Projected)\b/iu.test(normalized)) {
+    projectedKinds.push("PROJECTED_DATUM");
+  }
   if (/\b(?:Zone|Zona|Fuso)\b/iu.test(normalized)) projectedKinds.push("PROJECTED_ZONE");
   if (/\bHemisphere\b/iu.test(normalized)
     || /\b(?:UTM\s*(?:zone\s*)?|Zone|Zona|Fuso)\s*[:#=-]?\s*\d{1,2}[NS]\b/iu.test(normalized)) {
@@ -1968,6 +2113,8 @@ function privateObservationKindAllowedForFamily(family, kind) {
     [ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT]: new Set(["MAP_SEARCH_BOX", "MAP_PLACE_DETAILS", "MAP_PLUS_CODE"]),
     [ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE]: new Set([
       "PROJECTED_DATUM",
+      "PROJECTED_EPSG",
+      "PROJECTED_METHOD",
       "PROJECTED_ZONE",
       "PROJECTED_HEMISPHERE",
       "PROJECTED_AXIS_ORDER",
@@ -1996,6 +2143,8 @@ function privateObservationCoverageIdentity({ family, format, value, structure =
   } else if (family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE) {
     const crs = structure.crs || structure.identity || {};
     if (crs.datumClass && crs.datumIdentityDigest) tokens.push(`DATUM:${crs.datumClass}:${crs.datumIdentityDigest}`);
+    if (Number.isInteger(crs.epsgCode)) tokens.push(`EPSG:${crs.epsgCode}`);
+    if (crs.projectionMethod) tokens.push(`METHOD:${crs.projectionMethod}`);
     if (Number.isInteger(crs.zone)) tokens.push(`ZONE:${crs.zone}`);
     if (crs.hemisphere) tokens.push(`HEMISPHERE:${crs.hemisphere}`);
     if (crs.axisOrder) tokens.push(`AXIS_ORDER:${crs.axisOrder}`);
@@ -2003,7 +2152,12 @@ function privateObservationCoverageIdentity({ family, format, value, structure =
   return Object.freeze([...tokens, ...valueIdentity.map(item => `VALUE:${item}`)]);
 }
 
-function minimumPrivateSourceRegionCount({ family, expectedRowCount, groupBoundaryCount }) {
+function minimumPrivateSourceRegionCount({
+  family,
+  expectedRowCount,
+  groupBoundaryCount,
+  selfContainedProjectedRows = false
+}) {
   const rows = boundedStructureCount(expectedRowCount);
   switch (family) {
     case ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT:
@@ -2016,7 +2170,7 @@ function minimumPrivateSourceRegionCount({ family, expectedRowCount, groupBounda
     case ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT:
       return 3;
     case ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE:
-      return rows > 0 ? rows + 1 : 0;
+      return rows > 0 ? rows + (selfContainedProjectedRows ? 0 : 1) : 0;
     default:
       return 0;
   }
@@ -2056,18 +2210,34 @@ function createPrivateSpatialProvenance({
     || !Array.isArray(layoutLines) || layoutLines.length === 0 || layoutLines.length > 256) {
     return unavailable();
   }
-  const expectedCandidates = normalizeCoordinateEvidenceText(sourceText)
+  const sourceLines = normalizeCoordinateEvidenceText(sourceText)
     .split("\n")
     .map(normalizedSpatialLineText)
-    .filter(Boolean)
-    .flatMap(text => privateObservationKinds(text)
+    .filter(Boolean);
+  const selfContainedProjectedRows = family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE
+    && sourceLines.length > 0
+    && sourceLines.every(line => Boolean(parseStrictMgrsCoordinateLine(line)));
+  const observationKinds = (value, lineIndex = 0) => selfContainedProjectedRows
+    && parseStrictMgrsCoordinateLine(value)
+    ? lineIndex === 0
+      ? Object.freeze([
+        "PROJECTED_DATUM",
+        "PROJECTED_ZONE",
+        "PROJECTED_HEMISPHERE",
+        "PROJECTED_AXIS_ORDER",
+        "PROJECTED_ROW"
+      ])
+      : Object.freeze(["PROJECTED_ROW"])
+    : privateObservationKinds(value);
+  const expectedCandidates = sourceLines
+    .flatMap((text, lineIndex) => observationKinds(text, lineIndex)
       .map((kind, subIndex) => Object.freeze({ text, kind, subIndex })));
   const normalized = layoutLines.map(line => normalizePrivateSourceRegion(line, imageIdentity));
   if (normalized.some(region => !region)) {
     return unavailable();
   }
-  const candidateRegions = normalized.filter(region => privateObservationKinds(region.text).length > 0);
-  const candidates = candidateRegions.flatMap(region => privateObservationKinds(region.text)
+  const candidateRegions = normalized.filter(region => observationKinds(region.text).length > 0);
+  const candidates = candidateRegions.flatMap((region, lineIndex) => observationKinds(region.text, lineIndex)
     .map((kind, subIndex) => Object.freeze({ region, kind, subIndex })));
   const observedCandidateCount = boundedStructureCount(candidates.length);
   let boundCandidateCount = 0;
@@ -2088,7 +2258,12 @@ function createPrivateSpatialProvenance({
     || expectedCandidates.some(candidate => candidate.kind === "AMBIGUOUS_COORDINATE")
     || candidates.some(candidate => !privateObservationKindAllowedForFamily(family, candidate.kind))
     || expectedCandidates.some(candidate => !privateObservationKindAllowedForFamily(family, candidate.kind));
-  const minimumCount = minimumPrivateSourceRegionCount({ family, expectedRowCount, groupBoundaryCount });
+  const minimumCount = minimumPrivateSourceRegionCount({
+    family,
+    expectedRowCount,
+    groupBoundaryCount,
+    selfContainedProjectedRows
+  });
   const sourceLineIdentity = candidateRegions.flatMap(region => region.sourceLineIndexes);
   if (minimumCount <= 0 || candidateRegions.length < minimumCount
     || new Set(sourceLineIdentity).size !== sourceLineIdentity.length
@@ -2119,7 +2294,7 @@ function createPrivateSpatialProvenance({
     left.box.y0 - right.box.y0 || left.box.x0 - right.box.x0 || left.localLineIndex - right.localLineIndex
   ));
   const visualOrderValid = regionLineOrder.every((region, index) => region === regionVisualOrder[index]);
-  const lineOrder = regionLineOrder.flatMap(region => privateObservationKinds(region.text)
+  const lineOrder = regionLineOrder.flatMap((region, lineIndex) => observationKinds(region.text, lineIndex)
     .map((kind, subIndex) => Object.freeze({ region, kind, subIndex })));
   const sameCandidateCount = lineOrder.length === expectedCandidates.length;
   const sourceOrderValid = sameCandidateCount && lineOrder.every((candidate, index) => (
@@ -2482,6 +2657,7 @@ function extractProjectedContractIdentity(value = "") {
   const hemispheres = [];
   const axisOrders = [];
   const epsgCodes = [];
+  const strictMgrsRows = [];
   for (const line of lines) {
     for (const match of line.matchAll(/\bEPSG\s*[:#|=-]?\s*(\d{4,6})\b/giu)) {
       epsgCodes.push(Number(match[1]));
@@ -2507,6 +2683,8 @@ function extractProjectedContractIdentity(value = "") {
       zones.push(Number(match[1]));
       hemispheres.push(hemisphereFromLatitudeBand(match[2]));
     }
+    const strictMgrs = parseStrictMgrsCoordinateLine(line);
+    if (strictMgrs) strictMgrsRows.push(strictMgrs);
     const hemisphereMatch = line.match(/^(?:HEMISPHERE\s*[|:=]\s*|(?:NORTH|SOUTH)(?:ERN)?\s+HEMISPHERE\s*$)(N|S|NORTH|SOUTH)?/iu);
     if (hemisphereMatch) {
       const token = String(hemisphereMatch[1] || line).toUpperCase();
@@ -2528,6 +2706,12 @@ function extractProjectedContractIdentity(value = "") {
     const explicitPoint = parseExplicitProjectedPointLine(line, 0);
     if (explicitPoint) axisOrders.push(explicitPoint.axisOrder);
   }
+  if (strictMgrsRows.length > 0) {
+    if (datumTokens.length === 0) datumTokens.push("MGRS");
+    axisOrders.push("EASTING_NORTHING");
+  }
+  const observedZones = [...zones];
+  const observedHemispheres = [...hemispheres];
   for (const code of epsgCodes) {
     if (code >= 32601 && code <= 32660) {
       datumTokens.push("WGS84");
@@ -2541,12 +2725,29 @@ function extractProjectedContractIdentity(value = "") {
       datumTokens.push(`EPSG${code}`);
     }
   }
-  const datumIdentities = datumTokens.map(normalizeProjectedDatumIdentity).filter(item => item.datumClass);
+  const explicitOtherEpsgCodes = epsgCodes.filter(code => code !== 4326
+    && !(code >= 32601 && code <= 32760));
+  const explicitOtherDatumCompatible = explicitOtherEpsgCodes.length !== 1
+    || datumTokensCompatibleWithEpsg(datumTokens, explicitOtherEpsgCodes[0]);
+  const explicitOtherGridCompatible = explicitOtherEpsgCodes.length !== 1
+    || gridClaimsCompatibleWithEpsg(lines, zones, hemispheres, explicitOtherEpsgCodes[0]);
+  const epsgProjectionCompatible = epsgCodes.length !== 1
+    || projectionMethodsCompatibleWithEpsg(lines, epsgCodes[0]);
+  const expectedEpsgGrid = epsgCodes.length === 1 ? expectedGridIdentityForEpsg(epsgCodes[0]) : null;
+  const explicitEpsgGridIdentityComplete = !expectedEpsgGrid
+    || (observedZones.length > 0 && observedHemispheres.length > 0
+      && observedZones.every(zone => zone === expectedEpsgGrid.zone)
+      && observedHemispheres.every(hemisphere => hemisphere === expectedEpsgGrid.hemisphere));
+  const effectiveDatumTokens = explicitOtherEpsgCodes.length === 1
+    ? [`EPSG${explicitOtherEpsgCodes[0]}`]
+    : datumTokens;
+  const datumIdentities = effectiveDatumTokens.map(normalizeProjectedDatumIdentity).filter(item => item.datumClass);
   const datumClasses = [...new Set(datumIdentities.map(item => item.datumClass))];
   const datumDigests = [...new Set(datumIdentities.map(item => item.datumIdentityDigest))];
   const validZones = [...new Set(zones.filter(zone => Number.isInteger(zone) && zone >= 1 && zone <= 60))];
   const validHemispheres = [...new Set(hemispheres.filter(value => value === "N" || value === "S"))];
   const validAxisOrders = [...new Set(axisOrders.filter(Boolean))];
+  const explicitMethod = explicitProjectionMethodIdentity(lines);
   const gridIdentityRequired = lines.some(line => /\b(?:UTM|MGRS)\b/iu.test(line))
     || validZones.length > 0 || validHemispheres.length > 0
     || epsgCodes.some(code => code >= 32601 && code <= 32760);
@@ -2557,10 +2758,15 @@ function extractProjectedContractIdentity(value = "") {
   const identity = Object.freeze({
     datumClass: datumClasses.length === 1 ? datumClasses[0] : "",
     datumIdentityDigest: datumDigests.length === 1 ? datumDigests[0] : "",
+    epsgCode: [...new Set(epsgCodes)].length === 1 ? epsgCodes[0] : null,
+    projectionMethod: explicitMethod.value,
     zone: validZones.length === 1 ? validZones[0] : null,
     hemisphere: validHemispheres.length === 1 ? validHemispheres[0] : "",
     axisOrder: validAxisOrders.length === 1 ? validAxisOrders[0] : "",
-    complete: datumClasses.length === 1
+    complete: explicitOtherDatumCompatible && explicitOtherGridCompatible
+      && epsgProjectionCompatible && explicitEpsgGridIdentityComplete
+      && explicitMethod.complete
+      && datumClasses.length === 1
       && datumDigests.length === 1
       && (gridIdentityRequired
         ? validZones.length === 1 && validHemispheres.length === 1
@@ -2603,6 +2809,20 @@ function acquisitionContractPayload(contract = {}) {
         datumIdentityDigest: /^[a-f0-9]{64}$/u.test(String(crs.datumIdentityDigest || ""))
           ? String(crs.datumIdentityDigest)
           : "",
+        epsgCode: Number.isInteger(crs.epsgCode) && crs.epsgCode >= 1000 && crs.epsgCode <= 999999
+          ? crs.epsgCode
+          : null,
+        projectionMethod: [
+          "WEB_MERCATOR",
+          "TRANSVERSE_MERCATOR",
+          "LAMBERT_CONFORMAL_CONIC",
+          "LAMBERT_AZIMUTHAL_EQUAL_AREA",
+          "MOLLWEIDE",
+          "ALBERS_EQUAL_AREA",
+          "STEREOGRAPHIC",
+          "OBLIQUE_MERCATOR",
+          "MERCATOR"
+        ].includes(crs.projectionMethod) ? crs.projectionMethod : "",
         zone: Number.isInteger(crs.zone) && crs.zone >= 1 && crs.zone <= 60 ? crs.zone : null,
         hemisphere: crs.hemisphere === "N" || crs.hemisphere === "S" ? crs.hemisphere : "",
         axisOrder: ["EASTING_NORTHING", "NORTHING_EASTING"].includes(crs.axisOrder) ? crs.axisOrder : "",
@@ -2625,7 +2845,16 @@ export function createOneShotAcquisitionContract({
   const evidence = route?.evidence || {};
   const crs = family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE
     ? extractProjectedContractIdentity(sourceText)
-    : Object.freeze({ datumClass: "", datumIdentityDigest: "", zone: null, hemisphere: "", axisOrder: "", complete: false });
+    : Object.freeze({
+      datumClass: "",
+      datumIdentityDigest: "",
+      epsgCode: null,
+      projectionMethod: "",
+      zone: null,
+      hemisphere: "",
+      axisOrder: "",
+      complete: false
+    });
   const groupedDmsStructure = family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
     ? extractGroupedDmsStructure(sourceText)
     : Object.freeze({ mode: "NONE", rowCounts: Object.freeze([]) });
@@ -2806,7 +3035,14 @@ function parseProjectedProviderEvidence(text) {
     /^POINT\s*\|/iu.test(line) || /^MGRS\s*[|:]/iu.test(line)
   ));
   const identity = extractProjectedContractIdentity(text);
-  const crsFieldCount = [identity.datumClass, identity.zone, identity.hemisphere, identity.axisOrder]
+  const crsFieldCount = [
+    identity.datumClass,
+    identity.epsgCode,
+    identity.projectionMethod,
+    identity.zone,
+    identity.hemisphere,
+    identity.axisOrder
+  ]
     .filter(value => value !== "" && value !== null).length;
   return Object.freeze({
     projectedCoordinateRowCount: pointRows.length + mgrsRows.length,
@@ -2820,6 +3056,8 @@ function projectedIdentityMatches(expected, actual) {
   return expected?.complete === true && actual?.complete === true
     && expected.datumClass === actual.datumClass
     && expected.datumIdentityDigest === actual.datumIdentityDigest
+    && expected.epsgCode === actual.epsgCode
+    && expected.projectionMethod === actual.projectionMethod
     && expected.zone === actual.zone
     && expected.hemisphere === actual.hemisphere
     && expected.axisOrder === actual.axisOrder;
@@ -2925,6 +3163,7 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
 
 export function buildOneShotStructuredFamilyPrompt({
   family = ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW,
+  format = "",
   noCoordinatesText = "NO_COORDINATES_FOUND"
 } = {}) {
   const commonRules = `
@@ -2937,6 +3176,11 @@ For the generic review contract, output that same text only when no coordinate-b
   switch (family) {
     case ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT:
       return `Read one clearly labelled WGS84 point from this image.${commonRules}
+${format === "DMS_SINGLE_POINT"
+    ? "The acquisition contract requires the original visible DMS notation, including direction letters. Never convert it to decimal degrees."
+    : format === "WGS84_DECIMAL_SINGLE_POINT"
+      ? "The acquisition contract requires the original visible decimal-degree notation. Never convert it to DMS."
+      : "Preserve whichever single-point notation is visibly present."}
 Output exactly three lines:
 WGS84 Single Point
 longitude | <original visible longitude value>
@@ -2971,6 +3215,7 @@ Do not merge values or choose a preferred precision.`;
       return `Read the complete projected-coordinate table and its explicit CRS evidence.${commonRules}
 Output the visibly supported metadata first:
 CRS | <datum or EPSG text>
+METHOD | <visible projection method, only when present>
 ZONE | <zone text>
 HEMISPHERE | <hemisphere text>
 AXIS_ORDER | <visible axis order>

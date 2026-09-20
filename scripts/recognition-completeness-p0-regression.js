@@ -9,6 +9,7 @@ import {
   ONE_SHOT_ACQUISITION_CONFORMANCE_REASON,
   ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS,
   ONE_SHOT_STRUCTURED_FAMILY,
+  buildOneShotStructuredFamilyPrompt,
   classifyOneShotStructuredFamily,
   createOneShotAcquisitionContract,
   validateOneShotAcquisitionContract
@@ -558,6 +559,65 @@ test("incomplete source-layout coverage cannot authorize family contract or geom
     oneShotAcquisitionConformance: conformance
   });
   verifyAuthorityBoundary(completeness);
+});
+
+test("fresh recovered DMS map and MGRS classifications remain candidate-only", () => {
+  const splitRows = [
+    ["Longitude"], [`107°41'26.13\"E`], ["Latitude"], [`36°23'14.57\"S`]
+  ];
+  const split = normalizeLocalOcrStructuredEvidence({
+    sourceText: ["Longitude", `107° 41' 26.13\" E`, "Latitude", `36° 23' 14.57\" S`].join("\n"),
+    layoutLines: wordBoxTable(splitRows)
+  });
+  const splitContract = contractFor(split.text, split.layoutLines);
+  assert.equal(split.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.equal(splitContract.family, ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT);
+  assert.equal(splitContract.format, "DMS_SINGLE_POINT");
+  assert.match(buildOneShotStructuredFamilyPrompt({
+    family: splitContract.family,
+    format: splitContract.format
+  }), /Never convert it to decimal degrees/u);
+  const splitConformance = validateOneShotAcquisitionContract({
+    contract: splitContract,
+    providerText: split.text
+  });
+  assert.equal(splitConformance.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  verifyAuthorityBoundary(assessRecognitionCompleteness({
+    isImageInput: true,
+    candidateCount: 1,
+    acceptedCandidateCount: 1,
+    oneShotAcquisitionConformance: splitConformance
+  }));
+
+  const mapRows = [
+    ["Search"], ["42.6194", "-116.2847"],
+    ["Place details"], ["42.619468", "-116.284761"],
+    ["Plus Code 85M5JP9C+Q3"]
+  ];
+  const map = normalizeLocalOcrStructuredEvidence({
+    sourceText: mapRows.map(row => row.join(" ")).join("\n"),
+    layoutLines: wordBoxTable(mapRows)
+  });
+  assert.equal(classifyOneShotStructuredFamily(map).family, ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT);
+
+  const mgrsRows = [["MGRS 41G PL 86420 97531"]];
+  const mgrs = normalizeLocalOcrStructuredEvidence({
+    sourceText: mgrsRows[0].join(" "),
+    layoutLines: wordBoxTable(mgrsRows)
+  });
+  const mgrsContract = contractFor(mgrs.text, mgrs.layoutLines);
+  const mgrsConformance = validateOneShotAcquisitionContract({
+    contract: mgrsContract,
+    providerText: "MGRS | 41G | PL | 86420 | 97531"
+  });
+  assert.equal(mgrsContract.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(mgrsConformance.status, ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT);
+  verifyAuthorityBoundary(assessRecognitionCompleteness({
+    isImageInput: true,
+    candidateCount: 1,
+    acceptedCandidateCount: 1,
+    oneShotAcquisitionConformance: mgrsConformance
+  }));
 });
 
 console.log(`Recognition completeness P0 regression: ${passed}/${passed} PASS`);

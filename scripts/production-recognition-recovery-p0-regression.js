@@ -1882,6 +1882,135 @@ test("one-shot structured normalization rejects incomplete OCR coverage before r
     primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
 });
 
+test("one-shot structured production classification recovery stays contract-bound and synthetic", () => {
+  assert.match(serverSource, /format:\s*oneShotAcquisitionContract\.format/u);
+  assert.match(primaryRouting.buildOneShotStructuredFamilyPrompt({
+    family: primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT,
+    format: "DMS_SINGLE_POINT"
+  }), /original visible DMS notation[\s\S]*Never convert it to decimal degrees/u);
+
+  const compositeUtm = primaryRouting.classifyOneShotStructuredFamily({ text: [
+    "WGS 84 / UTM zone 47S / EPSG:32747",
+    "Point | Easting | Northing",
+    "R | 357910 | 7468020"
+  ].join("\n") });
+  assert.equal(compositeUtm.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(compositeUtm.evidence.projectedEvidenceComplete, true);
+
+  const controlledMgrs = primaryRouting.classifyOneShotStructuredFamily({
+    text: "MGRS | 47J | MT | 35791 | 46802"
+  });
+  assert.equal(controlledMgrs.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(controlledMgrs.evidence.projectedEvidenceComplete, true);
+  const numericImpostor = primaryRouting.classifyOneShotStructuredFamily({ text: "47 35791 46802" });
+  assert.equal(numericImpostor.family, primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+
+  const explicitOtherProjected = primaryRouting.classifyOneShotStructuredFamily({ text: [
+    "Projected CRS WGS 84 / Pseudo-Mercator EPSG:3857",
+    "Point | Easting | Northing",
+    "R | 357910 | 146802"
+  ].join("\n") });
+  assert.equal(explicitOtherProjected.family,
+    primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(explicitOtherProjected.evidence.projectedEvidenceComplete, true);
+
+  const nad83Projected = primaryRouting.classifyOneShotStructuredFamily({ text: [
+    "Projected CRS NAD83 / EPSG:26915",
+    "Point | Easting | Northing",
+    "R | 357910 | 146802"
+  ].join("\n") });
+  assert.equal(nad83Projected.family,
+    primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(nad83Projected.evidence.projectedEvidenceComplete, false);
+
+  const nad83Utm = primaryRouting.classifyOneShotStructuredFamily({ text: [
+    "Projection NAD83 UTM zone 15N EPSG:26915",
+    "Point | Easting | Northing",
+    "R | 357910 | 146802"
+  ].join("\n") });
+  assert.equal(nad83Utm.family,
+    primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(nad83Utm.evidence.projectedEvidenceComplete, true);
+
+  for (const crsTitle of [
+    "Projection WGS84 Transverse Mercator UTM zone 47S EPSG:32747",
+    "Projection NAD83 Transverse Mercator UTM zone 15N EPSG:26915"
+  ]) {
+    const transverseUtm = primaryRouting.classifyOneShotStructuredFamily({ text: [
+      crsTitle,
+      "Point | Easting | Northing",
+      "R | 357910 | 146802"
+    ].join("\n") });
+    assert.equal(transverseUtm.family,
+      primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+    assert.equal(transverseUtm.evidence.projectedEvidenceComplete, true);
+  }
+
+  const splitMethodConflict = primaryRouting.classifyOneShotStructuredFamily({ text: [
+    "Projected CRS WGS84", "Projection", "Mollweide", "EPSG:3857",
+    "Point | Easting | Northing", "R | 357910 | 146802"
+  ].join("\n") });
+  assert.equal(splitMethodConflict.family,
+    primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(splitMethodConflict.evidence.projectedEvidenceComplete, false);
+
+  const splitMethodValid = primaryRouting.classifyOneShotStructuredFamily({ text: [
+    "Projected CRS WGS84", "Projection", "Pseudo-Mercator", "EPSG:3857",
+    "Point | Easting | Northing", "R | 357910 | 146802"
+  ].join("\n") });
+  assert.equal(splitMethodValid.family,
+    primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(splitMethodValid.evidence.projectedEvidenceComplete, false);
+
+  const explicitMethodConflict = primaryRouting.classifyOneShotStructuredFamily({ text: [
+    "Projected CRS WGS84", "Method: Mollweide", "EPSG:3857",
+    "Point | Easting | Northing", "R | 357910 | 146802"
+  ].join("\n") });
+  assert.equal(explicitMethodConflict.family,
+    primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(explicitMethodConflict.evidence.projectedEvidenceComplete, false);
+
+  const explicitProjectionMethod = primaryRouting.classifyOneShotStructuredFamily({ text: [
+    "Projected CRS WGS84", "Projection Method: Pseudo-Mercator", "EPSG:3857",
+    "Point | Easting | Northing", "R | 357910 | 146802"
+  ].join("\n") });
+  assert.equal(explicitProjectionMethod.family,
+    primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(explicitProjectionMethod.evidence.projectedEvidenceComplete, true);
+
+  const delimiterlessMethod = primaryRouting.classifyOneShotStructuredFamily({ text: [
+    "Projected CRS WGS84", "Method Pseudo-Mercator", "EPSG:3857",
+    "Point | Easting | Northing", "R | 357910 | 146802"
+  ].join("\n") });
+  assert.equal(delimiterlessMethod.family,
+    primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(delimiterlessMethod.evidence.projectedEvidenceComplete, true);
+
+  for (const conflictingCrsTitle of [
+    "Projection NAD83 PseudoMercator EPSG:3857",
+    "Projection WGS84 EPSG:26915",
+    "Projection WGS84 EPSG:22222",
+    "Projection WGS84 UTM zone 47S EPSG:3857",
+    "Projection NAD83 UTM zone 16N EPSG:26915",
+    "Projection WGS84 Transverse Mercator EPSG:3857",
+    "Projection WGS84 Lambert Conformal Conic EPSG:3857",
+    "Projection: Mollweide / Datum WGS84 / EPSG:3857",
+    "Projection WGS84 Lambert Azimuthal Equal Area EPSG:3857",
+    "Projection WGS84 Transverse-Mercator EPSG:3857"
+  ]) {
+    const conflictingProjected = primaryRouting.classifyOneShotStructuredFamily({ text: [
+      conflictingCrsTitle,
+      "Point | Easting | Northing",
+      "R | 357910 | 146802"
+    ].join("\n") });
+    assert.equal(conflictingProjected.family,
+      primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+    assert.ok(["projected_crs_evidence_inconsistent", "strong_structure_not_established"]
+      .includes(conflictingProjected.reason));
+    assert.equal(conflictingProjected.evidence.projectedEvidenceComplete, false);
+  }
+});
+
 let passed = 0;
 const noServiceMode = process.argv.includes("--no-service");
 const selectedCases = structuredFamilyOnly
