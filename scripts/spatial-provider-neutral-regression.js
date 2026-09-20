@@ -397,11 +397,12 @@ test("SPN-UX-01", "provider failure is a compact non-blocking status with approv
   assert.match(html, /class="spatial-result-card"[\s\S]*id="spatialMapFailure"[\s\S]*id="spatialMapRetryAction"/);
 });
 
-test("SPN-UX-02", "Point fallback auto-fit centers single-axis geometry", () => {
+test("SPN-UX-02", "Point and MultiPoint fallback auto-fit centers point geometry", () => {
   const source = fs.readFileSync(path.join(root, "assets/spatial-map/maplibre-renderer.js"), "utf8");
   assert.match(source, /const centerX = \(bounds\.minX \+ bounds\.maxX\) \/ 2/);
   assert.match(source, /const centerY = \(bounds\.minY \+ bounds\.maxY\) \/ 2/);
-  assert.match(source, /\.\.\.\(geometry\.type === "Point" \? \{ r: 9 \} : \{\}\)/);
+  assert.match(source, /const pointGeometry = geometry\.type === "Point" \|\| geometry\.type === "MultiPoint"/);
+  assert.match(source, /\.\.\.\(pointGeometry \? \{ r: 9 \} : \{\}\)/);
 });
 
 test("SPN-UX-03", "Point LineString and Polygon fallback keep high-contrast SVG styles", () => {

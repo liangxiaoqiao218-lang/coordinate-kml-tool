@@ -14,6 +14,7 @@ function haversine(left, right) {
 
 function flattenPositions(geometry) {
   if (geometry.type === "Point") return [geometry.coordinates];
+  if (geometry.type === "MultiPoint") return geometry.coordinates;
   if (geometry.type === "LineString") return geometry.coordinates;
   if (geometry.type === "Polygon") return geometry.coordinates.flat();
   if (geometry.type === "MultiPolygon") return geometry.coordinates.flat(2);
@@ -84,6 +85,7 @@ function lineCentroid(line) {
 
 function geometryCentroid(geometry, positions) {
   if (geometry.type === "Point") return geometry.coordinates;
+  if (geometry.type === "MultiPoint") return averagePosition(geometry.coordinates);
   if (geometry.type === "LineString") return lineCentroid(geometry.coordinates);
   if (geometry.type === "Polygon") return polygonCentroid(geometry.coordinates).centroid;
   if (geometry.type === "MultiPolygon") {

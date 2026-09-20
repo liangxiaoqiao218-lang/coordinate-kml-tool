@@ -7242,6 +7242,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function getSpatialPositions(geometry) {
       if (!geometry) return [];
       if (geometry.type === "Point") return [geometry.coordinates];
+      if (geometry.type === "MultiPoint") return geometry.coordinates;
       if (geometry.type === "LineString") return geometry.coordinates;
       if (geometry.type === "Polygon") return geometry.coordinates.flat();
       if (geometry.type === "MultiPolygon") return geometry.coordinates.flat(2);

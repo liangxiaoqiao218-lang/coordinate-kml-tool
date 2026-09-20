@@ -19,6 +19,7 @@ function mapPositions(value, project) {
 
 function flattenedPositions(geometry) {
   if (geometry.type === "Point") return [geometry.coordinates];
+  if (geometry.type === "MultiPoint") return geometry.coordinates;
   if (geometry.type === "LineString") return geometry.coordinates;
   if (geometry.type === "Polygon") return geometry.coordinates.flat(1);
   return geometry.coordinates.flat(2);
@@ -79,6 +80,7 @@ export function applyLocalViewTransform(position, transform) {
 
 function geometryGroups(geometry) {
   if (geometry.type === "Point") return [[geometry.coordinates]];
+  if (geometry.type === "MultiPoint") return geometry.coordinates.map(position => [position]);
   if (geometry.type === "LineString") return [geometry.coordinates];
   if (geometry.type === "Polygon") return geometry.coordinates;
   return geometry.coordinates.flatMap(polygon => polygon);
@@ -113,7 +115,7 @@ export class LocalSvgRenderer {
       const screen = points.map(position => applyLocalViewTransform(position, this.viewTransform));
       const shape = this.shapes[index];
       if (!shape) return;
-      if (this.projectedGeometry.type === "Point") {
+      if (this.projectedGeometry.type === "Point" || this.projectedGeometry.type === "MultiPoint") {
         shape.setAttribute("cx", String(screen[0][0]));
         shape.setAttribute("cy", String(screen[0][1]));
       } else {
@@ -206,11 +208,12 @@ export class LocalSvgRenderer {
     svg.style.touchAction = "none";
     svg.append(svgElement("rect", { x: 0, y: 0, width, height, fill: "#edf2f6" }));
     this.shapes = geometryGroups(this.projectedGeometry).map(() => {
-      const shape = svgElement(geometry.type === "Point" ? "circle" : geometry.type === "LineString" ? "polyline" : "polygon", {
+      const pointGeometry = geometry.type === "Point" || geometry.type === "MultiPoint";
+      const shape = svgElement(pointGeometry ? "circle" : geometry.type === "LineString" ? "polyline" : "polygon", {
         fill: geometry.type === "LineString" ? "none" : "#1976D2",
         "fill-opacity": geometry.type === "LineString" ? 0 : 0.15,
         stroke: "#E53935", "stroke-width": 3, "vector-effect": "non-scaling-stroke",
-        ...(geometry.type === "Point" ? { r: 9 } : {})
+        ...(pointGeometry ? { r: 9 } : {})
       });
       svg.append(shape);
       return shape;

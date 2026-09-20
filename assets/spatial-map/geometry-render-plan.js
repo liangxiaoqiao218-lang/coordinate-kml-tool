@@ -8,7 +8,7 @@ export const DEFAULT_GEOMETRY_STYLE = Object.freeze({
   fillOpacity: 0.15
 });
 
-const SUPPORTED_TYPES = new Set(["Point", "LineString", "Polygon", "MultiPolygon"]);
+const SUPPORTED_TYPES = new Set(["Point", "MultiPoint", "LineString", "Polygon", "MultiPolygon"]);
 
 function positionIsValid(position) {
   return Array.isArray(position)
@@ -35,6 +35,11 @@ function ringIsValid(ring) {
 export function geometryIsDrawable(geometry) {
   if (!geometry || typeof geometry !== "object" || !SUPPORTED_TYPES.has(geometry.type)) return false;
   if (geometry.type === "Point") return positionIsValid(geometry.coordinates);
+  if (geometry.type === "MultiPoint") {
+    return Array.isArray(geometry.coordinates)
+      && geometry.coordinates.length > 0
+      && geometry.coordinates.every(positionIsValid);
+  }
   if (geometry.type === "LineString") return lineIsValid(geometry.coordinates, 2);
   if (geometry.type === "Polygon") {
     return Array.isArray(geometry.coordinates)
@@ -71,6 +76,7 @@ export function validateMapPreviewObject(preview) {
 
 function flattenPositions(geometry) {
   if (geometry.type === "Point") return [geometry.coordinates];
+  if (geometry.type === "MultiPoint") return geometry.coordinates;
   if (geometry.type === "LineString") return geometry.coordinates;
   if (geometry.type === "Polygon") return geometry.coordinates.flat(1);
   return geometry.coordinates.flat(2);
@@ -89,7 +95,7 @@ export function geometryBounds(geometry) {
 export function createGeometryRenderPlan(geometry, style = DEFAULT_GEOMETRY_STYLE) {
   if (!geometryIsDrawable(geometry)) throw new Error("GEOMETRY_NOT_DRAWABLE");
   const layers = [];
-  if (geometry.type === "Point") {
+  if (geometry.type === "Point" || geometry.type === "MultiPoint") {
     layers.push({
       id: "p09e-point",
       type: "circle",

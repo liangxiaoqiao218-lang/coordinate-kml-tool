@@ -92,6 +92,10 @@ export class AMapProviderAdapter {
     if (geometry.type === "Point") {
       this.lastPoint = geometry.coordinates;
       this.overlays.push(new this.runtime.Marker({ ...common, position: geometry.coordinates }));
+    } else if (geometry.type === "MultiPoint") {
+      geometry.coordinates.forEach(position => {
+        this.overlays.push(new this.runtime.Marker({ ...common, position }));
+      });
     } else if (geometry.type === "LineString") {
       this.overlays.push(new this.runtime.Polyline({ ...common, path: geometry.coordinates, strokeColor: "#E53935", strokeWeight: 3 }));
     } else {
