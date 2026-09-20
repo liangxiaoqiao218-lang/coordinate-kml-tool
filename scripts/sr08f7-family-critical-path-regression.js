@@ -1724,6 +1724,283 @@ test("R46", "an empty DMS group fails closed before a Provider can replace its h
   assertReview(contract, provider, ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY);
 });
 
+test("R47", "fresh production-classification recovery matrix preserves complete trusted word-box authority", () => {
+  const normalizeRows = (rows, sourceLines = null) => normalizeLocalOcrStructuredEvidence({
+    sourceText: (sourceLines || rows.map(row => row.join(" "))).join("\n"),
+    layoutLines: syntheticWordLayout(rows)
+  });
+
+  const splitDmsRows = [
+    ["Longitude"], [`112°36'19.87\"W`], ["Latitude"], [`28°17'43.21\"N`]
+  ];
+  const splitDms = normalizeRows(splitDmsRows, [
+    "Longitude", `112° 36' 19.87\" W`, "Latitude", `28° 17' 43.21\" N`
+  ]);
+  const splitRoute = route(splitDms.text, splitDms.layoutLines);
+  const splitContract = contractFor(splitDms.text, splitDms.layoutLines);
+  assert.equal(splitDms.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.equal(splitRoute.family, ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT);
+  assert.equal(splitContract.format, "DMS_SINGLE_POINT");
+  assert.match(buildOneShotStructuredFamilyPrompt({
+    family: splitRoute.family,
+    format: splitContract.format
+  }), /requires the original visible DMS notation/u);
+  assertConformant(splitContract, splitDms.text);
+  const uncertainLineIdentity = normalizeRows(splitDmsRows, [
+    "Longi tude", `112° 36' 19.87\" W`, "Latitude", `28° 17' 43.21\" N`
+  ]);
+  assert.equal(uncertainLineIdentity.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+  assert.equal(route(uncertainLineIdentity.text, uncertainLineIdentity.layoutLines).family,
+    ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+
+  const tableRows = [];
+  for (let index = 0; index < 20; index += 1) {
+    if (index === 0 || index === 10) tableRows.push(["Point", "Longitude", "Latitude"]);
+    tableRows.push([
+      String(index + 1),
+      (101.7301 + (index * 0.0011)).toFixed(4),
+      (-33.2401 - (index * 0.0011)).toFixed(4)
+    ]);
+  }
+  const longTable = normalizeRows(tableRows);
+  const longRoute = route(longTable.text, longTable.layoutLines);
+  assert.equal(longRoute.family, ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE);
+  assert.equal(longRoute.evidence.coordinateRowCount, 20);
+  assert.equal(longRoute.evidence.repeatedHeaderCount, 2);
+  const longResult = assertConformant(contractFor(longTable.text, longTable.layoutLines), longTable.text);
+  assert.equal(longResult.counts.observedCandidateCount, 22);
+  assert.equal(longResult.counts.unassignedCandidateCount, 0);
+
+  const groupedRows = [
+    ["Location Group Kappa"], ["Point", "Latitude DMS", "Longitude DMS"],
+    ["A", `31°11'21.11\"S`, `118°22'32.22\"E`],
+    ["B", `31°11'22.22\"S`, `118°22'33.33\"E`],
+    ["Location Group Lambda"], ["Point", "Latitude DMS", "Longitude DMS"],
+    ["A", `32°12'23.33\"S`, `119°23'34.44\"E`],
+    ["B", `32°12'24.44\"S`, `119°23'35.55\"E`]
+  ];
+  const grouped = normalizeRows(groupedRows);
+  const groupedRoute = route(grouped.text, grouped.layoutLines);
+  assert.equal(groupedRoute.family, ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED);
+  assert.equal(groupedRoute.evidence.groupHeadingCount, 2);
+  assert.equal(groupedRoute.evidence.repeatedHeaderCount, 2);
+
+  const map = normalizeRows([
+    ["Search"], ["31.4821", "-108.7314"],
+    ["Place details"], ["31.482167", "-108.731467"],
+    ["Plus Code"], ["75XHF7JF+V8"]
+  ]);
+  const mapRoute = route(map.text, map.layoutLines);
+  assert.equal(mapRoute.family, ONE_SHOT_STRUCTURED_FAMILY.MAP_SCREENSHOT);
+  assert.equal(mapRoute.evidence.layoutRegionCount, 2);
+  assertConformant(
+    contractFor(map.text, map.layoutLines),
+    "MAP_SEARCH_BOX | 31.4821, -108.7314\nMAP_PLACE_DETAILS | 31.482167, -108.731467\nPLUS_CODE | 75XHF7JF+V8"
+  );
+
+  const utm = normalizeRows([
+    ["WGS 84 / UTM zone 52S / EPSG:32752"],
+    ["Point G"], ["Easting"], ["246810"], ["Northing"], ["6357913"]
+  ]);
+  const utmRoute = route(utm.text, utm.layoutLines);
+  assert.equal(utmRoute.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(utmRoute.evidence.projectedEvidenceComplete, true);
+  assertConformant(
+    contractFor(utm.text, utm.layoutLines),
+    "CRS | WGS 84 EPSG:32752\nZONE | 52S\nHEMISPHERE | S\nAXIS_ORDER | EASTING | NORTHING\nPOINT | G | 246810 | 6357913"
+  );
+
+  const mgrs = normalizeRows([
+    ["MGRS", "52H", "KV", "24680", "13579"],
+    ["MGRS", "52H", "KW", "97531", "24680"]
+  ]);
+  const mgrsRoute = route(mgrs.text, mgrs.layoutLines);
+  assert.equal(mgrsRoute.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(mgrsRoute.reason, "explicit_projected_crs_structure");
+  assertConformant(
+    contractFor(mgrs.text, mgrs.layoutLines),
+    "CRS | MGRS\nZONE | 52H\nHEMISPHERE | S\nAXIS_ORDER | EASTING | NORTHING\nMGRS | 52H | KV | 24680 | 13579\nMGRS | 52H | KW | 97531 | 24680"
+  );
+
+  const otherProjectedRows = [
+    ["Projected CRS WGS 84 / Pseudo-Mercator EPSG:3857"],
+    ["Point", "Easting", "Northing"],
+    ["G", "246810", "135790"]
+  ];
+  const otherProjectedLayout = syntheticWordLayout(otherProjectedRows);
+  let projectedTitleX = 30;
+  otherProjectedLayout[0].words = otherProjectedLayout[0].words.map(word => {
+    const width = Math.max(42, word.text.length * 11);
+    const positioned = { ...word, bbox: [projectedTitleX, 40, projectedTitleX + width, 66] };
+    projectedTitleX += width + 14;
+    return positioned;
+  });
+  const otherProjected = normalizeLocalOcrStructuredEvidence({
+    sourceText: otherProjectedRows.map(row => row.join(" ")).join("\n"),
+    layoutLines: otherProjectedLayout
+  });
+  const otherRoute = route(otherProjected.text, otherProjected.layoutLines);
+  assert.equal(otherRoute.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(otherRoute.evidence.projectedEvidenceComplete, true);
+  assertConformant(
+    contractFor(otherProjected.text, otherProjected.layoutLines),
+    "CRS | EPSG:3857\nAXIS_ORDER | EASTING | NORTHING\nPOINT | G | 246810 | 135790"
+  );
+
+  const nad83Projected = normalizeRows([
+    ["Projected CRS NAD83 / EPSG:26915"],
+    ["Point", "Easting", "Northing"],
+    ["G", "246810", "135790"]
+  ]);
+  const nad83Route = route(nad83Projected.text, nad83Projected.layoutLines);
+  assert.equal(nad83Route.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(nad83Route.evidence.projectedEvidenceComplete, false);
+
+  const nad83Utm = normalizeRows([
+    ["Projection NAD83 UTM zone 15N EPSG:26915"],
+    ["Point", "Easting", "Northing"],
+    ["G", "246810", "135790"]
+  ]);
+  const nad83UtmRoute = route(nad83Utm.text, nad83Utm.layoutLines);
+  assert.equal(nad83UtmRoute.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(nad83UtmRoute.evidence.projectedEvidenceComplete, true);
+  assertConformant(
+    contractFor(nad83Utm.text, nad83Utm.layoutLines),
+    "CRS | EPSG:26915\nZONE | 15N\nHEMISPHERE | N\nAXIS_ORDER | EASTING | NORTHING\nPOINT | G | 246810 | 135790"
+  );
+
+  for (const [crsTitle, providerCrs, zone, hemisphere] of [
+    ["Projection WGS84 Transverse Mercator UTM zone 47S EPSG:32747", "WGS84 EPSG:32747", "47S", "S"],
+    ["Projection NAD83 Transverse Mercator UTM zone 15N EPSG:26915", "EPSG:26915", "15N", "N"]
+  ]) {
+    const transverseUtm = normalizeRows([
+      [crsTitle],
+      ["Point", "Easting", "Northing"],
+      ["G", "246810", "135790"]
+    ]);
+    const transverseRoute = route(transverseUtm.text, transverseUtm.layoutLines);
+    assert.equal(transverseRoute.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+    assert.equal(transverseRoute.evidence.projectedEvidenceComplete, true);
+    assertConformant(
+      contractFor(transverseUtm.text, transverseUtm.layoutLines),
+      `CRS | ${providerCrs}\nZONE | ${zone}\nHEMISPHERE | ${hemisphere}\nAXIS_ORDER | EASTING | NORTHING\nPOINT | G | 246810 | 135790`
+    );
+  }
+
+  const splitMethodConflictRows = [
+    ["Projected CRS WGS84"], ["Projection"], ["Mollweide"], ["EPSG:3857"],
+    ["Point", "Easting", "Northing"], ["G", "246810", "135790"]
+  ];
+  const splitMethodConflict = normalizeRows(splitMethodConflictRows);
+  assert.equal(splitMethodConflict.status, "COMPLETE");
+  const splitMethodConflictRoute = route(splitMethodConflict.text, splitMethodConflict.layoutLines);
+  assert.equal(splitMethodConflictRoute.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(splitMethodConflictRoute.evidence.projectedEvidenceComplete, false);
+
+  const splitMethodValid = normalizeRows([
+    ["Projected CRS WGS84"], ["Projection"], ["Pseudo-Mercator"], ["EPSG:3857"],
+    ["Point", "Easting", "Northing"], ["G", "246810", "135790"]
+  ]);
+  const splitMethodValidRoute = route(splitMethodValid.text, splitMethodValid.layoutLines);
+  assert.equal(splitMethodValidRoute.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(splitMethodValidRoute.evidence.projectedEvidenceComplete, true);
+
+  const explicitMethodConflict = normalizeRows([
+    ["Projected CRS WGS84"], ["Method: Mollweide"], ["EPSG:3857"],
+    ["Point", "Easting", "Northing"], ["G", "246810", "135790"]
+  ]);
+  const explicitMethodConflictRoute = route(explicitMethodConflict.text, explicitMethodConflict.layoutLines);
+  assert.equal(explicitMethodConflictRoute.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(explicitMethodConflictRoute.evidence.projectedEvidenceComplete, false);
+
+  const explicitProjectionMethod = normalizeRows([
+    ["Projected CRS WGS84"], ["Projection Method: Pseudo-Mercator"], ["EPSG:3857"],
+    ["Point", "Easting", "Northing"], ["G", "246810", "135790"]
+  ]);
+  const explicitProjectionMethodRoute = route(explicitProjectionMethod.text, explicitProjectionMethod.layoutLines);
+  assert.equal(explicitProjectionMethodRoute.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  assert.equal(explicitProjectionMethodRoute.evidence.projectedEvidenceComplete, true);
+  const explicitProjectionMethodResult = assertConformant(
+    contractFor(explicitProjectionMethod.text, explicitProjectionMethod.layoutLines),
+    "CRS | EPSG:3857\nMETHOD | Pseudo-Mercator\nAXIS_ORDER | EASTING | NORTHING\nPOINT | G | 246810 | 135790"
+  );
+  assert.equal(explicitProjectionMethodResult.counts.unassignedCandidateCount, 0);
+
+  const delimiterlessMethod = normalizeRows([
+    ["Projected CRS WGS84"], ["Method Pseudo-Mercator"], ["EPSG:3857"],
+    ["Point", "Easting", "Northing"], ["G", "246810", "135790"]
+  ]);
+  const delimiterlessMethodRoute = route(delimiterlessMethod.text, delimiterlessMethod.layoutLines);
+  assert.equal(delimiterlessMethodRoute.family, ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE);
+  const delimiterlessMethodResult = assertConformant(
+    contractFor(delimiterlessMethod.text, delimiterlessMethod.layoutLines),
+    "CRS | EPSG:3857\nMETHOD | Pseudo-Mercator\nAXIS_ORDER | EASTING | NORTHING\nPOINT | G | 246810 | 135790"
+  );
+  assert.equal(delimiterlessMethodResult.counts.observedCandidateCount, 5);
+  assert.equal(delimiterlessMethodResult.counts.boundCandidateCount, 5);
+  assert.equal(delimiterlessMethodResult.counts.unassignedCandidateCount, 0);
+
+  const nonAdjacentSplitLayout = syntheticWordLayout([
+    ["Projected CRS WGS84"], ["Projection"], ["Pseudo-Mercator"], ["EPSG:3857"],
+    ["Point", "Easting", "Northing"], ["G", "246810", "135790"]
+  ]).map((line, index) => {
+    if (index < 2) return line;
+    return {
+      ...line,
+      bbox: [line.bbox[0], line.bbox[1] + 200, line.bbox[2], line.bbox[3] + 200],
+      words: line.words.map(word => ({
+        ...word,
+        bbox: [word.bbox[0], word.bbox[1] + 200, word.bbox[2], word.bbox[3] + 200]
+      }))
+    };
+  });
+  const nonAdjacentSplit = normalizeLocalOcrStructuredEvidence({
+    sourceText: [
+      "Projected CRS WGS84", "Projection", "Pseudo-Mercator", "EPSG:3857",
+      "Point Easting Northing", "G 246810 135790"
+    ].join("\n"),
+    layoutLines: nonAdjacentSplitLayout
+  });
+  assert.equal(nonAdjacentSplit.status, "COMPLETE");
+  const nonAdjacentSplitRoute = route(nonAdjacentSplit.text, nonAdjacentSplit.layoutLines);
+  assert.equal(nonAdjacentSplitRoute.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+  assert.equal(nonAdjacentSplitRoute.evidence.projectedEvidenceComplete, false);
+
+  const untrustedSplitMethodLayout = syntheticWordLayout(splitMethodConflictRows);
+  untrustedSplitMethodLayout[2] = { ...untrustedSplitMethodLayout[2], words: [], word_structure_valid: false };
+  const untrustedSplitMethod = normalizeLocalOcrStructuredEvidence({
+    sourceText: splitMethodConflictRows.map(row => row.join(" ")).join("\n"),
+    layoutLines: untrustedSplitMethodLayout
+  });
+  assert.equal(untrustedSplitMethod.status, "INCOMPLETE");
+  assert.equal(route(untrustedSplitMethod.text, untrustedSplitMethod.layoutLines).family,
+    ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+
+  for (const conflictingCrsTitle of [
+    "Projection NAD83 PseudoMercator EPSG:3857",
+    "Projection WGS84 EPSG:26915",
+    "Projection WGS84 EPSG:22222",
+    "Projection WGS84 UTM zone 47S EPSG:3857",
+    "Projection NAD83 UTM zone 16N EPSG:26915",
+    "Projection WGS84 Transverse Mercator EPSG:3857",
+    "Projection WGS84 Lambert Conformal Conic EPSG:3857",
+    "Projection: Mollweide / Datum WGS84 / EPSG:3857",
+    "Projection WGS84 Lambert Azimuthal Equal Area EPSG:3857",
+    "Projection WGS84 Transverse-Mercator EPSG:3857"
+  ]) {
+    const conflict = normalizeRows([
+      [conflictingCrsTitle],
+      ["Point", "Easting", "Northing"],
+      ["G", "246810", "135790"]
+    ]);
+    const conflictRoute = route(conflict.text, conflict.layoutLines);
+    assert.equal(conflictRoute.family, ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW);
+    assert.ok(["projected_crs_evidence_inconsistent", "strong_structure_not_established"]
+      .includes(conflictRoute.reason));
+    assert.equal(conflictRoute.evidence.projectedEvidenceComplete, false);
+  }
+});
+
 let passed = 0;
 for (const entry of tests) {
   try {

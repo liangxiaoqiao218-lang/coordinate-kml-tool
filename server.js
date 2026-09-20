@@ -14728,6 +14728,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     ];
     const selectedProviderPrompt = buildOneShotStructuredFamilyPrompt({
       family: oneShotStructuredFamilyRoute.family,
+      format: oneShotAcquisitionContract.format,
       noCoordinatesText
     });
 

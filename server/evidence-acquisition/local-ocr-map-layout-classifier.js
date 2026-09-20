@@ -136,8 +136,9 @@ function normalizedCoverageText(value) {
   return text(value).replace(/\s+/gu, " ");
 }
 
-function compactCoverageText(value) {
-  return normalizedCoverageText(value).replace(/\s+/gu, "");
+function canonicalCoverageText(value) {
+  return normalizedCoverageText(value)
+    .replace(/\s*([|:;,/°º'′’"″”=+()])\s*/gu, "$1");
 }
 
 function boundedCount(value) {
@@ -284,6 +285,7 @@ function roleLabel(value) {
   const normalized = normalizedWordText(value);
   if (/^(?:search|rechercher|buscar|搜索|搜尋)$/iu.test(normalized)) return "Search";
   if (/^(?:place\s+details?|location\s+details?|details?|place|location|address|directions?|地点|地點|位置|地址|路线|路線)$/iu.test(normalized)) return "Place details";
+  if (/^plus\s*code$/iu.test(normalized)) return "Plus Code";
   return "";
 }
 
@@ -308,6 +310,17 @@ function coordinateOnlyText(value, projected = false) {
   const singleDecimal = /^[-+]?\d{1,3}(?:[.,]\d{3,12})?$/u;
   const dms = /^\d{1,3}\s*[°º]\s*\d{1,2}(?:\s*['′’])?\s*\d{1,2}(?:[.,]\d+)?(?:\s*["″”])?\s*[NSEWO]$/iu;
   return decimalPair.test(source) || singleDecimal.test(source) || dms.test(source) ? source : "";
+}
+
+function decimalCoordinatePairFromWords(words) {
+  if (!Array.isArray(words) || words.length !== 2) return "";
+  const values = words.map(word => text(word?.text).replace(/[，,]$/u, ""));
+  if (!values.every(value => /^[-+]?\d{1,3}(?:\.\d{4,12})?$/u.test(value))) return "";
+  const numbers = values.map(Number);
+  if (!numbers.every(Number.isFinite)
+    || !numbers.some(value => Math.abs(value) <= 90)
+    || numbers.some(value => Math.abs(value) > 180)) return "";
+  return `${values[0]}, ${values[1]}`;
 }
 
 // Reconstructs only structures already supported by trustworthy OCR word boxes.
@@ -362,8 +375,8 @@ export function normalizeLocalOcrStructuredEvidence({ sourceText = "", layoutLin
       word.bbox[0] >= lineBox[0] && word.bbox[1] >= lineBox[1]
       && word.bbox[2] <= lineBox[2] && word.bbox[3] <= lineBox[3]
     ));
-    return rawText === sourceLines[index]
-      && compactCoverageText(rawText) === compactCoverageText(wordsText)
+    return canonicalCoverageText(rawText) === canonicalCoverageText(sourceLines[index])
+      && canonicalCoverageText(rawText) === canonicalCoverageText(wordsText)
       && wordsInsideLine;
   });
   if (!coverageMatches) {
@@ -412,6 +425,16 @@ export function normalizeLocalOcrStructuredEvidence({ sourceText = "", layoutLin
     const explicitRole = roleLabel(joinedWords);
     const nextProjectedValue = coordinateOnlyText(nextText, ["Easting", "Northing"].includes(explicitAxis));
     const nextCoordinateValue = coordinateOnlyText(nextText, false);
+    const splitProjectionMethod = /^\s*(?:Projection|Projected\s+CRS|Projected\s+Coordinate\s+System)\s*[:|]?\s*$/iu.test(joinedWords)
+      && /^[\p{L}][\p{L}\s_-]{1,60}$/u.test(nextText);
+    if (nextWords && layoutLinesAreAdjacent(line, next) && splitProjectionMethod) {
+      const merged = unionLayoutLines([line, next], `Projection | ${nextText}`);
+      if (merged) {
+        logical.push(merged);
+        index += 1;
+        continue;
+      }
+    }
     if (nextWords && layoutLinesAreAdjacent(line, next) && explicitAxis
       && (nextProjectedValue || nextCoordinateValue)) {
       const merged = unionLayoutLines([line, next], `${explicitAxis}: ${nextProjectedValue || nextCoordinateValue}`);
@@ -421,8 +444,21 @@ export function normalizeLocalOcrStructuredEvidence({ sourceText = "", layoutLin
         continue;
       }
     }
-    if (nextWords && layoutLinesAreAdjacent(line, next) && explicitRole && /^[-+]?\d{1,3}(?:\.\d{4,12})?\s*,\s*[-+]?\d{1,3}(?:\.\d{4,12})?$/u.test(nextText)) {
-      const merged = unionLayoutLines([line, next], `${explicitRole} ${nextText}`);
+    const nextMapCoordinate = coordinateOnlyText(nextText, false)
+      || decimalCoordinatePairFromWords(nextWords);
+    const nextPlusCode = explicitRole === "Plus Code"
+      && /^[A-Z0-9]{4,12}\+[A-Z0-9]{2,}$/iu.test(nextText) ? nextText : "";
+    if (nextWords && layoutLinesAreAdjacent(line, next) && nextPlusCode) {
+      const merged = unionLayoutLines([line, next], `${explicitRole} ${nextPlusCode}`);
+      if (merged) {
+        logical.push(merged);
+        index += 1;
+        continue;
+      }
+    }
+    if (nextWords && layoutLinesAreAdjacent(line, next) && explicitRole
+      && /^[-+]?\d{1,3}(?:\.\d{4,12})?\s*,\s*[-+]?\d{1,3}(?:\.\d{4,12})?$/u.test(nextMapCoordinate)) {
+      const merged = unionLayoutLines([line, next], `${explicitRole} ${nextMapCoordinate}`);
       if (merged) {
         logical.push(merged);
         index += 1;
