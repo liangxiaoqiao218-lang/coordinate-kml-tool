@@ -119,6 +119,10 @@ import {
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
+import {
+  createAgenticCoordinateApi,
+  requireAgenticCoordinateApiEnabled
+} from "./server/agentic-coordinate-api.js";
 import { parseManualLongitudeLatitudeText } from "./server/manual-coordinate-input.js";
 import { calculateSpatialFacts } from "./server/spatial/spatial-facts.js";
 import { createAmapSecurityProxy } from "./server/spatial/amap-security-proxy.js";
@@ -298,6 +302,10 @@ const aliyunApiKey = process.env.ALIYUN_API_KEY || process.env.DASHSCOPE_API_KEY
 const aliyunBaseURL = process.env.ALIYUN_BASE_URL || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || "qwen-vl-plus";
 const aliyunOcrModel = process.env.ALIYUN_OCR_MODEL || process.env.DASHSCOPE_OCR_MODEL || "qwen-vl-ocr-latest";
+const agenticCoordinateApi = createAgenticCoordinateApi({
+  modelName: aliyunVisionModel,
+  providerCall: request => callAliyunVision(request)
+});
 const supabaseUrl = String(process.env.SUPABASE_URL || "").trim();
 const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 const supabase = supabaseUrl && supabaseServiceRoleKey
@@ -13894,6 +13902,23 @@ app.post("/api/recognize-coordinates/recover", async (req, res) => {
     });
   }
 });
+
+app.post(
+  "/api/agentic-coordinate/v1/recognize",
+  requireAgenticCoordinateApiEnabled,
+  recognitionDeadlineMiddleware(),
+  upload.single("image"),
+  (req, res) => {
+    activateRecognitionDeadlineContext(req);
+    return agenticCoordinateApi.recognize(req, res);
+  }
+);
+
+app.post(
+  "/api/agentic-coordinate/v1/finalize",
+  requireAgenticCoordinateApiEnabled,
+  (req, res) => agenticCoordinateApi.finalize(req, res)
+);
 
 app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.single("image"), async (req, res) => {
   activateRecognitionDeadlineContext(req);
