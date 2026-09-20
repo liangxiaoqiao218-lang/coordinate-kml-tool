@@ -26,6 +26,7 @@
     "agentic-multipoint-map-regression": "node scripts/agentic-multipoint-map-regression.js",
     "agentic-controller-v1-regression": "node scripts/agentic-coordinate-controller-v1-regression.js",
     "agentic-ui-v1-regression": "node scripts/agentic-coordinate-ui-v1-regression.js",
+    "agentic-user-sample-acceptance-v1": "node scripts/agentic-coordinate-user-sample-acceptance-v1-regression.js",
     "ocr-golden": "node scripts/ocr-golden-runner.js",
     "sr08c-manual-regression": "node scripts/sr08c-manual-finalizer-regression.js",
     "sr08c-evidence": "node scripts/sr08c-build-release-evidence.js",
