@@ -121,6 +121,7 @@ import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-p
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
 import {
   createAgenticCoordinateApi,
+  getAgenticCoordinateApiReadiness,
   requireAgenticCoordinateApiEnabled
 } from "./server/agentic-coordinate-api.js";
 import { parseManualLongitudeLatitudeText } from "./server/manual-coordinate-input.js";
@@ -13916,9 +13917,7 @@ app.post(
 
 app.get("/api/agentic-coordinate/v1/status", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  return res.json({
-    enabled: String(process.env.AGENTIC_COORDINATE_V1_ENABLED || "").toLowerCase() === "true"
-  });
+  return res.json(getAgenticCoordinateApiReadiness());
 });
 
 app.post(

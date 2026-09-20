@@ -18,7 +18,7 @@ assert.match(html, /outcome\.map\.geometryHash[\s\S]*outcome\.kml\.geometryHash/
 assert.match(html, /input\.value = String\(workspace\.currentText \|\| ""\)/);
 
 assert.match(server, /\/api\/agentic-coordinate\/v1\/status/);
-assert.match(server, /AGENTIC_COORDINATE_V1_ENABLED/);
+assert.match(server, /getAgenticCoordinateApiReadiness/);
 assert.match(server, /requireAgenticCoordinateApiEnabled/);
 
 const scriptMatch = /<script>\s*const APP_VERSION = "v1\.0\.2";/.exec(html);

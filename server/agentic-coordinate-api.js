@@ -81,7 +81,8 @@ export function createAgenticCoordinateApi({ modelName, providerCall }) {
 }
 
 export function requireAgenticCoordinateApiEnabled(req, res, next) {
-  if (String(process.env.AGENTIC_COORDINATE_V1_ENABLED || '').toLowerCase() !== 'true') {
+  const readiness = getAgenticCoordinateApiReadiness();
+  if (!readiness.enabled) {
     return res.status(404).json({
       success: false,
       code: 'AGENTIC_COORDINATE_V1_DISABLED',
@@ -90,3 +91,12 @@ export function requireAgenticCoordinateApiEnabled(req, res, next) {
   return next();
 }
 
+export function getAgenticCoordinateApiReadiness() {
+  const featureEnabled = String(process.env.AGENTIC_COORDINATE_V1_ENABLED || '').toLowerCase() === 'true';
+  const atomicUsageReady = String(process.env.AGENTIC_COORDINATE_ATOMIC_USAGE_READY || '').toLowerCase() === 'true';
+  return Object.freeze({
+    enabled: featureEnabled && atomicUsageReady,
+    featureEnabled,
+    atomicUsageReady,
+  });
+}

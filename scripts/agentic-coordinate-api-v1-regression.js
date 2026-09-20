@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   createAgenticCoordinateApi,
+  getAgenticCoordinateApiReadiness,
   requireAgenticCoordinateApiEnabled,
 } from '../server/agentic-coordinate-api.js';
 
@@ -110,7 +111,9 @@ assert.equal(missingImageResponse.statusCode, 400);
 assert.equal(missingImageResponse.body.success, false);
 
 const previousEnabled = process.env.AGENTIC_COORDINATE_V1_ENABLED;
+const previousAtomicReady = process.env.AGENTIC_COORDINATE_ATOMIC_USAGE_READY;
 delete process.env.AGENTIC_COORDINATE_V1_ENABLED;
+delete process.env.AGENTIC_COORDINATE_ATOMIC_USAGE_READY;
 const disabledResponse = responseRecorder();
 let nextCalled = false;
 requireAgenticCoordinateApiEnabled({}, disabledResponse, () => { nextCalled = true; });
@@ -119,9 +122,26 @@ assert.equal(disabledResponse.body.code, 'AGENTIC_COORDINATE_V1_DISABLED');
 assert.equal(nextCalled, false);
 
 process.env.AGENTIC_COORDINATE_V1_ENABLED = 'true';
+assert.deepEqual(getAgenticCoordinateApiReadiness(), {
+  enabled: false,
+  featureEnabled: true,
+  atomicUsageReady: false,
+});
+nextCalled = false;
+requireAgenticCoordinateApiEnabled({}, responseRecorder(), () => { nextCalled = true; });
+assert.equal(nextCalled, false);
+
+process.env.AGENTIC_COORDINATE_ATOMIC_USAGE_READY = 'true';
+assert.deepEqual(getAgenticCoordinateApiReadiness(), {
+  enabled: true,
+  featureEnabled: true,
+  atomicUsageReady: true,
+});
 requireAgenticCoordinateApiEnabled({}, responseRecorder(), () => { nextCalled = true; });
 assert.equal(nextCalled, true);
 if (previousEnabled === undefined) delete process.env.AGENTIC_COORDINATE_V1_ENABLED;
 else process.env.AGENTIC_COORDINATE_V1_ENABLED = previousEnabled;
+if (previousAtomicReady === undefined) delete process.env.AGENTIC_COORDINATE_ATOMIC_USAGE_READY;
+else process.env.AGENTIC_COORDINATE_ATOMIC_USAGE_READY = previousAtomicReady;
 
 console.log('agentic coordinate api v1 regression: PASS');
