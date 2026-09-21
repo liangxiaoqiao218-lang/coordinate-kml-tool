@@ -15709,6 +15709,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         }
         const localReviewPayload = {
+          success: true,
           model: `${aliyunVisionModel}+trusted-local-ocr-decimal-review`,
           rawText: oneShotLocalOcrSourceText,
           coordinates: trustedLocalCoordinates,
@@ -15761,6 +15762,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         }
         const providerReviewPayload = {
+          success: true,
           model: `${aliyunVisionModel}+trusted-provider-decimal-recovery`,
           rawText: trustedProviderDecimalEvidence.text,
           coordinates: trustedProviderCoordinates,

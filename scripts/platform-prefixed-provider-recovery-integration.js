@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { evaluateCoordinateUsageAuthority } from "../server/coordinate-usage-atomicity.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rows = [
@@ -88,6 +89,8 @@ try {
   assert.equal(payload.coordinateEngineV2?.requires_review, false);
   assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
   assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
+  const authority = evaluateCoordinateUsageAuthority({ httpStatus: response.status, body: payload });
+  assert.equal(authority.eligible, true, JSON.stringify({ authority, finalizedCoordinateResult: payload.finalizedCoordinateResult }));
   const statsPromise = once(child, "message", { signal });
   child.send("stats");
   const [stats] = await statsPromise;
