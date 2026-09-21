@@ -47,11 +47,12 @@ const controller = new AgenticCoordinateController({
     }
     if (url.endsWith('/finalize')) {
       const request = JSON.parse(options.body);
+      const geometryHash = request.currentText.includes('A 10.05,20') ? 'edited-hash' : 'original-hash';
       return response({
         success: true,
         documentRevision: request.documentRevision,
-        map: { documentRevision: request.documentRevision, geometryHash: 'hash', feature: { geometry: { type: 'Polygon', coordinates: [] } } },
-        kml: { documentRevision: request.documentRevision, geometryHash: 'hash', content: '<kml />' },
+        map: { documentRevision: request.documentRevision, geometryHash, feature: { geometry: { type: 'Polygon', coordinates: [] } } },
+        kml: { documentRevision: request.documentRevision, geometryHash, content: `<kml>${request.currentText}</kml>` },
       });
     }
     throw new Error(`Unexpected URL ${url}`);
@@ -81,14 +82,29 @@ assert.deepEqual(usageEvents, [
   'clear',
 ]);
 
+const originalFinalized = await controller.finalize({ name: 'Original' });
+assert.equal(originalFinalized.map.geometryHash, 'original-hash');
+assert.equal(originalFinalized.map.geometryHash, originalFinalized.kml.geometryHash);
+assert.match(originalFinalized.kml.content, /A 10,20/);
+
 const originalRevision = controller.workspace.documentRevision;
-controller.edit(recognitionResult.displayText.replace('A 10,20', 'A 10.05,20'));
+const editedText = recognitionResult.displayText.replace('A 10,20', 'A 10.05,20');
+controller.edit(editedText);
 assert.equal(controller.workspace.documentRevision, originalRevision + 1);
 assert.deepEqual(controller.workspace.derived, { map: null, kml: null });
 
 const finalized = await controller.finalize({ name: 'Edited' });
 assert.equal(finalized.map.geometryHash, finalized.kml.geometryHash);
+assert.notEqual(finalized.map.geometryHash, originalFinalized.map.geometryHash);
+assert.notEqual(finalized.kml.content, originalFinalized.kml.content);
+assert.match(finalized.kml.content, /A 10\.05,20/);
 assert.equal(controller.workspace.derived.map.documentRevision, controller.workspace.documentRevision);
+const finalizeRequests = requests
+  .filter(item => item.url.endsWith('/finalize'))
+  .map(item => JSON.parse(item.options.body));
+assert.equal(finalizeRequests[0].currentText, recognitionResult.displayText);
+assert.equal(finalizeRequests[1].currentText, editedText);
+assert.equal(finalizeRequests[1].documentRevision, originalRevision + 1);
 
 const staleFinalize = controller.finalize();
 controller.edit(`${controller.workspace.currentText}\nD 10,20.1`);

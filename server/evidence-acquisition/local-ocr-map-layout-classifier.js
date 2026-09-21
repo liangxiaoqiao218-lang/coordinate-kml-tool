@@ -16,6 +16,7 @@ export const LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS = Object.freeze({
 
 export const LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON = Object.freeze({
   COMPLETE_COVERAGE: "COMPLETE_COVERAGE",
+  TRUSTED_DECIMAL_ROWS_ONLY: "TRUSTED_DECIMAL_ROWS_ONLY",
   SOURCE_LAYOUT_COVERAGE_MISMATCH: "SOURCE_LAYOUT_COVERAGE_MISMATCH",
   INVALID_READING_ORDER: "INVALID_READING_ORDER",
   INVALID_LINE_REGION: "INVALID_LINE_REGION",
@@ -526,6 +527,110 @@ export function normalizeLocalOcrStructuredEvidence({ sourceText = "", layoutLin
     reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.COMPLETE_COVERAGE,
     sourceLineCount: boundedCount(sourceLines.length),
     layoutLineCount: boundedCount(ordered.length)
+  });
+}
+
+function decimalCoordinatePairObservation(value) {
+  const normalized = text(value).replace(/[，]/gu, ",").replace(/[−–—]/gu, "-");
+  const pattern = /([+-]?\d{1,3}(?:\.\d{4,12})?)\s*,\s*([+-]?\d{1,3}(?:\.\d{4,12})?)/gu;
+  const matches = [...normalized.matchAll(pattern)];
+  if (matches.length !== 1) return null;
+
+  const first = Number(matches[0][1]);
+  const second = Number(matches[0][2]);
+  if (!Number.isFinite(first) || !Number.isFinite(second)
+    || Math.abs(first) > 180 || Math.abs(second) > 180
+    || (Math.abs(first) > 90 && Math.abs(second) > 90)) return null;
+
+  const prefix = normalized.slice(0, matches[0].index);
+  const suffix = normalized.slice((matches[0].index || 0) + matches[0][0].length);
+  const outsidePair = `${prefix}${suffix}`;
+  if (/\d|[°º'′’"″”]/u.test(outsidePair)) return null;
+  return Object.freeze({
+    pair: `${matches[0][1]},${matches[0][2]}`,
+    prefix,
+    suffix,
+    compactPrefix: prefix.trim().match(/^[A-Za-z]$/u)?.[0]?.toLowerCase() || "",
+    compactSuffix: suffix.trim()
+  });
+}
+
+function decimalCoordinatePairText(value) {
+  return decimalCoordinatePairObservation(value)?.pair || "";
+}
+
+// A noisy app screenshot may contain status bars and buttons whose OCR is not
+// trustworthy while its coordinate rows are clear. Keep only independently
+// high-confidence decimal pairs that are present in both OCR text and bound
+// layout lines. This never assigns axis order or grants Map/KML authority.
+export function extractTrustedLocalOcrDecimalCoordinateEvidence({
+  sourceText = "",
+  layoutLines = [],
+  minimumRows = 3
+} = {}) {
+  const sourceObservations = String(sourceText || "").split(/\r?\n/u)
+    .map(decimalCoordinatePairObservation)
+    .filter(Boolean);
+  const sourceRows = sourceObservations.map(observation => observation.pair);
+  if (!Array.isArray(layoutLines) || sourceRows.length < minimumRows) {
+    return incompleteStructuredEvidence(
+      LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+      sourceRows.length,
+      Array.isArray(layoutLines) ? layoutLines.length : 0
+    );
+  }
+
+  const selected = layoutLines.flatMap(line => {
+    const words = trustedLineWords(line);
+    const lineConfidence = Number(line?.confidence);
+    const observation = decimalCoordinatePairObservation(line?.text);
+    if (!observation || !words || !Number.isFinite(lineConfidence) || lineConfidence < 70
+      || words.some(word => word.confidence < 70) || !finiteLineBox(line)) return [];
+    return [Object.freeze({
+      line: Object.freeze({ ...line, text: observation.pair }),
+      observation
+    })];
+  });
+  const layoutRows = selected.map(item => item.observation.pair);
+  if (layoutRows.length < minimumRows
+    || layoutRows.length !== sourceRows.length
+    || layoutRows.some((row, index) => row !== sourceRows[index])) {
+    return incompleteStructuredEvidence(
+      LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+      sourceRows.length,
+      layoutRows.length
+    );
+  }
+
+  const repeatedCompactPrefix = sourceObservations[0]?.compactPrefix || "";
+  const hasRepeatedCompactPrefix = Boolean(
+    repeatedCompactPrefix
+    && sourceObservations.every(observation => (
+      observation.compactPrefix === repeatedCompactPrefix
+      && observation.compactSuffix === ""
+    ))
+    && selected.every(item => (
+      item.observation.compactPrefix === repeatedCompactPrefix
+      && item.observation.compactSuffix === ""
+    ))
+  );
+
+  return Object.freeze({
+    text: sourceRows.join("\n"),
+    layoutLines: Object.freeze(selected.map(item => item.line)),
+    status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE,
+    reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.TRUSTED_DECIMAL_ROWS_ONLY,
+    sourceLineCount: boundedCount(sourceRows.length),
+    layoutLineCount: boundedCount(layoutRows.length),
+    axisOrderEvidence: hasRepeatedCompactPrefix
+      ? Object.freeze({
+        status: "FORMAT_RESOLVED",
+        axisOrder: "longitude_latitude",
+        interpretation: "first_is_lon_second_is_lat",
+        confidence: 0.9,
+        reason: "repeated_compact_platform_prefix_before_decimal_pair"
+      })
+      : null
   });
 }
 

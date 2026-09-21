@@ -49,12 +49,14 @@ const finalized = await runAgenticCoordinateFinalization({
   },
   documentRevision: 7,
   modelName: 'fake-model',
-  providerCall: async ({ prompt, imageItems, stageName }) => {
+  providerCall: async ({ prompt, imageItems, stageName, responseFormat, enableThinking }) => {
     callCount += 1;
     assert.match(prompt, /CURRENT TEXT \(authoritative\)/);
     assert.match(prompt, /31\.26/);
     assert.deepEqual(imageItems, []);
     assert.equal(stageName, 'agentic_text_finalize');
+    assert.deepEqual(responseFormat, { type: 'json_object' });
+    assert.equal(enableThinking, false);
     return providerPayload(editedPolygonPayload);
   },
 });
@@ -74,6 +76,32 @@ assert.equal(polygonArtifact.geometry.coordinates[0].length, 4);
 assert.deepEqual(
   polygonArtifact.geometry.coordinates[0][0],
   polygonArtifact.geometry.coordinates[0][3],
+);
+
+const reviewRequiredResult = {
+  ...finalized.result,
+  resultStatus: 'needs_review',
+  warnings: ['One row needs review'],
+};
+assert.throws(
+  () => createAgenticGeometryArtifact({
+    documentRevision: 70,
+    result: reviewRequiredResult,
+  }),
+  error => error.code === 'AGENTIC_REVIEW_REQUIRED',
+);
+
+await assert.rejects(
+  finalizeAgenticCoordinateDocument({
+    documentRevision: 71,
+    currentText: reviewRequiredResult.displayText,
+    sourceText: reviewRequiredResult.displayText,
+    recognitionResult: reviewRequiredResult,
+    providerCall: async () => {
+      throw new Error('Provider must not be called for unchanged review text');
+    },
+  }),
+  error => error.code === 'AGENTIC_REVIEW_REQUIRED',
 );
 
 const kml = buildAgenticKml({ geometryArtifact: polygonArtifact, name: 'Edited & current' });
@@ -250,6 +278,31 @@ assert.equal(reused.map.documentRevision, 11);
 assert.equal(reused.kml.documentRevision, 11);
 assert.equal(reused.map.geometryHash, reused.kml.geometryHash);
 
+const originalBeforeEdit = {
+  ...editedPolygonPayload,
+  displayText: editedPolygonPayload.displayText.replace('31.26', '37.26'),
+  groups: [{
+    ...editedPolygonPayload.groups[0],
+    points: editedPolygonPayload.groups[0].points.map((point, index) => index === 0
+      ? {
+        ...point,
+        sourceText: point.sourceText.replace('31.26', '37.26'),
+        latitude: 11.4770166667,
+      }
+      : point),
+  }],
+};
+const originalPipeline = await finalizeAgenticCoordinateDocument({
+  documentRevision: 11,
+  currentText: originalBeforeEdit.displayText,
+  sourceText: originalBeforeEdit.displayText,
+  recognitionResult: originalBeforeEdit,
+  name: 'Before edit',
+  providerCall: async () => {
+    throw new Error('Provider must not be called before the edit');
+  },
+});
+
 let editedPipelineCalls = 0;
 const editedPipeline = await finalizeAgenticCoordinateDocument({
   documentRevision: 12,
@@ -265,6 +318,9 @@ const editedPipeline = await finalizeAgenticCoordinateDocument({
 assert.equal(editedPipelineCalls, 1);
 assert.equal(editedPipeline.execution.providerCallCount, 1);
 assert.equal(editedPipeline.map.geometryHash, editedPipeline.kml.geometryHash);
+assert.notEqual(editedPipeline.map.geometryHash, originalPipeline.map.geometryHash);
+assert.notEqual(editedPipeline.kml.content, originalPipeline.kml.content);
 assert.match(editedPipeline.kml.content, /-8\.6783694444,11\.47535,0/);
+assert.match(originalPipeline.kml.content, /-8\.6783694444,11\.4770166667,0/);
 
 console.log('agentic coordinate finalization v1 regression: PASS');

@@ -76,7 +76,7 @@ for (const [rawText, expected] of boundaryEqualityCases) {
   assert.equal(clientKmlNormalizedText, manualFinalizerRequestCoordinateText);
 }
 
-assert.match(indexHtml, /const normalizedText = normalizeManualCoordinateTextForFinalizer\(text\);/);
+assert.match(indexHtml, /const normalizedText = normalizeManualCoordinateTextForFinalizer\(text, "auto"\);/);
 assert.equal((indexHtml.match(/coordinateText: normalizedCoordinateText/g) || []).length, 2);
 
 const cases = [

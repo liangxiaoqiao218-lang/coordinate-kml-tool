@@ -48,6 +48,7 @@ function sourceAxisOrder(engine = {}, family = "", format = "") {
   if (explicit) return normalizeAxisOrder(explicit);
   const identity = `${family} ${format}`.toLowerCase();
   if (/projected|utm|bftm|kyrgyz|gauss|cadastral|mgrs|x[-_ ]?y/.test(identity)) return "easting_northing";
+  if (/wgs84[-_ ]?platform[-_ ]?lonlat/.test(identity)) return "longitude_latitude";
   if (/wgs84[-_ ]?table|longitude[-_ ]?latitude/.test(identity)) return "longitude_latitude";
   if (/dms|chat|latitude[-_ ]?longitude/.test(identity)) return "latitude_longitude";
   return null;
@@ -97,6 +98,76 @@ function parseDecimalCoordinateLine(line, axisOrder) {
   const longitude = axisOrder === "longitude_latitude" ? first : second;
   if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
   return Object.freeze({ label, latitude, longitude });
+}
+
+function extractRawDecimalCoordinateStructure(text, axisOrder) {
+  if (!["latitude_longitude", "longitude_latitude"].includes(axisOrder)) {
+    return Object.freeze({ rows: [], groups: [], points: [], displayText: "" });
+  }
+
+  const groups = [];
+  let current = [];
+  const flush = () => {
+    if (current.length) groups.push(current);
+    current = [];
+  };
+
+  for (const line of sourceLines(text)) {
+    const match = String(line || "").match(/^\s*(?:[A-Za-z]{1,8}\s*)?([+-]?\d+(?:\.\d+)?)\s*[,，;|\t ]\s*([+-]?\d+(?:\.\d+)?)\s*$/);
+    if (!match) {
+      if (!String(line || "").trim()) flush();
+      continue;
+    }
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    const latitude = axisOrder === "longitude_latitude" ? second : first;
+    const longitude = axisOrder === "longitude_latitude" ? first : second;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)
+      || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) continue;
+    current.push(Object.freeze({
+      sourceText: `${match[1]},${match[2]}`,
+      latitude,
+      longitude
+    }));
+  }
+  flush();
+
+  const rows = groups.flat();
+  return Object.freeze({
+    rows,
+    groups,
+    points: rows.map(row => Object.freeze({ latitude: row.latitude, longitude: row.longitude })),
+    displayText: groups.map(group => group.map(row => row.sourceText).join("\n")).join("\n\n")
+  });
+}
+
+function rawDecimalSemanticallyMatchesResult(rawStructure, engineGroups) {
+  const sourcePoints = Array.isArray(rawStructure?.points) ? rawStructure.points : [];
+  const enginePoints = engineGroups.flatMap(group => group.points);
+  if (!sourcePoints.length || !enginePoints.length) {
+    return Object.freeze({ verified: false, reason: "missing_decimal_rows_or_engine_points" });
+  }
+
+  const hasClosureDuplicate = sourcePoints.length === enginePoints.length + 1
+    && Math.abs(sourcePoints[0].latitude - sourcePoints.at(-1).latitude) <= 1e-8
+    && Math.abs(sourcePoints[0].longitude - sourcePoints.at(-1).longitude) <= 1e-8;
+  if (sourcePoints.length !== enginePoints.length && !hasClosureDuplicate) {
+    return Object.freeze({ verified: false, reason: "decimal_row_count_mismatch" });
+  }
+
+  for (let index = 0; index < enginePoints.length; index += 1) {
+    if (Math.abs(sourcePoints[index].latitude - enginePoints[index].latitude) > 1e-8
+      || Math.abs(sourcePoints[index].longitude - enginePoints[index].longitude) > 1e-8) {
+      return Object.freeze({ verified: false, reason: "decimal_point_value_mismatch" });
+    }
+  }
+
+  return Object.freeze({
+    verified: true,
+    reason: hasClosureDuplicate
+      ? "pointwise_decimal_semantic_match_with_source_closure"
+      : "pointwise_decimal_semantic_match"
+  });
 }
 
 function groupsFromEngine(engine = {}, coordinateDisplayText = "", axisOrder = "latitude_longitude") {
@@ -355,13 +426,26 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
   const coordinateAlreadyPreservesDms = extractDmsSourceStructure(coordinateDisplayText).rowCount > 0;
   const engineGroups = groupsFromEngine(coordinateEngineV2, coordinateDisplayText, axisOrder || "latitude_longitude");
   const rawDmsEquivalence = rawDmsSemanticallyMatchesResult(rawDmsStructure, engineGroups, axisOrder);
+  const rawDecimalStructure = extractRawDecimalCoordinateStructure(
+    effectiveRecognitionResult?.rawText || "",
+    axisOrder
+  );
+  const rawDecimalEquivalence = family === "decimal_latlon"
+    && ["wgs84-chat-coordinates", "wgs84-platform-lonlat-coordinates"].includes(format)
+    ? rawDecimalSemanticallyMatchesResult(rawDecimalStructure, engineGroups)
+    : Object.freeze({ verified: false, reason: "not_wgs84_chat_decimal" });
   const useRawDms = rawDmsEquivalence.verified === true;
+  const useRawDecimal = rawDecimalEquivalence.verified === true;
   const canonicalEngineDisplay = renderCanonicalEngineGroups(engineGroups, axisOrder);
-  const displayText = rawDmsEquivalence.verified === true
+  const displayText = useRawDms
     ? rawDmsStructure.displayText
-    : (coordinateAlreadyPreservesDms && canonicalEngineDisplay ? canonicalEngineDisplay : coordinateDisplayText);
+    : useRawDecimal
+      ? rawDecimalStructure.displayText
+      : (coordinateAlreadyPreservesDms && canonicalEngineDisplay ? canonicalEngineDisplay : coordinateDisplayText);
   const groups = useRawDms
     ? rawDmsStructure.groups.map(group => [...group.rows])
+    : useRawDecimal
+      ? rawDecimalStructure.groups.map(group => group.map(row => row.sourceText))
     : sourceGroups(displayText);
 
   return Object.freeze({
@@ -369,7 +453,11 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
     family,
     format,
     rawText: String(effectiveRecognitionResult?.rawText || ""),
-    rows: useRawDms ? [...rawDmsStructure.rows] : sourceLines(displayText).filter(line => line.trim()),
+    rows: useRawDms
+      ? [...rawDmsStructure.rows]
+      : useRawDecimal
+        ? rawDecimalStructure.rows.map(row => row.sourceText)
+        : sourceLines(displayText).filter(line => line.trim()),
     groups,
     groupNames: useRawDms ? rawDmsStructure.groups.map(group => group.name) : groups.map(() => null),
     pointLabels: enginePointLabels(coordinateEngineV2),
@@ -377,7 +465,7 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
     hemisphere: sourceHemispheres(displayText),
     precision: format,
     sourceCrsEvidence: sourceCrsEvidence(effectiveRecognitionResult, coordinateEngineV2),
-    sourceEquivalence: rawDmsEquivalence.reason,
+    sourceEquivalence: useRawDecimal ? rawDecimalEquivalence.reason : rawDmsEquivalence.reason,
     displayText,
     editable: Boolean(displayText),
     candidateRole: reviewCandidate ? "NONAUTHORITATIVE_REVIEW_CANDIDATE" : "CURRENT_RECOGNITION_CANDIDATE",

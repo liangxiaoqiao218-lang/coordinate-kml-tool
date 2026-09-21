@@ -113,6 +113,7 @@ import {
   isProviderLayoutQualificationReadAllowed
 } from "./server/evidence-acquisition/index.js";
 import {
+  extractTrustedLocalOcrDecimalCoordinateEvidence,
   LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
   normalizeLocalOcrStructuredEvidence
 } from "./server/evidence-acquisition/local-ocr-map-layout-classifier.js";
@@ -301,7 +302,7 @@ function validateCoordinateImageUpload(file) {
 }
 const aliyunApiKey = process.env.ALIYUN_API_KEY || process.env.DASHSCOPE_API_KEY || "";
 const aliyunBaseURL = process.env.ALIYUN_BASE_URL || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
-const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || "qwen-vl-plus";
+const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || "qwen3.8-flash";
 const aliyunOcrModel = process.env.ALIYUN_OCR_MODEL || process.env.DASHSCOPE_OCR_MODEL || "qwen-vl-ocr-latest";
 const agenticCoordinateApi = createAgenticCoordinateApi({
   modelName: aliyunVisionModel,
@@ -7872,6 +7873,9 @@ async function callAliyunVision({
   imageItems,
   temperature = 0.1,
   maxTokens,
+  responseFormat,
+  enableThinking,
+  highResolutionImages = false,
   timeoutMs = 35000,
   stageName = "generic_provider",
   attempt = 1,
@@ -7940,6 +7944,15 @@ async function callAliyunVision({
 
   if (Number.isFinite(Number(maxTokens)) && Number(maxTokens) > 0) {
     requestBody.max_tokens = Number(maxTokens);
+  }
+  if (responseFormat && typeof responseFormat === "object") {
+    requestBody.response_format = responseFormat;
+  }
+  if (typeof enableThinking === "boolean") {
+    requestBody.enable_thinking = enableThinking;
+  }
+  if (highResolutionImages === true) {
+    requestBody.vl_high_resolution_images = true;
   }
 
   let response;
@@ -8252,7 +8265,8 @@ async function runLocalOcrFamilyClassification({
       attempted: false,
       route,
       contract: createOneShotAcquisitionContract({ route }),
-      layoutLines: Object.freeze([])
+      layoutLines: Object.freeze([]),
+      axisOrderEvidence: null
     };
   };
   if (!imageBuffer || !imageIdentity) return genericResult();
@@ -8296,12 +8310,21 @@ async function runLocalOcrFamilyClassification({
       sourceText: result?.data?.text || "",
       layoutLines: extractedLayoutLines
     });
-    const normalizationComplete = normalizedLocalEvidence.status
+    const trustedDecimalEvidence = normalizedLocalEvidence.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
+      ? null
+      : extractTrustedLocalOcrDecimalCoordinateEvidence({
+        sourceText: result?.data?.text || "",
+        layoutLines: extractedLayoutLines
+      });
+    const selectedLocalEvidence = trustedDecimalEvidence?.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
+      ? trustedDecimalEvidence
+      : normalizedLocalEvidence;
+    const normalizationComplete = selectedLocalEvidence.status
       === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE;
     const layoutLines = normalizationComplete
-      ? normalizedLocalEvidence.layoutLines
+      ? selectedLocalEvidence.layoutLines
       : Object.freeze([]);
-    const sourceText = normalizationComplete ? normalizedLocalEvidence.text : "";
+    const sourceText = normalizationComplete ? selectedLocalEvidence.text : "";
     const route = classifyOneShotStructuredFamily({
       text: sourceText,
       layoutLines
@@ -8309,6 +8332,8 @@ async function runLocalOcrFamilyClassification({
     return {
       attempted: true,
       route,
+      sourceText,
+      axisOrderEvidence: selectedLocalEvidence.axisOrderEvidence || null,
       contract: createOneShotAcquisitionContract({
         route,
         sourceText,
@@ -8875,6 +8900,7 @@ function inferCoordinateEngineV2Type(payload = {}) {
   }
   if (precisionMode === "wgs84-table-coordinates"
     || precisionMode === "wgs84-chat-coordinates"
+    || precisionMode === "wgs84-platform-lonlat-coordinates"
     || precisionMode === "wgs84-single-point-decimal"
     || precisionMode === "wgs84-single-point-dms"
     || payload.wgs84TableCoordinates?.isWgs84TableCoordinates
@@ -9291,6 +9317,15 @@ function getCoordinateEngineV2AxisEvidence(coordinateType = "", result = {}, opt
       status: "locked_by_parser",
       interpretation: "as_parsed",
       reason: "WGS84 Chat parser defines latitude/longitude order"
+    };
+  }
+  if (precisionMode === "wgs84-platform-lonlat-coordinates"
+    && result.axisOrderEvidence?.status === "FORMAT_RESOLVED"
+    && result.axisOrderEvidence?.interpretation === "first_is_lon_second_is_lat") {
+    return {
+      status: "explicit_header",
+      interpretation: "first_is_lon_second_is_lat",
+      reason: "repeated compact platform format evidence defines longitude/latitude order"
     };
   }
 
@@ -10216,12 +10251,15 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
     schema_version: "coordinate_engine_v2",
     coordinate_type: coordinateType,
     precision_mode: precisionMode,
+    axisOrderEvidence: payload.axisOrderEvidence || null,
     source_crs: coordinateType === "projected_xy"
       ? { id: "EPSG:32630", projection: "utm", zone: 30, hemisphere: "N", axisOrder: "easting_northing" }
       : coordinateType === "indonesia_utm50_projected"
         ? { id: "EPSG:32750", projection: "utm", zone: 50, hemisphere: "S", axisOrder: "easting_northing" }
         : coordinateType === "madagascar_cadastral_grid"
           ? { id: "EPSG:29702", projection: "laborde", axisOrder: "easting_northing" }
+        : precisionMode === "wgs84-platform-lonlat-coordinates"
+          ? { id: "EPSG:4326", projection: "geographic", axisOrder: "longitude_latitude" }
         : null,
     confidence: groups.length > 0
       ? Number((groups.reduce((sum, group) => sum + Number(group.confidence || 0), 0) / groups.length).toFixed(2))
@@ -14088,6 +14126,8 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
   let localOcrStructuredLayoutRows = null;
   let oneShotLocalOcrAttempted = false;
   let oneShotLocalOcrLayoutLines = Object.freeze([]);
+  let oneShotLocalOcrSourceText = "";
+  let oneShotLocalOcrAxisOrderEvidence = null;
   let oneShotStructuredFamilyRoute = classifyOneShotStructuredFamily();
   let oneShotAcquisitionContract = createOneShotAcquisitionContract({ route: oneShotStructuredFamilyRoute });
   let responseCommitPromise = null;
@@ -14471,6 +14511,8 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     });
     oneShotLocalOcrAttempted = oneShotFamilyClassification.attempted === true;
     oneShotLocalOcrLayoutLines = oneShotFamilyClassification.layoutLines;
+    oneShotLocalOcrSourceText = String(oneShotFamilyClassification.sourceText || "");
+    oneShotLocalOcrAxisOrderEvidence = oneShotFamilyClassification.axisOrderEvidence || null;
     oneShotStructuredFamilyRoute = oneShotFamilyClassification.route;
     oneShotAcquisitionContract = oneShotFamilyClassification.contract;
     console.log("One-shot structured family route:", {
@@ -15638,6 +15680,61 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         : "REVIEW_REQUIRED"
     });
     if (oneShotAcquisitionConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
+      const trustedLocalSourceRows = oneShotLocalOcrSourceText.split(/\r?\n/u)
+        .map(line => line.trim())
+        .filter(line => /^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/u.test(line));
+      const trustedLocalCoordinateRows = trustedLocalSourceRows.length > 0
+        ? trustedLocalSourceRows
+        : extractCoordinateLines(oneShotLocalOcrSourceText).split(/\r?\n/u).filter(Boolean);
+      if (trustedLocalCoordinateRows.length >= 3) {
+        const trustedLocalAxisResolved = oneShotLocalOcrAxisOrderEvidence?.status === "FORMAT_RESOLVED"
+          && oneShotLocalOcrAxisOrderEvidence?.axisOrder === "longitude_latitude"
+          && oneShotLocalOcrAxisOrderEvidence?.interpretation === "first_is_lon_second_is_lat"
+          && Number(oneShotLocalOcrAxisOrderEvidence?.confidence || 0) >= 0.9;
+        const trustedLocalCoordinates = trustedLocalAxisResolved
+          ? trustedLocalSourceRows.join("\n")
+          : extractCoordinateLines(oneShotLocalOcrSourceText);
+        const consumeResult = await consumeCoordinateUsage({
+          note: "Coordinate recognition consumed after trusted local OCR decimal recovery"
+        });
+        if (!consumeResult.success) {
+          return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+            success: false,
+            reason: consumeResult.reason || "db_error",
+            code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+            error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const localReviewPayload = {
+          model: `${aliyunVisionModel}+trusted-local-ocr-decimal-review`,
+          rawText: oneShotLocalOcrSourceText,
+          coordinates: trustedLocalCoordinates,
+          precisionMode: trustedLocalAxisResolved
+            ? "wgs84-platform-lonlat-coordinates"
+            : "wgs84-chat-coordinates",
+          requiresReview: !trustedLocalAxisResolved,
+          warning: trustedLocalAxisResolved
+            ? "已依据图片中重复、紧邻坐标的格式标记自动按经度/纬度解析；仍可使用交换或撤销进行修正。"
+            : "possible swapped lat/lon; 已完整提取高置信坐标行，请核对或交换经纬度顺序后再查看地图或下载 KML。",
+          axisOrderEvidence: oneShotLocalOcrAxisOrderEvidence,
+          acquisitionContractConformance: oneShotAcquisitionConformance,
+          parserTrace: [
+            "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
+            "LOCAL_OCR:trusted_decimal_rows_recovered",
+            trustedLocalAxisResolved
+              ? "AXIS_ORDER:auto_resolved_by_repeated_platform_format_evidence"
+              : "AXIS_ORDER:review_required"
+          ],
+          quota: consumeResult.quota
+        };
+        const localReviewEngine = buildCoordinateEngineV2ShadowResult(localReviewPayload, {
+          forceRequiresReview: !trustedLocalAxisResolved,
+          rawHint: ""
+        });
+        return res.json(buildCoordinateVerificationResponse(localReviewPayload, localReviewEngine));
+      }
       const contractReviewPayload = {
         success: false,
         reason: "acquisition_contract_review_required",

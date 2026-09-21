@@ -28,7 +28,11 @@ export async function runAgenticCoordinateRecognition({
         }
       ],
       temperature: 0,
-      maxTokens: 5000,
+      maxTokens: 12000,
+      responseFormat: { type: "json_object" },
+      enableThinking: false,
+      highResolutionImages: true,
+      timeoutMs: 90000,
       stageName: "agentic_one_shot",
       lowValue: false
     });
@@ -44,4 +48,3 @@ export async function runAgenticCoordinateRecognition({
     })
   });
 }
-

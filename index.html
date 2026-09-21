@@ -884,7 +884,7 @@
       box-shadow: none;
     }
 
-    .workspace-tools .icon-button:not(.clear-input-button) {
+    .workspace-tools .icon-button:not(.clear-input-button):not(.undo-button):not(.swap-order-button) {
       display: none;
     }
 
@@ -1166,7 +1166,8 @@
 
     .coordinate-result-actions .map-preview-action:hover { background: #115e59; }
 
-    .coordinate-result-actions .coordinate-kml-action {
+    .coordinate-result-actions .coordinate-kml-action,
+    .coordinate-result-actions .coordinate-copy-action {
       width: 100%;
       min-height: 42px;
       margin: 0;
@@ -1179,13 +1180,15 @@
       font-weight: 800;
     }
 
-    .coordinate-result-actions .coordinate-kml-action[data-state="enabled"] {
+    .coordinate-result-actions .coordinate-kml-action[data-state="enabled"],
+    .coordinate-result-actions .coordinate-copy-action[data-state="enabled"] {
       border-color: #0f9488;
       background: #f0fdfa;
       color: #0f766e;
     }
 
-    .coordinate-result-actions .coordinate-kml-action[data-state="blocked"] {
+    .coordinate-result-actions .coordinate-kml-action[data-state="blocked"],
+    .coordinate-result-actions .coordinate-copy-action[data-state="blocked"] {
       border-color: #e2e8f0;
       background: #f1f5f9;
       color: #94a3b8;
@@ -4535,7 +4538,7 @@
 116.391245,39.907654
 31&#176;15'30.12&quot;N,121&#176;28'15.45&quot;E"></textarea>
           <div class="workspace-tools">
-            <button type="button" class="icon-button" onclick="undoLastChange()" title="&#25764;&#38144;&#19978;&#19968;&#27493;" aria-label="&#25764;&#38144;&#19978;&#19968;&#27493;">&#8630;</button>
+            <button type="button" class="icon-button undo-button" onclick="undoLastChange()" title="&#25764;&#38144;&#19978;&#19968;&#27493;" aria-label="&#25764;&#38144;&#19978;&#19968;&#27493;">&#8630;</button>
             <button type="button" class="icon-button clear-input-button" onclick="confirmClearContent()" title="&#28165;&#31354;&#20869;&#23481;" aria-label="&#28165;&#31354;&#20869;&#23481;">&#9003;</button>
             <button type="button" class="icon-button swap-order-button" onclick="swapLongitudeLatitude()" title="&#20132;&#25442;&#32463;&#32428;&#24230;" aria-label="&#20132;&#25442;&#32463;&#32428;&#24230;">&#8644;</button>
             <button type="button" class="icon-button" onclick="copyContent()" title="&#22797;&#21046;&#20869;&#23481;" aria-label="&#22797;&#21046;&#20869;&#23481;">&#10697;</button>
@@ -4562,7 +4565,7 @@
       <button id="mapPreviewAction" type="button" class="primary-action map-preview-action" onclick="openSpatialResult()" hidden disabled>查看地图</button>
       <div class="coordinate-secondary-actions">
         <button id="coordinateKmlAction" type="button" class="secondary kml-download-action coordinate-kml-action" data-state="blocked" aria-disabled="true" onclick="downloadKml()" disabled>下载 KML</button>
-        <button id="coordinateCopyAction" type="button" class="secondary coordinate-copy-action" onclick="copyContent()" disabled>复制坐标</button>
+        <button id="coordinateCopyAction" type="button" class="secondary coordinate-copy-action" data-state="blocked" aria-disabled="true" onclick="copyContent()" disabled>复制坐标</button>
       </div>
     </div>
 
@@ -5845,6 +5848,12 @@ Au值 = 纯度 × 10 后取整数</div>
       headers["x-user-code"] = userCode || getOrCreateUserCode();
       headers["x-page"] = window.location.pathname || "/";
 
+      const localRegressionRequested = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname)
+        && new URLSearchParams(window.location.search).get("regression") === "1";
+      if (localRegressionRequested) {
+        headers["x-regression-test"] = "true";
+      }
+
       if (firstSourceInfo.fromSource) {
         headers["x-source"] = firstSourceInfo.fromSource;
         headers["x-source-page"] = firstSourceInfo.firstPage || "/";
@@ -7057,6 +7066,7 @@ Au值 = 纯度 × 10 后取整数</div>
         snapshotRole: "RECOVERY_INPUT_AND_UI_CONTEXT",
         snapshotAuthority: "NON_AUTHORITATIVE",
         sourceText: text,
+        displayCoordinateOrder: coordinateOrder.value,
         geometry: cloneIdentityBoundValue(result.geometry),
         crs: cloneIdentityBoundValue(result.crs),
         axisOrder: result.crs?.axisOrder || "",
@@ -7118,7 +7128,10 @@ Au值 = 纯度 × 10 后取整数</div>
         method: "POST",
         headers: getSourceHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
-          coordinateText: normalizeManualCoordinateTextForFinalizer(snapshot.sourceText),
+          coordinateText: normalizeManualCoordinateTextForFinalizer(
+            snapshot.sourceText,
+            snapshot.displayCoordinateOrder || coordinateOrder.value
+          ),
           recoveryIdentity: {
             resultId: snapshot.resultIdentity.resultId,
             resultRevision: snapshot.resultIdentity.resultRevision,
@@ -7150,6 +7163,7 @@ Au值 = 纯度 × 10 后取整数</div>
     async function revertToLastValidIdentityBoundSnapshot() {
       if (!lastValidIdentityBoundSnapshot) return false;
       input.value = lastValidIdentityBoundSnapshot.sourceText;
+      coordinateOrder.value = lastValidIdentityBoundSnapshot.displayCoordinateOrder || "auto";
       markCoordinateTextChanged();
       updateCadastralGridPanel();
       return revalidateLastValidIdentityBoundSnapshot(lastValidIdentityBoundSnapshot.sourceText);
@@ -7195,7 +7209,7 @@ Au值 = 纯度 × 10 后取整数</div>
       mapPreviewAction.disabled = state === "blocked";
       mapPreviewAction.dataset.state = state;
       mapPreviewAction.setAttribute("aria-disabled", String(mapPreviewAction.disabled));
-      mapPreviewAction.textContent = state === "validation_required" ? "验证并查看地图" : "查看地图";
+      mapPreviewAction.textContent = "查看地图";
       refreshSpatialShareActions();
       syncKmlActionVisualState();
     }
@@ -7219,9 +7233,7 @@ Au值 = 纯度 × 10 后取整数</div>
         button.setAttribute("aria-busy", String(kmlGenerationInProgress));
         button.textContent = kmlGenerationInProgress
           ? "正在生成…"
-          : state === "validation_required"
-            ? (labels.validationRequired || "验证并下载 KML")
-            : (labels.enabled || "下载 KML");
+          : (labels.enabled || "下载 KML");
       };
       syncButton(coordinateKmlAction, coordinateKmlVisualState());
       syncButton(spatialKmlAction, spatialKmlAction?.dataset.eligible === "true");
@@ -7236,7 +7248,10 @@ Au值 = 纯度 × 10 后取整数</div>
       const shareReady = spatialResultEnabled && Boolean(getFinalizedCoordinateIdentity());
       if (coordinateCopyAction) {
         coordinateCopyAction.hidden = false;
-        coordinateCopyAction.disabled = !String(input?.value || "").trim();
+        const copyEnabled = Boolean(String(input?.value || "").trim());
+        coordinateCopyAction.disabled = !copyEnabled;
+        coordinateCopyAction.dataset.state = copyEnabled ? "enabled" : "blocked";
+        coordinateCopyAction.setAttribute("aria-disabled", String(coordinateCopyAction.disabled));
       }
       if (spatialShareCardAction) {
         spatialShareCardAction.hidden = !shareReady;
@@ -7382,12 +7397,30 @@ Au值 = 纯度 × 10 后取整数</div>
       return [];
     }
 
-    function spatialWarningText(warnings = []) {
+    function spatialReviewRequired(payload = {}) {
+      const preview = payload?.mapPreviewObject || {};
+      const eligibility = payload?.kmlEligibility || {};
+      const warnings = Array.isArray(preview.previewWarnings) ? preview.previewWarnings : [];
+      const confirmationStatus = String(eligibility.confirmationStatus || "").toUpperCase();
+      const qualityGateStatus = String(eligibility.qualityGateStatus || "").toUpperCase();
+      const decisionState = String(eligibility.decisionState || "").toUpperCase();
+      const explicitReviewWarning = warnings.some(value => /(?:REVIEW_REQUIRED|CONFIRMATION_PENDING|KML_BLOCKED|SELF[-_ ]?INTERSECTION|自交)/i.test(String(value)));
+      return explicitReviewWarning
+        || eligibility.allowed === false
+        || ["PENDING", "REVIEW_REQUIRED"].includes(confirmationStatus)
+        || ["REVIEW", "FAILED"].includes(qualityGateStatus)
+        || ["REVIEW_REQUIRED", "NEEDS_REVIEW", "BLOCKED"].includes(decisionState);
+    }
+
+    function spatialWarningText(payload = {}) {
+      const warnings = Array.isArray(payload?.mapPreviewObject?.previewWarnings)
+        ? payload.mapPreviewObject.previewWarnings
+        : [];
+      if (!spatialReviewRequired(payload)) return "";
       if (warnings.some(value => /self[-_ ]?intersection|自交/i.test(String(value)))) {
         return "当前边界可能存在自相交，请返回坐标核对；地图仅用于预览，KML 仍保持阻止。";
       }
-      if (warnings.length) return "当前结果需要核对；地图仅用于预览，不会改变 KML 权限。";
-      return "";
+      return "当前结果存在不确定信息，请核对后再下载 KML。";
     }
 
     function renderSpatialResult(payload) {
@@ -7399,7 +7432,7 @@ Au值 = 纯度 × 10 后取整数</div>
         ? payload.spatialFacts
         : null;
       spatialGeometryType.textContent = preview.geometryType || "Geometry";
-      const warning = spatialWarningText(preview.previewWarnings || []);
+      const warning = spatialWarningText(payload);
       spatialResultWarning.hidden = !warning;
       spatialResultWarning.textContent = warning;
       spatialReviewCompact.hidden = !warning;
@@ -7575,7 +7608,7 @@ Au值 = 纯度 × 10 后取整数</div>
     async function requestEditedCoordinateRevision() {
       const identity = getFinalizedCoordinateIdentity();
       if (!identity) throw new Error("当前坐标结果缺少服务端确认身份，请重新识别。");
-      const normalizedCoordinateText = normalizeManualCoordinateTextForFinalizer(input.value);
+      const normalizedCoordinateText = normalizeManualCoordinateTextForFinalizer(input.value, coordinateOrder.value);
       const response = await fetch("/api/coordinate-revision", {
         method: "POST",
         headers: getSourceHeaders({ "content-type": "application/json" }),
@@ -7605,7 +7638,7 @@ Au值 = 纯度 × 10 后取整数</div>
         }
         return activeFinalizedCoordinateResult;
       }
-      const normalizedCoordinateText = normalizeManualCoordinateTextForFinalizer(input.value);
+      const normalizedCoordinateText = normalizeManualCoordinateTextForFinalizer(input.value, coordinateOrder.value);
       const recoveryIdentity = activeFinalizedCoordinateResult ? {
         resultId: activeFinalizedCoordinateResult.resultId,
         resultRevision: activeFinalizedCoordinateResult.resultRevision,
@@ -10424,10 +10457,26 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         .replace(/^\s*\d{1,3}\s*(?:\.\s+|[\):：-]\s*)/, "");
     }
 
-    function normalizeManualCoordinateTextForFinalizer(rawText) {
+    function normalizeManualCoordinateTextForFinalizer(rawText, displayOrder = "lnglat") {
+      const normalizedOrder = ["latlng", "lnglat"].includes(displayOrder) ? displayOrder : "lnglat";
       return String(rawText || "")
         .split(/\r?\n/)
-        .map(line => stripLeadingCoordinateLabel(line))
+        .map(line => {
+          if (/^\s*label\s*\|\s*WGS84\s*\|\s*KML\s*$/i.test(line)) return null;
+          const columns = line.split("|").map(value => value.trim());
+          if (columns.length >= 3) {
+            const kml = columns.at(-1).match(/^([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)(?:\s*,\s*[+-]?\d+(?:\.\d+)?)?$/);
+            if (kml) return `${kml[1]},${kml[2]}`;
+          }
+
+          const stripped = stripLeadingCoordinateLabel(line);
+          const pair = stripped.match(/^\s*([+-]?\d+(?:\.\d+)?)\s*[,，]\s*([+-]?\d+(?:\.\d+)?)\s*$/);
+          if (!pair) return stripped;
+          return normalizedOrder === "latlng"
+            ? `${pair[2]},${pair[1]}`
+            : `${pair[1]},${pair[2]}`;
+        })
+        .filter(line => line !== null)
         .join("\n");
     }
 
@@ -12366,7 +12415,17 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     }
 
     function getCoordinateGroupsFromText(text) {
-      const normalizedText = normalizeManualCoordinateTextForFinalizer(text);
+      const formattedWgs84Rows = extractWgs84TableCoordinateRows(text, {
+        preserveDuplicatePoints: true
+      });
+      if (formattedWgs84Rows.length > 0 && hasFormattedWgs84KmlTableContext(text)) {
+        return [formattedWgs84Rows.map(row => normalizeKmlPair({
+          longitude: row.lon,
+          latitude: row.lat
+        }))];
+      }
+
+      const normalizedText = normalizeManualCoordinateTextForFinalizer(text, "auto");
       const mozambiqueRows = extractMozambiqueGeographicTableRows(normalizedText);
       if (mozambiqueRows.length > 0) {
         return [mozambiqueRows.map(row => normalizeKmlPair({
@@ -12375,7 +12434,9 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         }))];
       }
 
-      const chatRows = extractChatCoordinateRows(normalizedText);
+      const chatRows = coordinateOrder.value === "latlng"
+        ? extractChatCoordinateRows(normalizedText)
+        : [];
       if (chatRows.length > 0) {
         return [chatRows.map(row => normalizeKmlPair({
           longitude: row.lon,
@@ -12561,6 +12622,41 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return false;
     }
 
+    function swapCoordinateTextOrder(rawText, currentDisplayOrder = "auto") {
+      let swappedCount = 0;
+      let formattedWgs84Table = false;
+      const lines = String(rawText || "").split(/\r?\n/);
+      const swappedLines = lines.map(line => {
+        if (/^\s*label\s*\|\s*WGS84\s*\|\s*KML\s*$/i.test(line)) {
+          formattedWgs84Table = true;
+          return null;
+        }
+
+        const formattedRow = line.match(/^\s*[^|]+\|\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\|\s*[+-]?\d+(?:\.\d+)?\s*,\s*[+-]?\d+(?:\.\d+)?(?:\s*,\s*[+-]?\d+(?:\.\d+)?)?\s*$/);
+        if (formattedRow) {
+          formattedWgs84Table = true;
+          swappedCount += 1;
+          return `${formattedRow[2]},${formattedRow[1]}`;
+        }
+
+        const stripped = stripLeadingCoordinateLabel(line);
+        const pair = stripped.match(/^\s*([+-]?\d+(?:\.\d+)?)\s*[,，]\s*([+-]?\d+(?:\.\d+)?)\s*$/);
+        if (!pair) return line;
+        swappedCount += 1;
+        return `${pair[2]},${pair[1]}`;
+      }).filter(line => line !== null);
+
+      return {
+        text: swappedLines.join("\n"),
+        swappedCount,
+        displayOrder: formattedWgs84Table
+          ? "latlng"
+          : currentDisplayOrder === "auto"
+            ? "lnglat"
+            : currentDisplayOrder
+      };
+    }
+
     async function swapLongitudeLatitude() {
       await loadUserConfig();
 
@@ -12568,46 +12664,28 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return;
       }
 
-      const lines = input.value.split(/\r?\n/);
-      let swappedCount = 0;
-      const swappedLines = lines.map(line => {
-        if (!line.trim()) {
-          return line;
-        }
+      const swapped = swapCoordinateTextOrder(input.value, coordinateOrder.value);
 
-        const commaIndex = line.indexOf(",");
-
-        if (commaIndex === -1) {
-          return line;
-        }
-
-        const left = line.slice(0, commaIndex).trim();
-        const right = line.slice(commaIndex + 1).trim();
-
-        if (!left || !right) {
-          return line;
-        }
-
-        swappedCount += 1;
-        return `${right}, ${left}`;
-      });
-
-      if (swappedCount === 0) {
+      if (swapped.swappedCount === 0) {
         showMessage("没有找到可交换的坐标。", true);
         return;
       }
 
       rememberState();
-      input.value = swappedLines.join("\n");
-      markCoordinateTextChanged();
-      coordinateOrder.value = "lnglat";
+      input.value = swapped.text;
+      coordinateOrder.value = swapped.displayOrder;
+      if (agenticCoordinateController?.enabled) {
+        agenticCoordinateController.edit(input.value);
+      } else {
+        markCoordinateTextChanged();
+      }
       setInternalKmlSourceFromText(input.value);
       setCoordinateOrderReviewVisible(false);
       updateCadastralGridPanel();
       trackEvent("swap_lnglat_click", {
-        count: swappedCount
+        count: swapped.swappedCount
       });
-      showMessage(`已交换 ${swappedCount} 组坐标的经纬度顺序，导出时将按当前工作区顺序使用。`);
+      showMessage(`已交换 ${swapped.swappedCount} 组坐标的经纬度顺序，地图和 KML 将按交换后的顺序重新计算。`);
     }
 
     async function convertCoordinateFormat() {
@@ -14404,12 +14482,16 @@ ${placemarks}
 
         rememberState();
         input.value = displayCoordinates || finalCoordinates;
+        coordinateOrder.value = sourceCoordinateRepresentation.axisOrder === "latitude_longitude"
+          ? "latlng"
+          : sourceCoordinateRepresentation.axisOrder === "longitude_latitude"
+            ? "lnglat"
+            : "auto";
         refreshMapPreviewAction();
         finalizedCoordinateTextSnapshot = String(input.value || "");
         finalizedCoordinateDirty = false;
         syncCoordinateReviewConfirmationState(summaryEngine, activeFinalizedCoordinateResult);
         rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
-        coordinateOrder.value = "auto";
         setCoordinateOrderReviewVisible(hasOrderReview);
         updateCadastralGridPanel();
         if (isDmsGrouped) {

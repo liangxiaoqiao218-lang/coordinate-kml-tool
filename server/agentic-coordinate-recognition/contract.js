@@ -127,6 +127,30 @@ function normalizeWarnings(warnings) {
   )));
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sourceRowContainsLabel(sourceText, label) {
+  if (!label) return true;
+  const escapedLabel = escapeRegExp(label);
+  return new RegExp(`(^|[\\s|,;:])${escapedLabel}(?=$|[\\s|,;:])`, "i").test(sourceText);
+}
+
+function renderSourceFaithfulPointRow(point) {
+  if (!point.label || sourceRowContainsLabel(point.sourceText, point.label)) {
+    return point.sourceText;
+  }
+  return `${point.label} | ${point.sourceText}`;
+}
+
+export function buildAgenticSourceFaithfulDisplayText(groups) {
+  return groups.map(group => {
+    const rows = group.points.map(renderSourceFaithfulPointRow).join("\n");
+    return group.name ? `${group.name}\n${rows}` : rows;
+  }).join("\n\n");
+}
+
 export function normalizeAgenticCoordinateResult(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("recognition result must be an object");
@@ -144,7 +168,7 @@ export function normalizeAgenticCoordinateResult(payload) {
     throw new Error("unsuccessful result must use failed status");
   }
 
-  const displayText = success
+  const suppliedDisplayText = success
     ? asRequiredString(payload.displayText, "displayText")
     : String(payload.displayText || "");
   const coordinateSystem = payload.coordinateSystem;
@@ -168,6 +192,9 @@ export function normalizeAgenticCoordinateResult(payload) {
   if (!success && groups.length > 0) throw new Error("failed result cannot contain coordinate groups");
 
   const normalizedGroups = Object.freeze(groups.map(normalizeGroup));
+  const displayText = success
+    ? buildAgenticSourceFaithfulDisplayText(normalizedGroups)
+    : suppliedDisplayText;
   const pointCount = normalizedGroups.reduce((sum, group) => sum + group.points.length, 0);
   const warnings = normalizeWarnings(payload.warnings);
   const hasReviewPoint = normalizedGroups.some(group => (
@@ -197,4 +224,3 @@ export function normalizeAgenticCoordinateResult(payload) {
     })
   });
 }
-

@@ -2,6 +2,7 @@ import { createAgenticGeometryArtifact } from './geometry.js';
 import { buildAgenticKml } from './kml.js';
 import { runAgenticCoordinateFinalization } from './service.js';
 import { transformAgenticCoordinateResult } from './projection.js';
+import { assertAgenticCoordinateConsistency } from '../agentic-coordinate-recognition/consistency.js';
 
 function normalizeText(value) {
   return String(value || '').replace(/\r\n?/g, '\n');
@@ -41,7 +42,8 @@ export async function finalizeAgenticCoordinateDocument({
       providerCall,
     });
 
-  const spatialResult = transformAgenticCoordinateResult(finalized.result);
+  const consistentResult = assertAgenticCoordinateConsistency(finalized.result);
+  const spatialResult = transformAgenticCoordinateResult(consistentResult);
   const geometryArtifact = createAgenticGeometryArtifact({
     documentRevision,
     result: spatialResult,

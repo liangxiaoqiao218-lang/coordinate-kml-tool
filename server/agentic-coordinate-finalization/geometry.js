@@ -42,7 +42,13 @@ function flattenGroups(groups) {
 }
 
 export function buildAgenticGeoJsonGeometry(result) {
-  if (!result?.success || !['usable', 'needs_review'].includes(result.resultStatus)) {
+  if (result?.success && result.resultStatus === 'needs_review') {
+    throw geometryError(
+      'AGENTIC_REVIEW_REQUIRED',
+      'Coordinate review is required before map and KML generation',
+    );
+  }
+  if (!result?.success || result.resultStatus !== 'usable') {
     throw geometryError('UNUSABLE_COORDINATE_RESULT', 'Recognition result is not usable for geometry');
   }
 
@@ -89,6 +95,6 @@ export function createAgenticGeometryArtifact({ documentRevision, result }) {
     documentRevision,
     geometry,
     geometryHash: createHash('sha256').update(canonical).digest('hex'),
-    reviewRequired: result.resultStatus === 'needs_review',
+    reviewRequired: false,
   });
 }

@@ -25,6 +25,8 @@ export async function runAgenticCoordinateFinalization({
       imageItems: [],
       temperature: 0,
       maxTokens: 5000,
+      responseFormat: { type: 'json_object' },
+      enableThinking: false,
       stageName: 'agentic_text_finalize',
       lowValue: false,
     });
@@ -40,4 +42,3 @@ export async function runAgenticCoordinateFinalization({
     }),
   });
 }
-

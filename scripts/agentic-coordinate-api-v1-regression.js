@@ -83,6 +83,26 @@ assert.equal(finalizeResponse.body.map.documentRevision, 2);
 assert.equal(finalizeResponse.body.map.geometryHash, finalizeResponse.body.kml.geometryHash);
 assert.equal(providerCalls, 1);
 
+const reviewResult = {
+  ...result,
+  resultStatus: 'needs_review',
+  warnings: ['Review required'],
+};
+const reviewFinalizeResponse = responseRecorder();
+await api.finalize({
+  body: {
+    documentRevision: 20,
+    currentText: reviewResult.displayText,
+    sourceText: reviewResult.displayText,
+    recognitionResult: reviewResult,
+  },
+}, reviewFinalizeResponse);
+assert.equal(reviewFinalizeResponse.statusCode, 422);
+assert.equal(reviewFinalizeResponse.body.code, 'AGENTIC_REVIEW_REQUIRED');
+assert.equal(reviewFinalizeResponse.body.map, undefined);
+assert.equal(reviewFinalizeResponse.body.kml, undefined);
+assert.equal(providerCalls, 1);
+
 const editedResult = structuredClone(result);
 editedResult.displayText = result.displayText.replace('10.0', '10.05');
 editedResult.groups[0].points[0].sourceText = 'A 10.05,20.0';

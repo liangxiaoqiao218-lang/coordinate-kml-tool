@@ -4,7 +4,9 @@ import { buildAgenticCoordinateUsageAuthority } from './agentic-coordinate-usage
 
 function apiErrorStatus(error) {
   if (error?.code === 'PROJECTED_CRS_TRANSFORM_REQUIRED'
-    || error?.code === 'PROJECTED_TRANSFORM_FAILED') return 422;
+    || error?.code === 'PROJECTED_TRANSFORM_FAILED'
+    || error?.code === 'AGENTIC_REVIEW_REQUIRED'
+    || error?.code === 'AGENTIC_RESULT_INCONSISTENT') return 422;
   if (/must|invalid|unsupported|empty|required/i.test(String(error?.message || ''))) return 400;
   return 502;
 }

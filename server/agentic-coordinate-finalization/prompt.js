@@ -2,7 +2,7 @@ const OUTPUT_CONTRACT = `Return exactly one JSON object with this shape:
 {
   "success": true,
   "resultStatus": "usable | needs_review | failed",
-  "displayText": "the current coordinate text, kept easy to compare with the user's text",
+  "displayText": "the current coordinate text in its source format",
   "coordinateSystem": {
     "kind": "geographic | projected | unknown",
     "name": "printed CRS name or null",
@@ -16,7 +16,7 @@ const OUTPUT_CONTRACT = `Return exactly one JSON object with this shape:
       "points": [
         {
           "label": "visible point label or null",
-          "sourceText": "the exact current-text row",
+          "sourceText": "the exact entire current-text row, including its visible point label",
           "x": null,
           "y": null,
           "latitude": 0,
@@ -44,7 +44,7 @@ The CURRENT TEXT below is the only coordinate content with authority. The earlie
 
 Understand the document as a whole. Preserve visible group boundaries; never create groups merely because there are four rows. A list of observation/sample points is MultiPoint, not a polygon. A printed cadastral grid list is Grid, not one boundary polygon. Do not guess a CRS, UTM zone, hemisphere, datum, EPSG code, sign, digit, or missing coordinate.
 
-For DMS or decimal geographic coordinates, normalize longitude/latitude numerically while preserving each current source row in sourceText. For projected coordinates, preserve X/Y and explicit CRS evidence; do not invent latitude/longitude. Mark uncertain rows and the overall result as needs_review. If no reliable coordinate document remains, return failed with empty groups.
+For DMS or decimal geographic coordinates, normalize longitude/latitude numerically while preserving each entire current source row in sourceText. Normalized numeric fields must never replace the source-formatted displayText or sourceText. For projected coordinates, preserve X/Y and explicit CRS evidence; do not invent latitude/longitude. Mark uncertain rows and the overall result as needs_review. If no reliable coordinate document remains, return failed with empty groups.
 
 ${OUTPUT_CONTRACT}
 
@@ -56,4 +56,3 @@ CURRENT TEXT (authoritative):
 ${String(currentText || '')}
 ---END CURRENT COORDINATE TEXT---`;
 }
-
