@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON,
   LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
+  extractProviderDecimalCoordinateEvidence,
   extractTrustedLocalOcrDecimalCoordinateEvidence
 } from "../server/evidence-acquisition/local-ocr-map-layout-classifier.js";
 
@@ -61,9 +62,34 @@ const unprefixedResult = extractTrustedLocalOcrDecimalCoordinateEvidence({
 assert.equal(unprefixedResult.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
 assert.equal(unprefixedResult.axisOrderEvidence, null, "plain ambiguous pairs must not receive automatic axis authority");
 
+const providerResult = extractProviderDecimalCoordinateEvidence({
+  sourceText: ["UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE", ...rows].join("\n")
+});
+assert.equal(providerResult.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+assert.equal(providerResult.rowCount, 5);
+assert.equal(providerResult.text.split("\n")[0], "-8.09722200,10.62611100");
+assert.equal(providerResult.text.split("\n").at(-1), "-8.09722200,10.62611100");
+assert.equal(providerResult.axisOrderEvidence?.axisOrder, "longitude_latitude");
+
+const providerAmbiguous = extractProviderDecimalCoordinateEvidence({
+  sourceText: unprefixedRows.join("\n")
+});
+assert.equal(providerAmbiguous.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+assert.equal(providerAmbiguous.axisOrderEvidence, null);
+
+const providerTooShort = extractProviderDecimalCoordinateEvidence({
+  sourceText: rows.slice(0, 2).join("\n")
+});
+assert.equal(providerTooShort.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+
+const providerWithUnboundPair = extractProviderDecimalCoordinateEvidence({
+  sourceText: [...rows, "unbound 999.0,999.0"].join("\n")
+});
+assert.equal(providerWithUnboundPair.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+
 console.log(JSON.stringify({
   suite: "platform-prefixed-decimal-local-ocr-regression",
-  passed: 13,
+  passed: 21,
   cases: [
     "UI_NOISE_IGNORED",
     "SHORT_PLATFORM_PREFIX_REMOVED",
@@ -77,6 +103,14 @@ console.log(JSON.stringify({
     "REPEATED_PLATFORM_PREFIX_RESOLVES_AXIS_ORDER",
     "LONGITUDE_LATITUDE_ORDER_SELECTED",
     "PLAIN_PAIRS_REMAIN_AMBIGUOUS",
-    "AXIS_ORDER_AUTHORITY_IS_FORMAT_BOUND"
+    "AXIS_ORDER_AUTHORITY_IS_FORMAT_BOUND",
+    "PROVIDER_REVIEW_HEADER_IGNORED",
+    "PROVIDER_FIVE_ROWS_RECOVERED",
+    "PROVIDER_PRECISION_PRESERVED",
+    "PROVIDER_SOURCE_CLOSURE_PRESERVED",
+    "PROVIDER_PREFIX_RESOLVES_AXIS_ORDER",
+    "PROVIDER_PLAIN_PAIRS_REMAIN_AMBIGUOUS",
+    "PROVIDER_TOO_FEW_ROWS_REJECTED",
+    "PROVIDER_UNBOUND_PAIR_REJECTED"
   ]
 }, null, 2));

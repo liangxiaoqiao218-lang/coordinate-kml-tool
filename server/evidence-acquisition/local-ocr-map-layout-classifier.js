@@ -634,6 +634,60 @@ export function extractTrustedLocalOcrDecimalCoordinateEvidence({
   });
 }
 
+// Provider transcription is the fallback evidence source when bounded local
+// OCR cannot finish in time. Accept only a closed set of independently valid
+// decimal-pair rows; unrelated UI prose, timestamps and toolbar text are
+// ignored. Axis order remains unresolved unless every row carries the same
+// compact platform prefix already used by the source application.
+export function extractProviderDecimalCoordinateEvidence({
+  sourceText = "",
+  minimumRows = 3
+} = {}) {
+  const sourceLines = String(sourceText || "").split(/\r?\n/u);
+  const coordinateBearingLines = sourceLines.filter(line => (
+    /[+-]?\d{1,3}(?:\.\d+)?\s*[,，]\s*[+-]?\d{1,3}(?:\.\d+)?/u.test(line)
+  ));
+  const observations = sourceLines
+    .map(decimalCoordinatePairObservation)
+    .filter(Boolean);
+  if (observations.length < minimumRows || observations.length !== coordinateBearingLines.length) {
+    return Object.freeze({
+      text: "",
+      rows: Object.freeze([]),
+      rowCount: 0,
+      status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+      reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+      axisOrderEvidence: null
+    });
+  }
+
+  const repeatedCompactPrefix = observations[0]?.compactPrefix || "";
+  const hasRepeatedCompactPrefix = Boolean(
+    repeatedCompactPrefix
+    && observations.every(observation => (
+      observation.compactPrefix === repeatedCompactPrefix
+      && observation.compactSuffix === ""
+    ))
+  );
+  const rows = Object.freeze(observations.map(observation => observation.pair));
+  return Object.freeze({
+    text: rows.join("\n"),
+    rows,
+    rowCount: rows.length,
+    status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE,
+    reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.TRUSTED_DECIMAL_ROWS_ONLY,
+    axisOrderEvidence: hasRepeatedCompactPrefix
+      ? Object.freeze({
+        status: "FORMAT_RESOLVED",
+        axisOrder: "longitude_latitude",
+        interpretation: "first_is_lon_second_is_lat",
+        confidence: 0.9,
+        reason: "repeated_compact_platform_prefix_before_decimal_pair"
+      })
+      : null
+  });
+}
+
 function decimalToken(value) {
   const match = text(value).match(/^([+-]?)(\d+)(?:\.(\d+))?$/);
   if (!match) return null;

@@ -113,6 +113,7 @@ import {
   isProviderLayoutQualificationReadAllowed
 } from "./server/evidence-acquisition/index.js";
 import {
+  extractProviderDecimalCoordinateEvidence,
   extractTrustedLocalOcrDecimalCoordinateEvidence,
   LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
   normalizeLocalOcrStructuredEvidence
@@ -15734,6 +15735,58 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           rawHint: ""
         });
         return res.json(buildCoordinateVerificationResponse(localReviewPayload, localReviewEngine));
+      }
+      const trustedProviderDecimalEvidence = extractProviderDecimalCoordinateEvidence({
+        sourceText: rawText
+      });
+      if (trustedProviderDecimalEvidence.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE) {
+        const trustedProviderAxisResolved = trustedProviderDecimalEvidence.axisOrderEvidence?.status === "FORMAT_RESOLVED"
+          && trustedProviderDecimalEvidence.axisOrderEvidence?.axisOrder === "longitude_latitude"
+          && trustedProviderDecimalEvidence.axisOrderEvidence?.interpretation === "first_is_lon_second_is_lat"
+          && Number(trustedProviderDecimalEvidence.axisOrderEvidence?.confidence || 0) >= 0.9;
+        const trustedProviderCoordinates = trustedProviderAxisResolved
+          ? trustedProviderDecimalEvidence.text
+          : extractCoordinateLines(trustedProviderDecimalEvidence.text);
+        const consumeResult = await consumeCoordinateUsage({
+          note: "Coordinate recognition consumed after trusted Provider decimal recovery"
+        });
+        if (!consumeResult.success) {
+          return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+            success: false,
+            reason: consumeResult.reason || "db_error",
+            code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+            error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const providerReviewPayload = {
+          model: `${aliyunVisionModel}+trusted-provider-decimal-recovery`,
+          rawText: trustedProviderDecimalEvidence.text,
+          coordinates: trustedProviderCoordinates,
+          precisionMode: trustedProviderAxisResolved
+            ? "wgs84-platform-lonlat-coordinates"
+            : "wgs84-chat-coordinates",
+          requiresReview: !trustedProviderAxisResolved,
+          warning: trustedProviderAxisResolved
+            ? "已依据图片中重复、紧邻坐标的格式标记自动按经度/纬度解析；仍可使用交换或撤销进行修正。"
+            : "possible swapped lat/lon; 已完整提取高置信坐标行，请核对或交换经纬度顺序后再查看地图或下载 KML。",
+          axisOrderEvidence: trustedProviderDecimalEvidence.axisOrderEvidence,
+          acquisitionContractConformance: oneShotAcquisitionConformance,
+          parserTrace: [
+            "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
+            "PROVIDER:trusted_decimal_rows_recovered",
+            trustedProviderAxisResolved
+              ? "AXIS_ORDER:auto_resolved_by_repeated_platform_format_evidence"
+              : "AXIS_ORDER:review_required"
+          ],
+          quota: consumeResult.quota
+        };
+        const providerReviewEngine = buildCoordinateEngineV2ShadowResult(providerReviewPayload, {
+          forceRequiresReview: !trustedProviderAxisResolved,
+          rawHint: ""
+        });
+        return res.json(buildCoordinateVerificationResponse(providerReviewPayload, providerReviewEngine));
       }
       const contractReviewPayload = {
         success: false,
