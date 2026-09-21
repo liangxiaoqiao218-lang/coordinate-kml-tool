@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { evaluateCoordinateUsageAuthority } from "../server/coordinate-usage-atomicity.js";
 
@@ -10,7 +11,8 @@ const rows = [
   "g-8.11623600,10.83650900",
   "g-8.11597800,10.88405100",
   "g-8.06284900,10.79351300",
-  "g-8.09804000,10.79267000"
+  "g-8.09804000,10.79267000",
+  "g-8.11623600,10.83650900"
 ];
 
 if (process.argv.includes("--server")) {
@@ -65,10 +67,13 @@ child.stderr.resume();
 const signal = AbortSignal.timeout(20_000);
 try {
   const [{ port }] = await once(child, "message", { signal });
-  const syntheticPng = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-    "base64"
-  );
+  const fixturePath = String(process.env.PLATFORM_PREFIXED_FIXTURE || "").trim();
+  const syntheticPng = fixturePath
+    ? await readFile(fixturePath)
+    : Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64"
+    );
   const form = new FormData();
   form.set("visitorId", "platform-provider-recovery-regression");
   form.set("image", new Blob([syntheticPng], { type: "image/png" }), "platform-coordinate.png");
@@ -84,18 +89,31 @@ try {
   const payload = await response.json();
   assert.equal(response.status, 200, JSON.stringify(payload));
   assert.equal(payload.precisionMode, "wgs84-platform-lonlat-coordinates");
-  assert.equal(payload.rawText, rows.map(row => row.slice(1)).join("\n"));
+  if (fixturePath) {
+    assert.equal(payload.rawText.split(/\r?\n/u).filter(Boolean).length, 5);
+  } else {
+    assert.equal(payload.rawText, rows.map(row => row.slice(1)).join("\n"));
+  }
   assert.equal(payload.axisOrderEvidence?.axisOrder, "longitude_latitude");
   assert.equal(payload.coordinateEngineV2?.requires_review, false);
   assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult?.geometry?.coordinates?.[0]?.length, 5);
   assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
+  const validation = payload.coordinateEngineV2?.groups?.[0]?.validation;
+  const selectedCandidate = validation?.coordinate_order_candidates?.find(candidate => (
+    candidate.interpretation === validation.selected_interpretation
+  ));
+  assert.equal(selectedCandidate?.geometry_policy, "wgs84_terminal_closure_validation");
+  assert.equal(selectedCandidate?.original_point_count, 5);
+  assert.equal(selectedCandidate?.validation_point_count, 4);
+  assert.equal(selectedCandidate?.duplicate_coordinate_count, 1);
   const authority = evaluateCoordinateUsageAuthority({ httpStatus: response.status, body: payload });
   assert.equal(authority.eligible, true, JSON.stringify({ authority, finalizedCoordinateResult: payload.finalizedCoordinateResult }));
   const statsPromise = once(child, "message", { signal });
   child.send("stats");
   const [stats] = await statsPromise;
   assert.equal(stats.providerCalls, 1);
-  console.log("Platform-prefixed Provider recovery integration: 8/8 PASS");
+  console.log("Platform-prefixed Provider recovery integration: 14/14 PASS");
   console.log("PROVIDER_CALLS=1 (mock only)");
 } finally {
   const ended = once(child, "exit");

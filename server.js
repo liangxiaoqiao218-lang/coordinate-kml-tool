@@ -9123,21 +9123,24 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
   const rawPoints = Array.isArray(group.points) ? group.points : [];
   const labels = rawPoints.map(point => String(point?.label || "").trim()).filter(Boolean);
   const duplicateLabel = new Set(labels).size !== labels.length;
-  const usesWgs84TableGeometryPolicy = validationContext.geometryPolicy === "wgs84_table_deduplicated_validation";
+  const usesDeduplicatedValidationPolicy = [
+    "wgs84_table_deduplicated_validation",
+    "wgs84_terminal_closure_validation"
+  ].includes(validationContext.geometryPolicy);
   const baseWarnings = normalizeCoordinateEngineV2WarningList(group.warnings);
   const warnings = [...baseWarnings];
 
   if (rawPoints.length === 0) {
     warnings.push("缺少有效坐标点。");
   }
-  if (duplicateLabel && !usesWgs84TableGeometryPolicy) {
+  if (duplicateLabel && !usesDeduplicatedValidationPolicy) {
     warnings.push("存在重复或异常点号，请人工核对。");
   }
 
   let points = rawPoints.map(point => normalizeCoordinateEngineV2Point(point, false, []));
   const hasAllWgs84 = points.length > 0 && points.every(hasCoordinateEngineV2Wgs84Point);
   const hasProjectedOrGrid = points.some(hasCoordinateEngineV2ProjectedOrGridPoint) && !hasAllWgs84;
-  const selfIntersecting = !usesWgs84TableGeometryPolicy && hasAllWgs84 && points.length >= 4 && isCoordinateEngineV2SelfIntersecting(points);
+  const selfIntersecting = !usesDeduplicatedValidationPolicy && hasAllWgs84 && points.length >= 4 && isCoordinateEngineV2SelfIntersecting(points);
 
   if (selfIntersecting) {
     warnings.push("原始点序形成自交多边形，请人工核对点序后再生成 KML。");
@@ -9169,7 +9172,7 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
     || validatorRequiresReview
     || reviewWarnings.length > 0
     || rawPoints.length === 0
-    || (duplicateLabel && !usesWgs84TableGeometryPolicy)
+    || (duplicateLabel && !usesDeduplicatedValidationPolicy)
     || points.some(point => point.requires_review)
   );
   const kmlReady = Boolean(
@@ -9812,6 +9815,24 @@ function buildCoordinateEngineV2CandidatePoints(points = [], interpretation = "a
 }
 
 function buildCoordinateEngineV2GeometryPolicyMeta(points = [], geometryPolicy = "") {
+  if (geometryPolicy === "wgs84_terminal_closure_validation") {
+    const sourcePoints = Array.isArray(points) ? points : [];
+    const first = sourcePoints[0];
+    const last = sourcePoints[sourcePoints.length - 1];
+    const hasTerminalClosure = sourcePoints.length >= 4
+      && hasCoordinateEngineV2Wgs84Point(first)
+      && hasCoordinateEngineV2Wgs84Point(last)
+      && Number(first.lat) === Number(last.lat)
+      && Number(first.lon) === Number(last.lon);
+    return {
+      geometryPolicy,
+      originalPointCount: sourcePoints.length,
+      validationPointCount: hasTerminalClosure ? sourcePoints.length - 1 : sourcePoints.length,
+      duplicateCoordinateCount: hasTerminalClosure ? 1 : 0,
+      duplicateLabels: [],
+      points: hasTerminalClosure ? sourcePoints.slice(0, -1) : sourcePoints
+    };
+  }
   if (geometryPolicy !== "wgs84_table_deduplicated_validation") {
     return {
       geometryPolicy: "",
@@ -10108,7 +10129,11 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
   const validationContext = {
     profile: getCoordinateEngineV2ContextualProfile(coordinateType, result, options),
     axisEvidence: getCoordinateEngineV2AxisEvidence(coordinateType, result, options),
-    geometryPolicy: precisionMode === "wgs84-table-coordinates" ? "wgs84_table_deduplicated_validation" : ""
+    geometryPolicy: precisionMode === "wgs84-table-coordinates"
+      ? "wgs84_table_deduplicated_validation"
+      : precisionMode === "wgs84-platform-lonlat-coordinates"
+        ? "wgs84_terminal_closure_validation"
+        : ""
   };
   const forcedReview = coordinateType === "handwritten_dms_experimental"
     || precisionMode === "local-ocr-dms-fallback"
