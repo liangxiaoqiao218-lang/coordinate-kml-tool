@@ -7300,6 +7300,47 @@ function extractDmsCoordinateLines(text) {
   return coordinateLines;
 }
 
+function extractProviderDmsReviewEvidence(text) {
+  const sourceText = String(text || "");
+  const lines = normalizeText(sourceText)
+    .split(/\r?\n/u)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const candidateRows = lines.filter(line => (
+    (line.match(/[°º˚]/gu) || []).length === 2
+  ));
+  const sourceRows = candidateRows.filter(line => {
+    const degreeCount = (line.match(/[°º˚]/gu) || []).length;
+    const secondCount = (line.match(/(?:''|["”″])/gu) || []).length;
+    return degreeCount === 2 && secondCount >= 2;
+  });
+  const coordinateLines = extractDmsCoordinateLines(sourceText);
+  const explicitHeaderDirection = lines.some(line => {
+    const hasLatitude = /(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu.test(line);
+    const hasLongitude = /(?:\blon(?:gitude)?\b|经度|东经|西经)/iu.test(line);
+    const hasLatitudeDirection = /(?:\bnorth\b|\bsouth\b|\bnord\b|\bsud\b|\bnorte\b|\bsul\b|北纬|南纬|\b[NS]\b)/iu.test(line);
+    const hasLongitudeDirection = /(?:\beast\b|\bwest\b|\best\b|\bouest\b|\boeste\b|\bleste\b|东经|西经|\b[EWO]\b)/iu.test(line);
+    return hasLatitude && hasLongitude && hasLatitudeDirection && hasLongitudeDirection;
+  });
+  const everyRowHasDirections = sourceRows.length > 0 && sourceRows.every(line => (
+    /(?:\b[NS]\b|[NS]\s*$)/iu.test(line)
+      && /(?:\b[EWO]\b|[EWO]\s*$)/iu.test(line)
+  ));
+  const complete = sourceRows.length >= 3
+    && sourceRows.length === candidateRows.length
+    && coordinateLines.length === sourceRows.length
+    && (explicitHeaderDirection || everyRowHasDirections);
+
+  return Object.freeze({
+    status: complete ? "COMPLETE" : "REVIEW_REQUIRED",
+    coordinateRowCount: coordinateLines.length,
+    sourceRowCount: sourceRows.length,
+    candidateRowCount: candidateRows.length,
+    axisDirectionBound: explicitHeaderDirection || everyRowHasDirections,
+    coordinates: complete ? coordinateLines.join("\n") : ""
+  });
+}
+
 function extractCoordinateLines(text) {
   const dmsGroupedLines = extractDmsGroupedCoordinateLines(text);
   if (dmsGroupedLines) {
@@ -15814,6 +15855,49 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           rawHint: ""
         });
         return res.json(buildCoordinateVerificationResponse(providerReviewPayload, providerReviewEngine));
+      }
+      const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText);
+      if (trustedProviderDmsEvidence.status === "COMPLETE") {
+        const consumeResult = await consumeCoordinateUsage({
+          note: "Coordinate recognition consumed after trusted Provider DMS review recovery"
+        });
+        if (!consumeResult.success) {
+          return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+            success: false,
+            reason: consumeResult.reason || "db_error",
+            code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+            error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const providerDmsReviewPayload = {
+          success: true,
+          model: `${aliyunVisionModel}+trusted-provider-dms-review`,
+          rawText,
+          coordinates: trustedProviderDmsEvidence.coordinates,
+          precisionMode: "preserve-original-decimals-and-parse-dms",
+          requiresReview: true,
+          warning: "已完整提取具有明确方向证据的 DMS 坐标行；请对照原图确认点数、顺序和方向后再查看地图或下载 KML。",
+          providerDmsReviewEvidence: {
+            status: trustedProviderDmsEvidence.status,
+            coordinateRowCount: trustedProviderDmsEvidence.coordinateRowCount,
+            sourceRowCount: trustedProviderDmsEvidence.sourceRowCount,
+            axisDirectionBound: trustedProviderDmsEvidence.axisDirectionBound
+          },
+          acquisitionContractConformance: oneShotAcquisitionConformance,
+          parserTrace: [
+            "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
+            "PROVIDER:trusted_dms_rows_recovered",
+            "DMS_AUTHORITY:user_confirmation_required"
+          ],
+          quota: consumeResult.quota
+        };
+        const providerDmsReviewEngine = buildCoordinateEngineV2ShadowResult(providerDmsReviewPayload, {
+          forceRequiresReview: true,
+          rawHint: ""
+        });
+        return res.json(buildCoordinateVerificationResponse(providerDmsReviewPayload, providerDmsReviewEngine));
       }
       const contractReviewPayload = {
         success: false,

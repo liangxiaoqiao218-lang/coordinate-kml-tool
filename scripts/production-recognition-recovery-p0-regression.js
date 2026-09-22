@@ -126,9 +126,22 @@ if (process.argv[2] === '--http-candidate') {
     acquisitions += 1;
     if (acquisitions > 1) throw new Error('TEST_UNEXPECTED_SECOND_ACQUISITION');
     const prompt = JSON.parse(init.body).messages.map(message => JSON.stringify(message.content)).join(' ');
-    assert.ok(prompt.includes('缺失的 CRS'));
-    const content = scenario === 'observed' ? observedText : scenario === 'mismatch'
-      ? structuredText.replace('119°30\'40.863" E', '120°30\'40.863" E') : structuredText;
+    if (scenario === 'generic-dms-review') {
+      assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
+    } else {
+      assert.ok(prompt.includes('缺失的 CRS'));
+    }
+    const content = scenario === 'generic-dms-review'
+      ? [
+          'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
+          'Point | Latitude nord | Longitude ouest',
+          "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+          "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+          "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
+          "4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+        ].join('\n')
+      : scenario === 'observed' ? observedText : scenario === 'mismatch'
+        ? structuredText.replace('119°30\'40.863" E', '120°30\'40.863" E') : structuredText;
     return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const nativeListen = http.Server.prototype.listen;
@@ -1606,6 +1619,49 @@ test("one-shot structured generic contract cannot be upgraded by Provider output
   assert.equal(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY);
 });
 
+test("one-shot structured complete Provider DMS evidence is recoverable only for explicit review", () => {
+  const sourceText = [
+    "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+    "Point | Latitude nord | Longitude ouest",
+    "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
+    "4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(sourceText);
+  assert.equal(evidence.status, "COMPLETE");
+  assert.equal(evidence.sourceRowCount, 4);
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(evidence.axisDirectionBound, true);
+  assert.equal(evidence.coordinates.split("\n").length, 4);
+  assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
+
+  const ambiguousHeader = sourceText.replace(
+    "Point | Latitude nord | Longitude ouest",
+    "Point | First coordinate | Second coordinate"
+  );
+  assert.equal(runtime.extractProviderDmsReviewEvidence(ambiguousHeader).status, "REVIEW_REQUIRED");
+
+  const missingComponent = sourceText.replace("09° 00' 58.67''", "09° 00'");
+  const incomplete = runtime.extractProviderDmsReviewEvidence(missingComponent);
+  assert.equal(incomplete.status, "REVIEW_REQUIRED");
+  assert.equal(incomplete.coordinates, "");
+});
+
+test("one-shot structured actual HTTP generic DMS recovery remains confirmation gated", async () => {
+  const payload = await runHttpCandidate("generic-dms-review");
+  assert.equal(payload.success, true);
+  assert.equal(payload.requiresReview, true);
+  assert.equal(payload.providerDmsReviewEvidence.status, "COMPLETE");
+  assert.equal(payload.providerDmsReviewEvidence.coordinateRowCount, 4);
+  assert.equal(payload.coordinates.split("\n").length, 4);
+  assert.match(payload.rawText, /Latitude nord \| Longitude ouest/);
+  assert.ok(payload.parserTrace.includes("PROVIDER:trusted_dms_rows_recovered"));
+  assert.equal(payload.coordinateEngineV2.requires_review, true);
+  assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
+  assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+});
+
 test("one-shot structured server gates conformance before parsing and returns sanitized review", () => {
   const routeStart = serverSource.indexOf('app.post("/api/recognize-coordinates"');
   const conformanceIndex = serverSource.indexOf("validateOneShotAcquisitionContract", routeStart);
@@ -1615,6 +1671,8 @@ test("one-shot structured server gates conformance before parsing and returns sa
   const reviewBlock = serverSource.slice(conformanceIndex, dmsFormatIndex);
   assert.match(reviewBlock, /ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED/);
   assert.match(reviewBlock, /forceRequiresReview:\s*true/);
+  assert.match(reviewBlock, /extractProviderDmsReviewEvidence/);
+  assert.match(reviewBlock, /DMS_AUTHORITY:user_confirmation_required/);
   assert.match(reviewBlock, /rawText:\s*""/);
   assert.match(reviewBlock, /coordinates:\s*""/);
 });
