@@ -185,13 +185,15 @@ if (process.argv[2] === '--http-candidate') {
       : null;
     const kyrgyzProviderLines = kyrgyzProviderText?.split(/\r?\n/u).filter(Boolean) || [];
     const kyrgyzProviderRows = kyrgyzProviderLines.slice(3);
+    const asWhitespaceTriplet = row => row.split('|').map(part => part.trim()).join('\t');
     const kyrgyzParallelProviderText = kyrgyzProviderText
       ? [
           ...kyrgyzProviderLines.slice(0, 2),
-          '№ точек | X | Y | № точек | X | Y',
+          '№ точек\tX\tY\t№ точек\tX\tY',
           ...kyrgyzProviderRows.slice(0, 33).map((row, index) => {
             const parallelRow = kyrgyzProviderRows[index + 33];
-            return parallelRow ? `${row} | ${parallelRow}` : row;
+            const firstTriplet = asWhitespaceTriplet(row);
+            return parallelRow ? `${firstTriplet}\t\t${asWhitespaceTriplet(parallelRow)}` : firstTriplet;
           })
         ].join('\n')
       : null;
@@ -751,12 +753,54 @@ test("projected recovery splits parallel labelled triples and restores one conti
   );
 });
 
-test("parallel projected triples fail closed on duplicate, gap, incomplete, or extra fields", () => {
+test("projected recovery splits whitespace and tab separated parallel triples into one continuous sequence", async () => {
+  const sourceText = await readFile(
+    path.join(root, "regression-samples", "Kyrgyz_GK", "approved-transcription.txt"),
+    "utf8"
+  );
+  const lines = sourceText.split(/\r?\n/u).filter(Boolean);
+  const sourceRows = lines.slice(3);
+  const asWhitespaceTriplet = (row, separator) => row.split("|").map(part => part.trim()).join(separator);
+  const parallelText = [
+    ...lines.slice(0, 2),
+    "№ точек\tX\tY\t№ точек\tX\tY",
+    ...sourceRows.slice(0, 33).map((row, index) => {
+      const separator = index % 2 === 0 ? "\t" : "    ";
+      const parallelRow = sourceRows[index + 33];
+      const firstTriplet = asWhitespaceTriplet(row, separator);
+      return parallelRow
+        ? `${firstTriplet}${separator}${separator}${asWhitespaceTriplet(parallelRow, separator)}`
+        : firstTriplet;
+    })
+  ].join("\n");
+  const evidence = extractProviderProjectedCoordinateEvidence({ sourceText: parallelText });
+  assert.equal(evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.equal(evidence.rowCount, 65);
+  assert.equal(evidence.diagnostics.projectedCandidateLineCount, 33);
+  assert.equal(evidence.diagnostics.parsedProjectedRowCount, 65);
+  assert.equal(evidence.diagnostics.rejectedProjectedCandidateLineCount, 0);
+  assert.equal(evidence.diagnostics.multiRecordLineCount, 32);
+  assert.deepEqual(
+    evidence.rows.map(row => Number(row.label)),
+    Array.from({ length: 65 }, (_, index) => index + 1)
+  );
+  assert.deepEqual(
+    [evidence.rows[0].x, evidence.rows[0].y, evidence.rows.at(-1).x, evidence.rows.at(-1).y],
+    ["13261341", "4607777", "13261317", "4607721"]
+  );
+});
+
+test("parallel projected triples fail closed on duplicate, gap, incomplete, extra fields, or whitespace ambiguity", () => {
   const cases = [
     ["1 | 10000 | 20000 | 3 | 30000 | 40000", "4 | 50000 | 60000"],
     ["1 | 10000 | 20000 | 2 | 30000 | 40000", "2 | 50000 | 60000"],
     ["1 | 10000 | 20000 | 2 | 30000", "3 | 50000 | 60000"],
-    ["1 | 10000 | 20000 | 2 | 30000 | 40000 | 99999", "3 | 50000 | 60000"]
+    ["1 | 10000 | 20000 | 2 | 30000 | 40000 | 99999", "3 | 50000 | 60000"],
+    ["1 10000 20000 3 30000 40000", "4 50000 60000"],
+    ["1\t10000\t20000\t2\t30000\t40000", "2\t50000\t60000"],
+    ["1 10000 20000 2 30000", "3 50000 60000"],
+    ["1 10000 20000 2 30000 40000 99999", "3 50000 60000"],
+    ["1 65 800 1 364 200 2 65 100 1 364 200", "3 50000 60000"]
   ];
   for (const rows of cases) {
     const evidence = extractProviderProjectedCoordinateEvidence({

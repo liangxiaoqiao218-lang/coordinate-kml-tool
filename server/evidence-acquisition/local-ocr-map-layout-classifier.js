@@ -793,6 +793,44 @@ function parseProviderProjectedRows(line, { labelColumnVisible = false } = {}) {
     return Object.freeze({ rows: Object.freeze(groupedRows), multiRecord: true });
   }
 
+  // Some Providers preserve parallel projected-table columns as whitespace or
+  // tabs rather than pipes. Accept that layout only when the entire physical
+  // line is an exact sequence of two or more numeric-label/X/Y triples. A
+  // valid first triple followed by any incomplete or extra material is treated
+  // as a rejected multi-record line instead of falling back to a lossy single
+  // row parse. Thousand-spaced single rows keep using the existing ambiguity
+  // checked parser below because their first X/Y tokens are not complete
+  // projected numbers on their own.
+  if (!raw.includes("|")) {
+    const whitespaceParts = raw.split(/\s+/u).filter(Boolean);
+    const firstLabel = whitespaceParts[0] || "";
+    const firstX = normalizeProjectedProviderNumber(whitespaceParts[1]);
+    const firstY = normalizeProjectedProviderNumber(whitespaceParts[2]);
+    const beginsWithCompleteTriple = /^\d{1,3}$/u.test(firstLabel) && firstX && firstY;
+    const continuesWithNumericLabel = /^\d{1,3}$/u.test(whitespaceParts[3] || "");
+
+    if (whitespaceParts.length >= 6 && whitespaceParts.length % 3 === 0) {
+      const groupedRows = [];
+      for (let index = 0; index < whitespaceParts.length; index += 3) {
+        const label = whitespaceParts[index];
+        const x = normalizeProjectedProviderNumber(whitespaceParts[index + 1]);
+        const y = normalizeProjectedProviderNumber(whitespaceParts[index + 2]);
+        if (!/^\d{1,3}$/u.test(label) || !x || !y) {
+          if (beginsWithCompleteTriple && continuesWithNumericLabel) {
+            return Object.freeze({ rows: Object.freeze([]), multiRecord: true });
+          }
+          break;
+        }
+        groupedRows.push(Object.freeze({ label, x, y, sourceText: raw }));
+      }
+      if (groupedRows.length * 3 === whitespaceParts.length) {
+        return Object.freeze({ rows: Object.freeze(groupedRows), multiRecord: true });
+      }
+    } else if (beginsWithCompleteTriple && continuesWithNumericLabel) {
+      return Object.freeze({ rows: Object.freeze([]), multiRecord: true });
+    }
+  }
+
   const row = parseProviderProjectedRow(raw, { labelColumnVisible });
   return Object.freeze({
     rows: Object.freeze(row ? [row] : []),
