@@ -499,11 +499,12 @@ test("production source orders Provider admission before attempt and defers usag
   assert.match(indexSource, /projectionType\.value = "auto"/);
   assert.match(indexSource, /id="mapPreviewAction"[^>]*>查看地图<\/button>/);
   assert.doesNotMatch(indexSource, /确认坐标系后查看地图|确认并启用地图\/KML|id="projectedCrsConfirmAction"/);
-  assert.match(indexSource, /地图定位信息需要核对/);
-  assert.match(indexSource, /我有测量资料，手动设置/);
-  assert.match(indexSource, /系统不会猜测位置/);
-  assert.match(indexSource, /projectedCrsAdvanced\.open = false/);
-  assert.match(indexSource, /地图定位信息需要核对。请展开“我有测量资料，手动设置”/);
+  assert.match(indexSource, /图片缺少完整定位信息，暂时无法显示地图/);
+  assert.match(indexSource, /重新上传完整图片/);
+  assert.match(indexSource, /onclick="openManualSupport\(\)">人工协助<\/button>/);
+  assert.match(indexSource, /id="projectedCrsInternalState" hidden aria-hidden="true"/);
+  assert.doesNotMatch(indexSource, /<details id="projectedCrsAdvanced"|<summary>我有测量资料，手动设置<\/summary>/);
+  assert.match(indexSource, /function chooseCoordinateImage\(\)/);
   assert.match(indexSource, /payload\?\.precisionMode === "projected-x-y-review"/);
   assert.match(indexSource, /点位核对（非矿区边界）/);
   assert.match(indexSource, /KML_PROJECTED_BOUNDARY_UNRESOLVED/);

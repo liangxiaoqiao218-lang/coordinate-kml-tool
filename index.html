@@ -1185,28 +1185,14 @@
     }
     .projected-crs-review-title { margin: 0; font-size: 15px; font-weight: 900; }
     .projected-crs-review-hint { margin: 0; font-size: 13px; line-height: 1.55; }
-    .projected-crs-review-advanced {
-      border-top: 1px solid rgba(180, 83, 9, .2);
-      padding-top: 8px;
-    }
-    .projected-crs-review-advanced summary {
-      width: fit-content;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 800;
-    }
-    .projected-crs-review-controls { display: grid; gap: 7px; margin-top: 9px; }
-    .projected-crs-review-controls label,
-    .projected-crs-review-note { font-size: 12px; line-height: 1.5; }
-    .projected-crs-review-controls select {
-      min-height: 42px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 800;
-    }
-    .projected-crs-review-controls select { padding: 0 10px; border: 1px solid #f59e0b; background: #fff; color: #78350f; }
-    .projected-crs-review-note { margin: 0; }
     .projected-crs-review-help { margin: 0; font-size: 13px; line-height: 1.55; }
+    .projected-crs-review-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .projected-crs-review-actions button {
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 9px;
+      font-weight: 800;
+    }
 
     .coordinate-result-actions .coordinate-kml-action,
     .coordinate-result-actions .coordinate-copy-action {
@@ -4635,23 +4621,21 @@
       <div id="recognitionProgress" class="recognition-status" aria-live="polite"></div>
 
       <section id="projectedCrsReviewPanel" class="projected-crs-review-panel" aria-live="polite" hidden>
-        <p id="projectedCrsReviewTitle" class="projected-crs-review-title">地图定位信息需要核对</p>
-        <p id="projectedCrsReviewHint" class="projected-crs-review-hint">图片中的坐标数字已经识别，但缺少把它准确放到地图上的说明。系统不会猜测位置。</p>
-        <p id="projectedCrsReviewHelp" class="projected-crs-review-help">请上传包含位置说明的完整图片，或使用 <button type="button" class="text-link-button" onclick="openManualSupport()">人工协助</button>。</p>
-        <details id="projectedCrsAdvanced" class="projected-crs-review-advanced">
-          <summary>我有测量资料，手动设置</summary>
-          <div class="projected-crs-review-controls">
-            <label for="projectedCrsSelection">请严格按照原始测量资料选择</label>
-            <select id="projectedCrsSelection" aria-label="按原始测量资料选择地图定位方式">
-              <option value="" selected>请选择原始资料中明确标注的类型</option>
-              <option value="utm30n">UTM 30N（原资料明确标注 30N）</option>
-              <option value="utm29n">UTM 29N（原资料明确标注 29N）</option>
-              <option value="utm28n">UTM 28N（原资料明确标注 28N）</option>
-              <option value="bftm">BFTM（原资料明确标注 BFTM）</option>
-            </select>
-            <p class="projected-crs-review-note">选择后仍使用下方“查看地图”。如果原资料没有明确标注，请不要试选。</p>
-          </div>
-        </details>
+        <p id="projectedCrsReviewTitle" class="projected-crs-review-title">图片缺少完整定位信息，暂时无法显示地图</p>
+        <p id="projectedCrsReviewHint" class="projected-crs-review-hint">识别出的坐标已保留。</p>
+        <div id="projectedCrsReviewHelp" class="projected-crs-review-help projected-crs-review-actions">
+          <button type="button" class="secondary" onclick="chooseCoordinateImage()">重新上传完整图片</button>
+          <button type="button" class="secondary" onclick="openManualSupport()">人工协助</button>
+        </div>
+        <div id="projectedCrsInternalState" hidden aria-hidden="true">
+          <select id="projectedCrsSelection" tabindex="-1">
+            <option value="" selected></option>
+            <option value="utm30n"></option>
+            <option value="utm29n"></option>
+            <option value="utm28n"></option>
+            <option value="bftm"></option>
+          </select>
+        </div>
       </section>
 
     <div class="coordinate-result-actions" aria-label="坐标结果操作">
@@ -5177,7 +5161,6 @@ Au值 = 纯度 × 10 后取整数</div>
     const projectedCrsReviewHint = document.getElementById("projectedCrsReviewHint");
     const projectedCrsReviewHelp = document.getElementById("projectedCrsReviewHelp");
     const projectedCrsSelection = document.getElementById("projectedCrsSelection");
-    const projectedCrsAdvanced = document.getElementById("projectedCrsAdvanced");
     const handwrittenDmsReviewPanel = document.getElementById("handwrittenDmsReviewPanel");
     const imagePreview = document.getElementById("imagePreview");
     const imageModal = document.getElementById("imageModal");
@@ -7297,7 +7280,6 @@ Au值 = 纯度 × 10 后取整数</div>
       activeProjectedBoundaryBlocked = false;
       projectedCrsReviewRequested = false;
       if (clearSelection && projectedCrsSelection) projectedCrsSelection.value = "";
-      if (projectedCrsAdvanced) projectedCrsAdvanced.open = false;
     }
 
     function isProjectedCoordinateReviewPending() {
@@ -7348,14 +7330,11 @@ Au值 = 纯度 × 10 后取整数</div>
           : "地图和 KML 已使用同一份核对结果；工作区继续保留原图中的坐标数字。";
         if (projectedCrsReviewHelp) projectedCrsReviewHelp.hidden = !pointsOnly;
       } else {
-        projectedCrsReviewTitle.textContent = activeProjectedSelectionDirty ? "地图位置将重新核对" : "地图定位信息需要核对";
-        projectedCrsReviewHint.textContent = activeProjectedSelectionDirty
-          ? "你选择了新的地图定位方式。再次点击“查看地图”后才会使用，原图坐标数字不会被改写。"
-          : "图片中的坐标数字已经识别，但缺少把它准确放到地图上的说明。系统不会猜测位置。";
+        projectedCrsReviewTitle.textContent = "图片缺少完整定位信息，暂时无法显示地图";
+        projectedCrsReviewHint.textContent = "识别出的坐标已保留。";
         if (projectedCrsReviewHelp) projectedCrsReviewHelp.hidden = false;
       }
       if (selectedCrs && projectedCrsSelection) projectedCrsSelection.value = selectedCrs;
-      if (projectedCrsAdvanced && confirmed && !activeProjectedSelectionDirty) projectedCrsAdvanced.open = false;
     }
 
     function focusProjectedCrsReviewPanel() {
@@ -7374,7 +7353,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
       if (!sourceCrs) {
         focusProjectedCrsReviewPanel();
-        showMessage("这张图片缺少地图定位说明，暂时不能准确显示位置。", true, 7000);
+        showMessage("图片缺少完整定位信息，暂时无法显示地图。", true, 7000);
         return false;
       }
       if (mapPreviewAction) mapPreviewAction.disabled = true;
@@ -7393,7 +7372,7 @@ Au值 = 纯度 × 10 后取整数</div>
         if (!response.ok || !getFinalizedCoordinateIdentity(payload.finalizedCoordinateResult)
           || (!pointsOnly && payload.finalizedCoordinateResult?.kmlReady !== true)) {
           const messages = {
-            PROJECTED_CRS_SELECTION_REQUIRED: "请严格按照原始测量资料选择地图定位方式。",
+            PROJECTED_CRS_SELECTION_REQUIRED: "图片缺少完整定位信息，暂时无法显示地图。",
             PROJECTED_COORDINATE_ROWS_INVALID: "坐标行已被修改或格式不完整，请核对点号和数字。",
             PROJECTED_TRANSFORM_FAILED: "所选定位方式与当前坐标不匹配，请核对原始资料。",
             PROJECTED_FINALIZER_GATE_BLOCKED: "当前坐标还不能形成可靠的矿区地图，请核对原始资料。",
@@ -7425,6 +7404,12 @@ Au值 = 纯度 × 10 后取整数</div>
       } finally {
         refreshMapPreviewAction();
       }
+    }
+
+    function chooseCoordinateImage() {
+      if (!imageInput) return;
+      imageInput.value = "";
+      imageInput.click();
     }
 
     projectedCrsSelection?.addEventListener("change", () => {
@@ -7785,7 +7770,7 @@ Au值 = 纯度 × 10 后取整数</div>
         await ensureManualInputFinalized();
         if (projectedCrsSelectionNeedsConfirmation()) {
           focusProjectedCrsReviewPanel();
-          showMessage("地图定位信息需要核对。请展开“我有测量资料，手动设置”，严格按照原始资料选择后再次点击“查看地图”。", true, 8000);
+          showMessage("图片缺少完整定位信息，暂时无法显示地图。", true, 8000);
           return;
         }
         const identity = getFinalizedCoordinateIdentity();
@@ -7861,7 +7846,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function getCoordinateFlowUserMessage(code, fallback) {
       const messages = {
-        COORDINATE_EDIT_INVALID: "当前坐标尚未形成可用经纬度；如果是投影 X/Y，请先确认坐标系。",
+        COORDINATE_EDIT_INVALID: "图片缺少完整定位信息，暂时无法显示地图。",
         COORDINATE_EDIT_TEXT_REQUIRED: "请输入需要处理的坐标。"
       };
       return messages[String(code || "")] || fallback || "无法处理当前坐标，请检查后重试。";
@@ -7869,7 +7854,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function getCoordinateGateUserMessage(reasonCodes, fallback) {
       const codes = Array.isArray(reasonCodes) ? reasonCodes.map(value => String(value || "")) : [];
-      if (codes.some(code => /CRS|AXIS_ORDER/.test(code))) return "当前坐标系尚未确认，请核对坐标系后重试。";
+      if (codes.some(code => /CRS|AXIS_ORDER/.test(code))) return "图片缺少完整定位信息，暂时无法显示地图。";
       if (codes.some(code => /GEOMETRY|FINITE/.test(code))) return "当前坐标几何无效，请检查坐标内容后重试。";
       if (codes.some(code => /STALE|REVISION|RESULT_ID|HASH/.test(code))) return "坐标已更新，请重新核对当前结果后重试。";
       if (codes.some(code => /AUTHORITY|SOURCE/.test(code))) return "当前坐标来源尚未通过安全验证，请重新识别或核对。";
@@ -7939,7 +7924,6 @@ Au值 = 纯度 × 10 后取整数</div>
           activeProjectedBoundaryBlocked = false;
           projectedCrsReviewRequested = true;
           if (projectedCrsSelection) projectedCrsSelection.value = "";
-          if (projectedCrsAdvanced) projectedCrsAdvanced.open = false;
           finalizedCoordinateTextSnapshot = String(input.value || "");
           finalizedCoordinateDirty = false;
           invalidateSpatialPreview();
@@ -14346,9 +14330,9 @@ ${placemarks}
         if (hasProjectedCoordinateRows(input.value)) {
           showKmlFailure({
             code: "KML_CRS_REQUIRED",
-            title: "需要确认坐标系",
-            reason: "识别结果是 X/Y 平面坐标，但尚未确认 CRS，不能直接写入 KML。",
-            suggestion: "请先确认坐标系并转换为 WGS84，或使用人工协助转换。"
+            title: "图片缺少完整定位信息",
+            reason: "当前结果暂时无法确认地图位置，因此不能生成 KML。",
+            suggestion: "请重新上传包含完整位置信息的图片，或使用人工协助。"
           });
           return;
         }
