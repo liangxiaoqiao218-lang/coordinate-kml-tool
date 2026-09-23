@@ -129,6 +129,7 @@ if (process.argv[2] === '--http-candidate') {
   let acquisitions = 0;
   let requestControl = null;
   const scenario = process.argv[3];
+  const baseScenario = scenario.replace(/-local-ocr-timeout$/u, '');
   globalThis.fetch = async (url, init) => {
     try {
       if (String(url) !== 'http://127.0.0.1:1/v1/chat/completions') throw new Error('TEST_EXTERNAL_NETWORK_FORBIDDEN');
@@ -141,12 +142,13 @@ if (process.argv[2] === '--http-candidate') {
         maxTokens: requestBody.max_tokens
       };
       const prompt = requestBody.messages.map(message => JSON.stringify(message.content)).join(' ');
-      if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
-        || scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
-        || scenario === 'generic-projected-contextual-utm30'
-        || scenario === 'generic-projected-contextual-utm30-safe'
-        || scenario === 'generic-projected-bftm-boundary'
-        || scenario === 'generic-projected-kyrgyz-real') {
+      if (baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
+        || baseScenario === 'generic-projected-review' || baseScenario === 'generic-projected-explicit'
+        || baseScenario === 'generic-projected-contextual-utm30'
+        || baseScenario === 'generic-projected-contextual-utm30-safe'
+        || baseScenario === 'generic-projected-bftm-boundary'
+        || baseScenario === 'generic-projected-kyrgyz-real'
+        || baseScenario === 'generic-projected-kyrgyz-unbound') {
         assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
         assert.ok(prompt.includes('CONTEXT |'));
       } else {
@@ -177,32 +179,38 @@ if (process.argv[2] === '--http-candidate') {
       '16 | 647300,1349700', '17 | 647300,1352000', '18 | 645000,1352000',
       '19 | 645000,1356200', '20 | 655000,1356200'
     ];
-    const kyrgyzProviderText = scenario === 'generic-projected-kyrgyz-real'
+    const kyrgyzProviderText = baseScenario === 'generic-projected-kyrgyz-real'
+      || baseScenario === 'generic-projected-kyrgyz-unbound'
       ? await readFile(path.join(root, 'regression-samples', 'Kyrgyz_GK', 'approved-transcription.txt'), 'utf8')
       : null;
-    const providerText = scenario === 'generic-projected-kyrgyz-real'
+    const providerText = baseScenario === 'generic-projected-kyrgyz-real'
       ? kyrgyzProviderText
-      : scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
-      || scenario === 'generic-projected-contextual-utm30'
-      || scenario === 'generic-projected-contextual-utm30-safe'
-      || scenario === 'generic-projected-bftm-boundary'
+      : baseScenario === 'generic-projected-kyrgyz-unbound'
+        ? (() => {
+            const lines = kyrgyzProviderText.split(/\r?\n/u);
+            return [lines[1], ...lines.slice(3)].join('\n');
+          })()
+      : baseScenario === 'generic-projected-review' || baseScenario === 'generic-projected-explicit'
+      || baseScenario === 'generic-projected-contextual-utm30'
+      || baseScenario === 'generic-projected-contextual-utm30-safe'
+      || baseScenario === 'generic-projected-bftm-boundary'
       ? [
-          ...(scenario === 'generic-projected-explicit' ? ['WGS 84 / UTM 30N'] : []),
-          ...(scenario === 'generic-projected-contextual-utm30' || scenario === 'generic-projected-contextual-utm30-safe'
+          ...(baseScenario === 'generic-projected-explicit' ? ['WGS 84 / UTM 30N'] : []),
+          ...(baseScenario === 'generic-projected-contextual-utm30' || baseScenario === 'generic-projected-contextual-utm30-safe'
             ? ['CONTEXT | Les coordonnées géographiques en UTM des sommets du site devant abriter l’activité sont consignées dans le tableau ci-dessous.']
             : []),
-          ...(scenario === 'generic-projected-bftm-boundary'
+          ...(baseScenario === 'generic-projected-bftm-boundary'
             ? ['CONTEXT | Ce permis couvre une superficie de 121,06 km². Il est défini par les sommets dont les coordonnées projetées (X, Y) en BFTM sont les suivantes :', 'CONTEXT | Système de Référence ITRF 2008 / Projection BFTM']
             : []),
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
           'Sommets | X | Y',
-          ...(scenario === 'generic-projected-contextual-utm30-safe'
+          ...(baseScenario === 'generic-projected-contextual-utm30-safe'
             ? safeProjectedRows
-            : scenario === 'generic-projected-bftm-boundary'
+            : baseScenario === 'generic-projected-bftm-boundary'
               ? bftmBoundaryRows
               : crossedProjectedRows)
         ].join('\n')
-      : scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
+      : baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
       ? [
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
           'Point | Latitude nord | Longitude ouest',
@@ -211,9 +219,9 @@ if (process.argv[2] === '--http-candidate') {
           "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
           "4 | 11° 43' 11.30'' | 09° 01' 15.25''"
         ].join('\n')
-      : scenario === 'observed' ? observedText : scenario === 'mismatch'
+      : baseScenario === 'observed' ? observedText : baseScenario === 'mismatch'
         ? structuredText.replace('119°30\'40.863" E', '120°30\'40.863" E') : structuredText;
-    const content = scenario === 'generic-dms-review-array'
+    const content = baseScenario === 'generic-dms-review-array'
       ? providerText.split('\n').map(text => ({ type: 'text', text }))
       : providerText;
       return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -233,6 +241,8 @@ if (process.argv[2] === '--http-candidate') {
 }
 
 async function runHttpCandidate(scenario) {
+  const baseScenario = scenario.replace(/-local-ocr-timeout$/u, '');
+  const forceLocalOcrTimeout = scenario !== baseScenario;
   // Process-local module fault injection, before imports. No runtime failure flag or extra file.
   const faultBodies = {
     null: 'return null;', exception: 'throw new Error("PRIVATE_TRANSFORM_ERROR_MUST_NOT_ESCAPE");',
@@ -241,7 +251,7 @@ async function runHttpCandidate(scenario) {
     degenerate: 'return {lat: -2, lon: 119};',
     selfintersection: 'return [{lat:0,lon:0},{lat:2,lon:2},{lat:0,lon:3},{lat:2,lon:0}][calls++];'
   };
-  const fault = faultBodies[scenario];
+  const fault = faultBodies[baseScenario];
   const preload = fault ? `import { registerHooks } from 'node:module';
     registerHooks({load(url, context, nextLoad) {
       const result = nextLoad(url, context);
@@ -250,8 +260,22 @@ async function runHttpCandidate(scenario) {
       if (source === String(result.source)) throw new Error('FAULT_INJECTION_NOT_INSTALLED');
       return {...result, source: source + ${JSON.stringify(`\nlet calls=0; export function utmToWgs84(...args) { if(args[0] !== 50) return originalUtmToWgs84(...args); ${fault} }`)}};
     }});` : null;
+  const localOcrTimeoutPreload = forceLocalOcrTimeout ? `import { registerHooks } from 'node:module';
+    registerHooks({load(url, context, nextLoad) {
+      const result = nextLoad(url, context);
+      if (!url.endsWith('/server.js')) return result;
+      const source = String(result.source);
+      const functionMarker = 'async function runLocalOcrFamilyClassification';
+      const callMarker = '    const result = await runCancellableOcrJob({';
+      const functionIndex = source.indexOf(functionMarker);
+      const callIndex = source.indexOf(callMarker, functionIndex);
+      if (functionIndex < 0 || callIndex < 0) throw new Error('LOCAL_OCR_TIMEOUT_INJECTION_NOT_INSTALLED');
+      const injection = '    { const forcedTimeout = new Error("FORCED_LOCAL_OCR_TIMEOUT"); forcedTimeout.code = RECOGNITION_BUDGET_CODE; throw forcedTimeout; }\\n';
+      return {...result, source: source.slice(0, callIndex) + injection + source.slice(callIndex)};
+    }});` : null;
   const child = spawn(process.execPath, [
     ...(preload ? ['--import', `data:text/javascript,${encodeURIComponent(preload)}`] : []),
+    ...(localOcrTimeoutPreload ? ['--import', `data:text/javascript,${encodeURIComponent(localOcrTimeoutPreload)}`] : []),
     fileURLToPath(import.meta.url), '--http-candidate', scenario], {
     cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env: { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH, NODE_ENV: 'test', PORT: '0',
@@ -320,11 +344,14 @@ async function runHttpCandidate(scenario) {
     form.set('visitorId', 'coordinate-regression-p0-contract');
     // The Kyrgyz gate uses the hash-bound fixture with a neutral upload name; all other
     // mocked Provider cases keep using synthetic bytes.
-    const uploadBytes = scenario === 'generic-projected-kyrgyz-real'
+    const uploadBytes = baseScenario === 'generic-projected-kyrgyz-real'
+      || baseScenario === 'generic-projected-kyrgyz-unbound'
       ? await readFile(path.join(root, 'regression-samples', 'fixtures', '吉尔吉斯斯坦矿地坐标.png'))
       : syntheticPng;
     form.set('image', new Blob([uploadBytes], { type: 'image/png' }),
-      scenario === 'generic-projected-kyrgyz-real' ? 'projected-table.png' : 'synthetic-coordinate-image.png');
+      baseScenario === 'generic-projected-kyrgyz-real' || baseScenario === 'generic-projected-kyrgyz-unbound'
+        ? 'projected-table.png'
+        : 'synthetic-coordinate-image.png');
     const response = await fetch(`http://127.0.0.1:${port}/api/recognize-coordinates`, { method: 'POST',
       headers: { 'x-regression-test': '1', 'x-regression-case-id': 'indonesia-dms-real-001' }, body: form, signal });
     const payload = await response.json();
@@ -336,12 +363,12 @@ async function runHttpCandidate(scenario) {
     const traceResponse = await fetch(`http://127.0.0.1:${port}/api/regression/recognition-trace/${response.headers.get('x-recognition-request-id')}`, { headers: { 'x-regression-test': '1' }, signal });
     const trace = await traceResponse.json();
     assert.equal(trace.acquisitionEvidence == null, true, 'synthetic bytes cannot claim real acquisition identity');
-    if (scenario === 'generic-projected-contextual-utm30'
-      || scenario === 'generic-projected-contextual-utm30-safe'
-      || scenario === 'generic-projected-bftm-boundary'
-      || scenario === 'generic-projected-kyrgyz-real'
-      || scenario === 'generic-dms-review'
-      || scenario === 'generic-dms-review-array') {
+    if (baseScenario === 'generic-projected-contextual-utm30'
+      || baseScenario === 'generic-projected-contextual-utm30-safe'
+      || baseScenario === 'generic-projected-bftm-boundary'
+      || baseScenario === 'generic-projected-kyrgyz-real'
+      || baseScenario === 'generic-dms-review'
+      || baseScenario === 'generic-dms-review-array') {
       const finalized = payload.finalizedCoordinateResult;
       const mapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal,
@@ -2159,6 +2186,71 @@ test("hash-bound Kyrgyz image completes one generic Provider call and preserves 
   assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
   assert.equal(payload.mapPreview?.mapPreviewObject?.geometry?.type, "Polygon");
 });
+
+test("explicit projected family recovery requires context, continuous labels, and row equality", async () => {
+  const sourceText = await readFile(
+    path.join(root, "regression-samples", "Kyrgyz_GK", "approved-transcription.txt"),
+    "utf8"
+  );
+  const evidence = extractProviderProjectedCoordinateEvidence({ sourceText });
+  const familyInfo = runtime.getKyrgyzGkInfo(sourceText);
+  assert.equal(runtime.supportsExplicitProjectedFamilyRecovery({
+    evidence,
+    familyInfo,
+    hasExplicitFamilyContext: runtime.hasKyrgyzGkContext(sourceText)
+  }), true);
+  assert.equal(runtime.supportsExplicitProjectedFamilyRecovery({
+    evidence,
+    familyInfo,
+    hasExplicitFamilyContext: false
+  }), false);
+  assert.equal(runtime.supportsExplicitProjectedFamilyRecovery({
+    evidence,
+    familyInfo: { ...familyInfo, rows: familyInfo.rows.slice(0, -1) },
+    hasExplicitFamilyContext: true
+  }), false);
+});
+
+test("forced local OCR timeout still accepts explicit complete Kyrgyz GK evidence from one Provider call", async () => {
+  const payload = await runHttpCandidate("generic-projected-kyrgyz-real-local-ocr-timeout");
+  assert.equal(payload.success, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.precisionMode, "kyrgyz-gk-point-x-y");
+  assert.equal(
+    payload.coordinates.split(/\r?\n/u).filter(line => /^\d+\s*\|/u.test(line)).length,
+    65
+  );
+  assert.ok(payload.parserTrace.includes("LOCAL_OCR:unavailable_provider_family_evidence_confirmed"));
+  assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
+  assert.equal(payload.mapPreview?.mapPreviewObject?.geometry?.type, "Polygon");
+});
+
+test("forced local OCR timeout keeps Kyrgyz-shaped rows without explicit family context fail-closed", async () => {
+  const payload = await runHttpCandidate("generic-projected-kyrgyz-unbound-local-ocr-timeout");
+  assert.equal(payload.success, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.precisionMode, "projected-x-y-review");
+  assert.equal(payload.requiresReview, true);
+  assert.equal(payload.finalizedCoordinateResult?.geometry, null);
+  assert.equal(payload.finalizedCoordinateResult?.kmlReady, false);
+  assert.ok(!payload.parserTrace.includes("KYRGYZ_GK:accepted"));
+});
+
+for (const [scenario, expectedPrecision] of [
+  ["generic-projected-bftm-boundary-local-ocr-timeout", "bftm-projected-x-y"],
+  ["generic-projected-contextual-utm30-safe-local-ocr-timeout", "utm30n-projected-x-y"],
+  ["generic-dms-review-local-ocr-timeout", "preserve-original-decimals-and-parse-dms"]
+]) {
+  test(`forced local OCR timeout preserves ${expectedPrecision} recovery and one Provider call`, async () => {
+    const payload = await runHttpCandidate(scenario);
+    assert.equal(payload.success, true);
+    assert.equal(payload.providerCallCount, 1);
+    assert.equal(payload.precisionMode, expectedPrecision);
+    assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
+    assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
+  });
+}
 
 test("projected boundary geometry keeps both simple BFTM source orders and rejects the crossed UTM source order", () => {
   const bftm01 = [

@@ -14436,6 +14436,30 @@ function supportsExplicitProjectedBoundaryAutoRelease({ sourceText = "", evidenc
   return rows.every(row => Number.isFinite(Number(row?.x)) && Number.isFinite(Number(row?.y)));
 }
 
+function supportsExplicitProjectedFamilyRecovery({
+  evidence = null,
+  familyInfo = null,
+  hasExplicitFamilyContext = false
+} = {}) {
+  const evidenceRows = Array.isArray(evidence?.rows) ? evidence.rows : [];
+  const familyRows = Array.isArray(familyInfo?.rows) ? familyInfo.rows : [];
+  const integrity = familyInfo?.integrity;
+  if (hasExplicitFamilyContext !== true
+    || evidence?.status !== LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
+    || integrity?.isComplete !== true
+    || integrity?.continuous !== true
+    || integrity?.startsAtOne !== true
+    || evidenceRows.length < 3
+    || evidenceRows.length !== familyRows.length) return false;
+
+  return familyRows.every((row, index) => {
+    const evidenceRow = evidenceRows[index];
+    return String(evidenceRow?.label || "").trim() === String(row?.point || "")
+      && String(evidenceRow?.x || "").trim() === String(row?.x || "")
+      && String(evidenceRow?.y || "").trim() === String(row?.y || "");
+  });
+}
+
 function buildExplicitProjectedBoundaryResponse({ payload = {}, evidence = null, requestId = null } = {}) {
   const sourceCrsSelection = getExplicitProjectedCrsSelection(evidence);
   const rows = parseProjectedCoordinateConfirmationRows(evidence?.text || "");
@@ -16586,7 +16610,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ));
         }
         const recoveredKyrgyzGk = getKyrgyzGkInfo(rawText);
-        if (projectedTableOcrAcquisition && recoveredKyrgyzGk.isKyrgyzGk) {
+        const explicitKyrgyzGkProviderRecovery = supportsExplicitProjectedFamilyRecovery({
+          evidence: trustedProviderProjectedEvidence,
+          familyInfo: recoveredKyrgyzGk,
+          hasExplicitFamilyContext: hasKyrgyzGkContext(rawText)
+        });
+        if (explicitKyrgyzGkProviderRecovery) {
           const warning = "已依据原图可见的 X/Y 表头和完整点号序列恢复 Kyrgyz GK 坐标；请结合原图逐行核对。";
           const kyrgyzRecoveredPayload = {
             success: true,
@@ -16610,6 +16639,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             parserTrace: [
               "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
               "PROVIDER:trusted_projected_rows_recovered",
+              projectedTableOcrAcquisition
+                ? "LOCAL_OCR:projected_structure_confirmed"
+                : "LOCAL_OCR:unavailable_provider_family_evidence_confirmed",
               "KYRGYZ_GK:accepted"
             ],
             quota: consumeResult.quota
