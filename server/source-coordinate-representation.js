@@ -198,6 +198,11 @@ function labelMatches(sourceLabel, engineLabel) {
   return String(sourceLabel).trim().toUpperCase() === String(engineLabel).trim().toUpperCase();
 }
 
+function labelMatchesSourceRow(sourceLabel, engineLabel, pointIndex) {
+  if (!sourceLabel && String(engineLabel || "").trim() === String(pointIndex + 1)) return true;
+  return labelMatches(sourceLabel, engineLabel);
+}
+
 function matchesCoordinate(sourcePoint, enginePoint) {
   return Math.abs(sourcePoint.latitude - enginePoint.latitude) <= sourcePoint.latitudeTolerance
     && Math.abs(sourcePoint.longitude - enginePoint.longitude) <= sourcePoint.longitudeTolerance;
@@ -247,9 +252,6 @@ function rawDmsSemanticallyMatchesResult(rawDmsStructure, engineGroups, expected
       if (!sourcePoint || !enginePoint) {
         return Object.freeze({ verified: false, reason: "unparseable_point" });
       }
-      if (sourcePoint.axisOrder !== expectedAxisOrder) {
-        return Object.freeze({ verified: false, reason: "axis_order_mismatch" });
-      }
       const expectedLatitudeHemisphere = expectedHemisphere(enginePoint.latitude, "N", "S");
       const expectedLongitudeHemisphere = expectedHemisphere(enginePoint.longitude, "E", "W");
       if (!expectedLatitudeHemisphere || !expectedLongitudeHemisphere
@@ -257,7 +259,7 @@ function rawDmsSemanticallyMatchesResult(rawDmsStructure, engineGroups, expected
         || sourcePoint.longitudeHemisphere !== expectedLongitudeHemisphere) {
         return Object.freeze({ verified: false, reason: "hemisphere_mismatch" });
       }
-      if (!labelMatches(sourcePoint.label, enginePoint.label)) {
+      if (!labelMatchesSourceRow(sourcePoint.label, enginePoint.label, pointIndex)) {
         return Object.freeze({ verified: false, reason: "label_order_mismatch" });
       }
       if (!matchesCoordinate(sourcePoint, enginePoint)) {
@@ -267,6 +269,14 @@ function rawDmsSemanticallyMatchesResult(rawDmsStructure, engineGroups, expected
   }
 
   return Object.freeze({ verified: true, reason: "pointwise_dms_semantic_match" });
+}
+
+function sourceDmsAxisOrder(rawDmsStructure) {
+  const axisOrders = [...new Set((Array.isArray(rawDmsStructure?.groups) ? rawDmsStructure.groups : [])
+    .flatMap(group => Array.isArray(group?.parsedRows) ? group.parsedRows : [])
+    .map(point => point?.axisOrder)
+    .filter(value => ["latitude_longitude", "longitude_latitude"].includes(value)))];
+  return axisOrders.length === 1 ? axisOrders[0] : null;
 }
 
 function renderCanonicalEngineGroups(engineGroups, axisOrder) {
@@ -441,6 +451,7 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
     : Object.freeze({ verified: false, reason: "not_wgs84_chat_decimal" });
   const useRawDms = rawDmsEquivalence.verified === true;
   const useRawDecimal = rawDecimalEquivalence.verified === true;
+  const rawDmsAxisOrder = useRawDms ? sourceDmsAxisOrder(rawDmsStructure) : null;
   const canonicalEngineDisplay = renderCanonicalEngineGroups(engineGroups, axisOrder);
   const displayText = useRawDms
     ? rawDmsStructure.displayText
@@ -466,7 +477,7 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
     groups,
     groupNames: useRawDms ? rawDmsStructure.groups.map(group => group.name) : groups.map(() => null),
     pointLabels: enginePointLabels(coordinateEngineV2),
-    axisOrder,
+    axisOrder: rawDmsAxisOrder || axisOrder,
     hemisphere: sourceHemispheres(displayText),
     precision: format,
     sourceCrsEvidence: sourceCrsEvidence(effectiveRecognitionResult, coordinateEngineV2),

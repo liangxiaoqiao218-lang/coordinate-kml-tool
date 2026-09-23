@@ -1320,7 +1320,7 @@ function setSharedSpatialResultHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; script-src 'self' https://webapi.amap.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://*.amap.com; worker-src 'self' blob:");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; script-src 'self' https://webapi.amap.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://*.amap.com https://*.openfreemap.org; worker-src 'self' blob:");
 }
 
 app.get("/s/:shareId", spatialShareReadRateLimit, async (req, res) => {
@@ -1346,6 +1346,13 @@ app.get("/sitemap.xml", (req, res) => {
   const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map(pathname => `  <url><loc>${shareMetaOrigin}${pathname}</loc></url>`).join("\n")}\n</urlset>\n`;
   res.type("application/xml").send(body);
 });
+
+app.use("/vendor/maplibre-gl", express.static(path.join(__dirname, "node_modules", "maplibre-gl", "dist"), {
+  index: false,
+  etag: true,
+  maxAge: "7d",
+  immutable: true
+}));
 
 app.use(express.static(__dirname, {
   index: false,
@@ -1400,6 +1407,8 @@ app.get("/api/map-runtime-config", enforceSpatialApiEnabled, (req, res) => {
     amapWebJsKey: webJsKey,
     amapWebJsConfigured: Boolean(webJsKey),
     amapSecurityProxyReady: securityProxyReady,
+    openFreeMapEnabled: true,
+    openFreeMapStyleUrl: "https://tiles.openfreemap.org/styles/liberty",
     providerTimeoutMs: 8000
   });
 });
@@ -8504,12 +8513,19 @@ function buildManualTextCoordinateResult(text) {
   };
 }
 
-const SUPPORTED_PROJECTED_CRS_CONFIRMATIONS = Object.freeze({
-  utm28n: Object.freeze({ id: "EPSG:32628", projection: "utm28n", zone: 28, hemisphere: "N" }),
-  utm29n: Object.freeze({ id: "EPSG:32629", projection: "utm29n", zone: 29, hemisphere: "N" }),
-  utm30n: Object.freeze({ id: "EPSG:32630", projection: "utm30n", zone: 30, hemisphere: "N" }),
-  bftm: Object.freeze({ id: "BFTM:ITRF2008", projection: "bftm", zone: null, hemisphere: "N" })
-});
+function getProjectedCrsDefinition(selection) {
+  const normalized = String(selection || "").trim().toLowerCase().replace(/[\s_:/-]+/g, "");
+  if (normalized === "bftm" || normalized === "bftmitrf2008") {
+    return Object.freeze({ id: "BFTM:ITRF2008", projection: "bftm", zone: null, hemisphere: "N" });
+  }
+  const epsg = normalized.match(/^epsg(326|327)(\d{2})$/u);
+  const utm = normalized.match(/^utm(\d{1,2})([ns])$/u);
+  const zone = Number(epsg?.[2] || utm?.[1]);
+  const hemisphere = epsg ? (epsg[1] === "326" ? "N" : "S") : String(utm?.[2] || "").toUpperCase();
+  if (!Number.isInteger(zone) || zone < 1 || zone > 60 || !["N", "S"].includes(hemisphere)) return null;
+  const code = `${hemisphere === "N" ? "326" : "327"}${String(zone).padStart(2, "0")}`;
+  return Object.freeze({ id: `EPSG:${code}`, projection: `utm${zone}${hemisphere.toLowerCase()}`, zone, hemisphere });
+}
 
 function parseProjectedCoordinateConfirmationRows(text) {
   const rows = [];
@@ -8587,7 +8603,7 @@ function buildPendingManualProjectedCoordinateEngine(rows) {
 }
 
 function buildConfirmedProjectedCoordinateEngine(rows, selection) {
-  const definition = SUPPORTED_PROJECTED_CRS_CONFIRMATIONS[selection];
+  const definition = getProjectedCrsDefinition(selection);
   if (!definition || !Array.isArray(rows) || rows.length < 3) return null;
   const sourceCrs = Object.freeze({
     id: definition.id,
@@ -8597,9 +8613,9 @@ function buildConfirmedProjectedCoordinateEngine(rows, selection) {
     axisOrder: "easting_northing"
   });
   const points = rows.map(row => {
-    const converted = selection === "bftm"
+    const converted = definition.projection === "bftm"
       ? bftmToWgs84(row.x, row.y)
-      : utmToWgs84(definition.zone, row.x, row.y, true);
+      : utmToWgs84(definition.zone, row.x, row.y, definition.hemisphere === "N");
     const lat = finiteNumberOrNull(converted?.lat ?? converted?.latitude);
     const lon = finiteNumberOrNull(converted?.lon ?? converted?.longitude);
     if (lat === null || lon === null || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
@@ -10472,6 +10488,21 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
   return attachSpatialKnowledgeReport(normalizedResult, options);
 }
 
+function getProjectedSourceCrsFromPayload(payload = {}) {
+  const direct = payload.sourceCrs || payload.source_crs;
+  if (direct && typeof direct === "object" && String(direct.id || "").trim()) return direct;
+  const evidence = payload.providerProjectedReviewEvidence?.crsEvidence
+    || payload.projectedCoordinateReviewEvidence?.crsEvidence
+    || null;
+  if (String(evidence?.status || "").toUpperCase() !== "EXPLICIT") return null;
+  if (String(evidence?.projection || "").toLowerCase() === "bftm") {
+    const definition = getProjectedCrsDefinition("bftm");
+    return { ...definition, axisOrder: "easting_northing" };
+  }
+  const definition = getProjectedCrsDefinition(`utm${Number(evidence?.zone)}${String(evidence?.hemisphere || "").toLowerCase()}`);
+  return definition ? { ...definition, axisOrder: "easting_northing" } : null;
+}
+
 function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
   const budget = getRecognitionBudget();
   budget?.assertCanContinue({ stageName: "parser" });
@@ -10512,7 +10543,7 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
     precision_mode: precisionMode,
     axisOrderEvidence: payload.axisOrderEvidence || null,
     source_crs: coordinateType === "projected_xy"
-      ? { id: "EPSG:32630", projection: "utm", zone: 30, hemisphere: "N", axisOrder: "easting_northing" }
+      ? getProjectedSourceCrsFromPayload(payload)
       : coordinateType === "indonesia_utm50_projected"
         ? { id: "EPSG:32750", projection: "utm", zone: 50, hemisphere: "S", axisOrder: "easting_northing" }
         : coordinateType === "madagascar_cadastral_grid"
@@ -13808,7 +13839,7 @@ app.post("/api/coordinate-projection-confirmation", (req, res) => {
   const resultRevision = Number(req.body?.resultRevision);
   const sourceCrsSelection = String(req.body?.sourceCrs || "").toLowerCase();
   const coordinateText = String(req.body?.coordinateText || "").trim();
-  const definition = SUPPORTED_PROJECTED_CRS_CONFIRMATIONS[sourceCrsSelection];
+  const definition = getProjectedCrsDefinition(sourceCrsSelection);
   if (!definition) {
     return res.status(400).json({ success: false, code: "PROJECTED_CRS_SELECTION_REQUIRED" });
   }
@@ -13828,7 +13859,12 @@ app.post("/api/coordinate-projection-confirmation", (req, res) => {
   if (!rows) {
     return res.status(422).json({ success: false, code: "PROJECTED_COORDINATE_ROWS_INVALID" });
   }
-  const coordinateEngineV2 = buildConfirmedProjectedCoordinateEngine(rows, sourceCrsSelection);
+  let coordinateEngineV2 = null;
+  try {
+    coordinateEngineV2 = buildConfirmedProjectedCoordinateEngine(rows, sourceCrsSelection);
+  } catch (_) {
+    coordinateEngineV2 = null;
+  }
   if (!coordinateEngineV2) {
     return res.status(422).json({ success: false, code: "PROJECTED_TRANSFORM_FAILED" });
   }
@@ -13855,9 +13891,19 @@ app.post("/api/coordinate-projection-confirmation", (req, res) => {
   });
   const polygonSelfIntersection = response.verification?.status === "BLOCK"
     && (response.verification?.warnings || []).some(warning => /自交|self-intersection/i.test(String(warning || "")));
-  if (polygonSelfIntersection) {
-    const positions = coordinateEngineV2.groups[0].points.map(point => [Number(point.lon), Number(point.lat)]);
-    const pointReviewResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
+  const positions = coordinateEngineV2.groups[0].points.map(point => [Number(point.lon), Number(point.lat)]);
+  const pointGeometryValid = positions.length === rows.length && positions.every(position => (
+    Number.isFinite(position[0]) && Math.abs(position[0]) <= 180
+    && Number.isFinite(position[1]) && Math.abs(position[1]) <= 90
+  ));
+  if (!pointGeometryValid) {
+    return res.status(422).json({
+      success: false,
+      code: "PROJECTED_POINT_GEOMETRY_INVALID",
+      verificationStatus: response.verification?.status || "UNKNOWN"
+    });
+  }
+  const pointReviewResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
       resultId: current.resultId,
       resultRevision: current.resultRevision + 1,
       currentRevision: current.resultRevision + 1,
@@ -13874,47 +13920,28 @@ app.post("/api/coordinate-projection-confirmation", (req, res) => {
       currentAuthorizedGeometryExportable: false,
       requiresReview: true,
       kmlReady: false,
-      kmlAuthorityBlocked: true,
+      kmlAuthorityBlocked: false,
       groups: [{ groupId: "group_1", requiresReview: true, kmlReady: false }],
       warnings: [
-        "已定位各坐标点；原始点序形成自交，当前地图仅供点位核对，不代表矿区边界。",
+        polygonSelfIntersection
+          ? "已定位各坐标点；原始点序形成自交，当前地图仅供点位核对，不代表矿区边界。"
+          : "已定位各坐标点；原图未提供可核验的边界连接说明，当前地图仅供点位核对。",
         ...(response.verification?.warnings || [])
       ],
       limitations: [
         "当前 MultiPoint 结果不代表矿区边界、面积或点位连接顺序。",
-        "修正并重新确认点位顺序前，不得输出 Polygon 边界或 KML。"
+        "取得可核验的边界连接说明前，不得输出 Polygon 边界或 KML。"
       ]
-    }));
-    return res.json({
-      success: true,
-      precisionMode: pointReviewResult.precisionMode,
-      selectedCrs: definition.id,
-      sourceRowCount: rows.length,
-      geometryMode: "points_only",
-      boundaryBlocked: true,
-      coordinateEngineV2,
-      finalizedCoordinateResult: pointReviewResult
-    });
-  }
-  if (!response.finalizedCoordinateResult?.geometryHash
-    || response.finalizedCoordinateResult?.kmlReady !== true) {
-    return res.status(422).json({
-      success: false,
-      code: "PROJECTED_FINALIZER_GATE_BLOCKED",
-      reasonCodes: response.finalizedCoordinateResult?.reasonCodes || [],
-      verificationStatus: response.verification?.status || "UNKNOWN",
-      verificationWarnings: response.verification?.warnings || []
-    });
-  }
+  }));
   return res.json({
     success: true,
-    precisionMode: projectedPayload.precisionMode,
+    precisionMode: pointReviewResult.precisionMode,
     selectedCrs: definition.id,
     sourceRowCount: rows.length,
-    geometryMode: "boundary",
-    boundaryBlocked: false,
+    geometryMode: "points_only",
+    boundaryBlocked: true,
     coordinateEngineV2,
-    finalizedCoordinateResult: response.finalizedCoordinateResult
+    finalizedCoordinateResult: pointReviewResult
   });
 });
 
@@ -14251,6 +14278,55 @@ function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = 
     });
   }
   return { ...response, evidenceAcquisition, pointGeometryIntentReview };
+}
+
+function keepRecognizedCoordinatesAsPointReview(response = {}, warning = "") {
+  const points = (Array.isArray(response?.coordinateEngineV2?.groups) ? response.coordinateEngineV2.groups : [])
+    .flatMap(group => Array.isArray(group?.points) ? group.points : [])
+    .map(point => [Number(point?.lon), Number(point?.lat)])
+    .filter(position => Number.isFinite(position[0]) && Math.abs(position[0]) <= 180
+      && Number.isFinite(position[1]) && Math.abs(position[1]) <= 90);
+  if (points.length === 0 || !response?.finalizedCoordinateResult?.resultId) return response;
+  const prior = response.finalizedCoordinateResult;
+  const pointReviewResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
+    resultId: prior.resultId,
+    resultRevision: prior.resultRevision,
+    currentRevision: prior.resultRevision,
+    confirmedRevision: null,
+    sourceAuthority: prior.sourceAuthority || "legacy",
+    coordinateType: prior.coordinateType,
+    precisionMode: prior.precisionMode,
+    family: prior.family,
+    availabilityStatus: prior.availabilityStatus,
+    availabilityReasonCode: prior.availabilityReasonCode,
+    crs: FINALIZED_COORDINATE_CRS,
+    geometry: points.length === 1
+      ? { type: "Point", coordinates: points[0] }
+      : { type: "MultiPoint", coordinates: points },
+    confirmationStatus: "pending",
+    qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+    technicalKmlReady: false,
+    currentAuthorizedGeometryExportable: false,
+    requiresReview: true,
+    kmlReady: false,
+    kmlAuthorityBlocked: false,
+    groups: (Array.isArray(response?.coordinateEngineV2?.groups) ? response.coordinateEngineV2.groups : [])
+      .map(group => ({ groupId: group?.group_id || null, requiresReview: true, kmlReady: false })),
+    warnings: [
+      warning || "已定位坐标点；原图未提供可核验的边界连接说明，当前地图仅供点位核对。",
+      ...(Array.isArray(prior.warnings) ? prior.warnings : [])
+    ],
+    limitations: [
+      "当前点位结果不代表矿区边界、面积或点位连接顺序。",
+      "缺少可核验的边界说明时，不得输出 Polygon 边界或边界 KML。"
+    ]
+  }));
+  return {
+    ...response,
+    geometryMode: "points_only",
+    boundaryBlocked: true,
+    finalizedCoordinateResult: pointReviewResult
+  };
 }
 
 const buildCoordinateVerificationResponseWithoutRecognitionBudget = buildCoordinateVerificationResponse;
@@ -16352,7 +16428,14 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           forceRequiresReview: true,
           rawHint: ""
         });
-        return res.json(buildCoordinateVerificationResponse(providerDmsReviewPayload, providerDmsReviewEngine));
+        const providerDmsReviewResponse = buildCoordinateVerificationResponse(
+          providerDmsReviewPayload,
+          providerDmsReviewEngine
+        );
+        return res.json(keepRecognizedCoordinatesAsPointReview(
+          providerDmsReviewResponse,
+          "已定位识别出的坐标点；原图未提供可核验的边界连接说明，地图仅供点位核对。"
+        ));
       }
       const contractReviewPayload = {
         success: false,

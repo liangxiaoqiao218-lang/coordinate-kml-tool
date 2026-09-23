@@ -1242,23 +1242,25 @@ dynamicCase("unparseable no-hemisphere DMS fails closed", () => {
   assert.equal(result.sourceEquivalence, "missing_rows_or_engine_points");
 });
 
-dynamicCase("declared latitude-longitude rejects longitude-latitude source order", () => {
+dynamicCase("explicit DMS directions preserve longitude-latitude source order", () => {
   const swappedRows = flatRows.map(row => {
     const parsed = parseDmsSourceCoordinateRow(row);
     return `${parsed.label}. ${parsed.tokens[1]}, ${parsed.tokens[0]}`;
   });
   const result = buildSourceCoordinateRepresentation({ rawText: swappedRows.join("\n"), coordinates: decimalRows.join("\n") }, flatEngine);
-  assert.equal(result.displayText, decimalRows.join("\n"));
-  assert.equal(result.sourceEquivalence, "axis_order_mismatch");
+  assert.equal(result.displayText, swappedRows.join("\n"));
+  assert.equal(result.axisOrder, "longitude_latitude");
+  assert.equal(result.sourceEquivalence, "pointwise_dms_semantic_match");
 });
 
-dynamicCase("declared longitude-latitude rejects latitude-longitude source order", () => {
+dynamicCase("explicit DMS directions preserve latitude-longitude source order", () => {
   const result = buildSourceCoordinateRepresentation({ rawText: flatRows.join("\n"), coordinates: decimalRows.join("\n") }, {
     ...flatEngine,
     source_crs: { axisOrder: "longitude_latitude" }
   });
-  assert.equal(result.displayText, decimalRows.join("\n"));
-  assert.equal(result.sourceEquivalence, "axis_order_mismatch");
+  assert.equal(result.displayText, flatRows.join("\n"));
+  assert.equal(result.axisOrder, "latitude_longitude");
+  assert.equal(result.sourceEquivalence, "pointwise_dms_semantic_match");
 });
 
 dynamicCase("raw DMS with more rows than engine fails closed", () => {

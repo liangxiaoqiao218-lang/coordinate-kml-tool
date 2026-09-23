@@ -108,6 +108,8 @@ const createHarness = new Function(`
   let internalKmlSourceDirty = false;
   let handwrittenDmsReviewState = { required: false, status: "NOT_APPLICABLE", revision: 0, confirmedRevision: null };
   let fetchImpl = async () => { throw new Error("fetch mock not configured"); };
+  function projectedCrsSelectionNeedsConfirmation() { return false; }
+  function renderProjectedCrsReviewPanel() {}
 
   function fetch(url, options) { return fetchImpl(url, options); }
   function getSourceHeaders(headers = {}) { return headers; }

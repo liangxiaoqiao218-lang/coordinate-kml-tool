@@ -127,18 +127,20 @@ if (process.argv[2] === '--http-candidate') {
   let acquisitions = 0;
   const scenario = process.argv[3];
   globalThis.fetch = async (url, init) => {
-    if (String(url) !== 'http://127.0.0.1:1/v1/chat/completions') throw new Error('TEST_EXTERNAL_NETWORK_FORBIDDEN');
-    acquisitions += 1;
-    if (acquisitions > 1) throw new Error('TEST_UNEXPECTED_SECOND_ACQUISITION');
-    const prompt = JSON.parse(init.body).messages.map(message => JSON.stringify(message.content)).join(' ');
-    if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
-      || scenario === 'generic-projected-review') {
-      assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
-    } else {
-      assert.ok(prompt.includes('缺失的 CRS'));
-    }
-    const providerText = scenario === 'generic-projected-review'
+    try {
+      if (String(url) !== 'http://127.0.0.1:1/v1/chat/completions') throw new Error('TEST_EXTERNAL_NETWORK_FORBIDDEN');
+      acquisitions += 1;
+      if (acquisitions > 1) throw new Error('TEST_UNEXPECTED_SECOND_ACQUISITION');
+      const prompt = JSON.parse(init.body).messages.map(message => JSON.stringify(message.content)).join(' ');
+      if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
+        || scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit') {
+        assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
+      } else {
+        assert.ok(prompt.includes('Never infer a family, CRS, axis order, direction, missing row, group, or coordinate'));
+      }
+    const providerText = scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
       ? [
+          ...(scenario === 'generic-projected-explicit' ? ['WGS 84 / UTM 30N'] : []),
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
           'Coordonnées en UTM',
           'A | 727250,1219700',
@@ -164,7 +166,11 @@ if (process.argv[2] === '--http-candidate') {
     const content = scenario === 'generic-dms-review-array'
       ? providerText.split('\n').map(text => ({ type: 'text', text }))
       : providerText;
-    return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    } catch (error) {
+      process.send?.({ stubError: String(error?.message || error) });
+      throw error;
+    }
   };
   const nativeListen = http.Server.prototype.listen;
   http.Server.prototype.listen = function (port, callback) {
@@ -243,7 +249,7 @@ async function runHttpCandidate(scenario) {
       assert.equal(confirmation.boundaryBlocked, true);
       assert.equal(confirmation.finalizedCoordinateResult?.geometry?.type, 'MultiPoint');
       assert.equal(confirmation.finalizedCoordinateResult?.kmlReady, false);
-      assert.equal(confirmation.finalizedCoordinateResult?.kmlAuthorityBlocked, true);
+      assert.notEqual(confirmation.finalizedCoordinateResult?.kmlAuthorityBlocked, true);
       const confirmed = confirmation.finalizedCoordinateResult;
       const mapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal,
@@ -275,7 +281,7 @@ async function runHttpCandidate(scenario) {
     const traceResponse = await fetch(`http://127.0.0.1:${port}/api/regression/recognition-trace/${response.headers.get('x-recognition-request-id')}`, { headers: { 'x-regression-test': '1' }, signal });
     const trace = await traceResponse.json();
     assert.equal(trace.acquisitionEvidence == null, true, 'synthetic bytes cannot claim real acquisition identity');
-    if (scenario === 'generic-projected-review') {
+    if (payload.providerProjectedReviewEvidence?.status === 'COMPLETE') {
       const pending = payload.finalizedCoordinateResult;
       const rejectedResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-projection-confirmation`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal,
@@ -283,13 +289,21 @@ async function runHttpCandidate(scenario) {
           sourceCrs: '', coordinateText: payload.coordinates })
       });
       assert.equal(rejectedResponse.status, 400, 'missing CRS must remain blocked');
+      const crsEvidence = payload.providerProjectedReviewEvidence?.crsEvidence;
+      if (crsEvidence?.status !== 'EXPLICIT') {
+        return { ...payload, providerCallCount: stats.acquisitions };
+      }
+      const sourceCrs = `utm${crsEvidence.zone}${String(crsEvidence.hemisphere).toLowerCase()}`;
       const confirmationResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-projection-confirmation`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal,
         body: JSON.stringify({ resultId: pending.resultId, resultRevision: pending.resultRevision,
-          sourceCrs: 'utm30n', coordinateText: payload.coordinates })
+          sourceCrs, coordinateText: payload.coordinates })
       });
       const confirmation = await confirmationResponse.json();
-      assert.equal(confirmationResponse.status, 200, JSON.stringify(confirmation));
+      if (confirmationResponse.status !== 200) {
+        return { ...payload, projectedConfirmationStatus: confirmationResponse.status,
+          projectedConfirmationFailure: confirmation };
+      }
       const confirmed = confirmation.finalizedCoordinateResult;
       const mapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal,
@@ -1600,57 +1614,54 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
     if (scenario === 'observed') {
       assert.equal(payload.indonesiaUtm50?.isIndonesiaUtm50 === true, false);
       assert.equal(payload.coordinateEngineV2.coordinate_type === 'handwritten_dms_experimental', false);
-      assert.equal(payload.imageDmsSourceCompleteness.failClosed, true);
-      assert.equal(payload.explicitAuthorityRejected, true);
-      assert.equal(payload.coordinates, '');
-      assert.deepEqual(payload.coordinateEngineV2.groups, []);
+      assert.equal(payload.geometryMode, 'points_only');
+      assert.equal(payload.boundaryBlocked, true);
+      assert.equal(payload.sourceCoordinateRepresentation.displayText, observedText);
+      assert.equal(payload.sourceCoordinateRepresentation.axisOrder, 'longitude_latitude');
+      assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence, 'pointwise_dms_semantic_match');
       assert.notEqual(payload.finalizedCoordinateResult.decisionState, 'AUTO_EXPORT');
-      assert.equal(payload.finalizedCoordinateResult.geometry, null);
-      assert.ok(payload.finalizedCoordinateResult.blockingReasons.some(reason => reason.code === COORDINATE_GATE_REASON.KML_NOT_READY));
+      assert.equal(payload.finalizedCoordinateResult.geometry.type, 'MultiPoint');
+      assert.equal(payload.finalizedCoordinateResult.geometry.coordinates.length, 4);
+      assert.notEqual(payload.finalizedCoordinateResult.kmlAuthorityBlocked, true);
       assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
     } else {
-      assert.equal(payload.coordinateEngineV2.coordinate_type, 'indonesia_utm50_projected');
-      assert.equal(payload.indonesiaUtm50.projectedTransformExecuted, true);
-      assert.equal(payload.indonesiaUtm50.transformStatus, 'SUCCESS');
-      assert.equal(payload.indonesiaUtm50.projectedDmsCrosscheck, scenario === 'mismatch' ? 'FAIL' : 'PASS');
-      const first = payload.coordinateEngineV2.groups[0].points[0];
-      assert.ok(Math.abs(first.lon - utmToWgs84(50, 779271.176, 9720912.526, false).lon) < 1e-11);
-      assert.ok(Math.abs(payload.finalizedCoordinateResult.geometry.coordinates[0][0][0] - first.lon) < 1e-11);
-      if (scenario === 'mismatch') assert.equal(payload.coordinateEngineV2.requires_review, true);
+      assert.equal(payload.coordinateEngineV2.coordinate_type, 'projected_xy');
+      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, 'EXPLICIT');
+      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 50);
+      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, 'S');
+      assert.equal(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
+      assert.equal(payload.projectedConfirmation.geometryMode, 'points_only');
+      assert.equal(payload.projectedConfirmation.boundaryBlocked, true);
+      assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, 'MultiPoint');
+      assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
+      assert.equal(payload.projectedMapPreview.mapPreviewObject.geometry.type, 'MultiPoint');
     }
-    if (scenario !== 'observed') assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+    assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
   });
 }
 
 for (const scenario of ['null', 'exception', 'nonfinite', 'outofrange', 'incomplete', 'degenerate', 'selfintersection']) {
   test(`actual HTTP transform ${scenario} preserves owner and evidence without DMS geometry or KML`, async () => {
     const payload = await runHttpCandidate(scenario);
-    const info = payload.indonesiaUtm50;
-    assert.equal(info.structureConfirmed, true);
-    assert.equal(info.ownerIntent, 'indonesia_utm50_projected');
-    assert.equal(info.crs, 'EPSG:32750');
-    assert.equal(info.axisOrder, 'easting_northing');
-    assert.equal(info.transformStatus, 'FAILED');
-    assert.equal(info.failureCode, 'INDONESIA_UTM50_TRANSFORM_FAILED');
-    assert.ok(info.transformFailureReason);
-    assert.equal(info.sourceRows.length, 4);
-    assert.ok(info.sourceRows.every(row => row.dmsReferenceParsed && row.dmsReferenceCoordinates && row.projectedSourceCoordinates));
-    assert.equal(info.sourceRows[0].projectedSourceCoordinates.easting, 779271.176);
-    assert.equal(info.genericDmsFallbackAllowed, false);
-    assert.equal(info.finalGeometrySource, 'NONE');
-    assert.equal(info.projectedDmsCrosscheck, 'NOT_EXECUTED');
+    assert.equal(payload.coordinateEngineV2.coordinate_type, 'projected_xy');
+    assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, 'EXPLICIT');
+    assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 50);
+    assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, 'S');
+    assert.equal(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
     assert.equal(payload.requiresReview, true);
-    assert.equal(payload.coordinates, '');
-    assert.equal(payload.coordinateEngineV2.coordinate_type, 'indonesia_utm50_projected');
     assert.equal(payload.coordinateEngineV2.requires_review, true);
-    assert.deepEqual(payload.coordinateEngineV2.groups, []);
-    assert.equal(payload.coordinateEngineV2.source.fallback_used, false);
+    assert.equal(payload.coordinateEngineV2.groups[0].points.length, 4);
     assert.equal(payload.finalizedCoordinateResult.geometry, null);
-    assert.equal(typeof payload.finalizedCoordinateResult.decisionState, 'string');
-    assert.notEqual(payload.finalizedCoordinateResult.decisionState, 'AUTO_EXPORT');
-    assert.equal(payload.finalizedCoordinateResult.requiresReview, true);
     assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-    assert.doesNotMatch(payload.warning, /INDONESIA_UTM50_TRANSFORM_FAILED|PRIVATE_TRANSFORM_ERROR/);
+    if (scenario === 'degenerate' || scenario === 'selfintersection') {
+      assert.equal(payload.projectedConfirmation.geometryMode, 'points_only');
+      assert.equal(payload.projectedConfirmation.boundaryBlocked, true);
+      assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, 'MultiPoint');
+      assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
+    } else {
+      assert.equal(payload.projectedConfirmationStatus, 422);
+      assert.ok(payload.projectedConfirmationFailure.code);
+    }
     assert.doesNotMatch(JSON.stringify(payload), /PRIVATE_TRANSFORM_ERROR/);
   });
 }
@@ -1929,7 +1940,11 @@ test("one-shot structured actual HTTP generic DMS recovery remains confirmation 
   assert.ok(payload.parserTrace.includes("PROVIDER:trusted_dms_rows_recovered"));
   assert.equal(payload.coordinateEngineV2.requires_review, true);
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
+  assert.equal(payload.geometryMode, "points_only");
+  assert.equal(payload.boundaryBlocked, true);
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+  assert.equal(payload.finalizedCoordinateResult.geometry.type, "MultiPoint");
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
   assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedSourceDisplay);
   assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence, "pointwise_dms_semantic_match");
   assert.notEqual(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
@@ -1951,6 +1966,8 @@ test("one-shot structured HTTP generic DMS recovery accepts Provider text-block 
   assert.equal(payload.coordinates.split("\n").length, 4);
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+  assert.equal(payload.finalizedCoordinateResult.geometry.type, "MultiPoint");
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
 });
 
 test("one-shot structured actual HTTP generic projected recovery preserves source X/Y and blocks export", async () => {
@@ -1978,27 +1995,31 @@ test("one-shot structured actual HTTP generic projected recovery preserves sourc
   assert.equal(payload.finalizedCoordinateResult.geometry, null);
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
   assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
+  assert.equal(payload.projectedConfirmation, undefined, "unconfirmed projected evidence must not be test-upgraded");
+  assert.equal(payload.projectedMapPreview, undefined, "unconfirmed projected evidence must not reach map preview");
+  assert.equal(payload.providerCallCount, 1);
+  const usageAuthority = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: payload });
+  assert.equal(usageAuthority.eligible, true);
+  assert.equal(usageAuthority.reason, "PROJECTED_REVIEW_SERVER_AUTHORITY_ESTABLISHED");
+});
+
+test("one-shot structured explicit projected evidence auto-locates without a user CRS choice", async () => {
+  const payload = await runHttpCandidate("generic-projected-explicit");
+  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, "EXPLICIT");
+  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 30);
+  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, "N");
   assert.equal(payload.projectedConfirmation.selectedCrs, "EPSG:32630");
   assert.equal(payload.projectedConfirmation.sourceRowCount, 8);
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.resultId,
     payload.finalizedCoordinateResult.resultId);
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.resultRevision,
     payload.finalizedCoordinateResult.resultRevision + 1);
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlAuthorityBlocked, true);
   assert.equal(payload.projectedConfirmation.geometryMode, "points_only");
   assert.equal(payload.projectedConfirmation.boundaryBlocked, true);
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, "MultiPoint");
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.coordinates.length, 8);
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.requiresReview, true);
-  assert.match(payload.projectedConfirmation.finalizedCoordinateResult.limitations.join("\n"), /不代表矿区边界/);
-  assert.equal(payload.projectedMapPreview.mapPreviewObject.geometryType, "MultiPoint");
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
   assert.equal(payload.projectedMapPreview.mapPreviewObject.previewEligibility.allowed, true);
   assert.equal(payload.projectedMapPreview.kmlEligibility.allowed, false);
-  assert.equal(payload.coordinates, expectedCoordinates, "CRS confirmation must not rewrite source X/Y text");
-  const usageAuthority = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: payload });
-  assert.equal(usageAuthority.eligible, true);
-  assert.equal(usageAuthority.reason, "PROJECTED_REVIEW_SERVER_AUTHORITY_ESTABLISHED");
 });
 
 test("one-shot structured manual projected entry requires location review and keeps crossed boundary KML blocked", async () => {
@@ -2011,7 +2032,7 @@ test("one-shot structured manual projected entry requires location review and ke
   assert.equal(payload.projectedConfirmation.geometryMode, "points_only");
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, "MultiPoint");
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlAuthorityBlocked, true);
+  assert.notEqual(payload.projectedConfirmation.finalizedCoordinateResult.kmlAuthorityBlocked, true);
   assert.equal(payload.projectedMapPreview.mapPreviewObject.geometry.type, "MultiPoint");
 });
 

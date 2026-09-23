@@ -737,6 +737,12 @@ function parseProviderProjectedRow(line, { labelColumnVisible = false } = {}) {
     const y = normalizeProjectedProviderNumber(pipeParts[2]);
     if (x && y) return Object.freeze({ label: pipeParts[0], x, y, sourceText: raw });
   }
+  if (pipeParts.length >= 5
+    && pipeParts.slice(3).every(part => /\d\s*°[^|]*[NSEWO]\b/iu.test(part))) {
+    const x = normalizeProjectedProviderNumber(pipeParts[1]);
+    const y = normalizeProjectedProviderNumber(pipeParts[2]);
+    if (x && y) return Object.freeze({ label: pipeParts[0], x, y, sourceText: raw });
+  }
 
   const tokens = raw.match(/[+-]?\d+(?:[.,]\d+)?/gu) || [];
   let label = raw.match(/^\s*(?:POINT\s+)?([A-Z][A-Z0-9_.-]{0,15})\b/iu)?.[1] || "";
@@ -832,7 +838,8 @@ export function extractProviderProjectedCoordinateEvidence({
       crsEvidence: null
     });
   }
-  const explicitUtm = String(sourceText || "").match(/\bUTM\s*(?:ZONE\s*)?(\d{1,2})\s*([NS])\b/iu);
+  const explicitUtm = String(sourceText || "").match(/\bUTM\s*(?:ZONE\s*)?(\d{1,2})\s*([NS])\b/iu)
+    || String(sourceText || "").match(/\bUTM\b[^\r\n]{0,80}\b(?:ZONE|ZONA)\s*(\d{1,2})\s*([NS])\b/iu);
   const explicitBftm = /\bBFTM\b/iu.test(String(sourceText || ""));
   const crsEvidence = explicitBftm
     ? Object.freeze({ status: "EXPLICIT", projection: "bftm", zone: null, hemisphere: "" })

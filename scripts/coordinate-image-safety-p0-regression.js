@@ -201,7 +201,6 @@ test("server installs the safety boundary before user data and every image consu
     "readAdminData()",
     "validateCoordinateImageUpload(req.file)",
     "req.file.buffer.toString(\"base64\")",
-    "detectUploadTableStructure(req.file?.buffer",
     "runLocalOcrFallback(req.file.buffer"
   ]) {
     assert.ok(route.indexOf(marker) > replacement, `${marker} must use the canonical file`);

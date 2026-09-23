@@ -386,7 +386,7 @@ test("SPN-32", "390px direct task UI keeps back fit KML retry without a fullscre
 test("SPN-UX-01", "provider failure is a compact non-blocking status with approved copy", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const failureCss = html.match(/\.spatial-map-failure\s*\{[\s\S]*?\}/)?.[0] || "";
-  assert.match(html, /卫星地图暂时不可用/);
+  assert.match(html, /地图服务暂时不可用/);
   assert.doesNotMatch(html, /地图暂时无法加载/);
   assert.match(failureCss, /display:\s*flex/);
   assert.match(failureCss, /border:\s*1px/);
@@ -504,7 +504,7 @@ test("SPN-FS-10", "reopen uses the cached canonical preview identity", () => {
 test("SPN-FS-11", "provider failure stays in compact result UI and never covers the map", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
-    assert.equal((html.match(/卫星地图暂时不可用/g) || []).length, 1);
+    assert.equal((html.match(/<strong>地图服务暂时不可用<\/strong>/g) || []).length, 1);
     assert.doesNotMatch(html, /id="spatialProviderCompact"/);
   assert.match(html, /class="spatial-result-card"[\s\S]*id="spatialMapFailure"/);
   assert.doesNotMatch(css, /\.spatial-map-failure\s*\{[\s\S]*?position:\s*absolute/);
@@ -588,7 +588,7 @@ test("SPN-R1-03", "conservative mainland policy excludes approved border matrix 
 test("SPN-R1-04", "mobile provider failure stays single-instance and retryable outside collapsed details", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const source = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
-  assert.equal((html.match(/卫星地图暂时不可用/g) || []).length, 1);
+  assert.equal((html.match(/<strong>地图服务暂时不可用<\/strong>/g) || []).length, 1);
   assert.match(source, /mobileResultQuery\?\.matches[\s\S]*elements\.card\.insertBefore\(elements\.failure, elements\.details\)/);
   assert.match(source, /if \(elements\.failure\) elements\.failure\.hidden = !unavailable/);
   assert.match(source, /if \(elements\.retry\) elements\.retry\.hidden = !unavailable/);

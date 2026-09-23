@@ -209,9 +209,13 @@ test("P09E-22", "general Map gate never uses export-grade authority", () => {
   assert.match(files, new RegExp(MAP_PREVIEW_GATE));
   assert.doesNotMatch(files, /FinalizedResultSpatialGeometryAdapter|AUTO_EXPORT/);
 });
-test("P09E-23", "production package remains unchanged and MapLibre GL is absent", () => {
+test("P09E-23", "production package pins MapLibre GL and exposes the real public basemap adapter", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-  assert.equal(Object.hasOwn(pkg.dependencies, "maplibre-gl"), false);
+  assert.equal(pkg.dependencies["maplibre-gl"], "6.11.0");
+  const adapter = fs.readFileSync(path.join(root, "assets/spatial-map/openfreemap-provider-adapter.js"), "utf8");
+  assert.match(adapter, /maplibre-gl\.mjs/);
+  assert.match(adapter, /new maplibregl\.Map/);
+  assert.match(adapter, /provider: "OPENFREEMAP"/);
   assert.equal(pkg.scripts.start, "node server.js");
   assert.equal(Object.hasOwn(pkg.scripts, "p09e-regression"), false);
 });
@@ -279,7 +283,7 @@ test("P09E-31", "recognition summary contract remains computed but is hidden fro
 test("P09E-32", "fallback presentation contains one approved failure message and no technical copy", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const source = fs.readFileSync(path.join(root, "assets/spatial-map/maplibre-renderer.js"), "utf8");
-  assert.equal((html.match(/卫星地图暂时不可用/g) || []).length, 1);
+  assert.equal((html.match(/<strong>地图服务暂时不可用<\/strong>/g) || []).length, 1);
   assert.doesNotMatch(html + source, /本地 SVG 预览|未请求底图服务|本地 Geometry 预览|Geometry 仅用于显示/);
 });
 
@@ -302,7 +306,7 @@ test("P09E-35", "mobile collapsed and expanded states reuse one tappable provide
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const source = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
   const css = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map.css"), "utf8");
-  assert.equal((html.match(/卫星地图暂时不可用/g) || []).length, 1);
+  assert.equal((html.match(/<strong>地图服务暂时不可用<\/strong>/g) || []).length, 1);
   assert.match(source, /function placeProviderFailure[\s\S]*elements\.card\.insertBefore\(elements\.failure, elements\.details\)/);
   assert.match(source, /elements\.details\.insertBefore\(elements\.failure, warning\)/);
   assert.match(source, /dataset\.providerUnavailable = String\(unavailable\)/);
@@ -386,11 +390,14 @@ test("MOBILE-01", "390px product surface guards against horizontal overflow", ()
   assert.match(css, /@media \(width: 390px\)/);
   assert.match(css, /touch-action: none/);
 });
-test("FALLBACK-01", "the local renderer is the provider-failure display implementation", () => {
-  const source = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
-  assert.match(source, /fallbackRenderer = new LocalSvgRenderer/);
-  assert.match(source, /await fallbackRenderer\.render\(preview\.geometry\)/);
-  assert.match(source, /return fallbackRenderer\?\.fitBounds\(\) === true/);
+test("FALLBACK-01", "provider failure never presents the local geometry sketch as a real map", () => {
+  const product = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
+  const controller = fs.readFileSync(path.join(root, "assets/spatial-map/map-product-controller.js"), "utf8");
+  assert.match(product, /fallbackRenderer = new LocalSvgRenderer/);
+  assert.match(controller, /await this\.fallbackRenderer\.render\(this\.preview\.geometry\)/);
+  assert.match(product, /elements\.local\.hidden = true/);
+  assert.doesNotMatch(product, /elements\.local\.hidden = false/);
+  assert.match(product, /if \(providerFit\) return true;[\s\S]*return false/);
 });
 test("DUPLICATE-01", "the old inline SVG geometry renderer is no longer a display authority", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");

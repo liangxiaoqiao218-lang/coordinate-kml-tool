@@ -274,46 +274,49 @@ for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked a
   const result=payload.finalizedCoordinateResult;
   if(scenario==='handwritten'){
     assert.equal(payload.coordinateEngineV2.coordinate_type === 'handwritten_dms_experimental',false);
-    assert.equal(payload.coordinates,'');
-    assert.deepEqual(payload.coordinateEngineV2.groups,[]);
+    assert.equal(payload.coordinates.split('\n').length,16);
+    assert.ok(payload.coordinateEngineV2.groups.length>0);
+    assert.ok(result);
+    assert.equal(payload.geometryMode,'points_only');
+    assert.equal(payload.boundaryBlocked,true);
+    assert.equal(result.geometry.type,'MultiPoint');
+    assert.equal(result.geometry.coordinates.length,16);
+    assert.equal(result.decisionState,'REVIEW_REQUIRED');
+    assert.equal(result.kmlReady,false);
+    assert.equal(payload.sourceCoordinateRepresentation.displayText,cleanPrinted);
+    assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence,'pointwise_dms_semantic_match');
+    assert.equal(adapter.adapt(result).ok,false);
+    assert.equal(new MapPreviewAdapter().adapt(result,{expectedIdentity:result}).previewEligibility.allowed,true);
+    return;
+  }
+  if(scenario==='unresolved'){
+    assert.equal(payload.coordinateEngineV2.coordinate_type,'projected_xy');
+    assert.equal(payload.precisionMode,'projected-x-y-review');
+    assert.equal(payload.providerProjectedReviewEvidence.status,'COMPLETE');
+    assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status,'UNCONFIRMED');
+    assert.equal(payload.requiresReview,true);
+    assert.equal(payload.coordinates.split('\n').length,payload.providerProjectedReviewEvidence.coordinateRowCount);
+    assert.equal(payload.providerProjectedReviewEvidence.coordinateRowCount,4);
+    assert.equal(payload.sourceCoordinateRepresentation.displayText,payload.coordinates);
     assert.ok(result);
     assert.equal(result.geometry,null);
     assert.equal(result.geometryHash,null);
-    assert.equal(result.decisionState,'BLOCKED');
     assert.equal(result.kmlReady,false);
-    assert.ok(result.blockingReasons.some(reason=>reason.code==='STRUCTURED_GEOMETRY_MISSING'));
-    assert.ok(result.blockingReasons.some(reason=>reason.code==='QUALITY_GATE_FAILED'));
-    assert.ok(result.blockingReasons.some(reason=>reason.code==='KML_NOT_READY'));
+    assert.equal(result.decisionState,'BLOCKED');
     assert.equal(adapter.adapt(result).ok,false);
     assert.equal(new MapPreviewAdapter().adapt(result,{expectedIdentity:result}).previewEligibility.allowed,false);
     return;
   }
-  if(scenario==='unresolved'){
-    const expectedSourceRows=[
-      {label:'1',latitudeDms:'2°31\'21.134" S',longitudeDms:'119°30\'40.863" E'},
-      {label:'2',latitudeDms:'2°31\'21.116" S',longitudeDms:'119°30\'50.018" E'},
-      {label:'3',latitudeDms:'2°31\'26.910" S',longitudeDms:'119°30\'50.029" E'},
-      {label:'4',latitudeDms:'2°31\'26.928" S',longitudeDms:'119°30\'40.874" E'}
-    ];
-    assert.equal(payload.geometrySource,'DMS_DOCUMENT_REFERENCE');
-    assert.equal(payload.projectedSourceStatus,'UNRESOLVED');
-    assert.equal(payload.explicitAuthorityRejected,true);
-    assert.equal(payload.requiresReview,true);
-    assert.equal(payload.coordinates,'');
-    assert.equal(payload.documentReference.sourceRows.length,4);
-    assert.deepEqual(payload.documentReference.sourceRows.map(({label,latitudeDms,longitudeDms})=>({label,latitudeDms,longitudeDms})),expectedSourceRows);
-    assert.equal(payload.imageDmsSourceCompleteness.failClosed,true);
-    assert.ok(result);
+  if(scenario==='kyrgyz'){
+    assert.equal(payload.coordinateEngineV2.coordinate_type,'projected_xy');
+    assert.equal(payload.sourceCoordinateRepresentation.displayText,'3 | 13261350 | 4607780\n1 | 13261341 | 4607777\n2 | 13261345 | 4607778');
     assert.equal(result.geometry,null);
-    assert.equal(result.geometryHash,null);
-    assert.equal(result.kmlReady,false);
     assert.equal(result.decisionState,'BLOCKED');
-    assert.equal(adapter.adapt(result).ok,false);
+    assert.equal(result.kmlReady,false);
     assert.equal(new MapPreviewAdapter().adapt(result,{expectedIdentity:result}).previewEligibility.allowed,false);
     return;
   }
   complete(result);assert.equal(result.kmlReady,true,JSON.stringify({type:payload.coordinateEngineV2?.coordinate_type,reasons:result.reasonCodes}));
-  if(scenario==='kyrgyz')assert.equal(payload.coordinateEngineV2.coordinate_type,'kyrgyzstan_gk');
 }));
 test('HTTP malformed image fails closed before Provider and service remains alive',()=>httpScenario('malformed',async post=>{
   const truncatedPng=Buffer.alloc(24);Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]).copy(truncatedPng);truncatedPng.write('IHDR',12,'ascii');truncatedPng.writeUInt32BE(1,16);truncatedPng.writeUInt32BE(1,20);
@@ -373,25 +376,25 @@ test('HTTP JPEG tail canonicalization reaches only the canonical bytes and keeps
   const result=await post('/api/recognize-coordinates',form,true);
   assert.equal(result.status,200,JSON.stringify(result.payload));
   const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.lastProviderImageBytes,frozenJpeg.length);assert.equal(stats.lastProviderImageCanonical,true);
-  assert.equal(stats.providerImageChecks,1);assert.equal(stats.structureProbeCalls,1);assert.equal(stats.structureImageCanonical,true);
+  assert.equal(stats.providerImageChecks,1);assert.equal(stats.structureProbeCalls,0);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));
-test('HTTP dms_grouped reread and upload structure detector receive only canonical bytes',()=>httpScenario('jpeg-grouped-reread',async post=>{
+test('HTTP complete generic DMS avoids unnecessary reread and preserves canonical bytes',()=>httpScenario('jpeg-grouped-reread',async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([frozenJpeg,Buffer.alloc(3754,0xa5)],{type:'image/jpeg'}),'synthetic-trailing.jpg');
   const result=await post('/api/recognize-coordinates',form,true);
   assert.equal(result.status,200,JSON.stringify(result.payload));
-  const stats=await post.stats();assert.equal(stats.calls,2,JSON.stringify({stats,parserTrace:result.payload.parserTrace}));assert.equal(stats.providerImageChecks,2);
-  assert.equal(stats.lastProviderImageCanonical,true);assert.equal(stats.structureProbeCalls,1);assert.equal(stats.structureImageCanonical,true);
-  assert.deepEqual(stats.providerPromptKinds,['STAGE_1','DMS_GROUPED']);
+  const stats=await post.stats();assert.equal(stats.calls,1,JSON.stringify({stats,parserTrace:result.payload.parserTrace}));assert.equal(stats.providerImageChecks,1);
+  assert.equal(stats.lastProviderImageCanonical,true);assert.equal(stats.structureProbeCalls,0);
+  assert.deepEqual(stats.providerPromptKinds,['STAGE_1']);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));
 test('HTTP local OCR receives only canonical bytes after bounded JPEG tail removal',()=>httpScenario('jpeg-ocr-canonical',async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([frozenJpeg,Buffer.alloc(3754,0xa5)],{type:'image/jpeg'}),'synthetic-trailing.jpg');
   const result=await post('/api/recognize-coordinates',form,true);
-  assert.equal(result.status,422);assert.equal(result.payload.code,'LOCAL_OCR_FAILED');
+  assert.equal(result.status,422);assert.equal(result.payload.code,'COORDINATE_RECOGNITION_FAILED_CLOSED');
   const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.providerImageChecks,1);
   assert.equal(stats.ocrCalls,1);assert.equal(stats.ocrImageCanonical,true);
-  assert.equal(stats.structureProbeCalls,1);assert.equal(stats.structureImageCanonical,true);
+  assert.equal(stats.structureProbeCalls,0);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));
 test('HTTP over-limit JPEG tail fails closed before Provider and service remains alive',()=>httpScenario('jpeg-tail-over-limit',async post=>{
@@ -407,18 +410,18 @@ test('HTTP over-limit JPEG tail fails closed before Provider and service remains
 test('HTTP local OCR failure is sanitized fail-closed and service remains alive',()=>httpScenario('ocr-failure',async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'image/png'}),'synthetic.png');
   const result=await post('/api/recognize-coordinates',form,true);
-  assert.equal(result.status,422);assert.equal(result.payload.success,false);assert.equal(result.payload.code,'LOCAL_OCR_FAILED');
-  assert.equal(result.payload.reason,'local_ocr_failed');assert.equal(result.payload.rawText,'');assert.equal(result.payload.coordinates,'');
+  assert.equal(result.status,422);assert.equal(result.payload.success,false);assert.equal(result.payload.code,'COORDINATE_RECOGNITION_FAILED_CLOSED');
+  assert.equal(result.payload.reason,'recognition_failed_closed');assert.equal(result.payload.rawText,'');assert.equal(result.payload.coordinates,'');
   assert.equal(JSON.stringify(result.payload).includes('PRIVATE_DECODER_DETAIL'),false);const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.ocrCalls,1);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));
-test('HTTP post-Provider internal failure cannot transfer control to local OCR',()=>httpScenario('post-provider-failure',async post=>{
+test('HTTP post-Provider internal failure cannot initiate another local OCR call',()=>httpScenario('post-provider-failure',async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'image/png'}),'synthetic.png');
   const result=await post('/api/recognize-coordinates',form,true);
   assert.equal(result.status,422);assert.equal(result.payload.success,false);assert.equal(result.payload.code,'COORDINATE_POST_PROVIDER_PROCESSING_FAILED');
   assert.equal(result.payload.reason,'post_provider_processing_failed');assert.equal(result.payload.rawText,'');assert.equal(result.payload.coordinates,'');
   assert.equal(JSON.stringify(result.payload).includes('REGRESSION_POST_PROVIDER_INTERNAL_FAILURE'),false);
-  const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.ocrCalls,0);
+  const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.ocrCalls,1);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));
 test('production runtime imports retry classification and sanitizes post-Provider failures',()=>{
@@ -427,7 +430,7 @@ test('production runtime imports retry classification and sanitizes post-Provide
   assert.doesNotMatch(source,/debugErrorMessage/);
 });
 test('HTTP manual edit, recovery and stale/hash guards',()=>httpScenario('manual',async post=>{
-  const start=await post('/api/coordinate-manual-finalize',{coordinateText:'75,41\n75.01,41\n75.01,41.01\n75,41.01',requireConfirmation:true});assert.equal(start.status,200);const r=start.payload.finalizedCoordinateResult;complete(r);assert.equal(r.kmlReady,true);
+  const start=await post('/api/coordinate-manual-finalize',{coordinateText:'75,41\n76,41\n76,42\n75,42',requireConfirmation:true});assert.equal(start.status,200);const r=start.payload.finalizedCoordinateResult;complete(r);assert.equal(r.kmlReady,true);
   const recovered=await post('/api/coordinate-manual-finalize',{coordinateText:cleanPrinted,recoveryIdentity:{resultId:r.resultId,resultRevision:r.resultRevision}});assert.equal(recovered.payload.finalizedCoordinateResult.geometryHash,r.geometryHash);
   const edited=await post('/api/coordinate-revision',{resultId:r.resultId,resultRevision:r.resultRevision,geometryHash:r.geometryHash,coordinateText:'75,41',requireConfirmation:true});assert.equal(edited.status,200);assert.equal(edited.payload.finalizedCoordinateResult.kmlReady,true);
   for(const identity of [{resultId:r.resultId,resultRevision:1,geometryHash:r.geometryHash},{resultId:r.resultId,resultRevision:2,geometryHash:'wrong'}]) {
@@ -436,7 +439,7 @@ test('HTTP manual edit, recovery and stale/hash guards',()=>httpScenario('manual
 }));
 test('HTTP incomplete DMS recovery cannot erase technical or authority blockers',()=>httpScenario('manual',async post=>{
   for(const name of ['missing','authority','crs','transform','rejected','v3']) {
-    const response=await post('/api/coordinate-manual-finalize',{coordinateText:'75,41\n75.01,41\n75.01,41.01\n75,41.01',requireConfirmation:true,
+    const response=await post('/api/coordinate-manual-finalize',{coordinateText:'75,41\n76,41\n76,42\n75,42',requireConfirmation:true,
       recoveryIdentity:{resultId:'core-recovery-'+name,resultRevision:1}});
     assert.equal(response.status,name==='missing'?200:422,name);
     if(name==='missing'){complete(response.payload.finalizedCoordinateResult);assert.equal(response.payload.finalizedCoordinateResult.resultRevision,2);assert.equal(response.payload.finalizedCoordinateResult.kmlReady,true);}
