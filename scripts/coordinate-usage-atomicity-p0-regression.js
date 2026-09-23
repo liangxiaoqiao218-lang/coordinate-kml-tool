@@ -200,7 +200,7 @@ test("positive predicate accepts a valid server authority result", () => {
   assert.equal(evaluated.identity.resultId, "synthetic-authority-result");
 });
 
-test("review-required authority may be charged but cannot claim KML readiness", () => {
+test("review-required authority may be charged while KML remains safely blocked", () => {
   const body = authorityPayload({
     decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
     gate: {
@@ -229,7 +229,7 @@ test("missing availability identity cannot enter PREPARED", () => {
   assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body }).eligible, false);
 });
 
-test("review-required identity cannot claim KML readiness", () => {
+test("review-required authority accepts coherent technical KML readiness behind pending confirmation", () => {
   const body = authorityPayload({
     decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
     gate: {
@@ -243,6 +243,50 @@ test("review-required identity cannot claim KML readiness", () => {
     confirmationStatus: COORDINATE_CONFIRMATION_STATUS.PENDING,
     blockingReasons: [{ code: COORDINATE_GATE_REASON.REVIEW_REQUIRED }],
     requiresReview: true,
+    technicalKmlReady: true,
+    kmlReady: true
+  });
+  assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body }).eligible, true);
+});
+
+test("review-required KML readiness is rejected without matching technical authority", () => {
+  const body = authorityPayload({
+    decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+    gate: {
+      decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+      qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+      confirmationStatus: COORDINATE_CONFIRMATION_STATUS.PENDING,
+      availabilityStatus: FAMILY_AVAILABILITY_STATUS.AVAILABLE,
+      availabilityReasonCode: null
+    },
+    qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+    confirmationStatus: COORDINATE_CONFIRMATION_STATUS.PENDING,
+    blockingReasons: [{ code: COORDINATE_GATE_REASON.REVIEW_REQUIRED }],
+    requiresReview: true,
+    technicalKmlReady: false,
+    kmlReady: true
+  });
+  assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body }).eligible, false);
+});
+
+test("review-required KML readiness is rejected when a KML blocker remains", () => {
+  const body = authorityPayload({
+    decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+    gate: {
+      decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+      qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+      confirmationStatus: COORDINATE_CONFIRMATION_STATUS.PENDING,
+      availabilityStatus: FAMILY_AVAILABILITY_STATUS.AVAILABLE,
+      availabilityReasonCode: null
+    },
+    qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+    confirmationStatus: COORDINATE_CONFIRMATION_STATUS.PENDING,
+    blockingReasons: [
+      { code: COORDINATE_GATE_REASON.REVIEW_REQUIRED },
+      { code: COORDINATE_GATE_REASON.KML_NOT_READY }
+    ],
+    requiresReview: true,
+    technicalKmlReady: true,
     kmlReady: true
   });
   assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body }).eligible, false);

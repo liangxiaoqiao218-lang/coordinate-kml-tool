@@ -13,7 +13,11 @@ import {
   RECOGNITION_COMPLETENESS_DECISION,
   assessRecognitionCompleteness
 } from "../server/recognition/recognition-completeness.js";
-import { createCoordinateUsageCommitController, isRecognitionRequestId } from "../server/coordinate-usage-atomicity.js";
+import {
+  createCoordinateUsageCommitController,
+  evaluateCoordinateUsageAuthority,
+  isRecognitionRequestId
+} from "../server/coordinate-usage-atomicity.js";
 import * as primaryRouting from "../server/recognition/family-primary-routing.js";
 import * as dmsSourceStructure from "../server/recognition/dms-source-structure.js";
 import * as familyRetryPolicy from "../server/recognition/family-retry-policy.js";
@@ -1679,7 +1683,7 @@ test("one-shot structured Provider DMS review accepts labeled rows with per-valu
   assert.equal(evidence.axisDirectionBound, true);
 });
 
-test("one-shot structured Provider DMS review accepts complete DMS triples without seconds marks", () => {
+test("one-shot structured Provider DMS review accepts exact whitespace-delimited Provider rows", () => {
   const sourceText = [
     "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
     "Point Latitude nord Longitude ouest",
@@ -1698,6 +1702,23 @@ test("one-shot structured Provider DMS review accepts complete DMS triples witho
   assert.equal(runtime.extractProviderDmsReviewEvidence(sourceText.replace("43' 16.45", "43'")).status, "REVIEW_REQUIRED");
 });
 
+test("one-shot structured Provider DMS review accepts complete triples without seconds marks", () => {
+  const sourceText = [
+    "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+    "Point Latitude nord Longitude ouest",
+    "1 11° 43' 16.45 09° 01' 13.67",
+    "2 11° 43' 09.20 09° 00' 56.03",
+    "3 11° 43' 03.38 09° 00' 58.67",
+    "4 11° 43' 11.30 09° 01' 15.25"
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(sourceText);
+  assert.equal(evidence.status, "COMPLETE");
+  assert.equal(evidence.sourceRowCount, 4);
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(evidence.axisDirectionBound, true);
+  assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
+});
+
 test("one-shot structured actual HTTP generic DMS recovery remains confirmation gated", async () => {
   const payload = await runHttpCandidate("generic-dms-review");
   assert.equal(payload.success, true);
@@ -1710,6 +1731,13 @@ test("one-shot structured actual HTTP generic DMS recovery remains confirmation 
   assert.equal(payload.coordinateEngineV2.requires_review, true);
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+  const usageAuthority = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: payload });
+  assert.equal(usageAuthority.eligible, true, JSON.stringify({ usageAuthority, finalized: {
+    requiresReview: payload.finalizedCoordinateResult.requiresReview,
+    kmlReady: payload.finalizedCoordinateResult.kmlReady,
+    confirmationStatus: payload.finalizedCoordinateResult.confirmationStatus,
+    qualityGateStatus: payload.finalizedCoordinateResult.qualityGateStatus
+  } }));
 });
 
 test("one-shot structured HTTP generic DMS recovery accepts Provider text-block arrays", async () => {

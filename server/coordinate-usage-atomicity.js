@@ -420,12 +420,18 @@ export function evaluateCoordinateUsageAuthority({ httpStatus = 200, body = null
       || ![COORDINATE_CONFIRMATION_STATUS.NOT_REQUIRED, COORDINATE_CONFIRMATION_STATUS.ACCEPTED].includes(result.confirmationStatus))) {
     return reject("AUTO_EXPORT_IDENTITY_CONTRADICTORY");
   }
-  if (result.decisionState === COORDINATE_DECISION_STATE.REVIEW_REQUIRED
-    && (result.requiresReview !== true
-      || result.kmlReady !== false
+  if (result.decisionState === COORDINATE_DECISION_STATE.REVIEW_REQUIRED) {
+    const technicallyReadyReview = result.kmlReady === true
+      && result.technicalKmlReady === true
+      && result.kmlAuthorityBlocked !== true
+      && !blockers.includes(COORDINATE_GATE_REASON.KML_NOT_READY);
+    const safelyBlockedReview = result.kmlReady === false;
+    if (result.requiresReview !== true
       || result.confirmationStatus !== COORDINATE_CONFIRMATION_STATUS.PENDING
-      || result.qualityGateStatus !== COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED)) {
-    return reject("REVIEW_IDENTITY_CONTRADICTORY");
+      || result.qualityGateStatus !== COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED
+      || (!technicallyReadyReview && !safelyBlockedReview)) {
+      return reject("REVIEW_IDENTITY_CONTRADICTORY");
+    }
   }
   return Object.freeze({
     eligible: true,
