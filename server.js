@@ -7333,6 +7333,25 @@ function extractDmsCoordinateLines(text) {
   return coordinateLines;
 }
 
+function hasCompleteProviderDmsPair(line) {
+  const tokens = getDmsTokensFromLine(line);
+  if (tokens.length !== 2) return false;
+  return tokens.every(token => {
+    const normalized = normalizeText(token)
+      .trim()
+      .replace(/[NSEWO]\s*$/iu, "")
+      .replace(/["']+\s*$/u, "")
+      .trim();
+    const match = normalized.match(/^[-+]?\d{1,3}\s*°\s*(\d{1,2})(?:\s*'\s*|\s+)(\d{1,2}(?:\.\d+)?)$/u);
+    if (!match) return false;
+    const minutes = Number(match[1]);
+    const seconds = Number(match[2]);
+    return Number.isFinite(minutes) && Number.isFinite(seconds)
+      && minutes >= 0 && minutes < 60
+      && seconds >= 0 && seconds < 60;
+  });
+}
+
 function extractProviderDmsReviewEvidence(text) {
   const sourceText = String(text || "");
   const lines = normalizeText(sourceText)
@@ -7342,11 +7361,7 @@ function extractProviderDmsReviewEvidence(text) {
   const candidateRows = lines.filter(line => (
     (line.match(/[°º˚]/gu) || []).length === 2
   ));
-  const sourceRows = candidateRows.filter(line => {
-    const degreeCount = (line.match(/[°º˚]/gu) || []).length;
-    const secondCount = (line.match(/(?:''|["”″])/gu) || []).length;
-    return degreeCount === 2 && secondCount >= 2;
-  });
+  const sourceRows = candidateRows.filter(line => hasCompleteProviderDmsPair(line));
   const coordinateLines = extractDmsCoordinateLines(sourceText);
   const explicitHeaderDirection = lines.some(line => {
     const hasLatitude = /(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu.test(line);
