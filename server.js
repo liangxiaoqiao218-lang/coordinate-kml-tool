@@ -13649,13 +13649,10 @@ app.post("/api/coordinate-confirmation", (req, res) => {
   if (!outcome.ok) {
     return res.status(outcome.httpStatus).json({ success: false, code: outcome.code });
   }
-  const finalizedCoordinateResult = releaseConfirmedBoundaryReviewResult(
-    outcome.finalizedCoordinateResult
-  );
   return res.json({
     success: true,
     idempotent: outcome.idempotent,
-    finalizedCoordinateResult
+    finalizedCoordinateResult: outcome.finalizedCoordinateResult
   });
 });
 
@@ -14396,7 +14393,7 @@ function supportsLegacyUtm30BoundaryPreview({ providerText = "", localOcrText = 
   });
 }
 
-function keepRecognizedCoordinatesAsBoundaryReview(response = {}, warning = "") {
+function promoteRecognizedCoordinatesToSafeBoundary(response = {}, warning = "") {
   const engineGroups = Array.isArray(response?.coordinateEngineV2?.groups)
     ? response.coordinateEngineV2.groups
     : [];
@@ -14422,7 +14419,7 @@ function keepRecognizedCoordinatesAsBoundaryReview(response = {}, warning = "") 
 
   const prior = response.finalizedCoordinateResult;
   const ring = [...positions, [...positions[0]]];
-  const boundaryReviewResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
+  const safeBoundaryResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
     resultId: prior.resultId,
     resultRevision: prior.resultRevision,
     currentRevision: prior.resultRevision,
@@ -14435,63 +14432,24 @@ function keepRecognizedCoordinatesAsBoundaryReview(response = {}, warning = "") 
     availabilityReasonCode: prior.availabilityReasonCode,
     crs: FINALIZED_COORDINATE_CRS,
     geometry: { type: "Polygon", coordinates: [ring] },
-    confirmationStatus: "pending",
-    qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+    confirmationStatus: "not_required",
+    qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.PASSED,
     technicalKmlReady: true,
-    currentAuthorizedGeometryExportable: false,
-    requiresReview: true,
-    kmlReady: false,
-    kmlAuthorityBlocked: false,
-    groups: engineGroups.map(group => ({ groupId: group?.group_id || null, requiresReview: true, kmlReady: false })),
-    warnings: [
-      warning || "矿区轮廓待核对：地图已按原图点号顺序连接，确认边界含义前不开放边界 KML。",
-      ...(Array.isArray(prior.warnings) ? prior.warnings : [])
-    ],
-    limitations: [
-      "当前 Polygon 仅用于按原图点序核对矿区轮廓，不代表边界已经确认。",
-      "取得可核验的边界说明前，不得输出边界 KML。"
-    ]
-  }));
-  return {
-    ...response,
-    geometryMode: "boundary_review",
-    boundaryBlocked: true,
-    finalizedCoordinateResult: boundaryReviewResult
-  };
-}
-
-function releaseConfirmedBoundaryReviewResult(result = {}) {
-  const boundaryReviewWarning = Array.isArray(result?.warnings)
-    && result.warnings.some(value => /(?:矿区轮廓待核对|按原图点号顺序连接|边界含义)/iu.test(String(value)));
-  const confirmable = result?.confirmationStatus === "accepted"
-    && result?.technicalKmlReady === true
-    && result?.qualityGateStatus !== COORDINATE_QUALITY_GATE_STATUS.FAILED
-    && result?.kmlAuthorityBlocked !== true
-    && ["Polygon", "MultiPolygon"].includes(String(result?.geometry?.type || ""))
-    && boundaryReviewWarning;
-  if (!confirmable) return result;
-  const released = finalizeCoordinateResult({
-    ...result,
-    currentRevision: result.resultRevision,
-    confirmedRevision: result.resultRevision,
-    confirmationStatus: "accepted",
     currentAuthorizedGeometryExportable: true,
     requiresReview: false,
     kmlReady: true,
-    groups: (Array.isArray(result.groups) ? result.groups : []).map(group => ({
-      ...group,
-      requiresReview: false,
-      kmlReady: true
-    })),
-    warnings: (Array.isArray(result.warnings) ? result.warnings : []).filter(
-      value => !/(?:矿区轮廓待核对|按原图点号顺序连接|边界含义)/iu.test(String(value))
-    ),
-    limitations: (Array.isArray(result.limitations) ? result.limitations : []).filter(
-      value => !/(?:尚未确认|确认前|不得输出边界 KML)/iu.test(String(value))
-    ),
-    createdAt: result.createdAt
-  });
-  return coordinateConfirmationRuntime.register(released);
+    kmlAuthorityBlocked: false,
+    groups: engineGroups.map(group => ({ groupId: group?.group_id || null, requiresReview: false, kmlReady: true })),
+    warnings: warning ? [warning] : [],
+    limitations: []
+  }));
+  return {
+    ...response,
+    requiresReview: false,
+    geometryMode: "boundary",
+    boundaryBlocked: false,
+    finalizedCoordinateResult: safeBoundaryResult
+  };
 }
 
 const buildCoordinateVerificationResponseWithoutRecognitionBudget = buildCoordinateVerificationResponse;
@@ -15587,9 +15545,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           format: oneShotAcquisitionContract.format,
           noCoordinatesText
         });
-    const selectedProviderModel = projectedTableOcrAcquisition
-      ? aliyunOcrModel
-      : aliyunVisionModel;
+    // Keep the already-qualified production vision model for the single
+    // Provider call. The structure hint changes only the transcription
+    // contract; it must not silently switch this request to another model.
+    const selectedProviderModel = aliyunVisionModel;
 
     // Legacy country/file-name selectors remain available to older parsers but
     // no longer control the first (and only) Provider call. The primary route
@@ -16489,7 +16448,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         }
         if (contextualUtm30BoundaryPreview) {
-          const warning = "已从原图可见的 UTM 场地顶点说明恢复地图定位；地图严格保留原图点号和点序，边界安全核对通过前不开放 KML。";
+          const warning = "已从原图可见的 UTM 场地顶点说明恢复地图定位；当前地图仅供点位核对，不代表矿区边界，KML 保持关闭。";
           const contextualUtm30Payload = {
             success: true,
             model: `${selectedProviderModel}+contextual-utm30-boundary-review`,
@@ -16532,7 +16491,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             ...buildCoordinateVerificationResponse(contextualUtm30Payload, contextualUtm30Engine),
             requestId: recognitionBudget?.requestId || null
           };
-          return res.json(keepRecognizedCoordinatesAsBoundaryReview(
+          return res.json(keepRecognizedCoordinatesAsPointReview(
             contextualUtm30Response,
             warning
           ));
@@ -16637,8 +16596,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           rawText,
           coordinates: trustedProviderDmsEvidence.coordinates,
           precisionMode: "preserve-original-decimals-and-parse-dms",
-          requiresReview: true,
-          warning: "已完整提取具有明确方向证据的 DMS 坐标行；请对照原图确认点数、顺序和方向后再查看地图或下载 KML。",
+          requiresReview: false,
+          warning: "已完整提取具有明确方向证据的 DMS 坐标行，并按原图点号顺序形成矿区边界。",
           providerDmsReviewEvidence: {
             status: trustedProviderDmsEvidence.status,
             coordinateRowCount: trustedProviderDmsEvidence.coordinateRowCount,
@@ -16649,21 +16608,21 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           parserTrace: [
             "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
             "PROVIDER:trusted_dms_rows_recovered",
-            "DMS_AUTHORITY:user_confirmation_required"
+            "DMS_AUTHORITY:safe_boundary_auto_release"
           ],
           quota: consumeResult.quota
         };
         const providerDmsReviewEngine = buildCoordinateEngineV2ShadowResult(providerDmsReviewPayload, {
-          forceRequiresReview: true,
+          forceRequiresReview: false,
           rawHint: ""
         });
         const providerDmsReviewResponse = buildCoordinateVerificationResponse(
           providerDmsReviewPayload,
           providerDmsReviewEngine
         );
-        return res.json(keepRecognizedCoordinatesAsBoundaryReview(
+        return res.json(promoteRecognizedCoordinatesToSafeBoundary(
           providerDmsReviewResponse,
-          "矿区轮廓待核对：地图已按原图点号顺序连接；原图只显示坐标表，确认边界含义前不开放边界 KML。"
+          ""
         ));
       }
       const contractReviewPayload = {

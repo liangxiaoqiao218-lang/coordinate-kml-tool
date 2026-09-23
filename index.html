@@ -6961,14 +6961,6 @@ Au值 = 纯度 × 10 后取整数</div>
         && Boolean(getFinalizedCoordinateIdentity(result));
     }
 
-    function isPendingBoundaryKmlConfirmation(result = activeFinalizedCoordinateResult) {
-      return finalizedCoordinateResultRequiresUserConfirmation(result)
-        && ["Polygon", "MultiPolygon"].includes(String(result?.geometry?.type || ""))
-        && result?.technicalKmlReady === true
-        && result?.kmlAuthorityBlocked !== true
-        && !finalizedCoordinateDirty;
-    }
-
     function syncCoordinateReviewConfirmationState(engine = activeCoordinateEngineV2 || {}, result = activeFinalizedCoordinateResult) {
       initializeHandwrittenDmsReviewState(engine, result);
     }
@@ -7081,13 +7073,10 @@ Au值 = 纯度 × 10 后取整数</div>
       const statusText = document.createElement("span");
       statusText.className = "handwritten-dms-review-text";
       const ordinaryReviewOnly = isOrdinaryReviewOnlyFinalizedResult();
-      const boundaryKmlConfirmation = isPendingBoundaryKmlConfirmation();
       const pointIntentReview = handwrittenDmsReviewState.source === "trusted_point_geometry_intent_v1"
         && activePointGeometryIntentReview;
       statusText.textContent = pointIntentReview
         ? "检测到同一位置以不同精度重复显示。请对照原图，明确选择是否作为一个 Point。"
-        : boundaryKmlConfirmation
-          ? "地图已按原图点号连接矿区轮廓；下载 KML 前请确认轮廓与原图一致。"
         : ordinaryReviewOnly && activeCoordinateFieldConflictCount > 0
         ? `发现 ${activeCoordinateFieldConflictCount} 处坐标可能存在识别差异，请重点核对标记位置。`
         : ordinaryReviewOnly
@@ -7105,9 +7094,7 @@ Au值 = 纯度 × 10 后取整数</div>
         confirmButton.className = "handwritten-dms-review-button";
         confirmButton.textContent = pointIntentReview
           ? "确认同一位置并作为 Point"
-          : boundaryKmlConfirmation
-            ? "确认矿区轮廓"
-            : "我已对照原图核对当前坐标";
+          : "我已对照原图核对当前坐标";
         confirmButton.addEventListener("click", pointIntentReview
           ? confirmPointGeometryIntentReview
           : confirmHandwrittenDmsReview);
@@ -7519,7 +7506,6 @@ Au值 = 纯度 × 10 后取整数</div>
       if (projectedCrsSelectionNeedsConfirmation()) return "blocked";
       if (!activeFinalizedCoordinateResult) return "enabled";
       if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) return "validation_required";
-      if (isPendingBoundaryKmlConfirmation()) return "validation_required";
       return activeFinalizedCoordinateResult.kmlReady === true ? "enabled" : "blocked";
     }
 
@@ -7536,12 +7522,8 @@ Au值 = 纯度 × 10 后取整数</div>
           ? "正在生成…"
           : (labels.enabled || "下载 KML");
       };
-      const boundaryConfirmationPending = isPendingBoundaryKmlConfirmation();
-      const labels = boundaryConfirmationPending ? { enabled: "确认并下载 KML" } : {};
-      syncButton(coordinateKmlAction, coordinateKmlVisualState(), labels);
-      syncButton(spatialKmlAction,
-        spatialKmlAction?.dataset.eligible === "true" || boundaryConfirmationPending,
-        labels);
+      syncButton(coordinateKmlAction, coordinateKmlVisualState());
+      syncButton(spatialKmlAction, spatialKmlAction?.dataset.eligible === "true");
     }
 
     function setKmlGenerationInProgress(value) {
@@ -7783,9 +7765,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const regionalCount = Number(payload.regionalViewCount);
       spatialRegionalView.hidden = !Number.isFinite(regionalCount) || regionalCount <= 0;
       spatialRegionalView.textContent = spatialRegionalView.hidden ? "" : `区域内已有 ${regionalCount} 条真实记录`;
-      spatialKmlAction.dataset.eligible = String(
-        payload?.kmlEligibility?.allowed === true || isPendingBoundaryKmlConfirmation()
-      );
+      spatialKmlAction.dataset.eligible = String(payload?.kmlEligibility?.allowed === true);
       syncKmlActionVisualState();
       spatialCollapsedSummary.textContent = spatialCollapsedSummaryText(preview, facts);
       const factsAvailable = payload.spatialFactsStatus === "available" && e2eFailureMode !== "facts";
@@ -13978,32 +13958,6 @@ ${placemarks}
           suggestion: "请检查坐标内容后重试。"
         });
         return;
-      }
-
-      if (isPendingBoundaryKmlConfirmation()) {
-        const identity = getFinalizedCoordinateIdentity();
-        const response = await fetch("/api/coordinate-confirmation", {
-          method: "POST",
-          headers: getSourceHeaders({ "content-type": "application/json" }),
-          body: JSON.stringify({ ...identity, action: "accept" })
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload?.finalizedCoordinateResult?.kmlReady !== true) {
-          showKmlFailure({
-            code: payload?.code || "KML_BOUNDARY_CONFIRMATION_FAILED",
-            title: "矿区轮廓确认未完成",
-            reason: "当前轮廓尚未通过服务端安全确认。",
-            suggestion: "请返回地图核对轮廓；如仍无法确认，请使用人工协助。"
-          });
-          return;
-        }
-        activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;
-        finalizedCoordinateTextSnapshot = String(input.value || "");
-        finalizedCoordinateDirty = false;
-        invalidateSpatialPreview();
-        syncCoordinateReviewConfirmationState(activeCoordinateEngineV2, activeFinalizedCoordinateResult);
-        rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
-        refreshMapPreviewAction();
       }
 
       if (shouldBlockFinalizedCoordinateKml()) {

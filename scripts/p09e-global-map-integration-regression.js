@@ -247,7 +247,7 @@ test("P09E-27", "KML remains inside details and bound only to server eligibility
   assert.match(html, /id="spatialResultDetails"[\s\S]*id="spatialKmlAction"/);
   assert.match(
     html,
-    /spatialKmlAction\.dataset\.eligible = String\(\s*payload\?\.kmlEligibility\?\.allowed === true \|\| isPendingBoundaryKmlConfirmation\(\)\s*\)/
+    /spatialKmlAction\.dataset\.eligible = String\(payload\?\.kmlEligibility\?\.allowed === true\)/
   );
   assert.match(html, /syncKmlActionVisualState\(\)/);
 });

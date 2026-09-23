@@ -125,11 +125,10 @@ assert.match(html, /id="coordinateCopyAction"[^>]*data-state="blocked"[^>]*aria-
 assert.match(html, /\.coordinate-result-actions \.coordinate-kml-action,\s*\.coordinate-result-actions \.coordinate-copy-action/);
 assert.match(html, /coordinateCopyAction\.dataset\.state = copyEnabled \? "enabled" : "blocked"/);
 assert.match(html, /\.debug-live-status\[hidden\]\s*\{\s*display:\s*none;/u);
-assert.match(html, /function isPendingBoundaryKmlConfirmation\(/u);
-assert.match(html, /result\?\.technicalKmlReady === true/u);
-assert.match(html, /result\?\.kmlAuthorityBlocked !== true/u);
-assert.match(html, /确认并下载 KML/u);
-assert.match(html, /KML_BOUNDARY_CONFIRMATION_FAILED/u);
+assert.doesNotMatch(html, /function isPendingBoundaryKmlConfirmation\(/u);
+assert.doesNotMatch(html, /确认矿区轮廓|确认并下载 KML/u);
+assert.doesNotMatch(html, /KML_BOUNDARY_CONFIRMATION_FAILED/u);
+assert.match(html, /syncButton\(coordinateKmlAction, coordinateKmlVisualState\(\)\)/u);
 
-console.log("Coordinate UI clarity regression: 21/21 PASS");
+console.log("Coordinate UI clarity regression: 20/20 PASS");
 console.log("PROVIDER_CALLS=0");

@@ -486,11 +486,11 @@ test("SPN-FS-08", "KML action lives inside expandable result details", () => {
   assert.match(html, /id="spatialResultDetails"[\s\S]*id="spatialKmlAction"/);
   assert.match(
     html,
-    /spatialKmlAction\.dataset\.eligible = String\(\s*payload\?\.kmlEligibility\?\.allowed === true \|\| isPendingBoundaryKmlConfirmation\(\)\s*\)/
+    /spatialKmlAction\.dataset\.eligible = String\(payload\?\.kmlEligibility\?\.allowed === true\)/
   );
   assert.match(
     html,
-    /syncButton\(spatialKmlAction,\s*spatialKmlAction\?\.dataset\.eligible === "true" \|\| boundaryConfirmationPending,\s*labels\)/
+    /syncButton\(spatialKmlAction, spatialKmlAction\?\.dataset\.eligible === "true"\)/
   );
 });
 
