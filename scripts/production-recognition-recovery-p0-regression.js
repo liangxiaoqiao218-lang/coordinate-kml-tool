@@ -7,6 +7,7 @@ import vm from "node:vm";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import crypto from "node:crypto";
+import { createWorker } from "tesseract.js";
 import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "../server/recognition/cancellable-ocr.js";
 import {
@@ -144,7 +145,8 @@ if (process.argv[2] === '--http-candidate') {
         || scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
         || scenario === 'generic-projected-contextual-utm30'
         || scenario === 'generic-projected-contextual-utm30-safe'
-        || scenario === 'generic-projected-bftm-boundary') {
+        || scenario === 'generic-projected-bftm-boundary'
+        || scenario === 'generic-projected-kyrgyz-real') {
         assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
         assert.ok(prompt.includes('CONTEXT |'));
       } else {
@@ -175,7 +177,12 @@ if (process.argv[2] === '--http-candidate') {
       '16 | 647300,1349700', '17 | 647300,1352000', '18 | 645000,1352000',
       '19 | 645000,1356200', '20 | 655000,1356200'
     ];
-    const providerText = scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
+    const kyrgyzProviderText = scenario === 'generic-projected-kyrgyz-real'
+      ? await readFile(path.join(root, 'regression-samples', 'Kyrgyz_GK', 'approved-transcription.txt'), 'utf8')
+      : null;
+    const providerText = scenario === 'generic-projected-kyrgyz-real'
+      ? kyrgyzProviderText
+      : scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
       || scenario === 'generic-projected-contextual-utm30'
       || scenario === 'generic-projected-contextual-utm30-safe'
       || scenario === 'generic-projected-bftm-boundary'
@@ -311,8 +318,13 @@ async function runHttpCandidate(scenario) {
     }
     const form = new FormData();
     form.set('visitorId', 'coordinate-regression-p0-contract');
-    // Valid synthetic image bytes: no customer material or real Provider execution.
-    form.set('image', new Blob([syntheticPng], { type: 'image/png' }), 'synthetic-coordinate-image.png');
+    // The Kyrgyz gate uses the hash-bound fixture with a neutral upload name; all other
+    // mocked Provider cases keep using synthetic bytes.
+    const uploadBytes = scenario === 'generic-projected-kyrgyz-real'
+      ? await readFile(path.join(root, 'regression-samples', 'fixtures', '吉尔吉斯斯坦矿地坐标.png'))
+      : syntheticPng;
+    form.set('image', new Blob([uploadBytes], { type: 'image/png' }),
+      scenario === 'generic-projected-kyrgyz-real' ? 'projected-table.png' : 'synthetic-coordinate-image.png');
     const response = await fetch(`http://127.0.0.1:${port}/api/recognize-coordinates`, { method: 'POST',
       headers: { 'x-regression-test': '1', 'x-regression-case-id': 'indonesia-dms-real-001' }, body: form, signal });
     const payload = await response.json();
@@ -327,6 +339,7 @@ async function runHttpCandidate(scenario) {
     if (scenario === 'generic-projected-contextual-utm30'
       || scenario === 'generic-projected-contextual-utm30-safe'
       || scenario === 'generic-projected-bftm-boundary'
+      || scenario === 'generic-projected-kyrgyz-real'
       || scenario === 'generic-dms-review'
       || scenario === 'generic-dms-review-array') {
       const finalized = payload.finalizedCoordinateResult;
@@ -336,7 +349,7 @@ async function runHttpCandidate(scenario) {
           geometryHash: finalized.geometryHash })
       });
       const mapPreview = await mapResponse.json();
-      assert.equal(mapResponse.status, 200, JSON.stringify(mapPreview));
+      assert.equal(mapResponse.status, 200, JSON.stringify({ mapPreview, finalized }));
       return { ...payload, mapPreview, providerCallCount: stats.acquisitions,
         providerRequestControl: stats.requestControl };
     }
@@ -2079,8 +2092,18 @@ test("projected table OCR acquisition hint is generic, structure-bound, and revi
     "Cc 728400 | 1219500"
   ].join("\n");
   assert.equal(runtime.shouldUseProjectedTableOcrAcquisition(noisyStructuredOcr), true);
+  const nonUtmProjectedXyTable = [
+    "[Nene | X | Y | NeNe | X | Y |",
+    "1 13261341 4607777 34 13261040 4605899",
+    "2 13261396 4607769 35 13260960 4605979",
+    "3 13261377 4607682 36 13260930 4605993"
+  ].join("\n");
+  assert.equal(runtime.shouldUseProjectedTableOcrAcquisition(nonUtmProjectedXyTable), true);
   assert.equal(runtime.shouldUseProjectedTableOcrAcquisition(
     "Burkina Faso UTM sample filename without visible table rows"
+  ), false);
+  assert.equal(runtime.shouldUseProjectedTableOcrAcquisition(
+    "Kyrgyzstan GK filename without visible X/Y table structure"
   ), false);
   assert.equal(runtime.shouldUseProjectedTableOcrAcquisition(
     "Sommets du site\n1 | 11°43'16.45N | 09°01'13.67W\n2 | 11°43'09.20N | 09°00'56.03W"
@@ -2094,6 +2117,47 @@ test("projected table OCR acquisition hint is generic, structure-bound, and revi
   assert.match(serverSource, /const selectedProviderMaxTokens = projectedTableOcrAcquisition \? 4096 : 12000;/u);
   assert.match(serverSource, /enableThinking: false/u);
   assert.doesNotMatch(serverSource, /projectedTableOcrAcquisition\s*\?\s*aliyunOcrModel\s*:\s*aliyunVisionModel/u);
+});
+
+test("hash-bound Kyrgyz image still reaches the generic projected-table acquisition route", async () => {
+  const fixturePath = path.join(root, "regression-samples", "fixtures", "吉尔吉斯斯坦矿地坐标.png");
+  const fixture = await readFile(fixturePath);
+  assert.equal(
+    createHash("sha256").update(fixture).digest("hex"),
+    "94522774b1311a48f44b8c52370639add50cb8eb7734bbd812cad2fb6f954235"
+  );
+  const localOcr = await runCancellableOcrJob({
+    createWorker: () => createWorker("eng", 1, {
+      logger: () => {},
+      errorHandler: () => {}
+    }),
+    image: fixture,
+    recognizeOutput: { text: true },
+    timeoutMs: 20_000
+  });
+  const localOcrText = String(localOcr?.data?.text || "");
+  assert.equal(runtime.shouldUseProjectedTableOcrAcquisition(localOcrText), true);
+  assert.ok(
+    localOcrText.split(/\r?\n/u).filter(line => (line.match(/\b\d{6,8}\b/gu) || []).length >= 2).length >= 3,
+    "the real fixture must expose at least three projected X/Y table rows to local OCR"
+  );
+});
+
+test("hash-bound Kyrgyz image completes one generic Provider call and preserves all 65 points", async () => {
+  const payload = await runHttpCandidate("generic-projected-kyrgyz-real");
+  assert.equal(payload.success, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.precisionMode, "kyrgyz-gk-point-x-y");
+  assert.equal(
+    payload.coordinates.split(/\r?\n/u).filter(line => /^\d+\s*\|/u.test(line)).length,
+    65,
+    payload.coordinates
+  );
+  assert.match(payload.coordinates, /^1\s*\|\s*13261341\s*\|\s*4607777$/mu);
+  assert.match(payload.coordinates, /^65\s*\|\s*13261317\s*\|\s*4607721$/mu);
+  assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
+  assert.equal(payload.mapPreview?.mapPreviewObject?.geometry?.type, "Polygon");
 });
 
 test("projected boundary geometry keeps both simple BFTM source orders and rejects the crossed UTM source order", () => {

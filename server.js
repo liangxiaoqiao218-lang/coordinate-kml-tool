@@ -14362,11 +14362,18 @@ function shouldUseProjectedTableOcrAcquisition(value = "") {
   const hasProjectionContext = /\bUTM\b/iu.test(joined);
   const hasBoundaryContext = /\b(?:sommets?|vertices?|corners?|boundary|perimeter)\b/iu.test(joined)
     && /\b(?:site|area|parcel|permit|licen[cs]e)\b/iu.test(joined);
+  const hasVisibleAxisHeader = lines.some(line => {
+    const headerCandidate = line.replace(/\b\d{6,8}\b/gu, " ");
+    return /\bX\b/iu.test(headerCandidate) && /\bY\b/iu.test(headerCandidate);
+  });
   const projectedPairLineCount = lines.filter(line => {
     const largeNumericTokens = line.match(/\b\d{6,8}\b/gu) || [];
     return largeNumericTokens.length >= 2;
   }).length;
-  return hasProjectionContext && hasBoundaryContext && projectedPairLineCount >= 3;
+  const hasExplicitUtmBoundaryTable = hasProjectionContext && hasBoundaryContext;
+  const hasGenericProjectedXyTable = hasVisibleAxisHeader && projectedPairLineCount >= 3;
+  return projectedPairLineCount >= 3
+    && (hasExplicitUtmBoundaryTable || hasGenericProjectedXyTable);
 }
 
 function buildProjectedTableOcrAcquisitionPrompt() {
@@ -16576,6 +16583,43 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           return res.json(promoteRecognizedCoordinatesToSafeBoundary(
             contextualUtm30Response,
             warning
+          ));
+        }
+        const recoveredKyrgyzGk = getKyrgyzGkInfo(rawText);
+        if (projectedTableOcrAcquisition && recoveredKyrgyzGk.isKyrgyzGk) {
+          const warning = "已依据原图可见的 X/Y 表头和完整点号序列恢复 Kyrgyz GK 坐标；请结合原图逐行核对。";
+          const kyrgyzRecoveredPayload = {
+            success: true,
+            model: `${selectedProviderModel}+generic-projected-kyrgyz-gk`,
+            rawText,
+            coordinates: formatKyrgyzGkRows(recoveredKyrgyzGk.rows),
+            precisionMode: "kyrgyz-gk-point-x-y",
+            requiresReview: true,
+            warning,
+            kyrgyzGk: recoveredKyrgyzGk,
+            providerProjectedReviewEvidence: {
+              status: trustedProviderProjectedEvidence.status,
+              coordinateRowCount: trustedProviderProjectedEvidence.rowCount,
+              crsEvidence: {
+                status: "FAMILY_PARSER_RESOLVED",
+                projection: "kyrgyzstan_gk",
+                id: "EPSG:28413"
+              }
+            },
+            acquisitionContractConformance: oneShotAcquisitionConformance,
+            parserTrace: [
+              "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
+              "PROVIDER:trusted_projected_rows_recovered",
+              "KYRGYZ_GK:accepted"
+            ],
+            quota: consumeResult.quota
+          };
+          return res.json(buildCoordinateVerificationResponse(
+            kyrgyzRecoveredPayload,
+            buildCoordinateEngineV2ShadowResult(kyrgyzRecoveredPayload, {
+              fileName: "",
+              rawHint: ""
+            })
           ));
         }
         if (supportsExplicitProjectedBoundaryAutoRelease({

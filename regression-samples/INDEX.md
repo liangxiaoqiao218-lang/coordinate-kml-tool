@@ -35,7 +35,7 @@ Current stable coordinate types:
 | `DMS/` | Standard and single-point DMS samples | 0 |
 | `MGRS/` | MGRS / UTM Grid Reference samples | 0 |
 | `CHAT/` | Plain WGS84 chat coordinate samples | 0 |
-| `Kyrgyz_GK/` | Kyrgyzstan Gauss-Kruger table samples | 0 |
+| `Kyrgyz_GK/` | Kyrgyzstan Gauss-Kruger table samples | 1 |
 | `Madagascar/` | Madagascar cadastral grid samples | 0 |
 | `Mozambique/` | Portuguese Mozambique geographic table samples | 0 |
 

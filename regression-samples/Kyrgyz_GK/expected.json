@@ -2,7 +2,7 @@
   "typeId": "kyrgyz-gk-point-x-y",
   "sampleName": "Kyrgyzstan GK point X/Y table",
   "inputType": "image",
-  "inputFile": "D:/关于西非的业务/测试素材/吉尔吉斯斯坦矿地坐标.png",
+  "inputFile": "regression-samples/fixtures/吉尔吉斯斯坦矿地坐标.png",
   "expectedPrecisionMode": "kyrgyz-gk-point-x-y",
   "expectedParserTrace": ["OCR", "KYRGYZ_GK:accepted"],
   "expectedPointCount": 65,
