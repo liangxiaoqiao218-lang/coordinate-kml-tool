@@ -15775,6 +15775,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerText: rawText
     });
     const providerMessageDiagnostic = buildProviderMessageDiagnostic(response, rawText);
+    const providerDmsDiagnostic = extractProviderDmsReviewEvidence(rawText);
     console.log("One-shot acquisition conformance:", {
       family: oneShotAcquisitionConformance.family,
       status: oneShotAcquisitionConformance.status,
@@ -15799,7 +15800,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerNormalizedByteLength: providerMessageDiagnostic.normalizedByteLength,
       providerNormalizedLineCount: providerMessageDiagnostic.normalizedLineCount,
       providerDegreeMarkerCount: providerMessageDiagnostic.degreeMarkerCount,
-      providerDirectionTokenCount: providerMessageDiagnostic.directionTokenCount
+      providerDirectionTokenCount: providerMessageDiagnostic.directionTokenCount,
+      providerDmsCandidateRowCount: providerDmsDiagnostic.candidateRowCount,
+      providerDmsSourceRowCount: providerDmsDiagnostic.sourceRowCount,
+      providerDmsCoordinateRowCount: providerDmsDiagnostic.coordinateRowCount,
+      providerDmsAxisDirectionBound: providerDmsDiagnostic.axisDirectionBound
     });
     if (oneShotAcquisitionConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
       const trustedLocalSourceRows = oneShotLocalOcrSourceText.split(/\r?\n/u)

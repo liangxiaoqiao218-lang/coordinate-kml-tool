@@ -1682,11 +1682,11 @@ test("one-shot structured Provider DMS review accepts labeled rows with per-valu
 test("one-shot structured Provider DMS review accepts complete DMS triples without seconds marks", () => {
   const sourceText = [
     "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
-    "Point | Latitude nord | Longitude ouest",
-    "1 | 11° 43' 16.45 | 09° 01' 13.67",
-    "2 | 11° 43' 09.20 | 09° 00' 56.03",
-    "3 | 11° 43' 03.38 | 09° 00' 58.67",
-    "4 | 11° 43' 11.30 | 09° 01' 15.25"
+    "Point Latitude nord Longitude ouest",
+    "1 11° 43' 16.45'' 09° 01' 13.67''",
+    "2 11° 43' 09.20'' 09° 00' 56.03''",
+    "3 11° 43' 03.38'' 09° 00' 58.67''",
+    "4 11° 43' 11.30'' 09° 01' 15.25''"
   ].join("\n");
   const evidence = runtime.extractProviderDmsReviewEvidence(sourceText);
   assert.equal(evidence.status, "COMPLETE");
