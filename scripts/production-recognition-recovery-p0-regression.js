@@ -126,12 +126,12 @@ if (process.argv[2] === '--http-candidate') {
     acquisitions += 1;
     if (acquisitions > 1) throw new Error('TEST_UNEXPECTED_SECOND_ACQUISITION');
     const prompt = JSON.parse(init.body).messages.map(message => JSON.stringify(message.content)).join(' ');
-    if (scenario === 'generic-dms-review') {
+    if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array') {
       assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
     } else {
       assert.ok(prompt.includes('缺失的 CRS'));
     }
-    const content = scenario === 'generic-dms-review'
+    const providerText = scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
       ? [
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
           'Point | Latitude nord | Longitude ouest',
@@ -142,6 +142,9 @@ if (process.argv[2] === '--http-candidate') {
         ].join('\n')
       : scenario === 'observed' ? observedText : scenario === 'mismatch'
         ? structuredText.replace('119°30\'40.863" E', '120°30\'40.863" E') : structuredText;
+    const content = scenario === 'generic-dms-review-array'
+      ? providerText.split('\n').map(text => ({ type: 'text', text }))
+      : providerText;
     return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const nativeListen = http.Server.prototype.listen;
@@ -1623,6 +1626,15 @@ test("one-shot structured generic contract cannot be upgraded by Provider output
   assert.equal(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY);
 });
 
+test("Provider message text normalization accepts string and text-block envelopes only", () => {
+  assert.equal(runtime.extractProviderMessageText({ choices: [{ message: { content: "row 1\nrow 2" } }] }), "row 1\nrow 2");
+  assert.equal(runtime.extractProviderMessageText({
+    choices: [{ message: { content: ["header", { type: "text", text: "row 1" }, { content: "row 2" }, { type: "image", image_url: "forbidden" }] } }]
+  }), "header\nrow 1\nrow 2");
+  assert.equal(runtime.extractProviderMessageText({ choices: [{ message: { content: { text: "single object text" } } }] }), "single object text");
+  assert.equal(runtime.extractProviderMessageText({ choices: [{ message: { content: { image_url: "forbidden" } } }] }), "");
+});
+
 test("one-shot structured complete Provider DMS evidence is recoverable only for explicit review", () => {
   const sourceText = [
     "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
@@ -1677,6 +1689,17 @@ test("one-shot structured actual HTTP generic DMS recovery remains confirmation 
   assert.match(payload.rawText, /Latitude nord \| Longitude ouest/);
   assert.ok(payload.parserTrace.includes("PROVIDER:trusted_dms_rows_recovered"));
   assert.equal(payload.coordinateEngineV2.requires_review, true);
+  assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
+  assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+});
+
+test("one-shot structured HTTP generic DMS recovery accepts Provider text-block arrays", async () => {
+  const payload = await runHttpCandidate("generic-dms-review-array");
+  assert.equal(payload.success, true);
+  assert.equal(payload.requiresReview, true);
+  assert.equal(payload.providerDmsReviewEvidence.status, "COMPLETE");
+  assert.equal(payload.providerDmsReviewEvidence.coordinateRowCount, 4);
+  assert.equal(payload.coordinates.split("\n").length, 4);
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
 });

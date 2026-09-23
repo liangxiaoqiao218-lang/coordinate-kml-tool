@@ -338,6 +338,39 @@ const providerLayoutProductionQualificationGrantRuntime = new ProviderLayoutProd
 let p0QualificationAcquisition = null;
 let p0QualificationAcquisitionUsed = false;
 
+function extractProviderMessageText(response) {
+  const content = response?.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(item => {
+        if (typeof item === "string") return item;
+        if (typeof item?.text === "string") return item.text;
+        if (typeof item?.content === "string") return item.content;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (typeof content?.text === "string") return content.text;
+  return "";
+}
+
+function buildProviderMessageDiagnostic(response, normalizedText = "") {
+  const content = response?.choices?.[0]?.message?.content;
+  const contentShape = Array.isArray(content) ? "array" : typeof content;
+  const text = String(normalizedText || "");
+  const lines = text.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+  return Object.freeze({
+    contentShape,
+    contentBlockCount: Array.isArray(content) ? content.length : (content == null ? 0 : 1),
+    normalizedByteLength: Buffer.byteLength(text, "utf8"),
+    normalizedLineCount: lines.length,
+    degreeMarkerCount: (normalizeText(text).match(/°/gu) || []).length,
+    directionTokenCount: (normalizeText(text).match(/\b[NSEWO]\b/giu) || []).length
+  });
+}
+
 function sanitizeP0AcquisitionText(content) {
   if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > 16384) return null;
   if (/sk-|Bearer\s|authorization\s*[:=]|api[_ -]?key|password|secret|credential|data:|https?:\/\//i.test(content)) return null;
@@ -363,7 +396,7 @@ function retainP0QualificationAcquisition(req, response, budget) {
     || !Buffer.isBuffer(req.file?.buffer)
     || crypto.createHash("sha256").update(req.file.buffer).digest("hex") !== "2f508653305fee7c08470218f9bf94f75b56d26d7b28edcd7d8d68cd8f88eaf6") return false;
   p0QualificationAcquisitionUsed = true;
-  const sanitized = sanitizeP0AcquisitionText(response?.choices?.[0]?.message?.content);
+  const sanitized = sanitizeP0AcquisitionText(extractProviderMessageText(response));
   if (!sanitized) return false;
   const localReplay = /^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(aliyunBaseURL);
   p0QualificationAcquisition = Object.freeze({
@@ -8154,7 +8187,7 @@ async function readHandwrittenDmsWithPrompt({
     lowValue,
     familyEvidence: true
   });
-  const rawText = response.choices?.[0]?.message?.content || "";
+  const rawText = extractProviderMessageText(response);
   const candidateEvidenceRows = formatHandwrittenDmsRawRows(rawText);
   let coordinates = extractCoordinateLines(rawText);
   const handwrittenDms = getHandwrittenDmsInfo(rawText, coordinates, {
@@ -13029,7 +13062,7 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       requestIdPresent: Boolean(response?.request_id || response?.requestId || response?.RequestId)
     });
 
-    const originalContent = response.choices?.[0]?.message?.content || "";
+    const originalContent = extractProviderMessageText(response);
     const rawOutput = stripMarkdownCodeBlock(originalContent);
     if (String(originalContent || "").trim() !== String(rawOutput || "").trim()) {
       console.log("AI判读 content 已清理 markdown/code block 外壳。");
@@ -15115,7 +15148,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         lowValue: true,
         familyEvidence: true
       });
-      const rawText = response.choices?.[0]?.message?.content || "";
+      const rawText = extractProviderMessageText(response);
       const tableInfo = getMozambiqueGeographicInfo(rawText);
       const rows = tableInfo.isMozambiqueGeographicTable
         ? tableInfo.rows
@@ -15147,7 +15180,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           stageName: "pre_route",
           lowValue: false
         });
-        const kyrgyzDirectRawText = kyrgyzDirectResponse.choices?.[0]?.message?.content || "";
+        const kyrgyzDirectRawText = extractProviderMessageText(kyrgyzDirectResponse);
         const kyrgyzDirectInfo = getKyrgyzGkInfo(kyrgyzDirectRawText);
 
         if (kyrgyzDirectInfo.isKyrgyzGk) {
@@ -15496,7 +15529,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: false,
           familyEvidence: true
         });
-        const wgs84PrimaryRawText = wgs84PrimaryResponse.choices?.[0]?.message?.content || "";
+        const wgs84PrimaryRawText = extractProviderMessageText(wgs84PrimaryResponse);
         providerLayoutCandidates = extractProviderLayoutCandidates(wgs84PrimaryResponse);
         providerLayoutResponseId = String(wgs84PrimaryResponse?.id || wgs84PrimaryResponse?.request_id || "");
         retainProviderLayoutProfileQualification(
@@ -15635,7 +15668,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: false,
           familyEvidence: true
         });
-        const cadastralPrimaryRawText = cadastralPrimaryResponse.choices?.[0]?.message?.content || "";
+        const cadastralPrimaryRawText = extractProviderMessageText(cadastralPrimaryResponse);
         const cadastralPrimaryInfo = getCadastralGridInfo(cadastralPrimaryRawText);
         if (!cadastralPrimaryInfo.isCadastralGrid) {
           return res.status(503).json(buildSpecializedFamilyLockedReviewPayload({
@@ -15721,11 +15754,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       throw new Error("REGRESSION_POST_PROVIDER_INTERNAL_FAILURE");
     }
 
-    let rawText = response.choices?.[0]?.message?.content || "";
+    let rawText = extractProviderMessageText(response);
     const oneShotAcquisitionConformance = validateOneShotAcquisitionContract({
       contract: oneShotAcquisitionContract,
       providerText: rawText
     });
+    const providerMessageDiagnostic = buildProviderMessageDiagnostic(response, rawText);
     console.log("One-shot acquisition conformance:", {
       family: oneShotAcquisitionConformance.family,
       status: oneShotAcquisitionConformance.status,
@@ -15744,7 +15778,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0,
       terminalState: oneShotAcquisitionConformance.status === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
         ? "CANDIDATE_EVIDENCE_ALLOWED"
-        : "REVIEW_REQUIRED"
+        : "REVIEW_REQUIRED",
+      providerContentShape: providerMessageDiagnostic.contentShape,
+      providerContentBlockCount: providerMessageDiagnostic.contentBlockCount,
+      providerNormalizedByteLength: providerMessageDiagnostic.normalizedByteLength,
+      providerNormalizedLineCount: providerMessageDiagnostic.normalizedLineCount,
+      providerDegreeMarkerCount: providerMessageDiagnostic.degreeMarkerCount,
+      providerDirectionTokenCount: providerMessageDiagnostic.directionTokenCount
     });
     if (oneShotAcquisitionConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
       const trustedLocalSourceRows = oneShotLocalOcrSourceText.split(/\r?\n/u)
@@ -16378,7 +16418,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const dmsGroupedRetryRawText = dmsGroupedRetryResponse.choices?.[0]?.message?.content || "";
+        const dmsGroupedRetryRawText = extractProviderMessageText(dmsGroupedRetryResponse);
         const dmsGroupedRetryInfo = getDmsGroupedCoordinateInfo(dmsGroupedRetryRawText);
         const dmsGroupedRetryCoverage = evaluateDmsGroupedRetryCoverage({
           baselineText: rawText,
@@ -16550,7 +16590,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const frenchPerimeterRawText = frenchPerimeterResponse.choices?.[0]?.message?.content || "";
+        const frenchPerimeterRawText = extractProviderMessageText(frenchPerimeterResponse);
         const frenchPerimeterRetryInfo = getFrenchPerimeterDmsInfo(frenchPerimeterRawText);
 
         if (frenchPerimeterRetryInfo.isFrenchPerimeterDms) {
@@ -16680,7 +16720,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const wgs84TableRetryRawText = wgs84TableRetryResponse.choices?.[0]?.message?.content || "";
+        const wgs84TableRetryRawText = extractProviderMessageText(wgs84TableRetryResponse);
         const wgs84TableRetryInfo = getWgs84TableCoordinatesInfo(wgs84TableRetryRawText, {
           preserveDuplicatePoints: true
         });
@@ -16737,7 +16777,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const mgrsRetryRawText = mgrsRetryResponse.choices?.[0]?.message?.content || "";
+        const mgrsRetryRawText = extractProviderMessageText(mgrsRetryResponse);
         const mgrsRetryInfo = getMgrsInfo(mgrsRetryRawText);
 
         if (mgrsRetryInfo.isMgrs) {
@@ -16842,7 +16882,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const kyrgyzRawText = kyrgyzResponse.choices?.[0]?.message?.content || "";
+        const kyrgyzRawText = extractProviderMessageText(kyrgyzResponse);
         const kyrgyzInfo = getKyrgyzGkInfo(kyrgyzRawText);
 
         if (kyrgyzInfo.isKyrgyzGk) {
@@ -16874,7 +16914,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const layoutText = layoutResponse.choices?.[0]?.message?.content || "";
+        const layoutText = extractProviderMessageText(layoutResponse);
 
         if (isCadastralGridLayoutDetected(layoutText)) {
           console.log("Cadastral grid layout detected; reading table area", { layoutDetected: true });
@@ -16890,7 +16930,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             lowValue: true,
             familyEvidence: true
           });
-          const gridRawText = gridResponse.choices?.[0]?.message?.content || "";
+          const gridRawText = extractProviderMessageText(gridResponse);
           const gridInfo = getCadastralGridInfo(gridRawText);
 
           if (gridInfo.isCadastralGrid) {
@@ -16921,7 +16961,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const bftmRetryRawText = bftmRetryResponse.choices?.[0]?.message?.content || "";
+        const bftmRetryRawText = extractProviderMessageText(bftmRetryResponse);
         const bftmRetryCoordinates = extractCoordinateLines(bftmRetryRawText);
         const currentValidBftmRows = countValidBftmProjectedRows(coordinates);
         const retryValidBftmRows = countValidBftmProjectedRows(bftmRetryCoordinates);
@@ -16962,7 +17002,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const bftmVisionRawText = bftmVisionRetryResponse.choices?.[0]?.message?.content || "";
+        const bftmVisionRawText = extractProviderMessageText(bftmVisionRetryResponse);
         const bftmVisionCoordinates = extractCoordinateLines(bftmVisionRawText);
         const currentValidBftmRows = countValidBftmProjectedRows(coordinates);
         const visionValidBftmRows = countValidBftmProjectedRows(bftmVisionCoordinates);
@@ -17006,7 +17046,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const pointAzRetryRawText = pointAzRetryResponse.choices?.[0]?.message?.content || "";
+        const pointAzRetryRawText = extractProviderMessageText(pointAzRetryResponse);
         const pointAzTableRows = extractPointDmsTableCoordinateRows(pointAzRetryRawText);
         const pointAzDisplayText = pointAzTableRows.join("\n");
         const pointAzRetryCoordinates = extractCoordinateLines(pointAzDisplayText);
@@ -17525,7 +17565,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           lowValue: true,
           familyEvidence: true
         });
-        const coteDIvoireRawText = coteDIvoireResponse.choices?.[0]?.message?.content || "";
+        const coteDIvoireRawText = extractProviderMessageText(coteDIvoireResponse);
         const coteDIvoireV2 = buildCoteDIvoireGeographicDmsV2Result({
           model: `${aliyunVisionModel}+cote-divoire-geographic-dms-v2`,
           rawText: coteDIvoireRawText,
@@ -17885,7 +17925,7 @@ If the table is not readable, output only: ${noCoordinatesText}`;
             lowValue: true,
             familyEvidence: true
           });
-          const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
+          const retryRawText = extractProviderMessageText(retryResponse);
           const retryKyrgyzGk = getKyrgyzGkInfo(retryRawText);
 
           if (retryKyrgyzGk.isKyrgyzGk) {
@@ -17997,7 +18037,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             lowValue: true,
             familyEvidence: true
           });
-          const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
+          const retryRawText = extractProviderMessageText(retryResponse);
           const retryWgs84Table = getWgs84TableCoordinatesInfo(retryRawText, {
             preserveDuplicatePoints: true
           });
@@ -18220,7 +18260,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             lowValue: true,
             familyEvidence: true
           });
-          const retryRawText = retryResponse.choices?.[0]?.message?.content || "";
+          const retryRawText = extractProviderMessageText(retryResponse);
           const retryCoordinates = extractCoordinateLines(retryRawText);
           const retryInfo = getBftmLongTableInfo(retryRawText, retryCoordinates);
 
@@ -18315,7 +18355,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
             lowValue: true,
             familyEvidence: true
           });
-          const rescueRawText = rescueResponse.choices?.[0]?.message?.content || "";
+          const rescueRawText = extractProviderMessageText(rescueResponse);
           const rescueWgs84Table = getWgs84TableCoordinatesInfo(rescueRawText, {
             preserveDuplicatePoints: true
           });
