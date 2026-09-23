@@ -8838,13 +8838,34 @@ function coordinateEngineV2Orientation(a, b, c) {
   return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
+function coordinateEngineV2OrientationSign(value, tolerance = 1e-7) {
+  if (Math.abs(value) <= tolerance) return 0;
+  return value > 0 ? 1 : -1;
+}
+
+function coordinateEngineV2PointOnSegment(a, b, point, tolerance = 1e-7) {
+  return point.x >= Math.min(a.x, b.x) - tolerance
+    && point.x <= Math.max(a.x, b.x) + tolerance
+    && point.y >= Math.min(a.y, b.y) - tolerance
+    && point.y <= Math.max(a.y, b.y) + tolerance;
+}
+
 function coordinateEngineV2SegmentsIntersect(a, b, c, d) {
   const o1 = coordinateEngineV2Orientation(a, b, c);
   const o2 = coordinateEngineV2Orientation(a, b, d);
   const o3 = coordinateEngineV2Orientation(c, d, a);
   const o4 = coordinateEngineV2Orientation(c, d, b);
+  const s1 = coordinateEngineV2OrientationSign(o1);
+  const s2 = coordinateEngineV2OrientationSign(o2);
+  const s3 = coordinateEngineV2OrientationSign(o3);
+  const s4 = coordinateEngineV2OrientationSign(o4);
 
-  return (o1 > 0) !== (o2 > 0) && (o3 > 0) !== (o4 > 0);
+  if (s1 * s2 < 0 && s3 * s4 < 0) return true;
+  if (s1 === 0 && coordinateEngineV2PointOnSegment(a, b, c)) return true;
+  if (s2 === 0 && coordinateEngineV2PointOnSegment(a, b, d)) return true;
+  if (s3 === 0 && coordinateEngineV2PointOnSegment(c, d, a)) return true;
+  if (s4 === 0 && coordinateEngineV2PointOnSegment(c, d, b)) return true;
+  return false;
 }
 
 function isCoordinateEngineV2SelfIntersecting(points = []) {
@@ -14378,6 +14399,57 @@ function hasVisibleUtmBoundaryContext(value = "") {
   return hasUtm && hasBoundaryMeaning && hasProjectedHeader;
 }
 
+function getExplicitProjectedCrsSelection(evidence = null) {
+  const crs = evidence?.crsEvidence;
+  if (String(crs?.status || "").toUpperCase() !== "EXPLICIT") return "";
+  if (String(crs?.projection || "").toLowerCase() === "bftm") return "bftm";
+  const zone = Number(crs?.zone);
+  const hemisphere = String(crs?.hemisphere || "").toLowerCase();
+  return String(crs?.projection || "").toLowerCase() === "utm"
+    && Number.isInteger(zone) && zone >= 1 && zone <= 60
+    && ["n", "s"].includes(hemisphere)
+    ? `utm${zone}${hemisphere}`
+    : "";
+}
+
+function hasVisibleProjectedBoundaryContext(value = "") {
+  const source = normalizeText(String(value || ""));
+  const hasBoundaryMeaning = /(?:\b(?:permis|permit|licen[cs]e|parcel|site|area)\b[^\r\n]{0,180}\b(?:d[ée]fini(?:e)?s?|defined|bounded|delimited)\b[^\r\n]{0,140}\b(?:sommets?|vertices?|corners?|boundary)\b|\b(?:sommets?|vertices?|corners?)\b[^\r\n]{0,120}\b(?:site|area|parcel|permit|licen[cs]e)\b|矿区[^\r\n]{0,40}(?:边界|界址点|拐点)|(?:边界|界址点|拐点)[^\r\n]{0,40}矿区)/iu.test(source);
+  const hasProjectedHeader = /\b(?:sommets?|point|label|id|n[°o])\b[^\r\n]{0,70}\bX\b[^\r\n]{0,70}\bY\b/iu.test(source)
+    || /\bX\b[^\r\n]{0,50}\bY\b/iu.test(source);
+  return hasBoundaryMeaning && hasProjectedHeader;
+}
+
+function supportsExplicitProjectedBoundaryAutoRelease({ sourceText = "", evidence = null } = {}) {
+  const rows = Array.isArray(evidence?.rows) ? evidence.rows : [];
+  if (evidence?.status !== LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE || rows.length < 3) return false;
+  if (!getExplicitProjectedCrsSelection(evidence) || !hasVisibleProjectedBoundaryContext(sourceText)) return false;
+  const labels = rows.map(row => String(row?.label || "").trim()).filter(Boolean);
+  if (labels.length !== rows.length || new Set(labels).size !== labels.length) return false;
+  return rows.every(row => Number.isFinite(Number(row?.x)) && Number.isFinite(Number(row?.y)));
+}
+
+function buildExplicitProjectedBoundaryResponse({ payload = {}, evidence = null, requestId = null } = {}) {
+  const sourceCrsSelection = getExplicitProjectedCrsSelection(evidence);
+  const rows = parseProjectedCoordinateConfirmationRows(evidence?.text || "");
+  if (!sourceCrsSelection || !rows) return null;
+  const coordinateEngineV2 = buildConfirmedProjectedCoordinateEngine(rows, sourceCrsSelection);
+  if (!coordinateEngineV2) return null;
+  const response = buildCoordinateVerificationResponse({
+    ...payload,
+    requiresReview: false,
+    warning: "已依据原图中明确的投影坐标系和边界顶点说明，按原始点号顺序形成矿区边界。",
+    parserTrace: [
+      ...(Array.isArray(payload.parserTrace) ? payload.parserTrace : []),
+      "PROJECTED_BOUNDARY_AUTHORITY:safe_auto_release"
+    ]
+  }, coordinateEngineV2);
+  return promoteRecognizedCoordinatesToSafeBoundary({
+    ...response,
+    ...(requestId ? { requestId } : {})
+  });
+}
+
 function supportsLegacyUtm30BoundaryPreview({ providerText = "", localOcrText = "", evidence = null } = {}) {
   const rows = Array.isArray(evidence?.rows) ? evidence.rows : [];
   if (evidence?.status !== LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE || rows.length < 3) return false;
@@ -14408,11 +14480,15 @@ function promoteRecognizedCoordinatesToSafeBoundary(response = {}, warning = "")
   const selfIntersecting = positions.length >= 4 && isCoordinateEngineV2SelfIntersecting(
     positions.map(position => ({ lon: position[0], lat: position[1] }))
   );
-  if (positions.length < 3 || selfIntersecting) {
+  const positionKeys = positions.map(position => `${position[0].toFixed(10)},${position[1].toFixed(10)}`);
+  const duplicatePosition = new Set(positionKeys).size !== positionKeys.length;
+  if (positions.length < 3 || selfIntersecting || duplicatePosition) {
     return keepRecognizedCoordinatesAsPointReview(
       response,
       selfIntersecting
         ? "已定位各坐标点；按原图点序连接会交叉，当前地图仅供点位核对，不代表矿区边界。"
+        : duplicatePosition
+          ? "已定位各坐标点；原始点序含有重复顶点，当前地图仅供点位核对，不代表矿区边界。"
         : (warning || "已定位坐标点；当前点数不足以形成矿区轮廓，地图仅供点位核对。")
     );
   }
@@ -16454,7 +16530,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           });
         }
         if (contextualUtm30BoundaryPreview) {
-          const warning = "已从原图可见的 UTM 场地顶点说明恢复地图定位；当前地图仅供点位核对，不代表矿区边界，KML 保持关闭。";
+          const warning = "已从原图可见的 UTM 场地顶点说明恢复地图定位，并按原始点号顺序核验矿区边界。";
           const contextualUtm30Payload = {
             success: true,
             model: `${selectedProviderModel}+contextual-utm30-boundary-review`,
@@ -16497,10 +16573,41 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             ...buildCoordinateVerificationResponse(contextualUtm30Payload, contextualUtm30Engine),
             requestId: recognitionBudget?.requestId || null
           };
-          return res.json(keepRecognizedCoordinatesAsPointReview(
+          return res.json(promoteRecognizedCoordinatesToSafeBoundary(
             contextualUtm30Response,
             warning
           ));
+        }
+        if (supportsExplicitProjectedBoundaryAutoRelease({
+          sourceText: rawText,
+          evidence: trustedProviderProjectedEvidence
+        })) {
+          const projectedBoundaryResponse = buildExplicitProjectedBoundaryResponse({
+            payload: {
+              success: true,
+              model: `${selectedProviderModel}+explicit-projected-boundary`,
+              rawText,
+              coordinates: trustedProviderProjectedEvidence.text,
+              precisionMode: String(trustedProviderProjectedEvidence.crsEvidence?.projection || "").toLowerCase() === "bftm"
+                ? "bftm-projected-x-y"
+                : "projected-x-y-confirmed",
+              projection: getExplicitProjectedCrsSelection(trustedProviderProjectedEvidence),
+              providerProjectedReviewEvidence: {
+                status: trustedProviderProjectedEvidence.status,
+                coordinateRowCount: trustedProviderProjectedEvidence.rowCount,
+                crsEvidence: trustedProviderProjectedEvidence.crsEvidence
+              },
+              acquisitionContractConformance: oneShotAcquisitionConformance,
+              parserTrace: [
+                "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
+                "PROVIDER:trusted_projected_rows_recovered"
+              ],
+              quota: consumeResult.quota
+            },
+            evidence: trustedProviderProjectedEvidence,
+            requestId: recognitionBudget?.requestId || null
+          });
+          if (projectedBoundaryResponse) return res.json(projectedBoundaryResponse);
         }
         const providerProjectedReviewPayload = {
           success: true,
@@ -18311,6 +18418,20 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
     }
     let verificationResponse = buildCoordinateVerificationResponse(finalRecognitionCandidate, coordinateEngineV2);
+    if (bftmAccepted) {
+      const projectedBoundaryEvidence = extractProviderProjectedCoordinateEvidence({ sourceText: rawText });
+      if (supportsExplicitProjectedBoundaryAutoRelease({
+        sourceText: rawText,
+        evidence: projectedBoundaryEvidence
+      })) {
+        const projectedBoundaryResponse = buildExplicitProjectedBoundaryResponse({
+          payload: recognitionPayload,
+          evidence: projectedBoundaryEvidence,
+          requestId: recognitionBudget?.requestId || null
+        });
+        if (projectedBoundaryResponse) verificationResponse = projectedBoundaryResponse;
+      }
+    }
     if (stage1FullMultisiteReviewCandidate) {
       const stage1FullMultisiteConfirmationPolicy = buildStage1FullMultisiteConfirmationPolicy({
         finalizedResult: verificationResponse.finalizedCoordinateResult,

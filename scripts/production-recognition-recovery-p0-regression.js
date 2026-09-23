@@ -44,6 +44,7 @@ import {
   hasStrongPrintedProjectedTableEvidence
 } from "../server/recognition/family-primary-routing.js";
 import { utmToWgs84 } from "../server/projection/utm.js";
+import { bftmToWgs84 } from "../server/projection/bftm.js";
 import {
   extractProviderProjectedCoordinateEvidence,
   LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
@@ -60,7 +61,7 @@ const replay = structuredFamilyOnly ? null : JSON.parse(await readFile(path.join
 const releaseGate = structuredFamilyOnly ? null : JSON.parse(await readFile(path.join(root, "release-governance/p0-release-gate-governance.json"), "utf8"));
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
 // Execute the actual runtime function declarations without app startup or Provider I/O.
-const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, ...structuredCoordinateBoundary, utmToWgs84,
+const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, ...structuredCoordinateBoundary, utmToWgs84, bftmToWgs84,
   isRecognitionRequestId, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS, Buffer, crypto,
   process: { env: {} }, setTimeout: () => ({ unref() {} }) });
 const declarations = [];
@@ -141,29 +142,58 @@ if (process.argv[2] === '--http-candidate') {
       const prompt = requestBody.messages.map(message => JSON.stringify(message.content)).join(' ');
       if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
         || scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
-        || scenario === 'generic-projected-contextual-utm30') {
+        || scenario === 'generic-projected-contextual-utm30'
+        || scenario === 'generic-projected-contextual-utm30-safe'
+        || scenario === 'generic-projected-bftm-boundary') {
         assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
         assert.ok(prompt.includes('CONTEXT |'));
       } else {
         assert.ok(prompt.includes('Never infer a family, CRS, axis order, direction, missing row, group, or coordinate'));
       }
+    const crossedProjectedRows = [
+      'A | 727250,1219700',
+      'B | 728400,1219700',
+      'C | 728400,1219500',
+      'D | 728700,1219500',
+      'E | 728700,1220000',
+      'F | 729150,1220000',
+      'G | 729150,1219500',
+      'H | 729200,1219500'
+    ];
+    const safeProjectedRows = [
+      'A | 727250,1219700',
+      'B | 728400,1219700',
+      'C | 728400,1218500',
+      'D | 727250,1218500'
+    ];
+    const bftmBoundaryRows = [
+      '1 | 655000,1333600', '2 | 654500,1333600', '3 | 654500,1334100',
+      '4 | 653700,1334100', '5 | 653700,1335600', '6 | 653100,1335600',
+      '7 | 653100,1336400', '8 | 652400,1336400', '9 | 652400,1342200',
+      '10 | 651200,1342200', '11 | 651200,1345100', '12 | 649300,1345100',
+      '13 | 649300,1346000', '14 | 647900,1346000', '15 | 647900,1349700',
+      '16 | 647300,1349700', '17 | 647300,1352000', '18 | 645000,1352000',
+      '19 | 645000,1356200', '20 | 655000,1356200'
+    ];
     const providerText = scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
       || scenario === 'generic-projected-contextual-utm30'
+      || scenario === 'generic-projected-contextual-utm30-safe'
+      || scenario === 'generic-projected-bftm-boundary'
       ? [
           ...(scenario === 'generic-projected-explicit' ? ['WGS 84 / UTM 30N'] : []),
-          ...(scenario === 'generic-projected-contextual-utm30'
+          ...(scenario === 'generic-projected-contextual-utm30' || scenario === 'generic-projected-contextual-utm30-safe'
             ? ['CONTEXT | Les coordonnées géographiques en UTM des sommets du site devant abriter l’activité sont consignées dans le tableau ci-dessous.']
+            : []),
+          ...(scenario === 'generic-projected-bftm-boundary'
+            ? ['CONTEXT | Ce permis couvre une superficie de 121,06 km². Il est défini par les sommets dont les coordonnées projetées (X, Y) en BFTM sont les suivantes :', 'CONTEXT | Système de Référence ITRF 2008 / Projection BFTM']
             : []),
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
           'Sommets | X | Y',
-          'A | 727250,1219700',
-          'B | 728400,1219700',
-          'C | 728400,1219500',
-          'D | 728700,1219500',
-          'E | 728700,1220000',
-          'F | 729150,1220000',
-          'G | 729150,1219500',
-          'H | 729200,1219500'
+          ...(scenario === 'generic-projected-contextual-utm30-safe'
+            ? safeProjectedRows
+            : scenario === 'generic-projected-bftm-boundary'
+              ? bftmBoundaryRows
+              : crossedProjectedRows)
         ].join('\n')
       : scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
       ? [
@@ -295,6 +325,8 @@ async function runHttpCandidate(scenario) {
     const trace = await traceResponse.json();
     assert.equal(trace.acquisitionEvidence == null, true, 'synthetic bytes cannot claim real acquisition identity');
     if (scenario === 'generic-projected-contextual-utm30'
+      || scenario === 'generic-projected-contextual-utm30-safe'
+      || scenario === 'generic-projected-bftm-boundary'
       || scenario === 'generic-dms-review'
       || scenario === 'generic-dms-review-array') {
       const finalized = payload.finalizedCoordinateResult;
@@ -2064,6 +2096,34 @@ test("projected table OCR acquisition hint is generic, structure-bound, and revi
   assert.doesNotMatch(serverSource, /projectedTableOcrAcquisition\s*\?\s*aliyunOcrModel\s*:\s*aliyunVisionModel/u);
 });
 
+test("projected boundary geometry keeps both simple BFTM source orders and rejects the crossed UTM source order", () => {
+  const bftm01 = [
+    [658800, 1364200], [651600, 1364200], [651600, 1364000], [646900, 1364000],
+    [646900, 1366300], [649700, 1366300], [649700, 1365800], [650800, 1365800],
+    [650800, 1365400], [651800, 1365400], [651800, 1364800], [653200, 1364800],
+    [653200, 1365800], [656100, 1365800], [656100, 1370900], [656800, 1370900],
+    [656800, 1375800], [658800, 1375800]
+  ];
+  const bftm02 = [
+    [655000, 1333600], [654500, 1333600], [654500, 1334100], [653700, 1334100],
+    [653700, 1335600], [653100, 1335600], [653100, 1336400], [652400, 1336400],
+    [652400, 1342200], [651200, 1342200], [651200, 1345100], [649300, 1345100],
+    [649300, 1346000], [647900, 1346000], [647900, 1349700], [647300, 1349700],
+    [647300, 1352000], [645000, 1352000], [645000, 1356200], [655000, 1356200]
+  ];
+  const utm03 = [
+    [727250, 1219700], [728400, 1219700], [728400, 1219500], [728700, 1219500],
+    [728700, 1220000], [729150, 1220000], [729150, 1219500], [729200, 1219500]
+  ];
+  const toPoints = (rows, transform) => rows.map(([x, y]) => {
+    const point = transform(x, y);
+    return { lat: Number(point.lat ?? point.latitude), lon: Number(point.lon ?? point.longitude) };
+  });
+  assert.equal(runtime.isCoordinateEngineV2SelfIntersecting(toPoints(bftm01, bftmToWgs84)), false);
+  assert.equal(runtime.isCoordinateEngineV2SelfIntersecting(toPoints(bftm02, bftmToWgs84)), false);
+  assert.equal(runtime.isCoordinateEngineV2SelfIntersecting(toPoints(utm03, (x, y) => utmToWgs84(30, x, y, true))), true);
+});
+
 test("contextual UTM30 site vertices auto-locate while crossed source order remains point review and blocks KML", async () => {
   const payload = await runHttpCandidate("generic-projected-contextual-utm30");
   const expectedCoordinates = [
@@ -2092,6 +2152,44 @@ test("contextual UTM30 site vertices auto-locate while crossed source order rema
   assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "MultiPoint");
   assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
   assert.equal(payload.mapPreview.kmlEligibility.allowed, false);
+  assert.equal(payload.providerCallCount, 1);
+});
+
+test("contextual UTM site vertices form a boundary and enable KML when the original order is safe", async () => {
+  const payload = await runHttpCandidate("generic-projected-contextual-utm30-safe");
+  const expectedCoordinates = [
+    "A | 727250 | 1219700",
+    "B | 728400 | 1219700",
+    "C | 728400 | 1218500",
+    "D | 727250 | 1218500"
+  ].join("\n");
+  assert.equal(payload.success, true);
+  assert.equal(payload.coordinates, expectedCoordinates);
+  assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedCoordinates);
+  assert.equal(payload.geometryMode, "boundary");
+  assert.equal(payload.boundaryBlocked, false);
+  assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+  assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "Polygon");
+  assert.equal(payload.mapPreview.kmlEligibility.allowed, true);
+  assert.equal(payload.providerCallCount, 1);
+});
+
+test("explicit BFTM permit vertices preserve all rows, form the mining boundary, and enable KML", async () => {
+  const payload = await runHttpCandidate("generic-projected-bftm-boundary");
+  assert.equal(payload.success, true);
+  assert.equal(payload.precisionMode, "bftm-projected-x-y");
+  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, "EXPLICIT");
+  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.projection, "bftm");
+  assert.equal(payload.coordinates.split("\n").length, 20);
+  assert.equal(payload.coordinateEngineV2.groups[0].points.length, 20);
+  assert.ok(payload.parserTrace.includes("PROJECTED_BOUNDARY_AUTHORITY:safe_auto_release"));
+  assert.equal(payload.geometryMode, "boundary");
+  assert.equal(payload.boundaryBlocked, false);
+  assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+  assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "Polygon");
+  assert.equal(payload.mapPreview.kmlEligibility.allowed, true);
   assert.equal(payload.providerCallCount, 1);
 });
 
