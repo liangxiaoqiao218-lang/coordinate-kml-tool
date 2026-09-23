@@ -1,7 +1,7 @@
 import { COORDINATE_GATE_REASON, FINALIZED_COORDINATE_CRS } from "./reason-codes.js";
 import { finiteNumberOrNull } from "../coordinate-values.js";
 
-const SUPPORTED_TYPES = new Set(["Point", "LineString", "Polygon", "MultiPolygon"]);
+const SUPPORTED_TYPES = new Set(["Point", "MultiPoint", "LineString", "Polygon", "MultiPolygon"]);
 
 function finitePosition(value) {
   return Array.isArray(value)
@@ -38,6 +38,8 @@ export function validateFinalizedGeometry(geometry) {
   const coordinates = geometry.coordinates;
   const valid = geometry.type === "Point"
     ? finitePosition(coordinates)
+    : geometry.type === "MultiPoint"
+      ? validateLine(coordinates, 2)
     : geometry.type === "LineString"
       ? validateLine(coordinates, 2)
       : geometry.type === "Polygon"

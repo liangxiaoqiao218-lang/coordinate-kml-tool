@@ -200,7 +200,8 @@ async function runHttpCandidate(scenario) {
     cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env: { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH, NODE_ENV: 'test', PORT: '0',
       ENABLE_REGRESSION_TEST_MODE: 'true', ALIYUN_API_KEY: 'local-mock-only', ALIYUN_BASE_URL: 'http://127.0.0.1:1/v1',
-      P0_QUALIFICATION_ACQUISITION_ENABLED: 'true', DOTENV_CONFIG_PATH: path.join(root, '__no_test_env__') }
+      P0_QUALIFICATION_ACQUISITION_ENABLED: 'true', SPATIAL_RESULT_ENABLED: 'true',
+      DOTENV_CONFIG_PATH: path.join(root, '__no_test_env__') }
   });
   // Drain output without retaining provider text or exposing it as production evidence.
   child.stdout.resume(); child.stderr.resume();
@@ -222,6 +223,31 @@ async function runHttpCandidate(scenario) {
     const traceResponse = await fetch(`http://127.0.0.1:${port}/api/regression/recognition-trace/${response.headers.get('x-recognition-request-id')}`, { headers: { 'x-regression-test': '1' }, signal });
     const trace = await traceResponse.json();
     assert.equal(trace.acquisitionEvidence == null, true, 'synthetic bytes cannot claim real acquisition identity');
+    if (scenario === 'generic-projected-review') {
+      const pending = payload.finalizedCoordinateResult;
+      const rejectedResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-projection-confirmation`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+        body: JSON.stringify({ resultId: pending.resultId, resultRevision: pending.resultRevision,
+          sourceCrs: '', coordinateText: payload.coordinates })
+      });
+      assert.equal(rejectedResponse.status, 400, 'missing CRS must remain blocked');
+      const confirmationResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-projection-confirmation`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+        body: JSON.stringify({ resultId: pending.resultId, resultRevision: pending.resultRevision,
+          sourceCrs: 'utm30n', coordinateText: payload.coordinates })
+      });
+      const confirmation = await confirmationResponse.json();
+      assert.equal(confirmationResponse.status, 200, JSON.stringify(confirmation));
+      const confirmed = confirmation.finalizedCoordinateResult;
+      const mapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+        body: JSON.stringify({ resultId: confirmed.resultId, resultRevision: confirmed.resultRevision,
+          geometryHash: confirmed.geometryHash })
+      });
+      const mapPayload = await mapResponse.json();
+      assert.equal(mapResponse.status, 200, JSON.stringify(mapPayload));
+      return { ...payload, projectedConfirmation: confirmation, projectedMapPreview: mapPayload };
+    }
     return payload;
   } finally {
     const ended = once(child, 'exit');
@@ -1887,6 +1913,22 @@ test("one-shot structured actual HTTP generic projected recovery preserves sourc
   assert.equal(payload.finalizedCoordinateResult.geometry, null);
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
   assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
+  assert.equal(payload.projectedConfirmation.selectedCrs, "EPSG:32630");
+  assert.equal(payload.projectedConfirmation.sourceRowCount, 8);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.resultId,
+    payload.finalizedCoordinateResult.resultId);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.resultRevision,
+    payload.finalizedCoordinateResult.resultRevision + 1);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, true);
+  assert.equal(payload.projectedConfirmation.geometryMode, "points_only");
+  assert.equal(payload.projectedConfirmation.boundaryBlocked, true);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, "MultiPoint");
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.coordinates.length, 8);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.requiresReview, true);
+  assert.match(payload.projectedConfirmation.finalizedCoordinateResult.limitations.join("\n"), /不代表矿区边界/);
+  assert.equal(payload.projectedMapPreview.mapPreviewObject.geometryType, "MultiPoint");
+  assert.equal(payload.projectedMapPreview.mapPreviewObject.previewEligibility.allowed, true);
+  assert.equal(payload.coordinates, expectedCoordinates, "CRS confirmation must not rewrite source X/Y text");
   const usageAuthority = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: payload });
   assert.equal(usageAuthority.eligible, true);
   assert.equal(usageAuthority.reason, "PROJECTED_REVIEW_SERVER_AUTHORITY_ESTABLISHED");

@@ -89,6 +89,7 @@ import {
 import { finiteNumberOrNull, hasFiniteNumericValue } from "./server/coordinate-values.js";
 import { COORDINATE_REVIEW_REASON_CODE, deriveCoordinateReviewReason } from "./server/coordinate-review-reason.js";
 import { utmToWgs84 } from "./server/projection/utm.js";
+import { bftmToWgs84 } from "./server/projection/bftm.js";
 import {
   getStructuredCoordinateBlocks,
   inferStructuredBoundaryType,
@@ -147,6 +148,8 @@ import {
 import { SupabaseSpatialShareStore } from "./server/spatial/sharing/supabase-share-store.js";
 import {
   COORDINATE_DECISION_STATE,
+  COORDINATE_QUALITY_GATE_STATUS,
+  FINALIZED_COORDINATE_CRS,
   FINALIZED_COORDINATE_SCHEMA_VERSION,
   CONFIRMATION_RUNTIME_VERSION,
   FAMILY_AVAILABILITY_STATUS,
@@ -8501,6 +8504,99 @@ function buildManualTextCoordinateResult(text) {
   };
 }
 
+const SUPPORTED_PROJECTED_CRS_CONFIRMATIONS = Object.freeze({
+  utm28n: Object.freeze({ id: "EPSG:32628", projection: "utm28n", zone: 28, hemisphere: "N" }),
+  utm29n: Object.freeze({ id: "EPSG:32629", projection: "utm29n", zone: 29, hemisphere: "N" }),
+  utm30n: Object.freeze({ id: "EPSG:32630", projection: "utm30n", zone: 30, hemisphere: "N" }),
+  bftm: Object.freeze({ id: "BFTM:ITRF2008", projection: "bftm", zone: null, hemisphere: "N" })
+});
+
+function parseProjectedCoordinateConfirmationRows(text) {
+  const rows = [];
+  const labels = new Set();
+  for (const sourceLine of String(text || "").split(/\r?\n/)) {
+    const line = sourceLine.trim();
+    if (!line) continue;
+    const parts = line.split("|").map(part => part.trim());
+    let label = "";
+    let xText = "";
+    let yText = "";
+    if (parts.length === 3) {
+      [label, xText, yText] = parts;
+    } else {
+      const match = line.match(/^\s*([A-Z]|\d{1,3})\s*(?:[.):-]|\s)\s*([-+]?\d+(?:\.\d+)?)\s*[,;\s]\s*([-+]?\d+(?:\.\d+)?)\s*$/i);
+      if (!match) return null;
+      [, label, xText, yText] = match;
+    }
+    if (!/^(?:[A-Z]|\d{1,3})$/i.test(label)) return null;
+    const normalizedLabel = label.toUpperCase();
+    if (labels.has(normalizedLabel)) return null;
+    const x = finiteNumberOrNull(xText);
+    const y = finiteNumberOrNull(yText);
+    if (x === null || y === null || x < 100000 || x > 900000 || y < 0 || y > 10000000) return null;
+    labels.add(normalizedLabel);
+    rows.push(Object.freeze({ label: normalizedLabel, x, y, raw: line }));
+  }
+  return rows.length >= 3 ? Object.freeze(rows) : null;
+}
+
+function buildConfirmedProjectedCoordinateEngine(rows, selection) {
+  const definition = SUPPORTED_PROJECTED_CRS_CONFIRMATIONS[selection];
+  if (!definition || !Array.isArray(rows) || rows.length < 3) return null;
+  const sourceCrs = Object.freeze({
+    id: definition.id,
+    projection: definition.projection,
+    ...(definition.zone ? { zone: definition.zone } : {}),
+    hemisphere: definition.hemisphere,
+    axisOrder: "easting_northing"
+  });
+  const points = rows.map(row => {
+    const converted = selection === "bftm"
+      ? bftmToWgs84(row.x, row.y)
+      : utmToWgs84(definition.zone, row.x, row.y, true);
+    const lat = finiteNumberOrNull(converted?.lat ?? converted?.latitude);
+    const lon = finiteNumberOrNull(converted?.lon ?? converted?.longitude);
+    if (lat === null || lon === null || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return Object.freeze({
+      label: row.label,
+      raw: row.raw,
+      lat,
+      lon,
+      x: row.x,
+      y: row.y,
+      projection: definition.projection,
+      source_crs: sourceCrs,
+      confidence: 1,
+      requires_review: false,
+      warnings: []
+    });
+  });
+  if (points.some(point => point === null)) return null;
+  return normalizeCoordinateEngineV2Result({
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: "projected_xy",
+    precision_mode: "projected-x-y-confirmed",
+    source_crs: sourceCrs,
+    confidence: 1,
+    requires_review: false,
+    source: { image_count: 1, ocr_engine: "user-confirmed-projected-crs", fallback_used: false },
+    groups: [{
+      group_id: "group_1",
+      group_name: "矿地1",
+      geometry: getCoordinateEngineV2Geometry(points),
+      confidence: 1,
+      requires_review: false,
+      kml_ready: true,
+      declared_area_ha: null,
+      calculated_area_ha: null,
+      warnings: [],
+      points
+    }],
+    warnings: [],
+    debug: { matched_detectors: ["projected_xy", definition.projection], blocked_fallbacks: [], supplemental_fallbacks: [] }
+  });
+}
+
 function normalizeCoordinateEngineV2WarningList(value) {
   if (!value) {
     return [];
@@ -13622,6 +13718,120 @@ app.post("/api/coordinate-manual-finalize", (req, res) => {
   });
   return res.json({
     success: true,
+    finalizedCoordinateResult: response.finalizedCoordinateResult
+  });
+});
+
+app.post("/api/coordinate-projection-confirmation", (req, res) => {
+  const resultId = String(req.body?.resultId || "");
+  const resultRevision = Number(req.body?.resultRevision);
+  const sourceCrsSelection = String(req.body?.sourceCrs || "").toLowerCase();
+  const coordinateText = String(req.body?.coordinateText || "").trim();
+  const definition = SUPPORTED_PROJECTED_CRS_CONFIRMATIONS[sourceCrsSelection];
+  if (!definition) {
+    return res.status(400).json({ success: false, code: "PROJECTED_CRS_SELECTION_REQUIRED" });
+  }
+  coordinateConfirmationRuntime.cleanup();
+  const current = coordinateConfirmationRuntime.records.get(resultId)?.result;
+  if (!current) {
+    return res.status(404).json({ success: false, code: "CONFIRMATION_RESULT_NOT_FOUND" });
+  }
+  if (current.resultRevision !== resultRevision) {
+    return res.status(409).json({ success: false, code: "STALE_CONFIRMATION_REVISION" });
+  }
+  if (current.coordinateType !== "projected_xy"
+    || !["projected-x-y-review", "projected-x-y-confirmed", "projected-x-y-confirmed-points-only"].includes(current.precisionMode)) {
+    return res.status(422).json({ success: false, code: "PROJECTED_CONFIRMATION_NOT_APPLICABLE" });
+  }
+  const rows = parseProjectedCoordinateConfirmationRows(coordinateText);
+  if (!rows) {
+    return res.status(422).json({ success: false, code: "PROJECTED_COORDINATE_ROWS_INVALID" });
+  }
+  const coordinateEngineV2 = buildConfirmedProjectedCoordinateEngine(rows, sourceCrsSelection);
+  if (!coordinateEngineV2) {
+    return res.status(422).json({ success: false, code: "PROJECTED_TRANSFORM_FAILED" });
+  }
+  const projectedPayload = {
+    success: true,
+    model: "user-confirmed-projected-crs",
+    rawText: coordinateText,
+    coordinates: coordinateText,
+    precisionMode: "projected-x-y-confirmed",
+    projection: definition.projection,
+    pointCount: rows.length,
+    geometry: getCoordinateEngineV2Geometry(coordinateEngineV2.groups[0]?.points || []),
+    finalizerRevision: {
+      resultId: current.resultId,
+      resultRevision: current.resultRevision + 1,
+      currentRevision: current.resultRevision + 1,
+      confirmedRevision: current.resultRevision + 1,
+      confirmationStatus: "accepted"
+    }
+  };
+  const response = buildCoordinateVerificationResponse(projectedPayload, coordinateEngineV2, {
+    sourceAuthority: "manual_input",
+    revision: projectedPayload.finalizerRevision
+  });
+  const polygonSelfIntersection = response.verification?.status === "BLOCK"
+    && (response.verification?.warnings || []).some(warning => /自交|self-intersection/i.test(String(warning || "")));
+  if (polygonSelfIntersection) {
+    const positions = coordinateEngineV2.groups[0].points.map(point => [Number(point.lon), Number(point.lat)]);
+    const pointReviewResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
+      resultId: current.resultId,
+      resultRevision: current.resultRevision + 1,
+      currentRevision: current.resultRevision + 1,
+      confirmedRevision: current.resultRevision + 1,
+      sourceAuthority: "manual_input",
+      coordinateType: "projected_xy",
+      precisionMode: "projected-x-y-confirmed-points-only",
+      family: "projected_xy",
+      crs: FINALIZED_COORDINATE_CRS,
+      geometry: { type: "MultiPoint", coordinates: positions },
+      confirmationStatus: "accepted",
+      qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+      technicalKmlReady: true,
+      currentAuthorizedGeometryExportable: true,
+      requiresReview: true,
+      kmlReady: true,
+      groups: [{ groupId: "group_1", requiresReview: true, kmlReady: true }],
+      warnings: [
+        "已确认投影坐标系；原始点序形成自交，当前仅授权点位地图与点位 KML。",
+        ...(response.verification?.warnings || [])
+      ],
+      limitations: [
+        "当前 MultiPoint 结果不代表矿区边界、面积或点位连接顺序。",
+        "修正并重新确认点位顺序前，不得输出 Polygon 边界。"
+      ]
+    }));
+    return res.json({
+      success: true,
+      precisionMode: pointReviewResult.precisionMode,
+      selectedCrs: definition.id,
+      sourceRowCount: rows.length,
+      geometryMode: "points_only",
+      boundaryBlocked: true,
+      coordinateEngineV2,
+      finalizedCoordinateResult: pointReviewResult
+    });
+  }
+  if (!response.finalizedCoordinateResult?.geometryHash
+    || response.finalizedCoordinateResult?.kmlReady !== true) {
+    return res.status(422).json({
+      success: false,
+      code: "PROJECTED_FINALIZER_GATE_BLOCKED",
+      reasonCodes: response.finalizedCoordinateResult?.reasonCodes || [],
+      verificationStatus: response.verification?.status || "UNKNOWN",
+      verificationWarnings: response.verification?.warnings || []
+    });
+  }
+  return res.json({
+    success: true,
+    precisionMode: projectedPayload.precisionMode,
+    selectedCrs: definition.id,
+    sourceRowCount: rows.length,
+    geometryMode: "boundary",
+    boundaryBlocked: false,
+    coordinateEngineV2,
     finalizedCoordinateResult: response.finalizedCoordinateResult
   });
 });

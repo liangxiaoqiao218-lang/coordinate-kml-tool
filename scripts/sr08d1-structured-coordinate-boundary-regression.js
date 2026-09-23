@@ -17,7 +17,7 @@ const clock = () => "2026-08-26T00:00:00.000Z";
 const cases = [];
 function test(id, name, fn) { cases.push({ id, name, fn }); }
 
-function finalize(points, coordinateType, precisionMode) {
+function finalize(points, coordinateType, precisionMode, verification = { status: "PASS", warnings: [] }) {
   const group = {
     group_id: "group_1",
     geometry: "polygon",
@@ -33,7 +33,7 @@ function finalize(points, coordinateType, precisionMode) {
       requires_review: false,
       groups: [group]
     },
-    verification: { status: "PASS", warnings: [] },
+    verification,
     revision: { resultId: `${coordinateType}-specialized`, resultRevision: 1 }
   }), { clock });
 }
@@ -126,17 +126,25 @@ test("U5", "UTM30 converts and validates 8/8 expected WGS84 points", () => {
     assert.ok(Math.abs(point.lat - expectedUtmWgs84[index][1]) < 1e-10);
   });
 });
-test("U6", "UTM30 converted rows finalize as a polygon", () => {
+test("U6", "UTM30 converted rows form only a structural polygon candidate", () => {
   const geometry = geometryFromStructuredGroups([{ geometry: "polygon", points: utmPoints }]);
   assert.equal(geometry.ok, true);
   assert.equal(geometry.geometry.type, "Polygon");
   assert.equal(geometry.geometry.coordinates[0].length, 9);
 });
-test("U7", "UTM30 converted polygon passes the unified finalizer", () => {
-  assert.equal(finalize(utmPoints, "projected_xy", "utm30n-projected-x-y").decisionState, "AUTO_EXPORT");
+test("U7", "UTM30 self-intersection verification blocks polygon authority", () => {
+  const finalized = finalize(utmPoints, "projected_xy", "utm30n-projected-x-y", {
+    status: "BLOCK",
+    warnings: ["Coordinate Engine V2 detected polygon self-intersection."]
+  });
+  assert.equal(finalized.decisionState, "BLOCKED");
+  assert.equal(finalized.kmlReady, false);
 });
-test("U8", "UTM source CRS is converted before EPSG:4326 finalization", () => {
-  const finalized = finalize(utmPoints, "projected_xy", "utm30n-projected-x-y");
+test("U8", "UTM source CRS is converted before blocked boundary review", () => {
+  const finalized = finalize(utmPoints, "projected_xy", "utm30n-projected-x-y", {
+    status: "BLOCK",
+    warnings: ["Coordinate Engine V2 detected polygon self-intersection."]
+  });
   assert.equal(finalized.crs.id, "EPSG:4326");
   assert.equal(finalized.crs.axisOrder, "longitude_latitude");
 });
