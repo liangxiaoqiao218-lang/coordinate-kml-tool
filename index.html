@@ -2324,12 +2324,43 @@
     .upload-message {
       display: none;
       margin-top: 8px;
-      padding: 7px 9px;
-      border-radius: 8px;
+      padding: 10px 12px;
+      border: 1px solid #fed7aa;
+      border-radius: 10px;
       background: #fff7ed;
+      color: #7c2d12;
+      line-height: 1.4;
+      font-size: 13px;
+    }
+
+    .upload-message-content {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .upload-message-copy {
+      min-width: 0;
+    }
+
+    .upload-message-title {
       color: #b91c1c;
-      line-height: 1.35;
-      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .upload-message-detail {
+      color: #9a3412;
+      overflow-wrap: anywhere;
+    }
+
+    .upload-message-actions {
+      flex: 0 0 auto;
+    }
+
+    .upload-message-actions .inline-link {
+      white-space: nowrap;
     }
 
     .recognition-status {
@@ -8018,7 +8049,16 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function showUploadSupportMessage(text) {
       uploadMessage.style.display = "block";
-      uploadMessage.innerHTML = `${text}<button type="button" class="inline-link" onclick="openManualSupport()">人工协助识别</button>`;
+      const source = String(text || "").trim();
+      const isUnchargedFailure = /本次识别未完成|未扣除使用次数/.test(source);
+      let title = "图片识别未完成";
+      let detail = "未扣除使用次数。你可以重新识别，或使用人工协助。";
+      if (!isUnchargedFailure) {
+        const splitAt = source.search(/[：:]/);
+        title = splitAt > 0 ? source.slice(0, splitAt).trim() : "图片识别未完成";
+        detail = splitAt > 0 ? source.slice(splitAt + 1).trim() : source;
+      }
+      uploadMessage.innerHTML = `<div class="upload-message-content"><div class="upload-message-copy"><div class="upload-message-title">${escapeHtml(title)}</div><div class="upload-message-detail">${escapeHtml(detail || "请重新选择图片后再试。")}</div></div><div class="upload-message-actions"><button type="button" class="inline-link" onclick="openManualSupport()">人工协助</button></div></div>`;
     }
 
     function getRecognitionFailureMessage(errorMessage, responseStatus) {
@@ -14374,9 +14414,12 @@ ${placemarks}
           ? (data.kyrgyzGk?.integrity || analyzeKyrgyzGkRows(kyrgyzGkRows))
           : null;
         const isBftmProjected = data.precisionMode === "bftm-projected-x-y";
+        const isProjectedReview = data.precisionMode === "projected-x-y-review";
         const hasOrderReview = hasCoordinateOrderReviewSignal(data);
 
-        if (!isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
+        if (isProjectedReview) {
+          projectionType.value = "auto";
+        } else if (!isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
           const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
 
           if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeLikelyUtm30Coordinate(firstProjectedPair[0], firstProjectedPair[1])) {
@@ -14418,6 +14461,8 @@ ${placemarks}
                   : isKyrgyzGk
                     ? (kyrgyzGkText || data.coordinates || "")
                     : isBftmProjected
+                      ? (data.coordinates || projectedLines || "")
+                    : isProjectedReview
                       ? (data.coordinates || projectedLines || "")
                     : chooseBestCoordinateResult([
               recognizedLines,

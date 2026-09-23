@@ -17,6 +17,7 @@ export const LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS = Object.freeze({
 export const LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON = Object.freeze({
   COMPLETE_COVERAGE: "COMPLETE_COVERAGE",
   TRUSTED_DECIMAL_ROWS_ONLY: "TRUSTED_DECIMAL_ROWS_ONLY",
+  TRUSTED_PROJECTED_ROWS_ONLY: "TRUSTED_PROJECTED_ROWS_ONLY",
   SOURCE_LAYOUT_COVERAGE_MISMATCH: "SOURCE_LAYOUT_COVERAGE_MISMATCH",
   INVALID_READING_ORDER: "INVALID_READING_ORDER",
   INVALID_LINE_REGION: "INVALID_LINE_REGION",
@@ -685,6 +686,177 @@ export function extractProviderDecimalCoordinateEvidence({
         reason: "repeated_compact_platform_prefix_before_decimal_pair"
       })
       : null
+  });
+}
+
+function normalizeProjectedProviderNumber(value) {
+  const source = text(value).replace(/\u00a0/gu, " ").replace(/[−–—]/gu, "-");
+  if (!source) return null;
+  const compact = source.replace(/\s+/gu, "");
+  const normalized = /^[-+]?\d{1,3}(?:,\d{3}){1,3}(?:\.\d+)?$/u.test(compact)
+    ? compact.replace(/,/gu, "")
+    : compact.replace(/,/gu, ".");
+  if (!/^[-+]?\d{4,10}(?:\.\d+)?$/u.test(normalized)) return null;
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && Math.abs(numeric) >= 10000
+    ? normalized
+    : null;
+}
+
+function groupedProjectedProviderNumber(tokens = []) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return null;
+  if (tokens.length === 1) return normalizeProjectedProviderNumber(tokens[0]);
+  const unsigned = tokens.map(token => String(token || "").trim());
+  const sign = /^[+-]/u.test(unsigned[0]) ? unsigned[0][0] : "";
+  unsigned[0] = unsigned[0].replace(/^[+-]/u, "");
+  if (!/^\d{1,3}$/u.test(unsigned[0]) || unsigned.slice(1).some(token => !/^\d{3}$/u.test(token))) return null;
+  return normalizeProjectedProviderNumber(`${sign}${unsigned.join("")}`);
+}
+
+function parseProviderProjectedRow(line, { labelColumnVisible = false } = {}) {
+  const raw = text(line).replace(/[｜]/gu, "|");
+  if (!raw) return null;
+  const labelledCommaPair = raw.match(
+    /^\s*(?:POINT\s+)?([A-Z][A-Z0-9_.-]{0,15}|\d{1,3})\s*(?:[|:]\s*)?([+-]?\d{4,10}(?:\.\d+)?)\s*,\s*([+-]?\d{4,10}(?:\.\d+)?)\s*$/iu
+  );
+  if (labelledCommaPair) {
+    const x = normalizeProjectedProviderNumber(labelledCommaPair[2]);
+    const y = normalizeProjectedProviderNumber(labelledCommaPair[3]);
+    return x && y
+      ? Object.freeze({ label: labelledCommaPair[1], x, y, sourceText: raw })
+      : null;
+  }
+  const pipeParts = raw.split("|").map(part => part.trim()).filter(Boolean);
+  if (pipeParts.length === 4 && /^POINT$/iu.test(pipeParts[0])) {
+    const x = normalizeProjectedProviderNumber(pipeParts[2]);
+    const y = normalizeProjectedProviderNumber(pipeParts[3]);
+    if (x && y) return Object.freeze({ label: pipeParts[1], x, y, sourceText: raw });
+  }
+  if (pipeParts.length === 3) {
+    const x = normalizeProjectedProviderNumber(pipeParts[1]);
+    const y = normalizeProjectedProviderNumber(pipeParts[2]);
+    if (x && y) return Object.freeze({ label: pipeParts[0], x, y, sourceText: raw });
+  }
+
+  const tokens = raw.match(/[+-]?\d+(?:[.,]\d+)?/gu) || [];
+  let label = raw.match(/^\s*(?:POINT\s+)?([A-Z][A-Z0-9_.-]{0,15})\b/iu)?.[1] || "";
+  let coordinateTokens = tokens;
+  if (!label && labelColumnVisible && tokens.length >= 3 && /^\d{1,3}$/u.test(tokens[0])) {
+    label = tokens[0];
+    coordinateTokens = tokens.slice(1);
+  }
+  if (!label && !labelColumnVisible) return null;
+  if (coordinateTokens.length === 2) {
+    const x = normalizeProjectedProviderNumber(coordinateTokens[0]);
+    const y = normalizeProjectedProviderNumber(coordinateTokens[1]);
+    return x && y ? Object.freeze({ label, x, y, sourceText: raw }) : null;
+  }
+  const candidates = [];
+  for (let split = 1; split < coordinateTokens.length; split += 1) {
+    const x = groupedProjectedProviderNumber(coordinateTokens.slice(0, split));
+    const y = groupedProjectedProviderNumber(coordinateTokens.slice(split));
+    if (x && y) candidates.push({ x, y });
+  }
+  const unique = Array.from(new Map(candidates.map(candidate => [`${candidate.x}|${candidate.y}`, candidate])).values());
+  return unique.length === 1
+    ? Object.freeze({ label, ...unique[0], sourceText: raw })
+    : null;
+}
+
+// A generic Provider may faithfully transcribe a projected X/Y table even
+// when local OCR could not establish a private one-shot family binding. Keep
+// those rows available for review, but never infer a CRS from filenames,
+// countries, or numeric ranges and never grant Map/KML authority here.
+export function extractProviderProjectedCoordinateEvidence({
+  sourceText = "",
+  minimumRows = 3
+} = {}) {
+  const lines = String(sourceText || "").split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+  const unclassifiedTitleIndex = lines.findIndex(line => /UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE/iu.test(line));
+  const headerIndex = lines.findIndex(line => (
+    /\b(?:POINT|SOMMETS?|LABEL|ID|N[°O])\b[^\r\n]*(?:\bX\b|\bEASTING\b)[^\r\n]*(?:\bY\b|\bNORTHING\b)/iu.test(line)
+      || /(?:\bX\b|\bEASTING\b)[^\r\n]+(?:\bY\b|\bNORTHING\b)/iu.test(line)
+  ));
+  // Generic acquisition sometimes preserves all labelled rows and visible CRS
+  // text but omits a separate X/Y header. The server-issued unclassified title
+  // is then the required contract boundary; ordinary headerless number lists
+  // remain ineligible.
+  if (headerIndex < 0 && unclassifiedTitleIndex < 0) {
+    return Object.freeze({
+      text: "", rows: Object.freeze([]), rowCount: 0,
+      status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+      reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+      crsEvidence: null
+    });
+  }
+  const labelColumnVisible = unclassifiedTitleIndex >= 0
+    || /\b(?:POINT|SOMMETS?|LABEL|ID|N[°O])\b/iu.test(lines[headerIndex]);
+  const rowLines = lines.slice((headerIndex >= 0 ? headerIndex : unclassifiedTitleIndex) + 1);
+  const rows = [];
+  let projectedCandidateLineCount = 0;
+  let rejectedProjectedCandidateLineCount = 0;
+  for (const line of rowLines) {
+    const row = parseProviderProjectedRow(line, { labelColumnVisible });
+    if (row) {
+      rows.push(row);
+      projectedCandidateLineCount += 1;
+      continue;
+    }
+    const numericTokens = line.match(/[+-]?\d+(?:[.,]\d+)?/gu) || [];
+    if (numericTokens.length >= 2) {
+      projectedCandidateLineCount += 1;
+      rejectedProjectedCandidateLineCount += 1;
+    }
+  }
+  if (rows.length < minimumRows || rejectedProjectedCandidateLineCount > 0) {
+    return Object.freeze({
+      text: "", rows: Object.freeze([]), rowCount: 0,
+      status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+      reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+      crsEvidence: null,
+      diagnostics: Object.freeze({
+        contractTitlePresent: unclassifiedTitleIndex >= 0,
+        headerPresent: headerIndex >= 0,
+        projectedCandidateLineCount,
+        parsedProjectedRowCount: rows.length,
+        rejectedProjectedCandidateLineCount
+      })
+    });
+  }
+  const labels = rows.map(row => text(row.label));
+  if (labels.some(label => !label) || new Set(labels).size !== labels.length) {
+    return Object.freeze({
+      text: "", rows: Object.freeze([]), rowCount: 0,
+      status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+      reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+      crsEvidence: null
+    });
+  }
+  const explicitUtm = String(sourceText || "").match(/\bUTM\s*(?:ZONE\s*)?(\d{1,2})\s*([NS])\b/iu);
+  const explicitBftm = /\bBFTM\b/iu.test(String(sourceText || ""));
+  const crsEvidence = explicitBftm
+    ? Object.freeze({ status: "EXPLICIT", projection: "bftm", zone: null, hemisphere: "" })
+    : explicitUtm
+      ? Object.freeze({ status: "EXPLICIT", projection: "utm", zone: Number(explicitUtm[1]), hemisphere: explicitUtm[2].toUpperCase() })
+      : Object.freeze({ status: "UNCONFIRMED", projection: "", zone: null, hemisphere: "" });
+  const frozenRows = Object.freeze(rows.map((row, index) => Object.freeze({
+    ...row,
+    label: text(row.label) || String(index + 1)
+  })));
+  return Object.freeze({
+    text: frozenRows.map(row => `${row.label} | ${row.x} | ${row.y}`).join("\n"),
+    rows: frozenRows,
+    rowCount: frozenRows.length,
+    status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE,
+    reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.TRUSTED_PROJECTED_ROWS_ONLY,
+    crsEvidence,
+    diagnostics: Object.freeze({
+      contractTitlePresent: unclassifiedTitleIndex >= 0,
+      headerPresent: headerIndex >= 0,
+      projectedCandidateLineCount,
+      parsedProjectedRowCount: frozenRows.length,
+      rejectedProjectedCandidateLineCount
+    })
   });
 }
 

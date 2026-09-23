@@ -45,6 +45,7 @@ import {
 } from "../server/recognition/family-primary-routing.js";
 import { utmToWgs84 } from "../server/projection/utm.js";
 import {
+  extractProviderProjectedCoordinateEvidence,
   LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
   normalizeLocalOcrStructuredEvidence
 } from "../server/evidence-acquisition/local-ocr-map-layout-classifier.js";
@@ -130,12 +131,26 @@ if (process.argv[2] === '--http-candidate') {
     acquisitions += 1;
     if (acquisitions > 1) throw new Error('TEST_UNEXPECTED_SECOND_ACQUISITION');
     const prompt = JSON.parse(init.body).messages.map(message => JSON.stringify(message.content)).join(' ');
-    if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array') {
+    if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
+      || scenario === 'generic-projected-review') {
       assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
     } else {
       assert.ok(prompt.includes('缺失的 CRS'));
     }
-    const providerText = scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
+    const providerText = scenario === 'generic-projected-review'
+      ? [
+          'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
+          'Coordonnées en UTM',
+          'A | 727250,1219700',
+          'B | 728400,1219700',
+          'C | 728400,1219500',
+          'D | 728700,1219500',
+          'E | 728700,1220000',
+          'F | 729150,1220000',
+          'G | 729150,1219500',
+          'H | 729200,1219500'
+        ].join('\n')
+      : scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
       ? [
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
           'Point | Latitude nord | Longitude ouest',
@@ -401,6 +416,84 @@ test("production source orders Provider admission before attempt and defers usag
   assert.ok(indexSource.includes(fixedMessage));
   assert.match(indexSource, /RECOGNITION_BUDGET_EXHAUSTED/);
   assert.match(indexSource, /RECOGNITION_DEADLINE_EXCEEDED/);
+  assert.match(indexSource, /upload-message-content/);
+  assert.match(indexSource, /isProjectedReview/);
+  assert.match(indexSource, /projectionType\.value = "auto"/);
+});
+
+test("generic Provider projected table recovery preserves labels and blocks CRS inference", () => {
+  const evidence = extractProviderProjectedCoordinateEvidence({
+    sourceText: [
+      "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+      "Sommets | X | Y",
+      "A | 727250 | 1219700",
+      "B | 728400 | 1219700",
+      "C | 728400 | 1219500",
+      "D | 728700 | 1219500",
+      "E | 728700 | 1220000",
+      "F | 729150 | 1220000",
+      "G | 729150 | 1219500",
+      "H | 729200 | 1219500"
+    ].join("\n")
+  });
+  assert.equal(evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.equal(evidence.rowCount, 8);
+  assert.equal(evidence.rows[0].label, "A");
+  assert.equal(evidence.rows[0].x, "727250");
+  assert.equal(evidence.rows[0].y, "1219700");
+  assert.equal(evidence.rows.at(-1).label, "H");
+  assert.equal(evidence.crsEvidence.status, "UNCONFIRMED");
+  assert.match(evidence.text, /^A \| 727250 \| 1219700/m);
+});
+
+test("projected recovery handles thousand-space rows but rejects ambiguous or unlabeled structures", () => {
+  const spaced = extractProviderProjectedCoordinateEvidence({
+    sourceText: [
+      "Point X Y",
+      "1 658 800 1 364 200",
+      "2 651 600 1 364 200",
+      "3 651 600 1 364 000"
+    ].join("\n")
+  });
+  assert.equal(spaced.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.deepEqual([spaced.rows[0].label, spaced.rows[0].x, spaced.rows[0].y], ["1", "658800", "1364200"]);
+  const noHeader = extractProviderProjectedCoordinateEvidence({
+    sourceText: "A 727250 1219700\nB 728400 1219700\nC 728400 1219500"
+  });
+  assert.equal(noHeader.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+  const contractBoundNoHeader = extractProviderProjectedCoordinateEvidence({
+    sourceText: [
+      "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+      "Coordonnées en UTM",
+      "A 727250 1219700",
+      "B 728400 1219700",
+      "C 728400 1219500"
+    ].join("\n")
+  });
+  assert.equal(contractBoundNoHeader.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.deepEqual(
+    contractBoundNoHeader.rows.map(row => [row.label, row.x, row.y]),
+    [["A", "727250", "1219700"], ["B", "728400", "1219700"], ["C", "728400", "1219500"]]
+  );
+  const labelledCommaRows = extractProviderProjectedCoordinateEvidence({
+    sourceText: [
+      "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+      "Coordonnées géographiques en UTM",
+      "A | 727250,1219700",
+      "B | 728400,1219700",
+      "C | 728400,1219500"
+    ].join("\n")
+  });
+  assert.equal(labelledCommaRows.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.deepEqual(
+    labelledCommaRows.rows.map(row => [row.label, row.x, row.y]),
+    [["A", "727250", "1219700"], ["B", "728400", "1219700"], ["C", "728400", "1219500"]]
+  );
+  assert.equal(labelledCommaRows.diagnostics.parsedProjectedRowCount, 3);
+  const ambiguous = extractProviderProjectedCoordinateEvidence({
+    sourceText: "Point | X | Y\n1 | 727250 | 1219700\n2 | 728400 | 1219700\n3 | 728400 | 1219500 | 99"
+  });
+  assert.equal(ambiguous.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
 });
 
 test("local OCR worker rejection is normalized and sanitized", async () => {
@@ -1767,6 +1860,36 @@ test("one-shot structured HTTP generic DMS recovery accepts Provider text-block 
   assert.equal(payload.coordinates.split("\n").length, 4);
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+});
+
+test("one-shot structured actual HTTP generic projected recovery preserves source X/Y and blocks export", async () => {
+  const payload = await runHttpCandidate("generic-projected-review");
+  const expectedCoordinates = [
+    "A | 727250 | 1219700",
+    "B | 728400 | 1219700",
+    "C | 728400 | 1219500",
+    "D | 728700 | 1219500",
+    "E | 728700 | 1220000",
+    "F | 729150 | 1220000",
+    "G | 729150 | 1219500",
+    "H | 729200 | 1219500"
+  ].join("\n");
+  assert.equal(payload.success, true);
+  assert.equal(payload.precisionMode, "projected-x-y-review");
+  assert.equal(payload.requiresReview, true);
+  assert.equal(payload.providerProjectedReviewEvidence.status, "COMPLETE");
+  assert.equal(payload.providerProjectedReviewEvidence.coordinateRowCount, 8);
+  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, "UNCONFIRMED");
+  assert.equal(payload.coordinates, expectedCoordinates);
+  assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedCoordinates);
+  assert.ok(payload.parserTrace.includes("PROVIDER:trusted_projected_rows_recovered"));
+  assert.equal(payload.coordinateEngineV2.requires_review, true);
+  assert.equal(payload.finalizedCoordinateResult.geometry, null);
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
+  const usageAuthority = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: payload });
+  assert.equal(usageAuthority.eligible, true);
+  assert.equal(usageAuthority.reason, "PROJECTED_REVIEW_SERVER_AUTHORITY_ESTABLISHED");
 });
 
 test("one-shot structured server gates conformance before parsing and returns sanitized review", () => {

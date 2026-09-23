@@ -23,6 +23,7 @@ import {
   COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS,
   COORDINATE_USAGE_SESSION_COOKIE,
   CoordinateUsageAtomicityService,
+  buildProjectedCoordinateReviewUsageAuthority,
   buildUnchargedCoordinateFailureResponse,
   createCoordinateUsageCommitController,
   createCoordinateUsageRuntimeDiagnostic,
@@ -114,6 +115,7 @@ import {
 } from "./server/evidence-acquisition/index.js";
 import {
   extractProviderDecimalCoordinateEvidence,
+  extractProviderProjectedCoordinateEvidence,
   extractTrustedLocalOcrDecimalCoordinateEvidence,
   LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
   normalizeLocalOcrStructuredEvidence
@@ -15776,6 +15778,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     });
     const providerMessageDiagnostic = buildProviderMessageDiagnostic(response, rawText);
     const providerDmsDiagnostic = extractProviderDmsReviewEvidence(rawText);
+    const providerProjectedDiagnostic = extractProviderProjectedCoordinateEvidence({ sourceText: rawText });
     console.log("One-shot acquisition conformance:", {
       family: oneShotAcquisitionConformance.family,
       status: oneShotAcquisitionConformance.status,
@@ -15804,7 +15807,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerDmsCandidateRowCount: providerDmsDiagnostic.candidateRowCount,
       providerDmsSourceRowCount: providerDmsDiagnostic.sourceRowCount,
       providerDmsCoordinateRowCount: providerDmsDiagnostic.coordinateRowCount,
-      providerDmsAxisDirectionBound: providerDmsDiagnostic.axisDirectionBound
+      providerDmsAxisDirectionBound: providerDmsDiagnostic.axisDirectionBound,
+      providerProjectedStatus: providerProjectedDiagnostic.status,
+      providerProjectedContractTitlePresent: providerProjectedDiagnostic.diagnostics?.contractTitlePresent === true,
+      providerProjectedHeaderPresent: providerProjectedDiagnostic.diagnostics?.headerPresent === true,
+      providerProjectedCandidateLineCount: providerProjectedDiagnostic.diagnostics?.projectedCandidateLineCount || 0,
+      providerProjectedParsedRowCount: providerProjectedDiagnostic.diagnostics?.parsedProjectedRowCount || 0,
+      providerProjectedRejectedCandidateLineCount: providerProjectedDiagnostic.diagnostics?.rejectedProjectedCandidateLineCount || 0
     });
     if (oneShotAcquisitionConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
       const trustedLocalSourceRows = oneShotLocalOcrSourceText.split(/\r?\n/u)
@@ -15915,6 +15924,100 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           rawHint: ""
         });
         return res.json(buildCoordinateVerificationResponse(providerReviewPayload, providerReviewEngine));
+      }
+      const trustedProviderProjectedEvidence = providerProjectedDiagnostic;
+      if (trustedProviderProjectedEvidence.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE) {
+        const consumeResult = await consumeCoordinateUsage({
+          note: "Coordinate recognition consumed after trusted Provider projected-row review recovery"
+        });
+        if (!consumeResult.success) {
+          return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+            success: false,
+            reason: consumeResult.reason || "db_error",
+            code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+            error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const providerProjectedReviewPayload = {
+          success: true,
+          model: `${aliyunVisionModel}+trusted-provider-projected-review`,
+          rawText,
+          coordinates: trustedProviderProjectedEvidence.text,
+          precisionMode: "projected-x-y-review",
+          requiresReview: true,
+          warning: trustedProviderProjectedEvidence.crsEvidence?.status === "EXPLICIT"
+            ? "已完整提取可见的投影 X/Y 行；由于本次采集合同未建立完整来源绑定，请对照原图确认点号、顺序和 CRS 后再查看地图或下载 KML。"
+            : "已完整提取可见的投影 X/Y 行，但原图未提供可唯一确认的区带或 CRS；请对照原图核对并确认坐标系后再查看地图或下载 KML。",
+          providerProjectedReviewEvidence: {
+            status: trustedProviderProjectedEvidence.status,
+            coordinateRowCount: trustedProviderProjectedEvidence.rowCount,
+            crsEvidence: trustedProviderProjectedEvidence.crsEvidence
+          },
+          acquisitionContractConformance: oneShotAcquisitionConformance,
+          parserTrace: [
+            "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
+            "PROVIDER:trusted_projected_rows_recovered",
+            "PROJECTED_CRS:user_confirmation_required"
+          ],
+          quota: consumeResult.quota
+        };
+        const providerProjectedReviewEngine = normalizeCoordinateEngineV2Result({
+          schema_version: "coordinate_engine_v2",
+          coordinate_type: "projected_xy",
+          precision_mode: "projected-x-y-review",
+          source_crs: null,
+          confidence: 0.75,
+          requires_review: true,
+          source: {
+            image_count: 1,
+            ocr_engine: providerProjectedReviewPayload.model,
+            fallback_used: false
+          },
+          groups: [{
+            group_id: "group_1",
+            group_name: "坐标组1",
+            geometry: getCoordinateEngineV2Geometry(trustedProviderProjectedEvidence.rows),
+            confidence: 0.75,
+            requires_review: true,
+            kml_ready: false,
+            warnings: [providerProjectedReviewPayload.warning],
+            points: trustedProviderProjectedEvidence.rows.map(row => ({
+              label: row.label,
+              raw: row.sourceText,
+              lat: null,
+              lon: null,
+              x: Number(row.x),
+              y: Number(row.y),
+              projection: null,
+              source_crs: null,
+              confidence: 0.75,
+              requires_review: true,
+              warnings: []
+            }))
+          }],
+          warnings: [providerProjectedReviewPayload.warning],
+          debug: {
+            matched_detectors: ["trusted_provider_projected_rows"],
+            blocked_fallbacks: ["crs_inference", "map", "kml"],
+            supplemental_fallbacks: []
+          }
+        }, { forceRequiresReview: true });
+        const projectedReviewResponse = {
+          ...buildCoordinateVerificationResponse(
+          providerProjectedReviewPayload,
+          providerProjectedReviewEngine
+          ),
+          requestId: recognitionBudget?.requestId || null
+        };
+        return res.json({
+          ...projectedReviewResponse,
+          projectedCoordinateReviewAuthority: buildProjectedCoordinateReviewUsageAuthority({
+            recognitionRequestId: recognitionBudget?.requestId,
+            body: projectedReviewResponse
+          })
+        });
       }
       const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText);
       if (trustedProviderDmsEvidence.status === "COMPLETE") {

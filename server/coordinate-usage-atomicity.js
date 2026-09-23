@@ -22,6 +22,7 @@ import { evaluateAgenticCoordinateUsageAuthority } from "./agentic-coordinate-us
 
 export const COORDINATE_USAGE_ATOMICITY_VERSION = "coordinate_usage_atomicity_p0_v1";
 export const COORDINATE_USAGE_SEAL_VERSION = "AES_256_GCM_V1";
+export const PROJECTED_COORDINATE_REVIEW_USAGE_AUTHORITY_VERSION = "projected_coordinate_review_usage_authority/v1";
 export const COORDINATE_USAGE_SESSION_COOKIE = "__Host-geokit_coordinate_usage_session";
 export const COORDINATE_USAGE_COMMIT_STATE = Object.freeze({
   PREPARED: "PREPARED",
@@ -371,9 +372,158 @@ function fixedError(code, details = {}) {
   return error;
 }
 
+function normalizeProjectedCoordinateReviewAuthorityEvidence(body = null) {
+  if (!body || body.success !== true || body.precisionMode !== "projected-x-y-review" || body.requiresReview !== true) {
+    return null;
+  }
+  const evidence = body.providerProjectedReviewEvidence;
+  const rowCount = Number(evidence?.coordinateRowCount);
+  const crsStatus = String(evidence?.crsEvidence?.status || "");
+  const crsProjection = String(evidence?.crsEvidence?.projection || "");
+  const crsZone = evidence?.crsEvidence?.zone == null ? null : Number(evidence.crsEvidence.zone);
+  const crsHemisphere = String(evidence?.crsEvidence?.hemisphere || "");
+  if (evidence?.status !== "COMPLETE"
+    || !Number.isSafeInteger(rowCount)
+    || rowCount < 3
+    || rowCount > 500
+    || !["UNCONFIRMED", "EXPLICIT"].includes(crsStatus)) {
+    return null;
+  }
+  if ((crsStatus === "UNCONFIRMED" && (crsProjection !== "" || crsZone !== null || crsHemisphere !== ""))
+    || (crsStatus === "EXPLICIT"
+      && !((crsProjection === "bftm" && crsZone === null && crsHemisphere === "")
+        || (crsProjection === "utm" && Number.isInteger(crsZone) && crsZone >= 1 && crsZone <= 60 && ["N", "S"].includes(crsHemisphere))))) {
+    return null;
+  }
+  const coordinates = String(body.coordinates || "").trim();
+  const lines = coordinates.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+  if (lines.length !== rowCount) return null;
+  const coordinateRows = [];
+  const labels = new Set();
+  for (const line of lines) {
+    const match = line.match(/^([A-Z][A-Z0-9_.-]{0,15}|\d{1,3}) \| ([+-]?\d{4,10}(?:\.\d+)?) \| ([+-]?\d{4,10}(?:\.\d+)?)$/iu);
+    const labelIdentity = String(match?.[1] || "").toUpperCase();
+    if (!match || labels.has(labelIdentity)) return null;
+    labels.add(labelIdentity);
+    coordinateRows.push(Object.freeze({ label: match[1], x: match[2], y: match[3] }));
+  }
+  if (body.sourceCoordinateRepresentation?.displayText !== coordinates) return null;
+  const engine = body.coordinateEngineV2;
+  const groups = Array.isArray(engine?.groups) ? engine.groups : [];
+  const points = groups.length === 1 && Array.isArray(groups[0]?.points) ? groups[0].points : [];
+  if (engine?.coordinate_type !== "projected_xy"
+    || engine?.requires_review !== true
+    || groups[0]?.requires_review !== true
+    || groups[0]?.kml_ready !== false
+    || points.length !== coordinateRows.length) {
+    return null;
+  }
+  for (let index = 0; index < coordinateRows.length; index += 1) {
+    const expected = coordinateRows[index];
+    const point = points[index];
+    if (String(point?.label || "") !== expected.label
+      || Number(point?.x) !== Number(expected.x)
+      || Number(point?.y) !== Number(expected.y)
+      || point?.lat != null
+      || point?.lon != null
+      || point?.source_crs != null
+      || point?.requires_review !== true) {
+      return null;
+    }
+  }
+  const finalized = body.finalizedCoordinateResult;
+  if (!finalized
+    || finalized.schemaVersion !== FINALIZED_COORDINATE_SCHEMA_VERSION
+    || !safeIdentifier(finalized.resultId)
+    || !Number.isSafeInteger(finalized.resultRevision)
+    || finalized.resultRevision < 1
+    || finalized.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
+    || finalized.geometry != null
+    || finalized.geometryHash != null
+    || finalized.kmlReady !== false
+    || finalized.requiresReview !== true) {
+    return null;
+  }
+  return Object.freeze({
+    precisionMode: body.precisionMode,
+    coordinates,
+    coordinateRows: Object.freeze(coordinateRows),
+    coordinateRowCount: rowCount,
+    crsEvidence: Object.freeze({
+      status: crsStatus,
+      projection: crsProjection,
+      zone: crsZone,
+      hemisphere: crsHemisphere
+    }),
+    finalizedResultId: finalized.resultId,
+    finalizedResultRevision: finalized.resultRevision,
+    finalizedDecisionState: finalized.decisionState
+  });
+}
+
+export function hashProjectedCoordinateReviewResult(body) {
+  const evidence = normalizeProjectedCoordinateReviewAuthorityEvidence(body);
+  if (!evidence) return null;
+  return createHash("sha256").update(canonicalJson(evidence)).digest("hex");
+}
+
+export function buildProjectedCoordinateReviewUsageAuthority({ recognitionRequestId, body } = {}) {
+  const requestId = String(recognitionRequestId || "").trim().toLowerCase();
+  const resultHash = hashProjectedCoordinateReviewResult(body);
+  if (!isRecognitionRequestId(requestId) || !resultHash) {
+    throw fixedError(COORDINATE_USAGE_ERROR_CODE.AUTHORITY_NOT_ESTABLISHED);
+  }
+  return Object.freeze({
+    schemaVersion: PROJECTED_COORDINATE_REVIEW_USAGE_AUTHORITY_VERSION,
+    recognitionRequestId: requestId,
+    resultId: `projected-review:${requestId}`,
+    resultRevision: 1,
+    decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+    resultHash
+  });
+}
+
+export function evaluateProjectedCoordinateReviewUsageAuthority({ httpStatus = 200, body = null } = {}) {
+  const reject = reason => Object.freeze({ eligible: false, reason, identity: null });
+  if (!Number.isInteger(Number(httpStatus)) || Number(httpStatus) < 200 || Number(httpStatus) >= 300 || body?.success !== true) {
+    return reject("HTTP_OR_BODY_NOT_SUCCESSFUL");
+  }
+  const authority = body?.projectedCoordinateReviewAuthority;
+  const requestId = String(body?.requestId || "").trim().toLowerCase();
+  if (!authority || authority.schemaVersion !== PROJECTED_COORDINATE_REVIEW_USAGE_AUTHORITY_VERSION) {
+    return reject("PROJECTED_REVIEW_AUTHORITY_MISSING");
+  }
+  if (!isRecognitionRequestId(requestId)
+    || authority.recognitionRequestId !== requestId
+    || authority.resultId !== `projected-review:${requestId}`
+    || authority.resultRevision !== 1
+    || authority.decisionState !== COORDINATE_DECISION_STATE.REVIEW_REQUIRED) {
+    return reject("PROJECTED_REVIEW_AUTHORITY_IDENTITY_INVALID");
+  }
+  const resultHash = hashProjectedCoordinateReviewResult(body);
+  if (!resultHash
+    || !/^[a-f0-9]{64}$/i.test(String(authority.resultHash || ""))
+    || !constantTimeEqual(authority.resultHash, resultHash)) {
+    return reject("PROJECTED_REVIEW_RESULT_HASH_MISMATCH");
+  }
+  return Object.freeze({
+    eligible: true,
+    reason: "PROJECTED_REVIEW_SERVER_AUTHORITY_ESTABLISHED",
+    identity: Object.freeze({
+      resultId: authority.resultId,
+      resultRevision: authority.resultRevision,
+      decisionState: authority.decisionState,
+      geometryHash: `sha256:${resultHash}`
+    })
+  });
+}
+
 export function evaluateCoordinateUsageAuthority({ httpStatus = 200, body = null } = {}) {
   if (body?.agenticCoordinateAuthority) {
     return evaluateAgenticCoordinateUsageAuthority({ httpStatus, body });
+  }
+  if (body?.projectedCoordinateReviewAuthority) {
+    return evaluateProjectedCoordinateReviewUsageAuthority({ httpStatus, body });
   }
   const result = body?.finalizedCoordinateResult;
   const reject = reason => Object.freeze({ eligible: false, reason, identity: null });

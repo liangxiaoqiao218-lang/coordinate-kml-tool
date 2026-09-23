@@ -7,6 +7,7 @@ import {
   COORDINATE_USAGE_COMMIT_RESULT,
   COORDINATE_USAGE_ERROR_CODE,
   CoordinateUsageAtomicityService,
+  buildProjectedCoordinateReviewUsageAuthority,
   buildUnchargedCoordinateFailureResponse,
   createCoordinateUsageCommitController,
   createCoordinateUsageSessionToken,
@@ -79,6 +80,61 @@ function authorityPayload(overrides = {}) {
     coordinates: "20,10",
     finalizedCoordinateResult
   };
+}
+
+function projectedReviewPayload() {
+  const coordinates = [
+    "A | 727250 | 1219700",
+    "B | 728400 | 1219700",
+    "C | 728400 | 1219500"
+  ].join("\n");
+  const rows = coordinates.split("\n").map(line => {
+    const [label, x, y] = line.split("|").map(value => value.trim());
+    return { label, x: Number(x), y: Number(y) };
+  });
+  const body = {
+    success: true,
+    requestId,
+    coordinates,
+    precisionMode: "projected-x-y-review",
+    requiresReview: true,
+    providerProjectedReviewEvidence: {
+      status: "COMPLETE",
+      coordinateRowCount: rows.length,
+      crsEvidence: { status: "UNCONFIRMED" }
+    },
+    sourceCoordinateRepresentation: { displayText: coordinates },
+    coordinateEngineV2: {
+      coordinate_type: "projected_xy",
+      requires_review: true,
+      groups: [{
+        requires_review: true,
+        kml_ready: false,
+        points: rows.map(row => ({
+          ...row,
+          lat: null,
+          lon: null,
+          source_crs: null,
+          requires_review: true
+        }))
+      }]
+    },
+    finalizedCoordinateResult: {
+      schemaVersion: FINALIZED_COORDINATE_SCHEMA_VERSION,
+      resultId: "synthetic-projected-review",
+      resultRevision: 1,
+      decisionState: COORDINATE_DECISION_STATE.BLOCKED,
+      geometry: null,
+      geometryHash: null,
+      kmlReady: false,
+      requiresReview: true
+    }
+  };
+  body.projectedCoordinateReviewAuthority = buildProjectedCoordinateReviewUsageAuthority({
+    recognitionRequestId: requestId,
+    body
+  });
+  return body;
 }
 
 function createMemoryRpc({ commitUnknown = false } = {}) {
@@ -247,6 +303,47 @@ test("review-required authority accepts coherent technical KML readiness behind 
     kmlReady: true
   });
   assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body }).eligible, true);
+});
+
+test("complete projected review evidence is chargeable while map and KML remain blocked", () => {
+  const body = projectedReviewPayload();
+  const evaluated = evaluateCoordinateUsageAuthority({ httpStatus: 200, body });
+  assert.equal(evaluated.eligible, true);
+  assert.equal(evaluated.reason, "PROJECTED_REVIEW_SERVER_AUTHORITY_ESTABLISHED");
+  assert.match(evaluated.identity.geometryHash, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(body.finalizedCoordinateResult.geometry, null);
+  assert.equal(body.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(body.finalizedCoordinateResult.decisionState, COORDINATE_DECISION_STATE.BLOCKED);
+});
+
+test("projected review authority rejects coordinate, CRS, and export-permission tampering", () => {
+  for (const mutate of [
+    body => { body.coordinates = body.coordinates.replace("727250", "727251"); },
+    body => { body.providerProjectedReviewEvidence.crsEvidence.status = "INFERRED"; },
+    body => { body.finalizedCoordinateResult.kmlReady = true; },
+    body => { body.finalizedCoordinateResult.geometry = geometry; }
+  ]) {
+    const body = structuredClone(projectedReviewPayload());
+    mutate(body);
+    assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body }).eligible, false);
+  }
+});
+
+test("projected review result is sealed and consumes exactly one usage", async () => {
+  const mock = createMemoryRpc();
+  const service = new CoordinateUsageAtomicityService({ supabase: mock, sealKey });
+  const controller = createCoordinateUsageCommitController({
+    atomicityService: service,
+    recognitionRequestId: requestId,
+    userId,
+    sessionBindingSha256
+  });
+  controller.schedule({ note: "synthetic projected review" });
+  const settled = await controller.settle({ httpStatus: 200, body: projectedReviewPayload() });
+  assert.equal(settled.kind, "USAGE_COMMITTED");
+  assert.equal(mock.state.freeBalance, 1);
+  assert.equal(mock.state.usageLogs.length, 1);
+  assert.equal(JSON.stringify(mock.state.rows.get(requestId).envelope).includes("727250"), false);
 });
 
 test("review-required KML readiness is rejected without matching technical authority", () => {
