@@ -1185,17 +1185,28 @@
     }
     .projected-crs-review-title { margin: 0; font-size: 15px; font-weight: 900; }
     .projected-crs-review-hint { margin: 0; font-size: 13px; line-height: 1.55; }
-    .projected-crs-review-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
-    .projected-crs-review-controls select,
-    .projected-crs-review-controls button {
+    .projected-crs-review-advanced {
+      border-top: 1px solid rgba(180, 83, 9, .2);
+      padding-top: 8px;
+    }
+    .projected-crs-review-advanced summary {
+      width: fit-content;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .projected-crs-review-controls { display: grid; gap: 7px; margin-top: 9px; }
+    .projected-crs-review-controls label,
+    .projected-crs-review-note { font-size: 12px; line-height: 1.5; }
+    .projected-crs-review-controls select {
       min-height: 42px;
       border-radius: 8px;
       font-size: 14px;
       font-weight: 800;
     }
     .projected-crs-review-controls select { padding: 0 10px; border: 1px solid #f59e0b; background: #fff; color: #78350f; }
-    .projected-crs-review-controls button { padding: 0 16px; border: 1px solid #b45309; background: #b45309; color: #fff; cursor: pointer; }
-    .projected-crs-review-controls button:disabled { opacity: .55; cursor: not-allowed; }
+    .projected-crs-review-note { margin: 0; }
+    .projected-crs-review-help { margin: 0; font-size: 13px; line-height: 1.55; }
 
     .coordinate-result-actions .coordinate-kml-action,
     .coordinate-result-actions .coordinate-copy-action {
@@ -4624,18 +4635,23 @@
       <div id="recognitionProgress" class="recognition-status" aria-live="polite"></div>
 
       <section id="projectedCrsReviewPanel" class="projected-crs-review-panel" aria-live="polite" hidden>
-        <p id="projectedCrsReviewTitle" class="projected-crs-review-title">先确认投影坐标系</p>
-        <p id="projectedCrsReviewHint" class="projected-crs-review-hint">原图已识别出 X/Y，但未提供可唯一确认的区带或 CRS。请选择与原始资料一致的坐标系；不确认时地图与 KML 会保持关闭。</p>
-        <div class="projected-crs-review-controls">
-          <select id="projectedCrsSelection" aria-label="选择投影坐标系">
-            <option value="" selected>请选择坐标系</option>
-            <option value="utm30n">WGS 84 / UTM 30N（EPSG:32630）</option>
-            <option value="utm29n">WGS 84 / UTM 29N（EPSG:32629）</option>
-            <option value="utm28n">WGS 84 / UTM 28N（EPSG:32628）</option>
-            <option value="bftm">BFTM / ITRF 2008</option>
-          </select>
-          <button id="projectedCrsConfirmAction" type="button" onclick="confirmProjectedCoordinateCrs()">确认并启用地图/KML</button>
-        </div>
+        <p id="projectedCrsReviewTitle" class="projected-crs-review-title">地图定位信息需要核对</p>
+        <p id="projectedCrsReviewHint" class="projected-crs-review-hint">图片中的坐标数字已经识别，但缺少把它准确放到地图上的说明。系统不会猜测位置。</p>
+        <p id="projectedCrsReviewHelp" class="projected-crs-review-help">请上传包含位置说明的完整图片，或使用 <button type="button" class="text-link-button" onclick="openManualSupport()">人工协助</button>。</p>
+        <details id="projectedCrsAdvanced" class="projected-crs-review-advanced">
+          <summary>我有测量资料，手动设置</summary>
+          <div class="projected-crs-review-controls">
+            <label for="projectedCrsSelection">请严格按照原始测量资料选择</label>
+            <select id="projectedCrsSelection" aria-label="按原始测量资料选择地图定位方式">
+              <option value="" selected>请选择原始资料中明确标注的类型</option>
+              <option value="utm30n">UTM 30N（原资料明确标注 30N）</option>
+              <option value="utm29n">UTM 29N（原资料明确标注 29N）</option>
+              <option value="utm28n">UTM 28N（原资料明确标注 28N）</option>
+              <option value="bftm">BFTM（原资料明确标注 BFTM）</option>
+            </select>
+            <p class="projected-crs-review-note">选择后仍使用下方“查看地图”。如果原资料没有明确标注，请不要试选。</p>
+          </div>
+        </details>
       </section>
 
     <div class="coordinate-result-actions" aria-label="坐标结果操作">
@@ -5159,8 +5175,9 @@ Au值 = 纯度 × 10 后取整数</div>
     const projectedCrsReviewPanel = document.getElementById("projectedCrsReviewPanel");
     const projectedCrsReviewTitle = document.getElementById("projectedCrsReviewTitle");
     const projectedCrsReviewHint = document.getElementById("projectedCrsReviewHint");
+    const projectedCrsReviewHelp = document.getElementById("projectedCrsReviewHelp");
     const projectedCrsSelection = document.getElementById("projectedCrsSelection");
-    const projectedCrsConfirmAction = document.getElementById("projectedCrsConfirmAction");
+    const projectedCrsAdvanced = document.getElementById("projectedCrsAdvanced");
     const handwrittenDmsReviewPanel = document.getElementById("handwrittenDmsReviewPanel");
     const imagePreview = document.getElementById("imagePreview");
     const imageModal = document.getElementById("imageModal");
@@ -5306,6 +5323,11 @@ Au值 = 纯度 × 10 后取整数</div>
     let internalNormalizedCoordinateGroups = null;
     let internalKmlSourceDirty = false;
     let activeCoordinatePrecisionMode = "";
+    let activeProjectedReviewEvidence = null;
+    let activeConfirmedProjectedCrs = "";
+    let activeProjectedSelectionDirty = false;
+    let activeProjectedBoundaryBlocked = false;
+    let projectedCrsReviewRequested = false;
     let activeCoordinateEngineV2 = null;
     let activeCoordinateFieldConflictCount = 0;
     let activeFinalizedCoordinateResult = null;
@@ -7268,8 +7290,43 @@ Au值 = 纯度 × 10 后取整数</div>
       if (pages.spatialResult) delete pages.spatialResult.dataset.spatialCacheKey;
     }
 
+    function resetProjectedCoordinateUiState({ clearSelection = true } = {}) {
+      activeProjectedReviewEvidence = null;
+      activeConfirmedProjectedCrs = "";
+      activeProjectedSelectionDirty = false;
+      activeProjectedBoundaryBlocked = false;
+      projectedCrsReviewRequested = false;
+      if (clearSelection && projectedCrsSelection) projectedCrsSelection.value = "";
+      if (projectedCrsAdvanced) projectedCrsAdvanced.open = false;
+    }
+
     function isProjectedCoordinateReviewPending() {
       return activeCoordinatePrecisionMode === "projected-x-y-review";
+    }
+
+    function isProjectedCoordinateWorkflow() {
+      return [
+        "projected-x-y-review",
+        "projected-x-y-confirmed",
+        "projected-x-y-confirmed-points-only"
+      ].includes(activeCoordinatePrecisionMode);
+    }
+
+    function projectedCrsFromExplicitEvidence(evidence = activeProjectedReviewEvidence) {
+      const crs = evidence?.crsEvidence;
+      if (String(crs?.status || "").toUpperCase() !== "EXPLICIT") return "";
+      if (String(crs?.projection || "").toLowerCase() === "bftm") return "bftm";
+      const zone = Number(crs?.zone);
+      const hemisphere = String(crs?.hemisphere || "").toUpperCase();
+      return String(crs?.projection || "").toLowerCase() === "utm"
+        && hemisphere === "N" && [28, 29, 30].includes(zone)
+        ? `utm${zone}n`
+        : "";
+    }
+
+    function projectedCrsSelectionNeedsConfirmation() {
+      if (!isProjectedCoordinateWorkflow()) return false;
+      return isProjectedCoordinateReviewPending() || activeProjectedSelectionDirty;
     }
 
     function getProjectedCoordinateReviewIdentity() {
@@ -7280,44 +7337,47 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function renderProjectedCrsReviewPanel({ confirmed = false, selectedCrs = "", pointsOnly = false } = {}) {
       if (!projectedCrsReviewPanel) return;
-      const visible = confirmed || isProjectedCoordinateReviewPending();
+      const visible = isProjectedCoordinateWorkflow() && (confirmed || projectedCrsReviewRequested);
       projectedCrsReviewPanel.hidden = !visible;
       projectedCrsReviewPanel.classList.toggle("is-confirmed", confirmed);
       if (!visible) return;
       if (confirmed) {
-        projectedCrsReviewTitle.textContent = "投影坐标系已确认";
+        projectedCrsReviewTitle.textContent = pointsOnly ? "只能核对点位，暂不能确认矿区边界" : "地图位置已确认";
         projectedCrsReviewHint.textContent = pointsOnly
-          ? `已按 ${selectedCrs} 在服务端转换。原始点序存在自交，当前仅显示和导出独立点位，不代表矿区边界或面积；工作区继续保留原始 X/Y。`
-          : `已按 ${selectedCrs} 在服务端转换；工作区继续保留原始 X/Y，地图和 KML 共用同一份转换结果。`;
-        projectedCrsConfirmAction.disabled = true;
+          ? "已定位各坐标点，但按原图顺序连接会交叉。为避免生成错误矿区，地图只用于点位核对，矿区边界和 KML 保持关闭。"
+          : "地图和 KML 已使用同一份核对结果；工作区继续保留原图中的坐标数字。";
+        if (projectedCrsReviewHelp) projectedCrsReviewHelp.hidden = !pointsOnly;
       } else {
-        projectedCrsReviewTitle.textContent = "先确认投影坐标系";
-        projectedCrsReviewHint.textContent = "原图已识别出 X/Y，但未提供可唯一确认的区带或 CRS。请选择与原始资料一致的坐标系；不确认时地图与 KML 会保持关闭。";
-        projectedCrsConfirmAction.disabled = false;
+        projectedCrsReviewTitle.textContent = activeProjectedSelectionDirty ? "地图位置将重新核对" : "地图定位信息需要核对";
+        projectedCrsReviewHint.textContent = activeProjectedSelectionDirty
+          ? "你选择了新的地图定位方式。再次点击“查看地图”后才会使用，原图坐标数字不会被改写。"
+          : "图片中的坐标数字已经识别，但缺少把它准确放到地图上的说明。系统不会猜测位置。";
+        if (projectedCrsReviewHelp) projectedCrsReviewHelp.hidden = false;
       }
+      if (selectedCrs && projectedCrsSelection) projectedCrsSelection.value = selectedCrs;
+      if (projectedCrsAdvanced && confirmed && !activeProjectedSelectionDirty) projectedCrsAdvanced.open = false;
     }
 
     function focusProjectedCrsReviewPanel() {
+      projectedCrsReviewRequested = true;
       renderProjectedCrsReviewPanel();
       projectedCrsReviewPanel?.scrollIntoView({ behavior: "smooth", block: "center" });
-      projectedCrsSelection?.focus();
     }
 
     async function confirmProjectedCoordinateCrs() {
-      if (!isProjectedCoordinateReviewPending()) return;
+      if (!projectedCrsSelectionNeedsConfirmation()) return true;
       const identity = getProjectedCoordinateReviewIdentity();
       const sourceCrs = String(projectedCrsSelection?.value || "");
       if (!identity) {
-        showMessage("当前投影坐标结果已失效，请重新识别图片。", true, 6000);
-        return;
+        showMessage("当前坐标结果已失效，请重新识别图片。", true, 6000);
+        return false;
       }
       if (!sourceCrs) {
-        showMessage("请先根据原图或测量资料选择坐标系；系统不会根据国家、文件名或数值范围猜测。", true, 7000);
         focusProjectedCrsReviewPanel();
-        return;
+        showMessage("这张图片缺少地图定位说明，暂时不能准确显示位置。", true, 7000);
+        return false;
       }
-      projectedCrsConfirmAction.disabled = true;
-      projectedCrsConfirmAction.textContent = "正在确认…";
+      if (mapPreviewAction) mapPreviewAction.disabled = true;
       try {
         const response = await fetch("/api/coordinate-projection-confirmation", {
           method: "POST",
@@ -7329,38 +7389,56 @@ Au值 = 纯度 × 10 后取整数</div>
           })
         });
         const payload = await response.json().catch(() => ({}));
+        const pointsOnly = payload.geometryMode === "points_only" && payload.boundaryBlocked === true;
         if (!response.ok || !getFinalizedCoordinateIdentity(payload.finalizedCoordinateResult)
-          || payload.finalizedCoordinateResult?.kmlReady !== true) {
+          || (!pointsOnly && payload.finalizedCoordinateResult?.kmlReady !== true)) {
           const messages = {
-            PROJECTED_CRS_SELECTION_REQUIRED: "请选择受支持的投影坐标系。",
-            PROJECTED_COORDINATE_ROWS_INVALID: "X/Y 行已被修改或格式不完整，请核对点号、X 和 Y。",
-            PROJECTED_TRANSFORM_FAILED: "所选坐标系无法转换当前 X/Y，请核对坐标系。",
-            PROJECTED_FINALIZER_GATE_BLOCKED: "转换结果未通过地图/KML安全校验，请核对坐标系。",
+            PROJECTED_CRS_SELECTION_REQUIRED: "请严格按照原始测量资料选择地图定位方式。",
+            PROJECTED_COORDINATE_ROWS_INVALID: "坐标行已被修改或格式不完整，请核对点号和数字。",
+            PROJECTED_TRANSFORM_FAILED: "所选定位方式与当前坐标不匹配，请核对原始资料。",
+            PROJECTED_FINALIZER_GATE_BLOCKED: "当前坐标还不能形成可靠的矿区地图，请核对原始资料。",
             STALE_CONFIRMATION_REVISION: "坐标结果已更新，请重新识别或重新确认。"
           };
-          throw new Error(messages[payload.code] || "投影坐标系确认失败，请重新识别或核对坐标系。");
+          throw new Error(messages[payload.code] || "地图位置确认失败，请重新识别或核对原始资料。");
         }
         activeCoordinateEngineV2 = payload.coordinateEngineV2 || activeCoordinateEngineV2;
         activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;
         activeCoordinatePrecisionMode = payload.precisionMode || "projected-x-y-confirmed";
+        activeConfirmedProjectedCrs = sourceCrs;
+        activeProjectedSelectionDirty = false;
+        activeProjectedBoundaryBlocked = pointsOnly;
+        projectedCrsReviewRequested = pointsOnly;
         finalizedCoordinateTextSnapshot = String(input.value || "");
         finalizedCoordinateDirty = false;
         invalidateSpatialPreview();
         rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
-        const pointsOnly = payload.geometryMode === "points_only";
         const pointCount = Number(payload.sourceRowCount) || 0;
-        renderProjectedCrsReviewPanel({ confirmed: true, selectedCrs: payload.selectedCrs || sourceCrs, pointsOnly });
+        renderProjectedCrsReviewPanel({ confirmed: true, selectedCrs: sourceCrs, pointsOnly });
         refreshMapPreviewAction();
         showMessage(pointsOnly
-          ? `坐标系已确认。因原始点序自交，地图和 KML 仅显示 ${pointCount} 个独立点位，不代表矿区边界。`
-          : "坐标系已确认：原始 X/Y 保持不变，地图和 KML 已使用服务端转换结果。", pointsOnly, 9000);
+          ? `已定位 ${pointCount} 个坐标点，但这些点无法组成可靠的矿区边界；地图将明确标为点位核对，KML 保持关闭。`
+          : "地图位置已确认，原图坐标数字保持不变。", pointsOnly, 9000);
+        return true;
       } catch (error) {
-        projectedCrsConfirmAction.disabled = false;
-        showMessage(error?.message || "投影坐标系确认失败。", true, 7000);
+        showMessage(error?.message || "地图位置确认失败。", true, 7000);
+        return false;
       } finally {
-        projectedCrsConfirmAction.textContent = "确认并启用地图/KML";
+        refreshMapPreviewAction();
       }
     }
+
+    projectedCrsSelection?.addEventListener("change", () => {
+      if (!isProjectedCoordinateWorkflow()) return;
+      const selected = String(projectedCrsSelection.value || "");
+      activeProjectedSelectionDirty = Boolean(activeConfirmedProjectedCrs) && selected !== activeConfirmedProjectedCrs;
+      projectedCrsReviewRequested = true;
+      renderProjectedCrsReviewPanel({
+        confirmed: Boolean(activeConfirmedProjectedCrs) && !activeProjectedSelectionDirty,
+        selectedCrs: selected,
+        pointsOnly: activeProjectedBoundaryBlocked && !activeProjectedSelectionDirty
+      });
+      refreshMapPreviewAction();
+    });
 
     function refreshMapPreviewAction() {
       if (!mapPreviewAction) return;
@@ -7375,7 +7453,7 @@ Au值 = 纯度 × 10 后取整数</div>
         syncKmlActionVisualState();
         return;
       }
-      const projectedReviewPending = isProjectedCoordinateReviewPending();
+      const projectedReviewPending = projectedCrsSelectionNeedsConfirmation();
       const validationRequired = Boolean(activeFinalizedCoordinateResult)
         && (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || ""));
       const state = !spatialResultEnabled || !hasText
@@ -7387,7 +7465,7 @@ Au值 = 纯度 × 10 后取整数</div>
       mapPreviewAction.disabled = state === "blocked";
       mapPreviewAction.dataset.state = state;
       mapPreviewAction.setAttribute("aria-disabled", String(mapPreviewAction.disabled));
-      mapPreviewAction.textContent = projectedReviewPending ? "确认坐标系后查看地图" : "查看地图";
+      mapPreviewAction.textContent = "查看地图";
       refreshSpatialShareActions();
       syncKmlActionVisualState();
     }
@@ -7395,7 +7473,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function coordinateKmlVisualState() {
       if (!String(input?.value || "").trim()) return "blocked";
       if (agenticCoordinateController?.enabled) return "enabled";
-      if (isProjectedCoordinateReviewPending()) return "blocked";
+      if (projectedCrsSelectionNeedsConfirmation()) return "blocked";
       if (!activeFinalizedCoordinateResult) return "enabled";
       if (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || "")) return "validation_required";
       return activeFinalizedCoordinateResult.kmlReady === true ? "enabled" : "blocked";
@@ -7551,6 +7629,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function spatialCollapsedSummaryText(preview, facts) {
       const pointCount = Number.isFinite(facts?.pointCount) ? facts.pointCount : getSpatialPositions(preview?.geometry).length;
       if (preview?.geometryType === "Point") return `${pointCount || 1}点`;
+      if (preview?.geometryType === "MultiPoint") return `点位核对 · ${pointCount}点（非矿区边界）`;
       if (preview?.geometryType === "LineString") {
         const length = formatSpatialMeters(facts?.lengthMeters) || "线段";
         return `${length} · ${pointCount}点`;
@@ -7592,6 +7671,9 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function spatialWarningText(payload = {}) {
+      if (payload?.mapPreviewObject?.geometryType === "MultiPoint") {
+        return "这些点按原图顺序连接会交叉，当前地图只用于核对点位，不代表矿区边界或面积，KML 保持关闭。";
+      }
       const warnings = Array.isArray(payload?.mapPreviewObject?.previewWarnings)
         ? payload.mapPreviewObject.previewWarnings
         : [];
@@ -7610,7 +7692,9 @@ Au值 = 纯度 × 10 后取整数</div>
       const facts = payload.spatialFactsStatus === "available" && e2eFailureMode !== "facts"
         ? payload.spatialFacts
         : null;
-      spatialGeometryType.textContent = preview.geometryType || "Geometry";
+      spatialGeometryType.textContent = preview.geometryType === "MultiPoint"
+        ? "点位核对（非矿区边界）"
+        : (preview.geometryType || "Geometry");
       const warning = spatialWarningText(payload);
       spatialResultWarning.hidden = !warning;
       spatialResultWarning.textContent = warning;
@@ -7692,10 +7776,9 @@ Au值 = 纯度 × 10 后取整数</div>
     async function openSpatialResult() {
       if (agenticCoordinateController?.enabled) return openAgenticSpatialResult();
       if (!spatialResultEnabled) return;
-      if (isProjectedCoordinateReviewPending()) {
-        focusProjectedCrsReviewPanel();
-        showMessage("当前内容是投影 X/Y，不是经纬度。请先根据原图或测量资料确认坐标系。", true, 7000);
-        return;
+      if (projectedCrsSelectionNeedsConfirmation()) {
+        const confirmed = await confirmProjectedCoordinateCrs();
+        if (!confirmed) return;
       }
       mapPreviewAction.disabled = true;
       try {
@@ -8478,6 +8561,10 @@ Au值 = 纯度 × 10 后取整数</div>
       selectedImageUrl = "";
       selectedImageFile = null;
       activeCoordinateEngineV2 = null;
+      activeCoordinatePrecisionMode = "";
+      activeFinalizedCoordinateResult = null;
+      resetProjectedCoordinateUiState();
+      renderProjectedCrsReviewPanel();
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
       closeImageModal();
@@ -13269,11 +13356,11 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       input.value = "";
       clearInternalKmlSource();
       activeCoordinatePrecisionMode = "";
+      resetProjectedCoordinateUiState();
       activeCoordinateEngineV2 = null;
       activeFinalizedCoordinateResult = null;
       finalizedCoordinateTextSnapshot = "";
       finalizedCoordinateDirty = false;
-      projectedCrsSelection.value = "";
       renderProjectedCrsReviewPanel();
       resetHandwrittenDmsReviewState();
       clearRecognitionSummary();
@@ -13721,13 +13808,23 @@ ${placemarks}
         return downloadAgenticCoordinateKml();
       }
 
-      if (isProjectedCoordinateReviewPending()) {
+      if (projectedCrsSelectionNeedsConfirmation()) {
         focusProjectedCrsReviewPanel();
         showKmlFailure({
           code: "KML_PROJECTED_CRS_CONFIRMATION_REQUIRED",
-          title: "请先确认投影坐标系",
-          reason: "当前内容是投影 X/Y，不是经纬度；原图未提供可唯一确认的 CRS。",
-          suggestion: "请根据原图或测量资料选择正确坐标系。系统不会根据国家、文件名或数值范围猜测。"
+          title: "地图定位信息需要核对",
+          reason: "图片中的坐标数字已经识别，但缺少把它准确放到地图上的说明。",
+          suggestion: "请上传包含位置说明的完整图片，或使用人工协助。"
+        });
+        return;
+      }
+
+      if (activeProjectedBoundaryBlocked) {
+        showKmlFailure({
+          code: "KML_PROJECTED_BOUNDARY_UNRESOLVED",
+          title: "暂时无法生成矿区边界 KML",
+          reason: "原图中的点按当前顺序连接会交叉，不能确认真实矿区边界。",
+          suggestion: "请核对完整测量资料或使用人工协助；系统不会把这些点强行连成错误边界。"
         });
         return;
       }
@@ -14414,6 +14511,7 @@ ${placemarks}
       supportPanel.style.display = "none";
       clearUploadMessage();
       activeCoordinatePrecisionMode = "";
+      resetProjectedCoordinateUiState();
       activeCoordinateEngineV2 = null;
       activeFinalizedCoordinateResult = null;
       lastValidIdentityBoundSnapshot = null;
@@ -14421,7 +14519,6 @@ ${placemarks}
       finalizedCoordinateTextSnapshot = "";
       finalizedCoordinateDirty = false;
       resetHandwrittenDmsReviewState();
-      projectedCrsSelection.value = "";
       renderProjectedCrsReviewPanel();
       clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
@@ -14520,6 +14617,9 @@ ${placemarks}
         }
 
         activeCoordinatePrecisionMode = data.precisionMode || "";
+        activeProjectedReviewEvidence = data.providerProjectedReviewEvidence || null;
+        const explicitProjectedCrs = projectedCrsFromExplicitEvidence(activeProjectedReviewEvidence);
+        if (explicitProjectedCrs && projectedCrsSelection) projectedCrsSelection.value = explicitProjectedCrs;
         const preservedCoordinates = extractCoordinatesPreservePrecision(data.rawText);
         const dmsCoordinates = extractDmsCoordinates(data.rawText);
         const recognizedLines = extractRecognizedCoordinateLines(data.rawText);
@@ -14781,7 +14881,7 @@ ${placemarks}
         } else if (autoSelectedPoint) {
           showMessage("已自动识别：Point，可直接生成单点 KML。", false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (hasProjectedCoordinateRows(finalCoordinates)) {
-          showMessage("已识别到 X/Y 平面坐标，请先确认坐标系后再转换成经纬度。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showMessage("坐标数字已识别。点击“查看地图”时，系统会先核对图片中的地图定位信息。", false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (data.warning) {
           showMessage(`${data.warning} 坐标已填入工作区，请核对后再生成 KML。`, true, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else {

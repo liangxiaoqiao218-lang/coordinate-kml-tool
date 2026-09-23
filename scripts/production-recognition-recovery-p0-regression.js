@@ -445,6 +445,13 @@ test("production source orders Provider admission before attempt and defers usag
   assert.match(indexSource, /upload-message-content/);
   assert.match(indexSource, /isProjectedReview/);
   assert.match(indexSource, /projectionType\.value = "auto"/);
+  assert.match(indexSource, /id="mapPreviewAction"[^>]*>查看地图<\/button>/);
+  assert.doesNotMatch(indexSource, /确认坐标系后查看地图|确认并启用地图\/KML|id="projectedCrsConfirmAction"/);
+  assert.match(indexSource, /地图定位信息需要核对/);
+  assert.match(indexSource, /我有测量资料，手动设置/);
+  assert.match(indexSource, /系统不会猜测位置/);
+  assert.match(indexSource, /点位核对（非矿区边界）/);
+  assert.match(indexSource, /KML_PROJECTED_BOUNDARY_UNRESOLVED/);
 });
 
 test("generic Provider projected table recovery preserves labels and blocks CRS inference", () => {
@@ -1919,7 +1926,8 @@ test("one-shot structured actual HTTP generic projected recovery preserves sourc
     payload.finalizedCoordinateResult.resultId);
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.resultRevision,
     payload.finalizedCoordinateResult.resultRevision + 1);
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, true);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlAuthorityBlocked, true);
   assert.equal(payload.projectedConfirmation.geometryMode, "points_only");
   assert.equal(payload.projectedConfirmation.boundaryBlocked, true);
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, "MultiPoint");
@@ -1928,6 +1936,7 @@ test("one-shot structured actual HTTP generic projected recovery preserves sourc
   assert.match(payload.projectedConfirmation.finalizedCoordinateResult.limitations.join("\n"), /不代表矿区边界/);
   assert.equal(payload.projectedMapPreview.mapPreviewObject.geometryType, "MultiPoint");
   assert.equal(payload.projectedMapPreview.mapPreviewObject.previewEligibility.allowed, true);
+  assert.equal(payload.projectedMapPreview.kmlEligibility.allowed, false);
   assert.equal(payload.coordinates, expectedCoordinates, "CRS confirmation must not rewrite source X/Y text");
   const usageAuthority = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: payload });
   assert.equal(usageAuthority.eligible, true);

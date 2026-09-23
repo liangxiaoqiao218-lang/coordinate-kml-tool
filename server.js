@@ -13789,18 +13789,19 @@ app.post("/api/coordinate-projection-confirmation", (req, res) => {
       geometry: { type: "MultiPoint", coordinates: positions },
       confirmationStatus: "accepted",
       qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
-      technicalKmlReady: true,
-      currentAuthorizedGeometryExportable: true,
+      technicalKmlReady: false,
+      currentAuthorizedGeometryExportable: false,
       requiresReview: true,
-      kmlReady: true,
-      groups: [{ groupId: "group_1", requiresReview: true, kmlReady: true }],
+      kmlReady: false,
+      kmlAuthorityBlocked: true,
+      groups: [{ groupId: "group_1", requiresReview: true, kmlReady: false }],
       warnings: [
-        "已确认投影坐标系；原始点序形成自交，当前仅授权点位地图与点位 KML。",
+        "已定位各坐标点；原始点序形成自交，当前地图仅供点位核对，不代表矿区边界。",
         ...(response.verification?.warnings || [])
       ],
       limitations: [
         "当前 MultiPoint 结果不代表矿区边界、面积或点位连接顺序。",
-        "修正并重新确认点位顺序前，不得输出 Polygon 边界。"
+        "修正并重新确认点位顺序前，不得输出 Polygon 边界或 KML。"
       ]
     }));
     return res.json({
