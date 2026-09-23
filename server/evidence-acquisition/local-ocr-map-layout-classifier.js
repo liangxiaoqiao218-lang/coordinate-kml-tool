@@ -769,6 +769,37 @@ function parseProviderProjectedRow(line, { labelColumnVisible = false } = {}) {
     : null;
 }
 
+function parseProviderProjectedRows(line, { labelColumnVisible = false } = {}) {
+  const raw = text(line).replace(/[｜]/gu, "|");
+  if (!raw) return Object.freeze({ rows: Object.freeze([]), multiRecord: false });
+
+  const pipeParts = raw.split("|").map(part => part.trim()).filter(Boolean);
+  if (pipeParts.length >= 6 && pipeParts.length % 3 === 0) {
+    const groupedRows = [];
+    for (let index = 0; index < pipeParts.length; index += 3) {
+      const label = pipeParts[index];
+      const x = normalizeProjectedProviderNumber(pipeParts[index + 1]);
+      const y = normalizeProjectedProviderNumber(pipeParts[index + 2]);
+      if (!/^\d{1,3}$/u.test(label) || !x || !y) {
+        return Object.freeze({ rows: Object.freeze([]), multiRecord: true });
+      }
+      groupedRows.push(Object.freeze({
+        label,
+        x,
+        y,
+        sourceText: raw
+      }));
+    }
+    return Object.freeze({ rows: Object.freeze(groupedRows), multiRecord: true });
+  }
+
+  const row = parseProviderProjectedRow(raw, { labelColumnVisible });
+  return Object.freeze({
+    rows: Object.freeze(row ? [row] : []),
+    multiRecord: false
+  });
+}
+
 // A generic Provider may faithfully transcribe a projected X/Y table even
 // when local OCR could not establish a private one-shot family binding. Keep
 // those rows available for review, but never infer a CRS from filenames,
@@ -801,11 +832,13 @@ export function extractProviderProjectedCoordinateEvidence({
   const rows = [];
   let projectedCandidateLineCount = 0;
   let rejectedProjectedCandidateLineCount = 0;
+  let multiRecordLineCount = 0;
   for (const line of rowLines) {
-    const row = parseProviderProjectedRow(line, { labelColumnVisible });
-    if (row) {
-      rows.push(row);
+    const parsedLine = parseProviderProjectedRows(line, { labelColumnVisible });
+    if (parsedLine.rows.length > 0) {
+      rows.push(...parsedLine.rows);
       projectedCandidateLineCount += 1;
+      if (parsedLine.multiRecord) multiRecordLineCount += 1;
       continue;
     }
     const numericTokens = line.match(/[+-]?\d+(?:[.,]\d+)?/gu) || [];
@@ -825,7 +858,8 @@ export function extractProviderProjectedCoordinateEvidence({
         headerPresent: headerIndex >= 0,
         projectedCandidateLineCount,
         parsedProjectedRowCount: rows.length,
-        rejectedProjectedCandidateLineCount
+        rejectedProjectedCandidateLineCount,
+        multiRecordLineCount
       })
     });
   }
@@ -838,6 +872,27 @@ export function extractProviderProjectedCoordinateEvidence({
       crsEvidence: null
     });
   }
+  let orderedRows = rows;
+  if (multiRecordLineCount > 0) {
+    const numericLabels = labels.map(label => /^\d{1,3}$/u.test(label) ? Number(label) : null);
+    if (numericLabels.some(label => !Number.isInteger(label))) {
+      return Object.freeze({
+        text: "", rows: Object.freeze([]), rowCount: 0,
+        status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+        reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+        crsEvidence: null
+      });
+    }
+    orderedRows = rows.slice().sort((left, right) => Number(left.label) - Number(right.label));
+    if (orderedRows.some((row, index) => Number(row.label) !== index + 1)) {
+      return Object.freeze({
+        text: "", rows: Object.freeze([]), rowCount: 0,
+        status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+        reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+        crsEvidence: null
+      });
+    }
+  }
   const explicitUtm = String(sourceText || "").match(/\bUTM\s*(?:ZONE\s*)?(\d{1,2})\s*([NS])\b/iu)
     || String(sourceText || "").match(/\bUTM\b[^\r\n]{0,80}\b(?:ZONE|ZONA)\s*(\d{1,2})\s*([NS])\b/iu);
   const explicitBftm = /\bBFTM\b/iu.test(String(sourceText || ""));
@@ -846,7 +901,7 @@ export function extractProviderProjectedCoordinateEvidence({
     : explicitUtm
       ? Object.freeze({ status: "EXPLICIT", projection: "utm", zone: Number(explicitUtm[1]), hemisphere: explicitUtm[2].toUpperCase() })
       : Object.freeze({ status: "UNCONFIRMED", projection: "", zone: null, hemisphere: "" });
-  const frozenRows = Object.freeze(rows.map((row, index) => Object.freeze({
+  const frozenRows = Object.freeze(orderedRows.map((row, index) => Object.freeze({
     ...row,
     label: text(row.label) || String(index + 1)
   })));
@@ -862,7 +917,8 @@ export function extractProviderProjectedCoordinateEvidence({
       headerPresent: headerIndex >= 0,
       projectedCandidateLineCount,
       parsedProjectedRowCount: frozenRows.length,
-      rejectedProjectedCandidateLineCount
+      rejectedProjectedCandidateLineCount,
+      multiRecordLineCount
     })
   });
 }

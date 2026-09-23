@@ -183,11 +183,23 @@ if (process.argv[2] === '--http-candidate') {
       || baseScenario === 'generic-projected-kyrgyz-unbound'
       ? await readFile(path.join(root, 'regression-samples', 'Kyrgyz_GK', 'approved-transcription.txt'), 'utf8')
       : null;
+    const kyrgyzProviderLines = kyrgyzProviderText?.split(/\r?\n/u).filter(Boolean) || [];
+    const kyrgyzProviderRows = kyrgyzProviderLines.slice(3);
+    const kyrgyzParallelProviderText = kyrgyzProviderText
+      ? [
+          ...kyrgyzProviderLines.slice(0, 2),
+          '№ точек | X | Y | № точек | X | Y',
+          ...kyrgyzProviderRows.slice(0, 33).map((row, index) => {
+            const parallelRow = kyrgyzProviderRows[index + 33];
+            return parallelRow ? `${row} | ${parallelRow}` : row;
+          })
+        ].join('\n')
+      : null;
     const providerText = baseScenario === 'generic-projected-kyrgyz-real'
-      ? kyrgyzProviderText
+      ? kyrgyzParallelProviderText
       : baseScenario === 'generic-projected-kyrgyz-unbound'
         ? (() => {
-            const lines = kyrgyzProviderText.split(/\r?\n/u);
+            const lines = kyrgyzParallelProviderText.split(/\r?\n/u);
             return [lines[1], ...lines.slice(3)].join('\n');
           })()
       : baseScenario === 'generic-projected-review' || baseScenario === 'generic-projected-explicit'
@@ -705,6 +717,53 @@ test("projected recovery handles thousand-space rows but rejects ambiguous or un
     sourceText: "Point | X | Y\n1 | 727250 | 1219700\n2 | 728400 | 1219700\n3 | 728400 | 1219500 | 99"
   });
   assert.equal(ambiguous.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+});
+
+test("projected recovery splits parallel labelled triples and restores one continuous point sequence", async () => {
+  const sourceText = await readFile(
+    path.join(root, "regression-samples", "Kyrgyz_GK", "approved-transcription.txt"),
+    "utf8"
+  );
+  const lines = sourceText.split(/\r?\n/u).filter(Boolean);
+  const sourceRows = lines.slice(3);
+  const parallelText = [
+    ...lines.slice(0, 2),
+    "№ точек | X | Y | № точек | X | Y",
+    ...sourceRows.slice(0, 33).map((row, index) => {
+      const parallelRow = sourceRows[index + 33];
+      return parallelRow ? `${row} | ${parallelRow}` : row;
+    })
+  ].join("\n");
+  const evidence = extractProviderProjectedCoordinateEvidence({ sourceText: parallelText });
+  assert.equal(evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.equal(evidence.rowCount, 65);
+  assert.equal(evidence.diagnostics.projectedCandidateLineCount, 33);
+  assert.equal(evidence.diagnostics.parsedProjectedRowCount, 65);
+  assert.equal(evidence.diagnostics.rejectedProjectedCandidateLineCount, 0);
+  assert.equal(evidence.diagnostics.multiRecordLineCount, 32);
+  assert.deepEqual(
+    evidence.rows.map(row => Number(row.label)),
+    Array.from({ length: 65 }, (_, index) => index + 1)
+  );
+  assert.deepEqual(
+    [evidence.rows[0].x, evidence.rows[0].y, evidence.rows.at(-1).x, evidence.rows.at(-1).y],
+    ["13261341", "4607777", "13261317", "4607721"]
+  );
+});
+
+test("parallel projected triples fail closed on duplicate, gap, incomplete, or extra fields", () => {
+  const cases = [
+    ["1 | 10000 | 20000 | 3 | 30000 | 40000", "4 | 50000 | 60000"],
+    ["1 | 10000 | 20000 | 2 | 30000 | 40000", "2 | 50000 | 60000"],
+    ["1 | 10000 | 20000 | 2 | 30000", "3 | 50000 | 60000"],
+    ["1 | 10000 | 20000 | 2 | 30000 | 40000 | 99999", "3 | 50000 | 60000"]
+  ];
+  for (const rows of cases) {
+    const evidence = extractProviderProjectedCoordinateEvidence({
+      sourceText: ["UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE", "Point | X | Y", ...rows].join("\n")
+    });
+    assert.equal(evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+  }
 });
 
 test("local OCR worker rejection is normalized and sanitized", async () => {
