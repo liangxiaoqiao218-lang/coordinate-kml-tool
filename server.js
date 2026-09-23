@@ -8540,6 +8540,52 @@ function parseProjectedCoordinateConfirmationRows(text) {
   return rows.length >= 3 ? Object.freeze(rows) : null;
 }
 
+function buildPendingManualProjectedCoordinateEngine(rows) {
+  if (!Array.isArray(rows) || rows.length < 3) return null;
+  const warning = "坐标数字已读取，但缺少把它准确放到地图上的定位说明。请只按原始测量资料核对，系统不会猜测位置。";
+  return normalizeCoordinateEngineV2Result({
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: "projected_xy",
+    precision_mode: "projected-x-y-review",
+    source_crs: null,
+    confidence: 1,
+    requires_review: true,
+    source: {
+      image_count: 0,
+      ocr_engine: "manual-projected-coordinate-input",
+      fallback_used: false
+    },
+    groups: [{
+      group_id: "group_1",
+      group_name: "坐标组1",
+      geometry: getCoordinateEngineV2Geometry(rows),
+      confidence: 1,
+      requires_review: true,
+      kml_ready: false,
+      warnings: [warning],
+      points: rows.map(row => ({
+        label: row.label,
+        raw: row.raw,
+        lat: null,
+        lon: null,
+        x: row.x,
+        y: row.y,
+        projection: null,
+        source_crs: null,
+        confidence: 1,
+        requires_review: true,
+        warnings: []
+      }))
+    }],
+    warnings: [warning],
+    debug: {
+      matched_detectors: ["manual_projected_coordinate_rows"],
+      blocked_fallbacks: ["crs_inference", "map", "kml"],
+      supplemental_fallbacks: []
+    }
+  }, { forceRequiresReview: true });
+}
+
 function buildConfirmedProjectedCoordinateEngine(rows, selection) {
   const definition = SUPPORTED_PROJECTED_CRS_CONFIRMATIONS[selection];
   if (!definition || !Array.isArray(rows) || rows.length < 3) return null;
@@ -13698,6 +13744,41 @@ app.post("/api/coordinate-manual-finalize", (req, res) => {
     return res.status(400).json({ success: false, code: "COORDINATE_EDIT_TEXT_REQUIRED" });
   }
   const requireConfirmation = req.body?.requireConfirmation === true;
+  const projectedRows = parseProjectedCoordinateConfirmationRows(coordinateText);
+  if (!recoveryRevision && projectedRows) {
+    const warning = "坐标数字已读取，但缺少把它准确放到地图上的定位说明。请只按原始测量资料核对，系统不会猜测位置。";
+    const manualProjectedPayload = {
+      success: true,
+      model: "manual-projected-coordinate-input",
+      rawText: coordinateText,
+      coordinates: coordinateText,
+      precisionMode: "projected-x-y-review",
+      requiresReview: true,
+      warning,
+      projectedCoordinateReviewEvidence: {
+        status: "COMPLETE",
+        coordinateRowCount: projectedRows.length,
+        crsEvidence: { status: "UNCONFIRMED" }
+      },
+      parserTrace: [
+        "TEXT:manual_projected_rows",
+        "PROJECTED_CRS:user_confirmation_required"
+      ]
+    };
+    const manualProjectedEngine = buildPendingManualProjectedCoordinateEngine(projectedRows);
+    const response = buildCoordinateVerificationResponse(
+      manualProjectedPayload,
+      manualProjectedEngine,
+      { sourceAuthority: "manual_input" }
+    );
+    return res.json({
+      ...response,
+      precisionMode: manualProjectedPayload.precisionMode,
+      requiresReview: true,
+      sourceRowCount: projectedRows.length,
+      projectedCoordinateReviewEvidence: manualProjectedPayload.projectedCoordinateReviewEvidence
+    });
+  }
   const parsed = buildManualTextCoordinateResult(coordinateText);
   if (!parsed.coordinates || parsed.coordinates === noCoordinatesText) {
     return res.status(422).json({ success: false, code: "COORDINATE_EDIT_INVALID" });

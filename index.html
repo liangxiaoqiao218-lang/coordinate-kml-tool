@@ -7783,6 +7783,11 @@ Au值 = 纯度 × 10 后取整数</div>
       mapPreviewAction.disabled = true;
       try {
         await ensureManualInputFinalized();
+        if (projectedCrsSelectionNeedsConfirmation()) {
+          focusProjectedCrsReviewPanel();
+          showMessage("地图定位信息需要核对。请展开“我有测量资料，手动设置”，严格按照原始资料选择后再次点击“查看地图”。", true, 8000);
+          return;
+        }
         const identity = getFinalizedCoordinateIdentity();
         if (!identity) throw new Error("当前坐标还不能形成地图预览。");
         const cacheKey = getSpatialPreviewCacheKey(identity);
@@ -7922,6 +7927,28 @@ Au值 = 纯度 × 10 后取整数</div>
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !getFinalizedCoordinateIdentity(payload.finalizedCoordinateResult)) {
+        if (response.ok
+          && payload?.precisionMode === "projected-x-y-review"
+          && payload?.finalizedCoordinateResult?.resultId
+          && Number.isSafeInteger(payload?.finalizedCoordinateResult?.resultRevision)) {
+          activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;
+          activeCoordinatePrecisionMode = "projected-x-y-review";
+          activeProjectedReviewEvidence = payload.projectedCoordinateReviewEvidence || null;
+          activeConfirmedProjectedCrs = "";
+          activeProjectedSelectionDirty = false;
+          activeProjectedBoundaryBlocked = false;
+          projectedCrsReviewRequested = true;
+          if (projectedCrsSelection) projectedCrsSelection.value = "";
+          if (projectedCrsAdvanced) projectedCrsAdvanced.open = false;
+          finalizedCoordinateTextSnapshot = String(input.value || "");
+          finalizedCoordinateDirty = false;
+          invalidateSpatialPreview();
+          resetHandwrittenDmsReviewState();
+          renderProjectedCrsReviewPanel();
+          refreshMapPreviewAction();
+          syncKmlActionVisualState();
+          return activeFinalizedCoordinateResult;
+        }
         throw new Error(getCoordinateFlowUserMessage(payload.code, "无法处理当前坐标，请检查后重试。"));
       }
       activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;

@@ -208,6 +208,58 @@ async function runHttpCandidate(scenario) {
   const signal = AbortSignal.timeout(20000);
   try {
     const [{ port }] = await once(child, 'message', { signal });
+    if (scenario === 'manual-projected-review') {
+      const coordinateText = [
+        'A | 500000 | 1000000',
+        'B | 501000 | 1001000',
+        'C | 501000 | 1000000',
+        'D | 500000 | 1001000'
+      ].join('\n');
+      const response = await fetch(`http://127.0.0.1:${port}/api/coordinate-manual-finalize`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+        body: JSON.stringify({ coordinateText, requireConfirmation: false })
+      });
+      const payload = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(payload));
+      assert.equal(payload.precisionMode, 'projected-x-y-review');
+      assert.equal(payload.finalizedCoordinateResult?.coordinateType, 'projected_xy');
+      assert.equal(payload.finalizedCoordinateResult?.kmlReady, false);
+      assert.equal(payload.finalizedCoordinateResult?.geometry, null);
+      const pending = payload.finalizedCoordinateResult;
+      const missingCrsResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-projection-confirmation`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+        body: JSON.stringify({ resultId: pending.resultId, resultRevision: pending.resultRevision,
+          sourceCrs: '', coordinateText })
+      });
+      assert.equal(missingCrsResponse.status, 400, 'manual projected rows must not infer a CRS');
+      const confirmationResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-projection-confirmation`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+        body: JSON.stringify({ resultId: pending.resultId, resultRevision: pending.resultRevision,
+          sourceCrs: 'utm30n', coordinateText })
+      });
+      const confirmation = await confirmationResponse.json();
+      assert.equal(confirmationResponse.status, 200, JSON.stringify(confirmation));
+      assert.equal(confirmation.geometryMode, 'points_only');
+      assert.equal(confirmation.boundaryBlocked, true);
+      assert.equal(confirmation.finalizedCoordinateResult?.geometry?.type, 'MultiPoint');
+      assert.equal(confirmation.finalizedCoordinateResult?.kmlReady, false);
+      assert.equal(confirmation.finalizedCoordinateResult?.kmlAuthorityBlocked, true);
+      const confirmed = confirmation.finalizedCoordinateResult;
+      const mapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+        body: JSON.stringify({ resultId: confirmed.resultId, resultRevision: confirmed.resultRevision,
+          geometryHash: confirmed.geometryHash })
+      });
+      const mapPayload = await mapResponse.json();
+      assert.equal(mapResponse.status, 200, JSON.stringify(mapPayload));
+      assert.equal(mapPayload.mapPreviewObject?.geometry?.type, 'MultiPoint');
+      const statsPromise = once(child, 'message', { signal });
+      child.send('stats');
+      const [stats] = await statsPromise;
+      assert.equal(stats.acquisitions, 0, 'manual projected flow must not call a Provider');
+      return { ...payload, projectedConfirmation: confirmation, projectedMapPreview: mapPayload,
+        providerCallCount: stats.acquisitions };
+    }
     const form = new FormData();
     form.set('visitorId', 'coordinate-regression-p0-contract');
     // Valid synthetic image bytes: no customer material or real Provider execution.
@@ -450,8 +502,13 @@ test("production source orders Provider admission before attempt and defers usag
   assert.match(indexSource, /地图定位信息需要核对/);
   assert.match(indexSource, /我有测量资料，手动设置/);
   assert.match(indexSource, /系统不会猜测位置/);
+  assert.match(indexSource, /projectedCrsAdvanced\.open = false/);
+  assert.match(indexSource, /地图定位信息需要核对。请展开“我有测量资料，手动设置”/);
+  assert.match(indexSource, /payload\?\.precisionMode === "projected-x-y-review"/);
   assert.match(indexSource, /点位核对（非矿区边界）/);
   assert.match(indexSource, /KML_PROJECTED_BOUNDARY_UNRESOLVED/);
+  assert.match(serverSource, /manual-projected-coordinate-input/);
+  assert.match(serverSource, /manual_projected_coordinate_rows/);
 });
 
 test("generic Provider projected table recovery preserves labels and blocks CRS inference", () => {
@@ -1941,6 +1998,20 @@ test("one-shot structured actual HTTP generic projected recovery preserves sourc
   const usageAuthority = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: payload });
   assert.equal(usageAuthority.eligible, true);
   assert.equal(usageAuthority.reason, "PROJECTED_REVIEW_SERVER_AUTHORITY_ESTABLISHED");
+});
+
+test("one-shot structured manual projected entry requires location review and keeps crossed boundary KML blocked", async () => {
+  const payload = await runHttpCandidate("manual-projected-review");
+  assert.equal(payload.success, true);
+  assert.equal(payload.precisionMode, "projected-x-y-review");
+  assert.equal(payload.projectedCoordinateReviewEvidence.status, "COMPLETE");
+  assert.equal(payload.projectedCoordinateReviewEvidence.coordinateRowCount, 4);
+  assert.equal(payload.providerCallCount, 0);
+  assert.equal(payload.projectedConfirmation.geometryMode, "points_only");
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, "MultiPoint");
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlAuthorityBlocked, true);
+  assert.equal(payload.projectedMapPreview.mapPreviewObject.geometry.type, "MultiPoint");
 });
 
 test("one-shot structured server gates conformance before parsing and returns sanitized review", () => {
