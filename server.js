@@ -15549,6 +15549,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     // Provider call. The structure hint changes only the transcription
     // contract; it must not silently switch this request to another model.
     const selectedProviderModel = aliyunVisionModel;
+    // Coordinate acquisition is a bounded transcription task. Hybrid Qwen
+    // models otherwise enable thinking by default, which can consume the
+    // request deadline before a long coordinate table returns any text.
+    const selectedProviderMaxTokens = projectedTableOcrAcquisition ? 4096 : 12000;
 
     // Legacy country/file-name selectors remain available to older parsers but
     // no longer control the first (and only) Provider call. The primary route
@@ -16250,6 +16254,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       prompt: selectedProviderPrompt,
       imageItems,
       temperature: 0.1,
+      maxTokens: selectedProviderMaxTokens,
+      enableThinking: false,
       stageName: oneShotStructuredFamilyRoute.matched ? "pre_route" : "generic_provider",
       lowValue: false,
       familyEvidence: oneShotStructuredFamilyRoute.matched

@@ -125,13 +125,20 @@ function spatialContractFor(source, layoutLines = spatialLayoutFor(source)) {
 if (process.argv[2] === '--http-candidate') {
   const { default: http } = await import('node:http');
   let acquisitions = 0;
+  let requestControl = null;
   const scenario = process.argv[3];
   globalThis.fetch = async (url, init) => {
     try {
       if (String(url) !== 'http://127.0.0.1:1/v1/chat/completions') throw new Error('TEST_EXTERNAL_NETWORK_FORBIDDEN');
       acquisitions += 1;
       if (acquisitions > 1) throw new Error('TEST_UNEXPECTED_SECOND_ACQUISITION');
-      const prompt = JSON.parse(init.body).messages.map(message => JSON.stringify(message.content)).join(' ');
+      const requestBody = JSON.parse(init.body);
+      requestControl = {
+        model: requestBody.model,
+        enableThinking: requestBody.enable_thinking,
+        maxTokens: requestBody.max_tokens
+      };
+      const prompt = requestBody.messages.map(message => JSON.stringify(message.content)).join(' ');
       if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
         || scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
         || scenario === 'generic-projected-contextual-utm30') {
@@ -183,7 +190,7 @@ if (process.argv[2] === '--http-candidate') {
     this.once('listening', () => process.send({ port: this.address().port }));
     return nativeListen.call(this, port, '127.0.0.1', callback);
   };
-  process.on('message', message => { if (message === 'stats') process.send({ acquisitions }); });
+  process.on('message', message => { if (message === 'stats') process.send({ acquisitions, requestControl }); });
   await import('../server.js');
   await new Promise(() => {});
 }
@@ -298,7 +305,8 @@ async function runHttpCandidate(scenario) {
       });
       const mapPreview = await mapResponse.json();
       assert.equal(mapResponse.status, 200, JSON.stringify(mapPreview));
-      return { ...payload, mapPreview, providerCallCount: stats.acquisitions };
+      return { ...payload, mapPreview, providerCallCount: stats.acquisitions,
+        providerRequestControl: stats.requestControl };
     }
     if (payload.providerProjectedReviewEvidence?.status === 'COMPLETE') {
       const pending = payload.finalizedCoordinateResult;
@@ -2051,6 +2059,8 @@ test("projected table OCR acquisition hint is generic, structure-bound, and revi
   assert.match(prompt, /Never infer a zone, hemisphere, CRS, missing digit, missing row/u);
   assert.doesNotMatch(prompt, /727250|1219700|Burkina|布基纳/u);
   assert.match(serverSource, /const selectedProviderModel = aliyunVisionModel;/u);
+  assert.match(serverSource, /const selectedProviderMaxTokens = projectedTableOcrAcquisition \? 4096 : 12000;/u);
+  assert.match(serverSource, /enableThinking: false/u);
   assert.doesNotMatch(serverSource, /projectedTableOcrAcquisition\s*\?\s*aliyunOcrModel\s*:\s*aliyunVisionModel/u);
 });
 
@@ -2067,6 +2077,8 @@ test("contextual UTM30 site vertices auto-locate while crossed source order rema
     "H | 729200 | 1219500"
   ].join("\n");
   assert.equal(payload.success, true);
+  assert.equal(payload.providerRequestControl?.enableThinking, false);
+  assert.equal(payload.providerRequestControl?.maxTokens, 12000);
   assert.equal(payload.precisionMode, "utm30n-projected-x-y");
   assert.equal(payload.coordinates, expectedCoordinates);
   assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedCoordinates);
