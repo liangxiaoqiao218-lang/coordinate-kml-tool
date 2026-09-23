@@ -128,11 +128,43 @@ function normalizeHemisphere(value) {
   return "";
 }
 
+function headerDirectionForAxisSegment(segment, axis) {
+  const directionPattern = /\b(?:NORTH|SOUTH|NORD|SUD|NORTE|SUL|EAST|WEST|EST|OUEST|OESTE|LESTE|N|S|E|W|O)\b/giu;
+  const directions = [...String(segment || "").matchAll(directionPattern)]
+    .map(match => normalizeHemisphere(match[0]))
+    .filter(direction => axis === "latitude" ? ["N", "S"].includes(direction) : ["E", "W"].includes(direction));
+  const unique = [...new Set(directions)];
+  return unique.length === 1 ? unique[0] : "";
+}
+
+function dmsHeaderAxisDirections(line) {
+  const value = String(line || "");
+  const latitude = /\b(?:latitude|lat|parall[eè]le)\b/iu.exec(value);
+  const longitude = /\b(?:longitude|lon|m[eé]ridien)\b/iu.exec(value);
+  if (!latitude || !longitude || latitude.index === longitude.index) return null;
+
+  const latitudeEnd = latitude.index + latitude[0].length;
+  const longitudeEnd = longitude.index + longitude[0].length;
+  const latitudeSegment = value.slice(latitudeEnd, latitude.index < longitude.index ? longitude.index : value.length);
+  const longitudeSegment = value.slice(longitudeEnd, longitude.index < latitude.index ? latitude.index : value.length);
+  const latitudeHemisphere = headerDirectionForAxisSegment(latitudeSegment, "latitude");
+  const longitudeHemisphere = headerDirectionForAxisSegment(longitudeSegment, "longitude");
+  if (!latitudeHemisphere || !longitudeHemisphere) return null;
+
+  const axisOrder = latitude.index < longitude.index ? "latitude_longitude" : "longitude_latitude";
+  return Object.freeze({
+    axisOrder,
+    hemispheres: Object.freeze(axisOrder === "latitude_longitude"
+      ? [latitudeHemisphere, longitudeHemisphere]
+      : [longitudeHemisphere, latitudeHemisphere])
+  });
+}
+
 function normalizeSeconds(value) {
   return String(value || "").replace(",", ".");
 }
 
-function parseDmsComponent(token) {
+function parseDmsComponent(token, fallbackHemisphere = "") {
   const value = String(token || "").trim();
   const match = value.match(/^\s*([-+]?\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′’]\s*(\d{1,2}(?:[.,]\d+)?)\s*["″”]?\s*(N|S|E|W|O|NORD|NORTH|SUD|SOUTH|EST|EAST|OUEST|WEST)?\s*$/i);
   if (!match) return null;
@@ -141,7 +173,7 @@ function parseDmsComponent(token) {
   const minutes = Number(match[2]);
   const secondsText = normalizeSeconds(match[3]);
   const seconds = Number(secondsText);
-  const hemisphere = normalizeHemisphere(match[4]);
+  const hemisphere = normalizeHemisphere(match[4]) || normalizeHemisphere(fallbackHemisphere);
 
   if (!Number.isFinite(degrees) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) return null;
   if (minutes < 0 || minutes >= 60 || seconds < 0 || seconds >= 60) return null;
@@ -179,7 +211,7 @@ function componentTolerance(component) {
   return Math.max(1e-8, (0.5 * (10 ** -decimals)) / 3600);
 }
 
-export function parseDmsSourceCoordinateRow(line) {
+export function parseDmsSourceCoordinateRow(line, { fallbackHemispheres = [] } = {}) {
   const value = String(line || "").trim();
   const tokens = [...value.matchAll(DMS_COMPONENT_PATTERN)]
     .map(match => match[0].trim())
@@ -187,7 +219,7 @@ export function parseDmsSourceCoordinateRow(line) {
 
   if (tokens.length !== 2) return null;
 
-  const parsed = tokens.map(parseDmsComponent);
+  const parsed = tokens.map((token, index) => parseDmsComponent(token, fallbackHemispheres[index]));
   if (parsed.some(component => !component)) return null;
 
   const latitude = parsed.find(component => component.axis === "latitude");
@@ -226,6 +258,8 @@ export function extractDmsSourceStructure(text) {
   const groups = [];
   let currentRows = [];
   let currentDisplayRows = [];
+  let currentParsedRows = [];
+  let currentHeaderAxisDirections = null;
   let currentName = "";
   let currentBoundaryProvenance = "document_start";
   let previousRowNumber = null;
@@ -238,12 +272,16 @@ export function extractDmsSourceStructure(text) {
         name: currentName || null,
         rows: Object.freeze([...currentRows]),
         displayRows: Object.freeze([...currentDisplayRows]),
+        parsedRows: Object.freeze([...currentParsedRows]),
+        headerAxisOrder: currentHeaderAxisDirections?.axisOrder || null,
         boundaryProvenance: currentBoundaryProvenance
       }));
       reason ||= closeReason;
     }
     currentRows = [];
     currentDisplayRows = [];
+    currentParsedRows = [];
+    currentHeaderAxisDirections = null;
     currentName = "";
     previousRowNumber = null;
     pendingBlankBoundary = false;
@@ -269,10 +307,14 @@ export function extractDmsSourceStructure(text) {
         closeGroup("repeated_table_header");
         currentBoundaryProvenance = "repeated_table_header";
       }
+      currentHeaderAxisDirections = dmsHeaderAxisDirections(line);
       continue;
     }
 
-    if (!isDmsCoordinateSourceRow(line)) continue;
+    const parsedRow = parseDmsSourceCoordinateRow(line, {
+      fallbackHemispheres: currentHeaderAxisDirections?.hemispheres || []
+    });
+    if (!parsedRow) continue;
 
     const rowNumber = leadingRowNumber(line);
     // A blank line is layout whitespace, not site identity. In particular it
@@ -290,6 +332,7 @@ export function extractDmsSourceStructure(text) {
     if (currentRows.length && pendingBlankBoundary) currentDisplayRows.push("");
     currentRows.push(line);
     currentDisplayRows.push(line);
+    currentParsedRows.push(parsedRow);
     previousRowNumber = Number.isInteger(rowNumber) ? rowNumber : previousRowNumber;
     pendingBlankBoundary = false;
   }

@@ -219,7 +219,11 @@ function rawDmsSemanticallyMatchesResult(rawDmsStructure, engineGroups, expected
     && rawDmsStructure.reason === "blank_line"
     && engineGroups.length === 1
     && rawDmsStructure.groups.every(group => !normalizeDmsBoundaryIdentity(group.name))
-    ? [{ name: null, rows: rawDmsStructure.rows }]
+    ? [{
+        name: null,
+        rows: rawDmsStructure.rows,
+        parsedRows: rawDmsStructure.groups.flatMap(group => Array.isArray(group.parsedRows) ? group.parsedRows : [])
+      }]
     : rawDmsStructure.groups;
   if (comparisonSourceGroups.length !== engineGroups.length) {
     return Object.freeze({ verified: false, reason: "group_count_mismatch" });
@@ -237,7 +241,8 @@ function rawDmsSemanticallyMatchesResult(rawDmsStructure, engineGroups, expected
     }
 
     for (let pointIndex = 0; pointIndex < sourceGroup.rows.length; pointIndex += 1) {
-      const sourcePoint = parseDmsSourceCoordinateRow(sourceGroup.rows[pointIndex]);
+      const sourcePoint = sourceGroup.parsedRows?.[pointIndex]
+        || parseDmsSourceCoordinateRow(sourceGroup.rows[pointIndex]);
       const enginePoint = engineGroup.points[pointIndex];
       if (!sourcePoint || !enginePoint) {
         return Object.freeze({ verified: false, reason: "unparseable_point" });

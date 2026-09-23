@@ -1698,6 +1698,15 @@ test("one-shot structured Provider DMS review accepts exact whitespace-delimited
   assert.equal(evidence.coordinateRowCount, 4);
   assert.equal(evidence.axisDirectionBound, true);
   assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
+  const sourceStructure = dmsSourceStructure.extractDmsSourceStructure(sourceText);
+  assert.equal(sourceStructure.rowCount, 4);
+  assert.equal(sourceStructure.displayText, sourceText.split("\n").slice(2).join("\n"));
+  assert.equal(dmsSourceStructure.extractDmsSourceStructure(
+    sourceText.replace("Latitude nord Longitude ouest", "Latitude Longitude")
+  ).rowCount, 0);
+  assert.equal(dmsSourceStructure.extractDmsSourceStructure(
+    sourceText.replace("Latitude nord Longitude ouest", "Latitude est Longitude nord")
+  ).rowCount, 0);
   assert.equal(runtime.extractProviderDmsReviewEvidence(sourceText.replace("16.45", "60.00")).status, "REVIEW_REQUIRED");
   assert.equal(runtime.extractProviderDmsReviewEvidence(sourceText.replace("43' 16.45", "43'")).status, "REVIEW_REQUIRED");
 });
@@ -1721,6 +1730,12 @@ test("one-shot structured Provider DMS review accepts complete triples without s
 
 test("one-shot structured actual HTTP generic DMS recovery remains confirmation gated", async () => {
   const payload = await runHttpCandidate("generic-dms-review");
+  const expectedSourceDisplay = [
+    "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
+    "4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+  ].join("\n");
   assert.equal(payload.success, true);
   assert.equal(payload.requiresReview, true);
   assert.equal(payload.providerDmsReviewEvidence.status, "COMPLETE");
@@ -1731,6 +1746,9 @@ test("one-shot structured actual HTTP generic DMS recovery remains confirmation 
   assert.equal(payload.coordinateEngineV2.requires_review, true);
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+  assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedSourceDisplay);
+  assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence, "pointwise_dms_semantic_match");
+  assert.notEqual(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
   const usageAuthority = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: payload });
   assert.equal(usageAuthority.eligible, true, JSON.stringify({ usageAuthority, finalized: {
     requiresReview: payload.finalizedCoordinateResult.requiresReview,
