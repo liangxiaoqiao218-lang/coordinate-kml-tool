@@ -61,7 +61,7 @@ const releaseGate = structuredFamilyOnly ? null : JSON.parse(await readFile(path
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
 // Execute the actual runtime function declarations without app startup or Provider I/O.
 const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, ...structuredCoordinateBoundary, utmToWgs84,
-  isRecognitionRequestId, Buffer, crypto,
+  isRecognitionRequestId, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS, Buffer, crypto,
   process: { env: {} }, setTimeout: () => ({ unref() {} }) });
 const declarations = [];
 for (const start of serverSource.matchAll(/^(?:async )?function \w+\(/gm)) {
@@ -133,16 +133,22 @@ if (process.argv[2] === '--http-candidate') {
       if (acquisitions > 1) throw new Error('TEST_UNEXPECTED_SECOND_ACQUISITION');
       const prompt = JSON.parse(init.body).messages.map(message => JSON.stringify(message.content)).join(' ');
       if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array'
-        || scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit') {
+        || scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
+        || scenario === 'generic-projected-contextual-utm30') {
         assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
+        assert.ok(prompt.includes('CONTEXT |'));
       } else {
         assert.ok(prompt.includes('Never infer a family, CRS, axis order, direction, missing row, group, or coordinate'));
       }
     const providerText = scenario === 'generic-projected-review' || scenario === 'generic-projected-explicit'
+      || scenario === 'generic-projected-contextual-utm30'
       ? [
           ...(scenario === 'generic-projected-explicit' ? ['WGS 84 / UTM 30N'] : []),
+          ...(scenario === 'generic-projected-contextual-utm30'
+            ? ['CONTEXT | Les coordonnées géographiques en UTM des sommets du site devant abriter l’activité sont consignées dans le tableau ci-dessous.']
+            : []),
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
-          'Coordonnées en UTM',
+          'Sommets | X | Y',
           'A | 727250,1219700',
           'B | 728400,1219700',
           'C | 728400,1219500',
@@ -281,6 +287,19 @@ async function runHttpCandidate(scenario) {
     const traceResponse = await fetch(`http://127.0.0.1:${port}/api/regression/recognition-trace/${response.headers.get('x-recognition-request-id')}`, { headers: { 'x-regression-test': '1' }, signal });
     const trace = await traceResponse.json();
     assert.equal(trace.acquisitionEvidence == null, true, 'synthetic bytes cannot claim real acquisition identity');
+    if (scenario === 'generic-projected-contextual-utm30'
+      || scenario === 'generic-dms-review'
+      || scenario === 'generic-dms-review-array') {
+      const finalized = payload.finalizedCoordinateResult;
+      const mapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+        body: JSON.stringify({ resultId: finalized.resultId, resultRevision: finalized.resultRevision,
+          geometryHash: finalized.geometryHash })
+      });
+      const mapPreview = await mapResponse.json();
+      assert.equal(mapResponse.status, 200, JSON.stringify(mapPreview));
+      return { ...payload, mapPreview, providerCallCount: stats.acquisitions };
+    }
     if (payload.providerProjectedReviewEvidence?.status === 'COMPLETE') {
       const pending = payload.finalizedCoordinateResult;
       const rejectedResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-projection-confirmation`, {
@@ -521,6 +540,13 @@ test("production source orders Provider admission before attempt and defers usag
   assert.match(indexSource, /function chooseCoordinateImage\(\)/);
   assert.match(indexSource, /payload\?\.precisionMode === "projected-x-y-review"/);
   assert.match(indexSource, /点位核对（非矿区边界）/);
+  assert.match(indexSource, /矿区轮廓（待核对）/);
+  assert.match(indexSource, /id="debugLiveStatus"[^>]*>.*识别中/su);
+  assert.match(indexSource, /function setDebugRunning\(running\)/);
+  const debugFunctionStart = indexSource.indexOf("function setDebug(text)");
+  const debugFunctionEnd = indexSource.indexOf("async function openManualSupport", debugFunctionStart);
+  assert.ok(debugFunctionStart >= 0 && debugFunctionEnd > debugFunctionStart);
+  assert.doesNotMatch(indexSource.slice(debugFunctionStart, debugFunctionEnd), /coordinateDiagnosticsVisible/);
   assert.match(indexSource, /KML_PROJECTED_BOUNDARY_UNRESOLVED/);
   assert.match(serverSource, /manual-projected-coordinate-input/);
   assert.match(serverSource, /manual_projected_coordinate_rows/);
@@ -1614,14 +1640,14 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
     if (scenario === 'observed') {
       assert.equal(payload.indonesiaUtm50?.isIndonesiaUtm50 === true, false);
       assert.equal(payload.coordinateEngineV2.coordinate_type === 'handwritten_dms_experimental', false);
-      assert.equal(payload.geometryMode, 'points_only');
+      assert.equal(payload.geometryMode, 'boundary_review');
       assert.equal(payload.boundaryBlocked, true);
       assert.equal(payload.sourceCoordinateRepresentation.displayText, observedText);
       assert.equal(payload.sourceCoordinateRepresentation.axisOrder, 'longitude_latitude');
       assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence, 'pointwise_dms_semantic_match');
       assert.notEqual(payload.finalizedCoordinateResult.decisionState, 'AUTO_EXPORT');
-      assert.equal(payload.finalizedCoordinateResult.geometry.type, 'MultiPoint');
-      assert.equal(payload.finalizedCoordinateResult.geometry.coordinates.length, 4);
+      assert.equal(payload.finalizedCoordinateResult.geometry.type, 'Polygon');
+      assert.equal(payload.finalizedCoordinateResult.geometry.coordinates[0].length, 5);
       assert.notEqual(payload.finalizedCoordinateResult.kmlAuthorityBlocked, true);
       assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
     } else {
@@ -1825,6 +1851,31 @@ test("one-shot structured generic contract cannot be upgraded by Provider output
   assert.equal(result.reason, primaryRouting.ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY);
 });
 
+test("contextual UTM30 boundary preview requires visible UTM site-vertex meaning and bounded labeled rows", () => {
+  const sourceText = [
+    "CONTEXT | Les coordonnées géographiques en UTM des sommets du site devant abriter l’activité sont consignées dans le tableau ci-dessous.",
+    "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+    "Sommets | X | Y",
+    "A | 727250 | 1219700",
+    "B | 728400 | 1219700",
+    "C | 728400 | 1219500",
+    "D | 728700 | 1219500"
+  ].join("\n");
+  const evidence = extractProviderProjectedCoordinateEvidence({ sourceText });
+  assert.equal(evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.equal(runtime.supportsLegacyUtm30BoundaryPreview({ providerText: sourceText, evidence }), true);
+  assert.equal(runtime.supportsLegacyUtm30BoundaryPreview({
+    providerText: sourceText.replace(/\bUTM\b/u, "projection"), evidence
+  }), false);
+  assert.equal(runtime.supportsLegacyUtm30BoundaryPreview({
+    providerText: sourceText.replace(/des sommets du site/u, "du rapport"), evidence
+  }), false);
+  assert.equal(runtime.supportsLegacyUtm30BoundaryPreview({
+    providerText: sourceText,
+    evidence: { ...evidence, rows: evidence.rows.map((row, index) => ({ ...row, label: index ? row.label : "" })) }
+  }), false);
+});
+
 test("Provider message text normalization accepts string and text-block envelopes only", () => {
   assert.equal(runtime.extractProviderMessageText({ choices: [{ message: { content: "row 1\nrow 2" } }] }), "row 1\nrow 2");
   assert.equal(runtime.extractProviderMessageText({
@@ -1940,11 +1991,13 @@ test("one-shot structured actual HTTP generic DMS recovery remains confirmation 
   assert.ok(payload.parserTrace.includes("PROVIDER:trusted_dms_rows_recovered"));
   assert.equal(payload.coordinateEngineV2.requires_review, true);
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
-  assert.equal(payload.geometryMode, "points_only");
+  assert.equal(payload.geometryMode, "boundary_review");
   assert.equal(payload.boundaryBlocked, true);
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
-  assert.equal(payload.finalizedCoordinateResult.geometry.type, "MultiPoint");
+  assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "Polygon");
+  assert.equal(payload.mapPreview.kmlEligibility.allowed, false);
   assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedSourceDisplay);
   assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence, "pointwise_dms_semantic_match");
   assert.notEqual(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
@@ -1966,8 +2019,39 @@ test("one-shot structured HTTP generic DMS recovery accepts Provider text-block 
   assert.equal(payload.coordinates.split("\n").length, 4);
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+  assert.equal(payload.geometryMode, "boundary_review");
+  assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "Polygon");
+});
+
+test("contextual UTM30 site vertices auto-locate while crossed source order remains point review and blocks KML", async () => {
+  const payload = await runHttpCandidate("generic-projected-contextual-utm30");
+  const expectedCoordinates = [
+    "A | 727250 | 1219700",
+    "B | 728400 | 1219700",
+    "C | 728400 | 1219500",
+    "D | 728700 | 1219500",
+    "E | 728700 | 1220000",
+    "F | 729150 | 1220000",
+    "G | 729150 | 1219500",
+    "H | 729200 | 1219500"
+  ].join("\n");
+  assert.equal(payload.success, true);
+  assert.equal(payload.precisionMode, "utm30n-projected-x-y");
+  assert.equal(payload.coordinates, expectedCoordinates);
+  assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedCoordinates);
+  assert.ok(payload.parserTrace.includes("UTM30_XY:contextual_boundary_preview"));
+  assert.equal(payload.coordinateEngineV2.groups[0].points.length, 8);
+  assert.equal(payload.geometryMode, "points_only");
+  assert.equal(payload.boundaryBlocked, true);
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "MultiPoint");
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.match(payload.finalizedCoordinateResult.warnings.join("\n"), /交叉/u);
+  assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "MultiPoint");
+  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
+  assert.equal(payload.mapPreview.kmlEligibility.allowed, false);
+  assert.equal(payload.providerCallCount, 1);
 });
 
 test("one-shot structured actual HTTP generic projected recovery preserves source X/Y and blocks export", async () => {

@@ -3240,6 +3240,9 @@ MGRS | <zone and latitude band> | <grid square> | <easting digits> | <northing d
     default:
       return `Read only visible coordinate-structure evidence from this image.${commonRules}
 The family is not reliably classified. Preserve visible coordinate headers, row labels, original values, source-region labels, repeated headers, group boundaries, and explicit CRS text without choosing a family.
+Before the contract title, copy each visible sentence that directly states a projection family, datum/zone, place or administrative location, site/boundary/vertex meaning, or declared area as:
+CONTEXT | <exact visible sentence>
+Do not copy unrelated body text. Do not infer or complete anything that is not visible.
 Output:
 UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE
 Then transcribe every visible coordinate-bearing line in original order. The title alone is invalid whenever any coordinate-bearing line is visible.

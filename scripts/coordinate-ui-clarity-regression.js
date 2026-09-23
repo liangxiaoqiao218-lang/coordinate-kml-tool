@@ -35,8 +35,9 @@ function extractFunctionSource(source, functionName) {
 
 const createReviewHarness = new Function(`
   ${extractFunctionSource(html, "spatialReviewRequired")}
+  ${extractFunctionSource(html, "spatialHasBoundaryReviewWarning")}
   ${extractFunctionSource(html, "spatialWarningText")}
-  return { spatialReviewRequired, spatialWarningText };
+  return { spatialReviewRequired, spatialHasBoundaryReviewWarning, spatialWarningText };
 `);
 const review = createReviewHarness();
 
@@ -80,10 +81,26 @@ const selfIntersectionPayload = {
 assert.equal(review.spatialReviewRequired(selfIntersectionPayload), true);
 assert.match(review.spatialWarningText(selfIntersectionPayload), /自相交/);
 
+const boundaryReviewPayload = {
+  mapPreviewObject: {
+    geometryType: "Polygon",
+    previewWarnings: ["矿区轮廓待核对：地图已按原图点号顺序连接"]
+  },
+  kmlEligibility: { allowed: false }
+};
+assert.equal(review.spatialHasBoundaryReviewWarning(boundaryReviewPayload.mapPreviewObject), true);
+assert.match(review.spatialWarningText(boundaryReviewPayload), /按原图点号顺序连接为待核对轮廓/);
+
+const genericPointReviewPayload = {
+  mapPreviewObject: { geometryType: "MultiPoint", previewWarnings: ["REVIEW_REQUIRED"] },
+  kmlEligibility: { allowed: false }
+};
+assert.doesNotMatch(review.spatialWarningText(genericPointReviewPayload), /交叉/);
+
 assert.doesNotMatch(html, /验证并查看地图|验证并下载 KML/);
 assert.match(html, /id="coordinateCopyAction"[^>]*data-state="blocked"[^>]*aria-disabled="true"[^>]*disabled/);
 assert.match(html, /\.coordinate-result-actions \.coordinate-kml-action,\s*\.coordinate-result-actions \.coordinate-copy-action/);
 assert.match(html, /coordinateCopyAction\.dataset\.state = copyEnabled \? "enabled" : "blocked"/);
 
-console.log("Coordinate UI clarity regression: 10/10 PASS");
+console.log("Coordinate UI clarity regression: 13/13 PASS");
 console.log("PROVIDER_CALLS=0");
