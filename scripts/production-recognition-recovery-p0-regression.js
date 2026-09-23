@@ -1611,6 +1611,10 @@ test("one-shot structured acquisition contract rejects post-Provider family drif
 test("one-shot structured generic contract cannot be upgraded by Provider output", () => {
   const route = primaryRouting.classifyOneShotStructuredFamily({ text: "ordinary report" });
   const contract = primaryRouting.createOneShotAcquisitionContract({ route, sourceText: "ordinary report" });
+  const prompt = primaryRouting.buildOneShotStructuredFamilyPrompt({ family: route.family });
+  assert.match(prompt, /title alone is invalid whenever any coordinate-bearing line is visible/u);
+  assert.match(prompt, /Do not stop after the title/u);
+  assert.match(prompt, /degree, minute, second, and N\/S\/E\/W\/O direction characters/u);
   const result = primaryRouting.validateOneShotAcquisitionContract({
     contract,
     providerText: "Longitude: 63.500001\nLatitude: 11.500002"
@@ -1646,6 +1650,21 @@ test("one-shot structured complete Provider DMS evidence is recoverable only for
   const incomplete = runtime.extractProviderDmsReviewEvidence(missingComponent);
   assert.equal(incomplete.status, "REVIEW_REQUIRED");
   assert.equal(incomplete.coordinates, "");
+});
+
+test("one-shot structured Provider DMS review accepts labeled rows with per-value directions", () => {
+  const sourceText = [
+    "1 | 11°43'16.45\"N | 09°01'13.67\"W",
+    "2 | 11°43'09.20\"N | 09°00'56.03\"W",
+    "3 | 11°43'03.38\"N | 09°00'58.67\"W",
+    "4 | 11°43'11.30\"N | 09°01'15.25\"W",
+    "识别提示：手写坐标存在需核对字符，请结合原图逐行核对。"
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(sourceText);
+  assert.equal(evidence.status, "COMPLETE");
+  assert.equal(evidence.sourceRowCount, 4);
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(evidence.axisDirectionBound, true);
 });
 
 test("one-shot structured actual HTTP generic DMS recovery remains confirmation gated", async () => {

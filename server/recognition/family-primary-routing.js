@@ -3242,7 +3242,9 @@ MGRS | <zone and latitude band> | <grid square> | <easting digits> | <northing d
 The family is not reliably classified. Preserve visible coordinate headers, row labels, original values, source-region labels, repeated headers, group boundaries, and explicit CRS text without choosing a family.
 Output:
 UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE
-Then transcribe only the visible coordinate-bearing lines in original order.
+Then transcribe every visible coordinate-bearing line in original order. The title alone is invalid whenever any coordinate-bearing line is visible.
+For a row containing a complete coordinate pair, keep the visible row label when present and copy both original values on that same row. DMS values must retain their degree, minute, second, and N/S/E/W/O direction characters exactly as visible.
+Do not stop after the title. Do not summarize, omit, convert, reorder, or merge visible coordinate rows.
 This output must remain review-only.`;
   }
 }
