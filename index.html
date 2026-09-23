@@ -5487,7 +5487,7 @@ Au值 = 纯度 × 10 后取整数</div>
         const payload = await agenticCoordinateController.recognize(file);
         if (!payload) return;
         const result = payload.result;
-        input.value = result.displayText;
+        input.value = compactRecognizedCoordinateDisplayText(result.displayText);
         coordinateOrder.value = "auto";
         updateCadastralGridPanel();
         input.focus();
@@ -8818,6 +8818,19 @@ Au值 = 纯度 × 10 后取整数</div>
       }
       debugText.textContent = value;
       if (visible) debugText.scrollTop = debugText.scrollHeight;
+    }
+
+    function compactRecognizedCoordinateDisplayText(text = "") {
+      return String(text || "")
+        .replace(/\r\n/g, "\n")
+        .split("\n")
+        .map(line => {
+          const degreeMarkers = line.match(/[°º]/g) || [];
+          return degreeMarkers.length >= 2
+            ? line.trim().replace(/[ \t]+/g, " ")
+            : line;
+        })
+        .join("\n");
     }
 
     function appendDebug(text) {
@@ -14924,7 +14937,7 @@ ${placemarks}
         invalidateSpatialPreview();
 
         rememberState();
-        input.value = displayCoordinates || finalCoordinates;
+        input.value = compactRecognizedCoordinateDisplayText(displayCoordinates || finalCoordinates);
         coordinateOrder.value = sourceCoordinateRepresentation.axisOrder === "latitude_longitude"
           ? "latlng"
           : sourceCoordinateRepresentation.axisOrder === "longitude_latitude"

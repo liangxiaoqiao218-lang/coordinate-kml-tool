@@ -41,6 +41,12 @@ const createReviewHarness = new Function(`
 `);
 const review = createReviewHarness();
 
+const createCoordinateDisplayHarness = new Function(`
+  ${extractFunctionSource(html, "compactRecognizedCoordinateDisplayText")}
+  return { compactRecognizedCoordinateDisplayText };
+`);
+const coordinateDisplay = createCoordinateDisplayHarness();
+
 const clearPayload = {
   mapPreviewObject: {
     previewEligibility: { allowed: true, warning: true },
@@ -97,10 +103,27 @@ const genericPointReviewPayload = {
 };
 assert.doesNotMatch(review.spatialWarningText(genericPointReviewPayload), /交叉/);
 
+const spacedDms = [
+  "1     11°   43’   16.45’’          09°   01’   13.67’’",
+  "2     11°   43’   09.20’’          09°   00’   56.03’’"
+].join("\n");
+assert.equal(
+  coordinateDisplay.compactRecognizedCoordinateDisplayText(spacedDms),
+  [
+    "1 11° 43’ 16.45’’ 09° 01’ 13.67’’",
+    "2 11° 43’ 09.20’’ 09° 00’ 56.03’’"
+  ].join("\n")
+);
+assert.equal(
+  coordinateDisplay.compactRecognizedCoordinateDisplayText("A | 727250 | 1219700"),
+  "A | 727250 | 1219700",
+  "projected source rows must not be reformatted"
+);
+
 assert.doesNotMatch(html, /验证并查看地图|验证并下载 KML/);
 assert.match(html, /id="coordinateCopyAction"[^>]*data-state="blocked"[^>]*aria-disabled="true"[^>]*disabled/);
 assert.match(html, /\.coordinate-result-actions \.coordinate-kml-action,\s*\.coordinate-result-actions \.coordinate-copy-action/);
 assert.match(html, /coordinateCopyAction\.dataset\.state = copyEnabled \? "enabled" : "blocked"/);
 
-console.log("Coordinate UI clarity regression: 13/13 PASS");
+console.log("Coordinate UI clarity regression: 15/15 PASS");
 console.log("PROVIDER_CALLS=0");
