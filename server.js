@@ -8370,7 +8370,8 @@ async function runLocalOcrFamilyClassification({
       route,
       contract: createOneShotAcquisitionContract({ route }),
       layoutLines: Object.freeze([]),
-      axisOrderEvidence: null
+      axisOrderEvidence: null,
+      projectedTableOcrAcquisition: false
     };
   };
   if (!imageBuffer || !imageIdentity) return genericResult();
@@ -8409,15 +8410,16 @@ async function runLocalOcrFamilyClassification({
       deadlineCode: RECOGNITION_DEADLINE_CODE,
       timeoutCode: RECOGNITION_BUDGET_CODE
     });
+    const rawLocalOcrText = String(result?.data?.text || "");
     const extractedLayoutLines = extractLocalOcrLayoutLines(result, imageIdentity);
     const normalizedLocalEvidence = normalizeLocalOcrStructuredEvidence({
-      sourceText: result?.data?.text || "",
+      sourceText: rawLocalOcrText,
       layoutLines: extractedLayoutLines
     });
     const trustedDecimalEvidence = normalizedLocalEvidence.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
       ? null
       : extractTrustedLocalOcrDecimalCoordinateEvidence({
-        sourceText: result?.data?.text || "",
+        sourceText: rawLocalOcrText,
         layoutLines: extractedLayoutLines
       });
     const selectedLocalEvidence = trustedDecimalEvidence?.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
@@ -8438,6 +8440,7 @@ async function runLocalOcrFamilyClassification({
       route,
       sourceText,
       axisOrderEvidence: selectedLocalEvidence.axisOrderEvidence || null,
+      projectedTableOcrAcquisition: shouldUseProjectedTableOcrAcquisition(rawLocalOcrText),
       contract: createOneShotAcquisitionContract({
         route,
         sourceText,
@@ -13646,10 +13649,13 @@ app.post("/api/coordinate-confirmation", (req, res) => {
   if (!outcome.ok) {
     return res.status(outcome.httpStatus).json({ success: false, code: outcome.code });
   }
+  const finalizedCoordinateResult = releaseConfirmedBoundaryReviewResult(
+    outcome.finalizedCoordinateResult
+  );
   return res.json({
     success: true,
     idempotent: outcome.idempotent,
-    finalizedCoordinateResult: outcome.finalizedCoordinateResult
+    finalizedCoordinateResult
   });
 });
 
@@ -14329,6 +14335,43 @@ function keepRecognizedCoordinatesAsPointReview(response = {}, warning = "") {
   };
 }
 
+function shouldUseProjectedTableOcrAcquisition(value = "") {
+  const lines = normalizeText(String(value || ""))
+    .split(/\r?\n/u)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const joined = lines.join("\n");
+  const hasProjectionContext = /\bUTM\b/iu.test(joined);
+  const hasBoundaryContext = /\b(?:sommets?|vertices?|corners?|boundary|perimeter)\b/iu.test(joined)
+    && /\b(?:site|area|parcel|permit|licen[cs]e)\b/iu.test(joined);
+  const projectedPairLineCount = lines.filter(line => {
+    const largeNumericTokens = line.match(/\b\d{6,8}\b/gu) || [];
+    return largeNumericTokens.length >= 2;
+  }).length;
+  return hasProjectionContext && hasBoundaryContext && projectedPairLineCount >= 3;
+}
+
+function buildProjectedTableOcrAcquisitionPrompt() {
+  return `Read only the complete projected-coordinate table and the directly related visible context in this image.
+This is literal OCR transcription. Do not calculate, repair, infer, reorder, or omit values.
+
+Output exactly this review-only structure:
+CONTEXT | <each visible sentence that directly states UTM/projection, site/boundary/vertices, place, or declared area>
+UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE
+<exact visible table header>
+<label> | <first projected value> | <second projected value>
+
+Rules:
+- Read every visible table row in original top-to-bottom order.
+- Preserve every row label and every digit exactly as printed.
+- Pair values only from the same horizontal row.
+- Preserve visible UTM, datum, zone, hemisphere, X/Y, Easting/Northing, and Sommets/Point header text.
+- Never infer a zone, hemisphere, CRS, missing digit, missing row, or corrected value from a country, filename, known sample, or numeric range.
+- Do not convert projected values to longitude/latitude.
+- Do not output unrelated body text, markdown, explanations, bounding boxes, or confidence values.
+- If fewer than three complete same-row projected coordinate pairs are readable, output only: ${noCoordinatesText}`;
+}
+
 function hasVisibleUtmBoundaryContext(value = "") {
   const source = normalizeText(String(value || ""));
   const hasUtm = /\bUTM\b/iu.test(source);
@@ -14394,7 +14437,7 @@ function keepRecognizedCoordinatesAsBoundaryReview(response = {}, warning = "") 
     geometry: { type: "Polygon", coordinates: [ring] },
     confirmationStatus: "pending",
     qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
-    technicalKmlReady: false,
+    technicalKmlReady: true,
     currentAuthorizedGeometryExportable: false,
     requiresReview: true,
     kmlReady: false,
@@ -14415,6 +14458,40 @@ function keepRecognizedCoordinatesAsBoundaryReview(response = {}, warning = "") 
     boundaryBlocked: true,
     finalizedCoordinateResult: boundaryReviewResult
   };
+}
+
+function releaseConfirmedBoundaryReviewResult(result = {}) {
+  const boundaryReviewWarning = Array.isArray(result?.warnings)
+    && result.warnings.some(value => /(?:矿区轮廓待核对|按原图点号顺序连接|边界含义)/iu.test(String(value)));
+  const confirmable = result?.confirmationStatus === "accepted"
+    && result?.technicalKmlReady === true
+    && result?.qualityGateStatus !== COORDINATE_QUALITY_GATE_STATUS.FAILED
+    && result?.kmlAuthorityBlocked !== true
+    && ["Polygon", "MultiPolygon"].includes(String(result?.geometry?.type || ""))
+    && boundaryReviewWarning;
+  if (!confirmable) return result;
+  const released = finalizeCoordinateResult({
+    ...result,
+    currentRevision: result.resultRevision,
+    confirmedRevision: result.resultRevision,
+    confirmationStatus: "accepted",
+    currentAuthorizedGeometryExportable: true,
+    requiresReview: false,
+    kmlReady: true,
+    groups: (Array.isArray(result.groups) ? result.groups : []).map(group => ({
+      ...group,
+      requiresReview: false,
+      kmlReady: true
+    })),
+    warnings: (Array.isArray(result.warnings) ? result.warnings : []).filter(
+      value => !/(?:矿区轮廓待核对|按原图点号顺序连接|边界含义)/iu.test(String(value))
+    ),
+    limitations: (Array.isArray(result.limitations) ? result.limitations : []).filter(
+      value => !/(?:尚未确认|确认前|不得输出边界 KML)/iu.test(String(value))
+    ),
+    createdAt: result.createdAt
+  });
+  return coordinateConfirmationRuntime.register(released);
 }
 
 const buildCoordinateVerificationResponseWithoutRecognitionBudget = buildCoordinateVerificationResponse;
@@ -14701,6 +14778,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
   let oneShotLocalOcrLayoutLines = Object.freeze([]);
   let oneShotLocalOcrSourceText = "";
   let oneShotLocalOcrAxisOrderEvidence = null;
+  let projectedTableOcrAcquisition = false;
   let oneShotStructuredFamilyRoute = classifyOneShotStructuredFamily();
   let oneShotAcquisitionContract = createOneShotAcquisitionContract({ route: oneShotStructuredFamilyRoute });
   let responseCommitPromise = null;
@@ -15086,6 +15164,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     oneShotLocalOcrLayoutLines = oneShotFamilyClassification.layoutLines;
     oneShotLocalOcrSourceText = String(oneShotFamilyClassification.sourceText || "");
     oneShotLocalOcrAxisOrderEvidence = oneShotFamilyClassification.axisOrderEvidence || null;
+    projectedTableOcrAcquisition = oneShotFamilyClassification.projectedTableOcrAcquisition === true;
     oneShotStructuredFamilyRoute = oneShotFamilyClassification.route;
     oneShotAcquisitionContract = oneShotFamilyClassification.contract;
     console.log("One-shot structured family route:", {
@@ -15098,6 +15177,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
       groupHeadingCount: oneShotStructuredFamilyRoute.evidence.groupHeadingCount,
       layoutRegionCount: oneShotStructuredFamilyRoute.evidence.layoutRegionCount,
       ambiguousMultiPairLineCount: oneShotStructuredFamilyRoute.evidence.ambiguousMultiPairLineCount,
+      projectedTableOcrAcquisition,
       localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0
     });
     const prompt = `你是矿业坐标识别助手。请只识别图片中的真实坐标表区域，返回紧凑的坐标行及可见的坐标结构证据。图片可能是完整文件、手机截图、扫描件、带水印图片、长表、局部表格、同一页多块矿区坐标或带菜单按钮的截图。
@@ -15500,11 +15580,16 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       }
     ];
-    const selectedProviderPrompt = buildOneShotStructuredFamilyPrompt({
-      family: oneShotStructuredFamilyRoute.family,
-      format: oneShotAcquisitionContract.format,
-      noCoordinatesText
-    });
+    const selectedProviderPrompt = projectedTableOcrAcquisition
+      ? buildProjectedTableOcrAcquisitionPrompt()
+      : buildOneShotStructuredFamilyPrompt({
+          family: oneShotStructuredFamilyRoute.family,
+          format: oneShotAcquisitionContract.format,
+          noCoordinatesText
+        });
+    const selectedProviderModel = projectedTableOcrAcquisition
+      ? aliyunOcrModel
+      : aliyunVisionModel;
 
     // Legacy country/file-name selectors remain available to older parsers but
     // no longer control the first (and only) Provider call. The primary route
@@ -16202,7 +16287,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     // has already been consumed at most once for classification and is never
     // repeated here as both classification and fallback evidence.
     const response = await callAliyunVision({
-      modelName: aliyunVisionModel,
+      modelName: selectedProviderModel,
       prompt: selectedProviderPrompt,
       imageItems,
       temperature: 0.1,
@@ -16217,7 +16302,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       response,
       coordinateImageIdentity,
       recognitionBudget,
-      aliyunVisionModel
+      selectedProviderModel
     );
     stage1ProviderSucceeded = true;
     if (
@@ -16301,7 +16386,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
         const localReviewPayload = {
           success: true,
-          model: `${aliyunVisionModel}+trusted-local-ocr-decimal-review`,
+          model: `${selectedProviderModel}+trusted-local-ocr-decimal-review`,
           rawText: oneShotLocalOcrSourceText,
           coordinates: trustedLocalCoordinates,
           precisionMode: trustedLocalAxisResolved
@@ -16354,7 +16439,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
         const providerReviewPayload = {
           success: true,
-          model: `${aliyunVisionModel}+trusted-provider-decimal-recovery`,
+          model: `${selectedProviderModel}+trusted-provider-decimal-recovery`,
           rawText: trustedProviderDecimalEvidence.text,
           coordinates: trustedProviderCoordinates,
           precisionMode: trustedProviderAxisResolved
@@ -16407,7 +16492,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           const warning = "已从原图可见的 UTM 场地顶点说明恢复地图定位；地图严格保留原图点号和点序，边界安全核对通过前不开放 KML。";
           const contextualUtm30Payload = {
             success: true,
-            model: `${aliyunVisionModel}+contextual-utm30-boundary-review`,
+            model: `${selectedProviderModel}+contextual-utm30-boundary-review`,
             rawText,
             coordinates: trustedProviderProjectedEvidence.text,
             precisionMode: "utm30n-projected-x-y",
@@ -16454,7 +16539,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
         const providerProjectedReviewPayload = {
           success: true,
-          model: `${aliyunVisionModel}+trusted-provider-projected-review`,
+          model: `${selectedProviderModel}+trusted-provider-projected-review`,
           rawText,
           coordinates: trustedProviderProjectedEvidence.text,
           precisionMode: "projected-x-y-review",
@@ -16548,7 +16633,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
         const providerDmsReviewPayload = {
           success: true,
-          model: `${aliyunVisionModel}+trusted-provider-dms-review`,
+          model: `${selectedProviderModel}+trusted-provider-dms-review`,
           rawText,
           coordinates: trustedProviderDmsEvidence.coordinates,
           precisionMode: "preserve-original-decimals-and-parse-dms",
@@ -16585,7 +16670,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         success: false,
         reason: "acquisition_contract_review_required",
         code: "ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED",
-        model: aliyunVisionModel,
+        model: selectedProviderModel,
         rawText: "",
         coordinates: "",
         precisionMode: "one-shot-acquisition-contract-review",

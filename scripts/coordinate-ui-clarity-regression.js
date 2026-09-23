@@ -124,6 +124,12 @@ assert.doesNotMatch(html, /验证并查看地图|验证并下载 KML/);
 assert.match(html, /id="coordinateCopyAction"[^>]*data-state="blocked"[^>]*aria-disabled="true"[^>]*disabled/);
 assert.match(html, /\.coordinate-result-actions \.coordinate-kml-action,\s*\.coordinate-result-actions \.coordinate-copy-action/);
 assert.match(html, /coordinateCopyAction\.dataset\.state = copyEnabled \? "enabled" : "blocked"/);
+assert.match(html, /\.debug-live-status\[hidden\]\s*\{\s*display:\s*none;/u);
+assert.match(html, /function isPendingBoundaryKmlConfirmation\(/u);
+assert.match(html, /result\?\.technicalKmlReady === true/u);
+assert.match(html, /result\?\.kmlAuthorityBlocked !== true/u);
+assert.match(html, /确认并下载 KML/u);
+assert.match(html, /KML_BOUNDARY_CONFIRMATION_FAILED/u);
 
-console.log("Coordinate UI clarity regression: 15/15 PASS");
+console.log("Coordinate UI clarity regression: 21/21 PASS");
 console.log("PROVIDER_CALLS=0");

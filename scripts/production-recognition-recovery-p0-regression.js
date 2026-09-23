@@ -298,6 +298,25 @@ async function runHttpCandidate(scenario) {
       });
       const mapPreview = await mapResponse.json();
       assert.equal(mapResponse.status, 200, JSON.stringify(mapPreview));
+      if (scenario === 'generic-dms-review' || scenario === 'generic-dms-review-array') {
+        const confirmationResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-confirmation`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+          body: JSON.stringify({ resultId: finalized.resultId, resultRevision: finalized.resultRevision,
+            geometryHash: finalized.geometryHash, action: 'accept' })
+        });
+        const confirmation = await confirmationResponse.json();
+        assert.equal(confirmationResponse.status, 200, JSON.stringify(confirmation));
+        const confirmed = confirmation.finalizedCoordinateResult;
+        const confirmedMapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+          body: JSON.stringify({ resultId: confirmed.resultId, resultRevision: confirmed.resultRevision,
+            geometryHash: confirmed.geometryHash })
+        });
+        const confirmedMapPreview = await confirmedMapResponse.json();
+        assert.equal(confirmedMapResponse.status, 200, JSON.stringify(confirmedMapPreview));
+        return { ...payload, mapPreview, confirmedBoundary: confirmation,
+          confirmedMapPreview, providerCallCount: stats.acquisitions };
+      }
       return { ...payload, mapPreview, providerCallCount: stats.acquisitions };
     }
     if (payload.providerProjectedReviewEvidence?.status === 'COMPLETE') {
@@ -1995,12 +2014,22 @@ test("one-shot structured actual HTTP generic DMS recovery remains confirmation 
   assert.equal(payload.boundaryBlocked, true);
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult.technicalKmlReady, true);
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
   assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "Polygon");
   assert.equal(payload.mapPreview.kmlEligibility.allowed, false);
   assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedSourceDisplay);
   assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence, "pointwise_dms_semantic_match");
   assert.notEqual(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
+  assert.equal(payload.confirmedBoundary.finalizedCoordinateResult.confirmationStatus, "accepted");
+  assert.equal(payload.confirmedBoundary.finalizedCoordinateResult.requiresReview, false);
+  assert.equal(payload.confirmedBoundary.finalizedCoordinateResult.kmlReady, true);
+  assert.equal(payload.confirmedBoundary.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
+  assert.equal(payload.confirmedMapPreview.kmlEligibility.allowed, true);
+  assert.doesNotMatch(
+    payload.confirmedMapPreview.mapPreviewObject.previewWarnings.join("\n"),
+    /(?:矿区轮廓待核对|CONFIRMATION_PENDING|KML_BLOCKED)/u
+  );
   const usageAuthority = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: payload });
   assert.equal(usageAuthority.eligible, true, JSON.stringify({ usageAuthority, finalized: {
     requiresReview: payload.finalizedCoordinateResult.requiresReview,
@@ -2022,7 +2051,31 @@ test("one-shot structured HTTP generic DMS recovery accepts Provider text-block 
   assert.equal(payload.geometryMode, "boundary_review");
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.confirmedBoundary.finalizedCoordinateResult.kmlReady, true);
   assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "Polygon");
+});
+
+test("projected table OCR acquisition hint is generic, structure-bound, and review-only", () => {
+  const noisyStructuredOcr = [
+    "Les coordonnées géographiques en UTM des sommets du site sont consignées ci-dessous",
+    "[Sommets [ Tox Ty",
+    "AT 727250 | 1219700",
+    "BE 728400 | 1219700",
+    "Cc 728400 | 1219500"
+  ].join("\n");
+  assert.equal(runtime.shouldUseProjectedTableOcrAcquisition(noisyStructuredOcr), true);
+  assert.equal(runtime.shouldUseProjectedTableOcrAcquisition(
+    "Burkina Faso UTM sample filename without visible table rows"
+  ), false);
+  assert.equal(runtime.shouldUseProjectedTableOcrAcquisition(
+    "Sommets du site\n1 | 11°43'16.45N | 09°01'13.67W\n2 | 11°43'09.20N | 09°00'56.03W"
+  ), false);
+  const prompt = runtime.buildProjectedTableOcrAcquisitionPrompt();
+  assert.match(prompt, /literal OCR transcription/u);
+  assert.match(prompt, /UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE/u);
+  assert.match(prompt, /Never infer a zone, hemisphere, CRS, missing digit, missing row/u);
+  assert.doesNotMatch(prompt, /727250|1219700|Burkina|布基纳/u);
+  assert.match(serverSource, /projectedTableOcrAcquisition\s*\?\s*aliyunOcrModel\s*:\s*aliyunVisionModel/u);
 });
 
 test("contextual UTM30 site vertices auto-locate while crossed source order remains point review and blocks KML", async () => {

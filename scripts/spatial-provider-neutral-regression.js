@@ -484,8 +484,14 @@ test("SPN-FS-07", "review state is compact when collapsed and detailed only in t
 test("SPN-FS-08", "KML action lives inside expandable result details", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(html, /id="spatialResultDetails"[\s\S]*id="spatialKmlAction"/);
-  assert.match(html, /spatialKmlAction\.dataset\.eligible = String\(payload\?\.kmlEligibility\?\.allowed === true\)/);
-  assert.match(html, /syncButton\(spatialKmlAction, spatialKmlAction\?\.dataset\.eligible === "true"\)/);
+  assert.match(
+    html,
+    /spatialKmlAction\.dataset\.eligible = String\(\s*payload\?\.kmlEligibility\?\.allowed === true \|\| isPendingBoundaryKmlConfirmation\(\)\s*\)/
+  );
+  assert.match(
+    html,
+    /syncButton\(spatialKmlAction,\s*spatialKmlAction\?\.dataset\.eligible === "true" \|\| boundaryConfirmationPending,\s*labels\)/
+  );
 });
 
 test("SPN-FS-09", "sheet expansion is presentation-only", () => {

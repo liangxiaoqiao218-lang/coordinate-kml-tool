@@ -245,7 +245,10 @@ test("P09E-26", "mobile bottom sheet and desktop result card share one bounded r
 test("P09E-27", "KML remains inside details and bound only to server eligibility", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(html, /id="spatialResultDetails"[\s\S]*id="spatialKmlAction"/);
-  assert.match(html, /spatialKmlAction\.dataset\.eligible = String\(payload\?\.kmlEligibility\?\.allowed === true\)/);
+  assert.match(
+    html,
+    /spatialKmlAction\.dataset\.eligible = String\(\s*payload\?\.kmlEligibility\?\.allowed === true \|\| isPendingBoundaryKmlConfirmation\(\)\s*\)/
+  );
   assert.match(html, /syncKmlActionVisualState\(\)/);
 });
 
