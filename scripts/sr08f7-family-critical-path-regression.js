@@ -25,6 +25,7 @@ import {
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
 import {
+  extractProviderProjectedCoordinateEvidence,
   LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON,
   LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS,
   normalizeLocalOcrStructuredEvidence
@@ -1391,6 +1392,81 @@ test("R23C", "projected contract normalizes equivalent whitespace rows without w
     provider.replace("5 500500 9065500", "4 500500 9065500"),
     provider.replace("5 500500 9065500\n", ""),
     provider.replace("Zone 50S", "Zone 50N")
+  ]) assertReview(contract, unsafe);
+});
+
+test("R23D", "projected contract fully consumes five-column DMS reference rows and exact full repeats", () => {
+  const projectedRows = [
+    ["1", "500100", "9065100"], ["2", "500200", "9065200"], ["3", "500300", "9065300"],
+    ["4", "500400", "9065400"], ["5", "500500", "9065500"], ["6", "500600", "9065600"]
+  ];
+  const source = [
+    "Projection UTM | Datum WGS 84 | Zone 50S | Hemisphere S",
+    "Point | Easting | Northing",
+    ...projectedRows.map(row => row.join(" | "))
+  ].join("\n");
+  const dmsReferences = projectedRows.map((row, index) => [
+    `${2 + index}° 01' 02.00\" S`,
+    `${119 + index}° 03' 04.00\" E`
+  ]);
+  const metadata = [
+    "Projection UTM | Datum WGS 84 | Zone 50S | Hemisphere S",
+    "AXIS ORDER EASTING NORTHING"
+  ];
+  const whitespaceRows = projectedRows.map((row, index) => (
+    [...row, ...dmsReferences[index]].join(index % 2 === 0 ? " " : "\t")
+  ));
+  const whitespaceProvider = [
+    ...metadata,
+    "Point Easting Northing Latitude Longitude",
+    ...whitespaceRows
+  ].join("\n");
+  const pipeProvider = [
+    ...metadata,
+    "Point | Easting | Northing | Latitude | Longitude",
+    ...projectedRows.map((row, index) => [...row, ...dmsReferences[index]].join(" | "))
+  ].join("\n");
+  const pointPipeProvider = [
+    ...metadata,
+    "Point | Easting | Northing | Latitude | Longitude",
+    ...projectedRows.map((row, index) => ["POINT", ...row, ...dmsReferences[index]].join(" | "))
+  ].join("\n");
+  const contract = contractFor(source);
+  assertConformant(contract, whitespaceProvider);
+  assertConformant(contract, pipeProvider);
+  assertConformant(contract, pointPipeProvider);
+
+  const repeatedProvider = [
+    ...metadata,
+    "Point Easting Northing Latitude Longitude",
+    ...whitespaceRows,
+    ...whitespaceRows
+  ].join("\n");
+  const repeatedEvidence = extractProviderProjectedCoordinateEvidence({
+    sourceText: repeatedProvider,
+    minimumRows: 1
+  });
+  assert.equal(repeatedEvidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.equal(repeatedEvidence.rowCount, projectedRows.length);
+  assert.equal(repeatedEvidence.diagnostics.exactRepeatedSequenceCollapsed, true);
+  assert.equal(repeatedEvidence.diagnostics.exactRepeatedSequenceCount, 2);
+  assertConformant(contract, repeatedProvider);
+
+  for (const unsafe of [
+    whitespaceProvider.replace(`6° 01' 02.00\" S`, `6° 01' 02.00\"`),
+    whitespaceProvider.replace(`3 500300 9065300`, `3 500300 9065300 99999`),
+    whitespaceProvider.replace(`5 500500 9065500`, `4 500500 9065500`),
+    whitespaceProvider.replace(`${whitespaceRows[4]}\n`, ""),
+    `${whitespaceProvider}\n${whitespaceRows[0]}`,
+    repeatedProvider.replace(
+      whitespaceRows.at(-1),
+      whitespaceRows.at(-1).replace("9065600", "9065601")
+    ),
+    pipeProvider.replace(`119° 03' 04.00\" E`, `119° 03' 04.00\" E | 7`),
+    whitespaceProvider.replace(
+      whitespaceRows[1],
+      whitespaceRows[1].replace("500200", "500200,,")
+    )
   ]) assertReview(contract, unsafe);
 });
 

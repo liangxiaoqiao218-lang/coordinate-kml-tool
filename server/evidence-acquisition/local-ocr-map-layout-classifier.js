@@ -713,6 +713,95 @@ function groupedProjectedProviderNumber(tokens = []) {
   return normalizeProjectedProviderNumber(`${sign}${unsigned.join("")}`);
 }
 
+const PROVIDER_PROJECTED_DMS_COMPONENT_SOURCE = String.raw`\d{1,3}\s*[°º˚]\s*\d{1,2}\s*['′’]?\s*\d{1,2}(?:[.,]\d+)?\s*(?:["″”]|'{2})?\s*[NSEWO]`;
+
+function normalizeProviderProjectedDmsReference(value, expectedDirections) {
+  const source = text(value).replace(/\s+/gu, " ");
+  const match = source.match(new RegExp(`^(${PROVIDER_PROJECTED_DMS_COMPONENT_SOURCE})$`, "iu"));
+  if (!match) return null;
+  const direction = source.match(/([NSEWO])\s*$/iu)?.[1]?.toUpperCase() || "";
+  if (!expectedDirections.includes(direction)) return null;
+  const numbers = source.match(/\d{1,3}(?:[.,]\d+)?/gu) || [];
+  if (numbers.length !== 3) return null;
+  const degrees = Number(numbers[0].replace(",", "."));
+  const minutes = Number(numbers[1].replace(",", "."));
+  const seconds = Number(numbers[2].replace(",", "."));
+  const limit = expectedDirections === "NS" ? 90 : 180;
+  if (!Number.isFinite(degrees) || !Number.isFinite(minutes) || !Number.isFinite(seconds)
+    || degrees > limit || minutes >= 60 || seconds >= 60
+    || (degrees === limit && (minutes > 0 || seconds > 0))) return null;
+  return source;
+}
+
+function parseProviderProjectedDmsReferencePair(latitude, longitude) {
+  const normalizedLatitude = normalizeProviderProjectedDmsReference(latitude, "NS");
+  const normalizedLongitude = normalizeProviderProjectedDmsReference(longitude, "EWO");
+  return normalizedLatitude && normalizedLongitude
+    ? Object.freeze({ latitude: normalizedLatitude, longitude: normalizedLongitude })
+    : null;
+}
+
+function splitProviderPipeFields(value) {
+  const parts = String(value || "").split("|").map(part => part.trim());
+  if (parts[0] === "") parts.shift();
+  if (parts.at(-1) === "") parts.pop();
+  return parts.length > 0 && parts.every(Boolean) ? parts : null;
+}
+
+function parseWhitespaceProjectedRowWithDmsReferences(raw) {
+  const pattern = new RegExp(
+    `^\\s*(?:POINT\\s+)?([A-Z][A-Z0-9_.-]{0,15}|\\d{1,3})\\s+([+-]?\\d{4,10}(?:[.,]\\d+)?)\\s+([+-]?\\d{4,10}(?:[.,]\\d+)?)\\s+(${PROVIDER_PROJECTED_DMS_COMPONENT_SOURCE})\\s+(${PROVIDER_PROJECTED_DMS_COMPONENT_SOURCE})\\s*$`,
+    "iu"
+  );
+  const match = String(raw || "").match(pattern);
+  if (!match) return null;
+  const x = normalizeProjectedProviderNumber(match[2]);
+  const y = normalizeProjectedProviderNumber(match[3]);
+  const referenceDms = parseProviderProjectedDmsReferencePair(match[4], match[5]);
+  return x && y && referenceDms
+    ? Object.freeze({ label: match[1], x, y, referenceDms, sourceText: raw })
+    : null;
+}
+
+function projectedProviderRowIdentity(row) {
+  return JSON.stringify([
+    text(row?.label),
+    text(row?.x),
+    text(row?.y),
+    text(row?.referenceDms?.latitude),
+    text(row?.referenceDms?.longitude)
+  ]);
+}
+
+function collapseExactRepeatedProjectedProviderSequence(rows = []) {
+  const source = Array.isArray(rows) ? rows.slice() : [];
+  const candidates = new Map();
+  for (let blockLength = 3; blockLength <= Math.floor(source.length / 2); blockLength += 1) {
+    if (source.length % blockLength !== 0) continue;
+    const repetitions = source.length / blockLength;
+    const exact = source.every((row, index) => (
+      projectedProviderRowIdentity(row) === projectedProviderRowIdentity(source[index % blockLength])
+    ));
+    if (!exact) continue;
+    const base = source.slice(0, blockLength);
+    const labels = base.map(row => text(row.label));
+    if (labels.some(label => !label) || new Set(labels).size !== labels.length) continue;
+    const numericLabels = labels.map(label => /^\d{1,3}$/u.test(label) ? Number(label) : null);
+    if (numericLabels.every(Number.isInteger)
+      && numericLabels.some((label, index) => label !== index + 1)) continue;
+    if (numericLabels.some(Number.isInteger) && !numericLabels.every(Number.isInteger)) continue;
+    candidates.set(base.map(projectedProviderRowIdentity).join("\n"), Object.freeze({
+      rows: Object.freeze(base),
+      repetitions
+    }));
+  }
+  if (candidates.size !== 1) {
+    return Object.freeze({ rows: Object.freeze(source), collapsed: false, repetitions: 1 });
+  }
+  const [candidate] = candidates.values();
+  return Object.freeze({ rows: candidate.rows, collapsed: true, repetitions: candidate.repetitions });
+}
+
 function parseProviderProjectedRow(line, { labelColumnVisible = false } = {}) {
   const raw = text(line).replace(/[｜]/gu, "|");
   if (!raw) return null;
@@ -726,31 +815,48 @@ function parseProviderProjectedRow(line, { labelColumnVisible = false } = {}) {
       ? Object.freeze({ label: labelledCommaPair[1], x, y, sourceText: raw })
       : null;
   }
-  const pipeParts = raw.split("|").map(part => part.trim()).filter(Boolean);
+  const pipeParts = raw.includes("|") ? splitProviderPipeFields(raw) : [];
+  if (raw.includes("|") && !pipeParts) return null;
   if (pipeParts.length === 4 && /^POINT$/iu.test(pipeParts[0])) {
     const x = normalizeProjectedProviderNumber(pipeParts[2]);
     const y = normalizeProjectedProviderNumber(pipeParts[3]);
     if (x && y) return Object.freeze({ label: pipeParts[1], x, y, sourceText: raw });
+  }
+  if (pipeParts.length === 6 && /^POINT$/iu.test(pipeParts[0])) {
+    const x = normalizeProjectedProviderNumber(pipeParts[2]);
+    const y = normalizeProjectedProviderNumber(pipeParts[3]);
+    const referenceDms = parseProviderProjectedDmsReferencePair(pipeParts[4], pipeParts[5]);
+    if (x && y && referenceDms) {
+      return Object.freeze({ label: pipeParts[1], x, y, referenceDms, sourceText: raw });
+    }
   }
   if (pipeParts.length === 3) {
     const x = normalizeProjectedProviderNumber(pipeParts[1]);
     const y = normalizeProjectedProviderNumber(pipeParts[2]);
     if (x && y) return Object.freeze({ label: pipeParts[0], x, y, sourceText: raw });
   }
-  if (pipeParts.length >= 5
-    && pipeParts.slice(3).every(part => /\d\s*°[^|]*[NSEWO]\b/iu.test(part))) {
+  if (pipeParts.length === 5) {
     const x = normalizeProjectedProviderNumber(pipeParts[1]);
     const y = normalizeProjectedProviderNumber(pipeParts[2]);
-    if (x && y) return Object.freeze({ label: pipeParts[0], x, y, sourceText: raw });
+    const referenceDms = parseProviderProjectedDmsReferencePair(pipeParts[3], pipeParts[4]);
+    if (x && y && referenceDms) {
+      return Object.freeze({ label: pipeParts[0], x, y, referenceDms, sourceText: raw });
+    }
   }
+  if (raw.includes("|")) return null;
 
-  const tokens = raw.match(/[+-]?\d+(?:[.,]\d+)?/gu) || [];
-  let label = raw.match(/^\s*(?:POINT\s+)?([A-Z][A-Z0-9_.-]{0,15})\b/iu)?.[1] || "";
-  let coordinateTokens = tokens;
-  if (!label && labelColumnVisible && tokens.length >= 3 && /^\d{1,3}$/u.test(tokens[0])) {
-    label = tokens[0];
-    coordinateTokens = tokens.slice(1);
-  }
+  const projectedWithDmsReferences = parseWhitespaceProjectedRowWithDmsReferences(raw);
+  if (projectedWithDmsReferences) return projectedWithDmsReferences;
+
+  const fullyConsumedNumericRow = raw.match(
+    /^\s*(?:POINT\s+)?([A-Z][A-Z0-9_.-]{0,15}|\d{1,3})\s+([+\-\d.,\s]+)\s*$/iu
+  );
+  if (!fullyConsumedNumericRow) return null;
+  const label = fullyConsumedNumericRow[1];
+  if (/^\d{1,3}$/u.test(label) && !labelColumnVisible) return null;
+  const coordinateTokens = fullyConsumedNumericRow[2].match(/[+-]?\d+(?:[.,]\d+)?/gu) || [];
+  const normalizedNumericBody = fullyConsumedNumericRow[2].trim().replace(/\s+/gu, " ");
+  if (coordinateTokens.join(" ") !== normalizedNumericBody) return null;
   if (!label && !labelColumnVisible) return null;
   if (coordinateTokens.length === 2) {
     const x = normalizeProjectedProviderNumber(coordinateTokens[0]);
@@ -773,7 +879,14 @@ function parseProviderProjectedRows(line, { labelColumnVisible = false } = {}) {
   const raw = text(line).replace(/[｜]/gu, "|");
   if (!raw) return Object.freeze({ rows: Object.freeze([]), multiRecord: false });
 
-  const pipeParts = raw.split("|").map(part => part.trim()).filter(Boolean);
+  const pipeParts = raw.includes("|") ? splitProviderPipeFields(raw) : [];
+  if (raw.includes("|") && !pipeParts) {
+    return Object.freeze({ rows: Object.freeze([]), multiRecord: true });
+  }
+  if (pipeParts.length === 6 && /^POINT$/iu.test(pipeParts[0])) {
+    const row = parseProviderProjectedRow(raw, { labelColumnVisible });
+    return Object.freeze({ rows: Object.freeze(row ? [row] : []), multiRecord: false });
+  }
   if (pipeParts.length >= 6 && pipeParts.length % 3 === 0) {
     const groupedRows = [];
     for (let index = 0; index < pipeParts.length; index += 3) {
@@ -906,7 +1019,9 @@ export function extractProviderProjectedCoordinateEvidence({
       })
     });
   }
-  const labels = rows.map(row => text(row.label));
+  const repeatedSequence = collapseExactRepeatedProjectedProviderSequence(rows);
+  const normalizedRows = repeatedSequence.rows;
+  const labels = normalizedRows.map(row => text(row.label));
   if (labels.some(label => !label) || new Set(labels).size !== labels.length) {
     return Object.freeze({
       text: "", rows: Object.freeze([]), rowCount: 0,
@@ -915,9 +1030,17 @@ export function extractProviderProjectedCoordinateEvidence({
       crsEvidence: null
     });
   }
-  let orderedRows = rows;
+  let orderedRows = normalizedRows;
+  const numericLabels = labels.map(label => /^\d{1,3}$/u.test(label) ? Number(label) : null);
+  if (numericLabels.some(Number.isInteger) && !numericLabels.every(Number.isInteger)) {
+    return Object.freeze({
+      text: "", rows: Object.freeze([]), rowCount: 0,
+      status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+      reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+      crsEvidence: null
+    });
+  }
   if (multiRecordLineCount > 0) {
-    const numericLabels = labels.map(label => /^\d{1,3}$/u.test(label) ? Number(label) : null);
     if (numericLabels.some(label => !Number.isInteger(label))) {
       return Object.freeze({
         text: "", rows: Object.freeze([]), rowCount: 0,
@@ -926,15 +1049,16 @@ export function extractProviderProjectedCoordinateEvidence({
         crsEvidence: null
       });
     }
-    orderedRows = rows.slice().sort((left, right) => Number(left.label) - Number(right.label));
-    if (orderedRows.some((row, index) => Number(row.label) !== index + 1)) {
-      return Object.freeze({
-        text: "", rows: Object.freeze([]), rowCount: 0,
-        status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
-        reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
-        crsEvidence: null
-      });
-    }
+    orderedRows = normalizedRows.slice().sort((left, right) => Number(left.label) - Number(right.label));
+  }
+  if (numericLabels.every(Number.isInteger)
+    && orderedRows.some((row, index) => Number(row.label) !== index + 1)) {
+    return Object.freeze({
+      text: "", rows: Object.freeze([]), rowCount: 0,
+      status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+      reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.SOURCE_LAYOUT_COVERAGE_MISMATCH,
+      crsEvidence: null
+    });
   }
   const explicitUtm = String(sourceText || "").match(/\bUTM\s*(?:ZONE\s*)?(\d{1,2})\s*([NS])\b/iu)
     || String(sourceText || "").match(/\bUTM\b[^\r\n]{0,80}\b(?:ZONE|ZONA)\s*(\d{1,2})\s*([NS])\b/iu);
@@ -961,7 +1085,9 @@ export function extractProviderProjectedCoordinateEvidence({
       projectedCandidateLineCount,
       parsedProjectedRowCount: frozenRows.length,
       rejectedProjectedCandidateLineCount,
-      multiRecordLineCount
+      multiRecordLineCount,
+      exactRepeatedSequenceCollapsed: repeatedSequence.collapsed,
+      exactRepeatedSequenceCount: repeatedSequence.repetitions
     })
   });
 }

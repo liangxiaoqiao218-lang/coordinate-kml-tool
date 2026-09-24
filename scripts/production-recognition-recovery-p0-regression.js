@@ -1175,6 +1175,60 @@ test("Indonesia projected duplicate full sequence collapses to six without globa
   assert.deepEqual(collapseExactRepeatedCoordinateSequence(["A", "B", "C", "A"]), ["A", "B", "C", "A"]);
 });
 
+test("Indonesia projected real rows survive fully consumed five-column Provider layouts", () => {
+  const record = golden.records.find(item => item.id === "indonesia-projected-real-002");
+  const rows = record.sourceRows.map((row, index) => ({
+    projected: row.replaceAll(" | ", " "),
+    latitude: `${2 + index}° 01' 02.00\" S`,
+    longitude: `${119 + index}° 03' 04.00\" E`
+  }));
+  const metadata = [
+    "CONTEXT | SISTEM KOORDINAT UTM WGS 1984 ZONA 50S",
+    "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE"
+  ];
+  const whitespaceLines = rows.map((row, index) => (
+    `${row.projected}${index % 2 === 0 ? " " : "\t"}${row.latitude}${index % 2 === 0 ? " " : "\t"}${row.longitude}`
+  ));
+  const whitespaceProvider = [
+    ...metadata,
+    "No. X Y LATITUDE LONGITUDE",
+    ...whitespaceLines
+  ].join("\n");
+  const pipeProvider = [
+    ...metadata,
+    "No. | X | Y | LATITUDE | LONGITUDE",
+    ...rows.map(row => `${row.projected.replaceAll(" ", " | ")} | ${row.latitude} | ${row.longitude}`)
+  ].join("\n");
+  for (const providerText of [whitespaceProvider, pipeProvider]) {
+    const evidence = extractProviderProjectedCoordinateEvidence({ sourceText: providerText });
+    assert.equal(evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+    assert.equal(evidence.rowCount, 6);
+    assert.deepEqual(evidence.rows.map(row => `${row.label} | ${row.x} | ${row.y}`), record.sourceRows);
+    assert.deepEqual(evidence.crsEvidence, {
+      status: "EXPLICIT", projection: "utm", zone: 50, hemisphere: "S"
+    });
+  }
+
+  const repeated = extractProviderProjectedCoordinateEvidence({
+    sourceText: `${whitespaceProvider}\n${rows.map(row => `${row.projected} ${row.latitude} ${row.longitude}`).join("\n")}`
+  });
+  assert.equal(repeated.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE);
+  assert.equal(repeated.rowCount, 6);
+  assert.equal(repeated.diagnostics.exactRepeatedSequenceCollapsed, true);
+
+  for (const unsafe of [
+    `${whitespaceProvider}\n${rows[0].projected} ${rows[0].latitude} ${rows[0].longitude}`,
+    whitespaceProvider.replace("5 778875.519 9721180.576", "4 778875.519 9721180.576"),
+    whitespaceProvider.replace(`${whitespaceLines[4]}\n`, ""),
+    whitespaceProvider.replace(rows[2].longitude, `${rows[2].longitude} 7`),
+    whitespaceProvider.replace(rows[1].latitude, rows[1].latitude.replace(" S", ""))
+  ]) {
+    const evidence = extractProviderProjectedCoordinateEvidence({ sourceText: unsafe });
+    assert.equal(evidence.status, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE);
+    assert.equal(evidence.rowCount, 0);
+  }
+});
+
 test("printed projected table is strong non-handwritten evidence", async () => {
   const record = golden.records.find(item => item.id === "indonesia-dms-real-001");
   const text = `SISTEM KOORDINAT: UTM WGS 1984 ZONA 50S\nNo. | X | Y | Latitude | Longitude\n${record.sourceRows.join("\n")}`;
