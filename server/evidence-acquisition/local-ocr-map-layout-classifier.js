@@ -730,14 +730,23 @@ function normalizeProviderProjectedDmsReference(value, expectedDirections) {
   if (!Number.isFinite(degrees) || !Number.isFinite(minutes) || !Number.isFinite(seconds)
     || degrees > limit || minutes >= 60 || seconds >= 60
     || (degrees === limit && (minutes > 0 || seconds > 0))) return null;
-  return source;
+  const sign = /[SWO]/u.test(direction) ? -1 : 1;
+  return Object.freeze({
+    source,
+    decimal: sign * (degrees + minutes / 60 + seconds / 3600)
+  });
 }
 
 function parseProviderProjectedDmsReferencePair(latitude, longitude) {
   const normalizedLatitude = normalizeProviderProjectedDmsReference(latitude, "NS");
   const normalizedLongitude = normalizeProviderProjectedDmsReference(longitude, "EWO");
   return normalizedLatitude && normalizedLongitude
-    ? Object.freeze({ latitude: normalizedLatitude, longitude: normalizedLongitude })
+    ? Object.freeze({
+      latitude: normalizedLatitude.source,
+      longitude: normalizedLongitude.source,
+      latitudeDecimal: normalizedLatitude.decimal,
+      longitudeDecimal: normalizedLongitude.decimal
+    })
     : null;
 }
 
@@ -1060,14 +1069,34 @@ export function extractProviderProjectedCoordinateEvidence({
       crsEvidence: null
     });
   }
-  const explicitUtm = String(sourceText || "").match(/\bUTM\s*(?:ZONE\s*)?(\d{1,2})\s*([NS])\b/iu)
-    || String(sourceText || "").match(/\bUTM\b[^\r\n]{0,80}\b(?:ZONE|ZONA)\s*(\d{1,2})\s*([NS])\b/iu);
-  const explicitBftm = /\bBFTM\b/iu.test(String(sourceText || ""));
-  const crsEvidence = explicitBftm
-    ? Object.freeze({ status: "EXPLICIT", projection: "bftm", zone: null, hemisphere: "" })
-    : explicitUtm
-      ? Object.freeze({ status: "EXPLICIT", projection: "utm", zone: Number(explicitUtm[1]), hemisphere: explicitUtm[2].toUpperCase() })
-      : Object.freeze({ status: "UNCONFIRMED", projection: "", zone: null, hemisphere: "" });
+  const crsSource = String(sourceText || "");
+  const projectedCrsIdentities = new Map();
+  if (/\bBFTM\b/iu.test(crsSource)) {
+    projectedCrsIdentities.set("bftm", Object.freeze({
+      status: "EXPLICIT", projection: "bftm", zone: null, hemisphere: ""
+    }));
+  }
+  const explicitUtmMatches = [
+    ...crsSource.matchAll(/\bUTM\s*(?:ZONE\s*)?(\d{1,2})\s*([NS])\b/giu),
+    ...crsSource.matchAll(/\bUTM\b[^\r\n]{0,80}?\b(?:ZONE|ZONA)\s*(\d{1,2})\s*([NS])\b/giu)
+  ];
+  for (const match of explicitUtmMatches) {
+    const zone = Number(match[1]);
+    const hemisphere = String(match[2] || "").toUpperCase();
+    const identity = Number.isInteger(zone) && zone >= 1 && zone <= 60
+      && ["N", "S"].includes(hemisphere)
+      ? `utm${zone}${hemisphere}`
+      : "invalid-utm";
+    projectedCrsIdentities.set(identity, identity === "invalid-utm"
+      ? null
+      : Object.freeze({ status: "EXPLICIT", projection: "utm", zone, hemisphere }));
+  }
+  const uniqueCrsEvidence = projectedCrsIdentities.size === 1
+    ? [...projectedCrsIdentities.values()][0]
+    : null;
+  const crsEvidence = uniqueCrsEvidence || Object.freeze({
+    status: "UNCONFIRMED", projection: "", zone: null, hemisphere: ""
+  });
   const frozenRows = Object.freeze(orderedRows.map((row, index) => Object.freeze({
     ...row,
     label: text(row.label) || String(index + 1)

@@ -7347,6 +7347,35 @@ Au值 = 纯度 × 10 后取整数</div>
         : "";
     }
 
+    function projectedCrsFromPayload(payload = {}) {
+      const sourceCrs = payload?.sourceCrs
+        || payload?.source_crs
+        || payload?.coordinateEngineV2?.source_crs
+        || null;
+      const projection = String(sourceCrs?.projection || "").trim().toLowerCase();
+      if (projection === "bftm" || String(sourceCrs?.id || "").toUpperCase() === "BFTM:ITRF2008") {
+        return "bftm";
+      }
+      const zone = Number(sourceCrs?.zone);
+      const hemisphere = String(sourceCrs?.hemisphere || "").trim().toLowerCase();
+      return Number.isInteger(zone) && zone >= 1 && zone <= 60 && ["n", "s"].includes(hemisphere)
+        ? `utm${zone}${hemisphere}`
+        : "";
+    }
+
+    function setProjectedCrsControlValue(control, value) {
+      if (!control) return;
+      const normalized = String(value || "").trim().toLowerCase();
+      if (/^utm(?:[1-9]|[1-5]\d|60)[ns]$/u.test(normalized)
+        && !Array.from(control.options || []).some(option => option.value === normalized)) {
+        const option = document.createElement("option");
+        option.value = normalized;
+        option.textContent = normalized.toUpperCase();
+        control.appendChild(option);
+      }
+      control.value = normalized;
+    }
+
     function projectedCrsSelectionNeedsConfirmation() {
       if (!isProjectedCoordinateWorkflow()) return false;
       return isProjectedCoordinateReviewPending() || activeProjectedSelectionDirty;
@@ -7375,7 +7404,7 @@ Au值 = 纯度 × 10 后取整数</div>
         projectedCrsReviewHint.textContent = "识别出的坐标已保留。";
         if (projectedCrsReviewHelp) projectedCrsReviewHelp.hidden = false;
       }
-      if (selectedCrs && projectedCrsSelection) projectedCrsSelection.value = selectedCrs;
+      if (selectedCrs) setProjectedCrsControlValue(projectedCrsSelection, selectedCrs);
     }
 
     function focusProjectedCrsReviewPanel() {
@@ -7996,7 +8025,7 @@ Au值 = 纯度 × 10 后取整数</div>
           activeProjectedSelectionDirty = false;
           activeProjectedBoundaryBlocked = false;
           projectedCrsReviewRequested = true;
-          if (projectedCrsSelection) projectedCrsSelection.value = activeProjectedAutoCrs;
+          setProjectedCrsControlValue(projectedCrsSelection, activeProjectedAutoCrs);
           finalizedCoordinateTextSnapshot = String(input.value || "");
           finalizedCoordinateDirty = false;
           invalidateSpatialPreview();
@@ -12269,34 +12298,32 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       }
     }
 
-    function detectProjectionFromText(text) {
+    function detectProjectionFromText(text, explicitCrs = "") {
+      const authoritative = String(explicitCrs || "").trim().toLowerCase();
+      if (/^utm(?:[1-9]|[1-5]\d|60)[ns]$/.test(authoritative) || authoritative === "bftm") {
+        return authoritative;
+      }
       const value = String(text || "").toLowerCase();
-
-      if (/\butm\b|coordonn[eé]es?\s+g[eé]ographiques?\s+en\s+utm|coordonn[eé]es?\s+en\s+utm/.test(value)) {
-        if (/zone\s*28|utm\s*28/.test(value)) {
-          return "utm28n";
-        }
-
-        if (/zone\s*29|utm\s*29|guin[eé]e|guinea|kankan|siguiri/.test(value)) {
-          return "utm29n";
-        }
-
-        return "utm30n";
-      }
-
+      const identities = new Set();
       if (/bftm|itrf\s*2008|projection\s+bftm|coordonn[eé]es?\s*(?:en\s*)?bftm/.test(value)) {
-        return "bftm";
+        identities.add("bftm");
       }
-
-      return "";
-    }
-
-    function looksLikeBftmCoordinate(easting, northing) {
-      return easting >= 500000 && easting <= 760000 && northing >= 1200000 && northing <= 1600000;
-    }
-
-    function looksLikeLikelyUtm30Coordinate(easting, northing) {
-      return easting >= 700000 && easting <= 850000 && northing >= 1000000 && northing <= 1400000;
+      const explicitUtmMatches = [
+        ...value.matchAll(/\butm\b[^\r\n]{0,80}?\b(?:zone|zona|fuso)\s*[:#=\/-]?\s*(\d{1,2})\s*([ns])\b/gi),
+        ...value.matchAll(/\butm\s*[:#=\/_-]?\s*(\d{1,2})\s*([ns])\b/gi),
+        ...value.matchAll(/\b(?:zone|zona|fuso)\s*[:#=\/-]?\s*(\d{1,2})\s*([ns])\b[^\r\n]{0,80}?\butm\b/gi)
+      ];
+      for (const match of explicitUtmMatches) {
+        const zone = Number(match[1]);
+        const hemisphere = String(match[2] || "").toLowerCase();
+        identities.add(Number.isInteger(zone) && zone >= 1 && zone <= 60
+          && ["n", "s"].includes(hemisphere)
+          ? `utm${zone}${hemisphere}`
+          : "invalid-utm");
+      }
+      return identities.size === 1 && !identities.has("invalid-utm")
+        ? [...identities][0]
+        : "";
     }
 
     function resolveProjectedCoordinateSystem(easting, northing, sourceText = "") {
@@ -12310,31 +12337,17 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return projectionType.value;
       }
 
-      if (looksLikeLikelyUtm30Coordinate(easting, northing)) {
-        return "utm30n";
-      }
-
-      if (looksLikeBftmCoordinate(easting, northing)) {
-        return "bftm";
-      }
-
-      if (easting >= 100000 && easting <= 900000 && northing >= 0 && northing <= 2000000) {
-        return "utm29n";
-      }
-
       return "none";
     }
 
-    function getUtmZoneFromProjection(projectedSystem) {
-      if (projectedSystem === "utm28n") {
-        return 28;
-      }
-
-      if (projectedSystem === "utm30n") {
-        return 30;
-      }
-
-      return 29;
+    function getUtmDefinitionFromProjection(projectedSystem) {
+      const match = String(projectedSystem || "").trim().toLowerCase()
+        .match(/^utm([1-9]|[1-5]\d|60)([ns])$/u);
+      if (!match) return null;
+      return {
+        zone: Number(match[1]),
+        northernHemisphere: match[2] === "n"
+      };
     }
 
     function parseProjectedCoordinateLine(line) {
@@ -12363,9 +12376,12 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return null;
       }
 
+      const utmDefinition = getUtmDefinitionFromProjection(projectedSystem);
       const converted = projectedSystem === "bftm"
         ? bftmToWgs84(easting, northing)
-        : utmToWgs84(easting, northing, getUtmZoneFromProjection(projectedSystem), true);
+        : utmDefinition
+          ? utmToWgs84(easting, northing, utmDefinition.zone, utmDefinition.northernHemisphere)
+          : null;
 
       if (!converted) {
         return null;
@@ -14746,14 +14762,15 @@ ${placemarks}
         activeProjectedReviewEvidence = data.providerProjectedReviewEvidence
           || data.projectedCoordinateReviewEvidence
           || null;
-        const explicitProjectedCrs = projectedCrsFromExplicitEvidence(activeProjectedReviewEvidence);
+        const explicitProjectedCrs = projectedCrsFromPayload(data)
+          || projectedCrsFromExplicitEvidence(activeProjectedReviewEvidence);
         activeProjectedAutoCrs = explicitProjectedCrs;
-        if (explicitProjectedCrs && projectedCrsSelection) projectedCrsSelection.value = explicitProjectedCrs;
+        if (explicitProjectedCrs) setProjectedCrsControlValue(projectedCrsSelection, explicitProjectedCrs);
         const preservedCoordinates = extractCoordinatesPreservePrecision(data.rawText);
         const dmsCoordinates = extractDmsCoordinates(data.rawText);
         const recognizedLines = extractRecognizedCoordinateLines(data.rawText);
         const projectedLines = extractProjectedCoordinateLines(data.rawText);
-        const detectedProjection = detectProjectionFromText(data.rawText);
+        const detectedProjection = detectProjectionFromText(data.rawText, explicitProjectedCrs);
         const cadastralGridRows = Array.isArray(data.cadastralGrid?.rows) && data.cadastralGrid.rows.length > 0
           ? data.cadastralGrid.rows
           : extractCadastralGridRows(data.rawText || data.coordinates);
@@ -14835,14 +14852,8 @@ ${placemarks}
         if (isProjectedReview) {
           projectionType.value = "auto";
         } else if (!isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && !isChatCoordinates && !isKyrgyzGk && (detectedProjection || hasProjectedCoordinateRows(projectedLines))) {
-          const firstProjectedPair = (projectedLines.match(/[-+]?\d+(?:\.\d+)?/g) || []).map(Number);
-
-          if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeLikelyUtm30Coordinate(firstProjectedPair[0], firstProjectedPair[1])) {
-            projectionType.value = "utm30n";
-          } else if (!detectedProjection && firstProjectedPair.length >= 2 && looksLikeBftmCoordinate(firstProjectedPair[0], firstProjectedPair[1])) {
-            projectionType.value = "bftm";
-          } else if (detectedProjection) {
-            projectionType.value = detectedProjection;
+          if (detectedProjection) {
+            setProjectedCrsControlValue(projectionType, detectedProjection);
           }
         }
 

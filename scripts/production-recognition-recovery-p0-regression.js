@@ -9,6 +9,7 @@ import { once } from "node:events";
 import crypto from "node:crypto";
 import { createWorker } from "tesseract.js";
 import { createCoordinateImageIdentity } from "../server/recognition/coordinate-image-safety.js";
+import { finiteNumberOrNull } from "../server/coordinate-values.js";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "../server/recognition/cancellable-ocr.js";
 import {
   RECOGNITION_COMPLETENESS_DECISION,
@@ -61,9 +62,10 @@ const golden = structuredFamilyOnly ? null : JSON.parse(await readFile(goldenPat
 const replay = structuredFamilyOnly ? null : JSON.parse(await readFile(path.join(root, "release-governance/p0-deterministic-replay-manifest.json"), "utf8"));
 const releaseGate = structuredFamilyOnly ? null : JSON.parse(await readFile(path.join(root, "release-governance/p0-release-gate-governance.json"), "utf8"));
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
+const indexSource = await readFile(path.join(root, "index.html"), "utf8");
 // Execute the actual runtime function declarations without app startup or Provider I/O.
 const runtime = vm.createContext({ ...primaryRouting, ...dmsSourceStructure, ...familyRetryPolicy, ...candidateSelection, ...structuredCoordinateBoundary, utmToWgs84, bftmToWgs84,
-  isRecognitionRequestId, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS, Buffer, crypto,
+  isRecognitionRequestId, finiteNumberOrNull, LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS, Buffer, crypto,
   process: { env: {} }, setTimeout: () => ({ unref() {} }) });
 const declarations = [];
 for (const start of serverSource.matchAll(/^(?:async )?function \w+\(/gm)) {
@@ -74,10 +76,38 @@ for (const start of serverSource.matchAll(/^(?:async )?function \w+\(/gm)) {
   }
 }
 vm.runInContext(declarations.join("\n"), runtime);
-for (const name of ['noCoordinatesText', 'MGRS_BANDS', 'MGRS_COLUMN_SETS', 'MGRS_ROW_SETS', 'MOZAMBIQUE_TETE_KNOWN_ROW_TOLERANCE']) {
+for (const name of ['noCoordinatesText', 'MGRS_BANDS', 'MGRS_COLUMN_SETS', 'MGRS_ROW_SETS', 'MOZAMBIQUE_TETE_KNOWN_ROW_TOLERANCE', 'PROJECTED_DMS_REFERENCE_TOLERANCE_DEGREES']) {
   vm.runInContext(serverSource.match(new RegExp(`^const ${name} = .+;$`, 'm'))[0], runtime);
 }
 vm.runInContext('let p0QualificationAcquisition = null; let p0QualificationAcquisitionUsed = false; const aliyunBaseURL = "http://127.0.0.1:1/v1";', runtime);
+
+function extractFunctionDeclaration(source, name) {
+  const start = source.search(new RegExp(`^\\s*function ${name}\\(`, "m"));
+  assert.ok(start >= 0, `missing function ${name}`);
+  const tail = source.slice(start);
+  for (const end of tail.matchAll(/^\s{4}\}/gm)) {
+    const candidate = tail.slice(0, end.index + end[0].length);
+    try {
+      new vm.Script(candidate);
+      return candidate;
+    } catch {
+      // Keep looking until the complete declaration is balanced.
+    }
+  }
+  throw new Error(`unable to extract function ${name}`);
+}
+
+const frontendProjectionRuntime = vm.createContext({
+  projectionType: { value: "auto" }
+});
+vm.runInContext([
+  "detectProjectionFromText",
+  "projectedCrsFromPayload",
+  "resolveProjectedCoordinateSystem",
+  "getUtmDefinitionFromProjection",
+  "transverseMercatorToWgs84",
+  "utmToWgs84"
+].map(name => extractFunctionDeclaration(indexSource, name)).join("\n"), frontendProjectionRuntime);
 const structuredText = structuredFamilyOnly ? "" : replay.records.find(record => record.caseId === "indonesia-dms-real-001").approvedAcquisitionLines.join("\n");
 const observedText = structuredFamilyOnly ? "" : replay.realAcquisitionObservations[0].observedFinalRawTextLines.join("\n");
 const syntheticPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
@@ -148,6 +178,9 @@ if (process.argv[2] === '--http-candidate') {
         || baseScenario === 'generic-projected-contextual-utm30'
         || baseScenario === 'generic-projected-contextual-utm30-safe'
         || baseScenario === 'generic-projected-bftm-boundary'
+        || baseScenario === 'generic-projected-utm50-five-column-boundary'
+        || baseScenario === 'generic-projected-utm50-dms-conflict'
+        || baseScenario === 'generic-projected-utm50-self-intersection'
         || baseScenario === 'generic-projected-kyrgyz-real'
         || baseScenario === 'generic-projected-kyrgyz-unbound') {
         assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
@@ -194,6 +227,28 @@ if (process.argv[2] === '--http-candidate') {
       '16 | 647300,1349700', '17 | 647300,1352000', '18 | 645000,1352000',
       '19 | 645000,1356200', '20 | 655000,1356200'
     ];
+    const utm50SafeBoundary = [
+      [500000, 9700100], [500100, 9700050], [500100, 9699950],
+      [500000, 9699900], [499900, 9699950], [499900, 9700050]
+    ];
+    const utm50CrossedBoundary = [
+      [499900, 9700100], [500100, 9699900], [499900, 9699900],
+      [500100, 9700100], [500150, 9700000], [499850, 9700000]
+    ];
+    const formatSignedDms = (value, positiveDirection, negativeDirection) => {
+      let remainingSeconds = Math.round(Math.abs(value) * 3600 * 10000) / 10000;
+      const degrees = Math.floor(remainingSeconds / 3600);
+      remainingSeconds -= degrees * 3600;
+      const minutes = Math.floor(remainingSeconds / 60);
+      const seconds = (remainingSeconds - minutes * 60).toFixed(4);
+      const direction = value < 0 ? negativeDirection : positiveDirection;
+      return `${degrees}° ${minutes}' ${seconds}" ${direction}`;
+    };
+    const buildUtm50ReferenceRows = (coordinates, { conflictAt = -1 } = {}) => coordinates.map(([x, y], index) => {
+      const reference = utmToWgs84(50, x, y, false);
+      const latitude = index === conflictAt ? reference.lat + 0.01 : reference.lat;
+      return `${index + 1}\t${x}\t${y}\t${formatSignedDms(latitude, 'N', 'S')}\t${formatSignedDms(reference.lon, 'E', 'W')}`;
+    });
     const kyrgyzProviderText = baseScenario === 'generic-projected-kyrgyz-real'
       || baseScenario === 'generic-projected-kyrgyz-unbound'
       ? await readFile(path.join(root, 'regression-samples', 'Kyrgyz_GK', 'approved-transcription.txt'), 'utf8')
@@ -219,6 +274,20 @@ if (process.argv[2] === '--http-candidate') {
             const lines = kyrgyzParallelProviderText.split(/\r?\n/u);
             return [lines[1], ...lines.slice(3)].join('\n');
           })()
+      : baseScenario === 'generic-projected-utm50-five-column-boundary'
+        || baseScenario === 'generic-projected-utm50-dms-conflict'
+        || baseScenario === 'generic-projected-utm50-self-intersection'
+      ? [
+          'CONTEXT | UTM WGS 1984 ZONA 50S',
+          'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
+          'No. X Y LATITUDE LONGITUDE',
+          ...buildUtm50ReferenceRows(
+            baseScenario === 'generic-projected-utm50-self-intersection'
+              ? utm50CrossedBoundary
+              : utm50SafeBoundary,
+            { conflictAt: baseScenario === 'generic-projected-utm50-dms-conflict' ? 2 : -1 }
+          )
+        ].join('\n')
       : baseScenario === 'generic-projected-review' || baseScenario === 'generic-projected-explicit'
       || baseScenario === 'generic-projected-contextual-utm30'
       || baseScenario === 'generic-projected-contextual-utm30-safe'
@@ -282,7 +351,7 @@ async function runHttpCandidate(scenario) {
   const faultBodies = {
     null: 'return null;', exception: 'throw new Error("PRIVATE_TRANSFORM_ERROR_MUST_NOT_ESCAPE");',
     nonfinite: 'return {lat: NaN, lon: Infinity};', outofrange: 'return {lat: -91, lon: 181};',
-    incomplete: 'if (++calls === 3) return {lat: -2}; return originalUtmToWgs84(...args);',
+    incomplete: 'if (++calls >= 3) return {lat: -2}; return originalUtmToWgs84(...args);',
     degenerate: 'return {lat: -2, lon: 119};',
     selfintersection: 'return [{lat:0,lon:0},{lat:2,lon:2},{lat:0,lon:3},{lat:2,lon:0}][calls++];'
   };
@@ -398,10 +467,17 @@ async function runHttpCandidate(scenario) {
     const traceResponse = await fetch(`http://127.0.0.1:${port}/api/regression/recognition-trace/${response.headers.get('x-recognition-request-id')}`, { headers: { 'x-regression-test': '1' }, signal });
     const trace = await traceResponse.json();
     assert.equal(trace.acquisitionEvidence == null, true, 'synthetic bytes cannot claim real acquisition identity');
+    if (baseScenario === 'generic-projected-utm50-dms-conflict'
+      || baseScenario === 'generic-projected-utm50-self-intersection') {
+      return { ...payload, providerCallCount: stats.acquisitions,
+        providerRequestControl: stats.requestControl };
+    }
     if (baseScenario === 'generic-projected-contextual-utm30'
       || baseScenario === 'generic-projected-contextual-utm30-safe'
       || baseScenario === 'generic-projected-bftm-boundary'
+      || baseScenario === 'generic-projected-utm50-five-column-boundary'
       || baseScenario === 'generic-projected-kyrgyz-real'
+      || baseScenario === 'structured'
       || baseScenario === 'generic-dms-review'
       || baseScenario === 'generic-dms-point-az'
       || baseScenario === 'generic-dms-review-array') {
@@ -1909,6 +1985,18 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
       assert.equal(payload.finalizedCoordinateResult.geometry.coordinates[0].length, 5);
       assert.notEqual(payload.finalizedCoordinateResult.kmlAuthorityBlocked, true);
       assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+    } else if (scenario === 'structured') {
+      assert.equal(payload.coordinateEngineV2.coordinate_type, 'projected_xy');
+      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, 'EXPLICIT');
+      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 50);
+      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, 'S');
+      assert.equal(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
+      assert.equal(payload.geometryMode, 'boundary');
+      assert.equal(payload.boundaryBlocked, false);
+      assert.equal(payload.finalizedCoordinateResult.geometry.type, 'Polygon');
+      assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+      assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, 'Polygon');
+      assert.equal(payload.mapPreview.kmlEligibility.allowed, true);
     } else {
       assert.equal(payload.coordinateEngineV2.coordinate_type, 'projected_xy');
       assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, 'EXPLICIT');
@@ -1921,7 +2009,7 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
       assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
       assert.equal(payload.projectedMapPreview.mapPreviewObject.geometry.type, 'MultiPoint');
     }
-    assert.equal(payload.finalizedCoordinateResult.kmlReady, scenario === 'observed');
+    assert.equal(payload.finalizedCoordinateResult.kmlReady, scenario !== 'mismatch');
   });
 }
 
@@ -1938,7 +2026,7 @@ for (const scenario of ['null', 'exception', 'nonfinite', 'outofrange', 'incompl
     assert.equal(payload.coordinateEngineV2.groups[0].points.length, 4);
     assert.equal(payload.finalizedCoordinateResult.geometry, null);
     assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-    if (scenario === 'degenerate' || scenario === 'selfintersection') {
+    if (scenario === 'degenerate') {
       assert.equal(payload.projectedConfirmation.geometryMode, 'points_only');
       assert.equal(payload.projectedConfirmation.boundaryBlocked, true);
       assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, 'MultiPoint');
@@ -2477,6 +2565,116 @@ test("projected boundary geometry keeps both simple BFTM source orders and rejec
   assert.equal(runtime.isCoordinateEngineV2SelfIntersecting(toPoints(bftm02, bftmToWgs84)), false);
   assert.equal(runtime.isCoordinateEngineV2SelfIntersecting(toPoints(utm03, (x, y) => utmToWgs84(30, x, y, true))), true);
 });
+
+test("generic projected boundary authority rejects gaps duplicates ambiguous CRS extra data and unsafe geometry", () => {
+  const makeEvidence = (context, rows) => extractProviderProjectedCoordinateEvidence({
+    sourceText: [
+      context,
+      "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+      "No. | X | Y",
+      ...rows
+    ].join("\n")
+  });
+  const safeRows = [
+    "1 | 500000 | 9700100", "2 | 500100 | 9700050", "3 | 500100 | 9699950",
+    "4 | 500000 | 9699900", "5 | 499900 | 9699950", "6 | 499900 | 9700050"
+  ];
+  const safeEvidence = makeEvidence("CONTEXT | UTM WGS 1984 ZONA 50S", safeRows);
+  assert.equal(runtime.getExplicitProjectedCrsSelection(safeEvidence), "utm50s");
+  assert.equal(runtime.hasContinuousProjectedPointNumbers(safeEvidence.rows), true);
+  assert.equal(runtime.hasContinuousProjectedPointNumbers([
+    safeEvidence.rows[0], safeEvidence.rows[1], safeEvidence.rows[1], ...safeEvidence.rows.slice(3)
+  ]), false);
+  assert.equal(runtime.hasContinuousProjectedPointNumbers([
+    safeEvidence.rows[0], safeEvidence.rows[1], ...safeEvidence.rows.slice(3)
+  ]), false);
+  const safePoints = safeEvidence.rows.map(row => utmToWgs84(50, Number(row.x), Number(row.y), false));
+  assert.equal(runtime.hasNonDegenerateProjectedBoundary(safePoints), true);
+  assert.equal(runtime.hasNonDegenerateProjectedBoundary([
+    ...safePoints.slice(0, -1), safePoints[0]
+  ]), false);
+  const crossedPoints = [
+    [499900, 9700100], [500100, 9699900], [499900, 9699900],
+    [500100, 9700100], [500150, 9700000], [499850, 9700000]
+  ].map(([x, y]) => utmToWgs84(50, x, y, false));
+  assert.equal(runtime.hasNonDegenerateProjectedBoundary(crossedPoints), false);
+  assert.equal(runtime.getExplicitProjectedCrsSelection(
+    makeEvidence("CONTEXT | projected coordinate system", safeRows)
+  ), "");
+  assert.equal(runtime.getExplicitProjectedCrsSelection(
+    makeEvidence("CONTEXT | UTM 50S / UTM 49S", safeRows)
+  ), "");
+  const extraDataEvidence = makeEvidence("CONTEXT | UTM 50S", [
+    ...safeRows, "7 | 500000 | 9700000 | 123"
+  ]);
+  assert.ok(extraDataEvidence.status !== LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
+    || Number(extraDataEvidence.diagnostics?.rejectedProjectedCandidateLineCount || 0) > 0);
+});
+
+test("frontend projection detection accepts UTM zones 1 through 60 with hemisphere and never defaults unknown UTM", () => {
+  const detect = frontendProjectionRuntime.detectProjectionFromText;
+  const payloadCrs = frontendProjectionRuntime.projectedCrsFromPayload;
+  const resolve = frontendProjectionRuntime.resolveProjectedCoordinateSystem;
+  const definition = frontendProjectionRuntime.getUtmDefinitionFromProjection;
+  assert.equal(detect("UTM WGS 1984 ZONA 50S"), "utm50s");
+  assert.equal(detect("UTM zone 1N"), "utm1n");
+  assert.equal(detect("ZONE 60S / UTM"), "utm60s");
+  assert.equal(detect("UTM coordinates"), "");
+  assert.equal(detect("UTM zone 61N"), "");
+  assert.equal(detect("UTM 50S / UTM 49S"), "");
+  assert.equal(detect("BFTM / UTM 30N"), "");
+  assert.equal(detect("UTM zone 30N", "utm50s"), "utm50s");
+  assert.equal(detect("Projection BFTM"), "bftm");
+  assert.equal(payloadCrs({ sourceCrs: { projection: "utm", zone: 50, hemisphere: "S" } }), "utm50s");
+  assert.equal(payloadCrs({ coordinateEngineV2: { source_crs: { projection: "utm", zone: 30, hemisphere: "N" } } }), "utm30n");
+  assert.equal(payloadCrs({ sourceCrs: { projection: "utm", zone: 61, hemisphere: "N" } }), "");
+  assert.equal(resolve(500000, 9700000, "UTM coordinates"), "none");
+  frontendProjectionRuntime.projectionType.value = "utm28n";
+  assert.equal(resolve(500000, 9700000, "UTM coordinates"), "utm28n");
+  frontendProjectionRuntime.projectionType.value = "auto";
+  assert.equal(definition("utm50s").zone, 50);
+  assert.equal(definition("utm50s").northernHemisphere, false);
+  assert.equal(definition("utm60n").northernHemisphere, true);
+  assert.equal(definition("utm61n"), null);
+  assert.match(indexSource, /detectProjectionFromText\(data\.rawText, explicitProjectedCrs\)/u);
+  assert.doesNotMatch(indexSource, /return\s+["']utm30n["'];\s*\/\/.*default/iu);
+});
+
+test("generic five-column UTM50S table forms a safe six-point boundary without language-specific keywords", async () => {
+  const payload = await runHttpCandidate("generic-projected-utm50-five-column-boundary");
+  assert.equal(payload.success, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.providerProjectedReviewEvidence.status, "COMPLETE");
+  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, "EXPLICIT");
+  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 50);
+  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, "S");
+  assert.equal(payload.coordinates.split(/\r?\n/u).length, 6);
+  assert.equal(payload.coordinateEngineV2.groups[0].points.length, 6);
+  assert.ok(payload.parserTrace.includes("PROJECTED_BOUNDARY_AUTHORITY:safe_auto_release"));
+  assert.equal(payload.geometryMode, "boundary");
+  assert.equal(payload.boundaryBlocked, false);
+  assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+  assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "Polygon");
+  assert.equal(payload.mapPreview.kmlEligibility.allowed, true);
+});
+
+for (const scenario of [
+  "generic-projected-utm50-dms-conflict",
+  "generic-projected-utm50-self-intersection"
+]) {
+  test(`${scenario} remains fail-closed`, async () => {
+    const payload = await runHttpCandidate(scenario);
+    assert.equal(payload.success, true);
+    assert.equal(payload.providerCallCount, 1);
+    assert.equal(payload.precisionMode, "projected-x-y-review");
+    assert.equal(payload.requiresReview, true);
+    assert.equal(payload.finalizedCoordinateResult.geometry, null);
+    assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+    assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
+    assert.ok(!payload.parserTrace.includes("PROJECTED_BOUNDARY_AUTHORITY:safe_auto_release"));
+  });
+}
 
 test("contextual UTM30 site vertices auto-locate while crossed source order remains point review and blocks KML", async () => {
   const payload = await runHttpCandidate("generic-projected-contextual-utm30");

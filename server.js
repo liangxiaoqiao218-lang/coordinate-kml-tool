@@ -14437,21 +14437,67 @@ function getExplicitProjectedCrsSelection(evidence = null) {
     : "";
 }
 
-function hasVisibleProjectedBoundaryContext(value = "") {
-  const source = normalizeText(String(value || ""));
-  const hasBoundaryMeaning = /(?:\b(?:permis|permit|licen[cs]e|parcel|site|area)\b[^\r\n]{0,180}\b(?:d[ée]fini(?:e)?s?|defined|bounded|delimited)\b[^\r\n]{0,140}\b(?:sommets?|vertices?|corners?|boundary)\b|\b(?:sommets?|vertices?|corners?)\b[^\r\n]{0,120}\b(?:site|area|parcel|permit|licen[cs]e)\b|矿区[^\r\n]{0,40}(?:边界|界址点|拐点)|(?:边界|界址点|拐点)[^\r\n]{0,40}矿区)/iu.test(source);
-  const hasProjectedHeader = /\b(?:sommets?|point|label|id|n[°o])\b[^\r\n]{0,70}\bX\b[^\r\n]{0,70}\bY\b/iu.test(source)
-    || /\bX\b[^\r\n]{0,50}\bY\b/iu.test(source);
-  return hasBoundaryMeaning && hasProjectedHeader;
+const PROJECTED_DMS_REFERENCE_TOLERANCE_DEGREES = 1e-6;
+
+function hasContinuousProjectedPointNumbers(rows = []) {
+  return Array.isArray(rows) && rows.length >= 3 && rows.every((row, index) => (
+    /^\d{1,3}$/u.test(String(row?.label || "").trim())
+      && Number(row.label) === index + 1
+  ));
 }
 
-function supportsExplicitProjectedBoundaryAutoRelease({ sourceText = "", evidence = null } = {}) {
+function hasNonDegenerateProjectedBoundary(points = []) {
+  if (!Array.isArray(points) || points.length < 3) return false;
+  const positions = points.map(point => [Number(point?.lon), Number(point?.lat)]);
+  if (positions.some(([lon, lat]) => !Number.isFinite(lon) || Math.abs(lon) > 180
+    || !Number.isFinite(lat) || Math.abs(lat) > 90)) return false;
+  const identities = positions.map(([lon, lat]) => `${lon.toFixed(12)}|${lat.toFixed(12)}`);
+  if (new Set(identities).size !== identities.length) return false;
+  const twiceArea = positions.reduce((sum, [lon, lat], index) => {
+    const [nextLon, nextLat] = positions[(index + 1) % positions.length];
+    return sum + (lon * nextLat) - (nextLon * lat);
+  }, 0);
+  return Number.isFinite(twiceArea) && Math.abs(twiceArea) > 1e-14
+    && !isCoordinateEngineV2SelfIntersecting(points);
+}
+
+function projectedDmsReferencesMatch(rows = [], points = []) {
+  const referencedRows = rows.filter(row => row?.referenceDms);
+  if (referencedRows.length === 0) return true;
+  if (referencedRows.length !== rows.length || points.length !== rows.length) return false;
+  return rows.every((row, index) => {
+    const latitude = Number(row.referenceDms?.latitudeDecimal);
+    const longitude = Number(row.referenceDms?.longitudeDecimal);
+    const point = points[index];
+    return Number.isFinite(latitude) && Number.isFinite(longitude)
+      && Math.abs(Number(point?.lat) - latitude) <= PROJECTED_DMS_REFERENCE_TOLERANCE_DEGREES
+      && Math.abs(Number(point?.lon) - longitude) <= PROJECTED_DMS_REFERENCE_TOLERANCE_DEGREES;
+  });
+}
+
+function buildExplicitProjectedBoundaryAutoReleaseEngine({ evidence = null } = {}) {
   const rows = Array.isArray(evidence?.rows) ? evidence.rows : [];
-  if (evidence?.status !== LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE || rows.length < 3) return false;
-  if (!getExplicitProjectedCrsSelection(evidence) || !hasVisibleProjectedBoundaryContext(sourceText)) return false;
-  const labels = rows.map(row => String(row?.label || "").trim()).filter(Boolean);
-  if (labels.length !== rows.length || new Set(labels).size !== labels.length) return false;
-  return rows.every(row => Number.isFinite(Number(row?.x)) && Number.isFinite(Number(row?.y)));
+  if (evidence?.status !== LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE || rows.length < 3) return null;
+  const diagnostics = evidence?.diagnostics || {};
+  if (diagnostics.headerPresent !== true
+    || Number(diagnostics.rejectedProjectedCandidateLineCount || 0) !== 0
+    || Number(diagnostics.parsedProjectedRowCount || 0) !== rows.length
+    || Number(evidence?.rowCount || 0) !== rows.length
+    || !hasContinuousProjectedPointNumbers(rows)) return null;
+  const sourceCrsSelection = getExplicitProjectedCrsSelection(evidence);
+  const confirmationRows = parseProjectedCoordinateConfirmationRows(evidence?.text || "");
+  if (!sourceCrsSelection || !confirmationRows || confirmationRows.length !== rows.length) return null;
+  try {
+    const projectedEngine = buildConfirmedProjectedCoordinateEngine(confirmationRows, sourceCrsSelection);
+    const points = projectedEngine?.groups?.[0]?.points || [];
+    return points.length === rows.length
+      && hasNonDegenerateProjectedBoundary(points)
+      && projectedDmsReferencesMatch(rows, points)
+      ? projectedEngine
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function supportsExplicitProjectedFamilyRecovery({
@@ -14478,11 +14524,7 @@ function supportsExplicitProjectedFamilyRecovery({
   });
 }
 
-function buildExplicitProjectedBoundaryResponse({ payload = {}, evidence = null, requestId = null } = {}) {
-  const sourceCrsSelection = getExplicitProjectedCrsSelection(evidence);
-  const rows = parseProjectedCoordinateConfirmationRows(evidence?.text || "");
-  if (!sourceCrsSelection || !rows) return null;
-  const coordinateEngineV2 = buildConfirmedProjectedCoordinateEngine(rows, sourceCrsSelection);
+function buildExplicitProjectedBoundaryResponse({ payload = {}, coordinateEngineV2 = null, requestId = null } = {}) {
   if (!coordinateEngineV2) return null;
   const response = buildCoordinateVerificationResponse({
     ...payload,
@@ -16672,10 +16714,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             })
           ));
         }
-        if (supportsExplicitProjectedBoundaryAutoRelease({
-          sourceText: rawText,
+        const projectedBoundaryEngine = buildExplicitProjectedBoundaryAutoReleaseEngine({
           evidence: trustedProviderProjectedEvidence
-        })) {
+        });
+        if (projectedBoundaryEngine) {
           const projectedBoundaryResponse = buildExplicitProjectedBoundaryResponse({
             payload: {
               success: true,
@@ -16698,7 +16740,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               ],
               quota: consumeResult.quota
             },
-            evidence: trustedProviderProjectedEvidence,
+            coordinateEngineV2: projectedBoundaryEngine,
             requestId: recognitionBudget?.requestId || null
           });
           if (projectedBoundaryResponse) return res.json(projectedBoundaryResponse);
@@ -18518,13 +18560,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let verificationResponse = buildCoordinateVerificationResponse(finalRecognitionCandidate, coordinateEngineV2);
     if (bftmAccepted) {
       const projectedBoundaryEvidence = extractProviderProjectedCoordinateEvidence({ sourceText: rawText });
-      if (supportsExplicitProjectedBoundaryAutoRelease({
-        sourceText: rawText,
+      const projectedBoundaryEngine = buildExplicitProjectedBoundaryAutoReleaseEngine({
         evidence: projectedBoundaryEvidence
-      })) {
+      });
+      if (projectedBoundaryEngine) {
         const projectedBoundaryResponse = buildExplicitProjectedBoundaryResponse({
           payload: recognitionPayload,
-          evidence: projectedBoundaryEvidence,
+          coordinateEngineV2: projectedBoundaryEngine,
           requestId: recognitionBudget?.requestId || null
         });
         if (projectedBoundaryResponse) verificationResponse = projectedBoundaryResponse;
