@@ -17,17 +17,40 @@ function safeFailureCode(value, fallback = "RECOGNITION_ASYNC_JOB_FAILED") {
   return /^[A-Za-z0-9_.:-]{1,160}$/u.test(code) ? code : fallback;
 }
 
+function safeRequestId(value) {
+  const requestId = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(requestId)
+    ? requestId
+    : null;
+}
+
+function safeProviderCompletionState(value) {
+  const state = String(value || "").trim().toUpperCase();
+  return ["NOT_STARTED", "SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"].includes(state)
+    ? state
+    : "FAILED";
+}
+
 function buildSafeFailureResult(output, fallbackCode) {
   const source = output?.result && typeof output.result === "object" ? output.result : {};
+  const reason = safeFailureCode(
+    source.reason || source.responseCode || source.code || output?.code,
+    fallbackCode
+  );
   const result = {
     success: false,
-    reason: safeFailureCode(
-      source.reason || source.responseCode || source.code || output?.code,
-      fallbackCode
-    )
+    reason,
+    code: safeFailureCode(source.code || reason, reason),
+    providerCompletionState: safeProviderCompletionState(source.providerCompletionState),
+    providerCallCount: Math.min(1, Math.max(0, Number(source.providerCallCount) || 0)),
+    usageConsumed: source.usageConsumed === null
+      ? null
+      : source.usageConsumed === true,
+    userUsageConsumed: source.userUsageConsumed === null
+      ? null
+      : source.userUsageConsumed === true,
+    recoveryRequired: source.recoveryRequired === true
   };
-  if (typeof source.userUsageConsumed === "boolean") result.userUsageConsumed = source.userUsageConsumed;
-  if (typeof source.usageConsumed === "boolean") result.usageConsumed = source.usageConsumed;
   if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(String(source.requestId || ""))) {
     result.requestId = source.requestId;
   }
@@ -64,6 +87,7 @@ export function createRecognitionAcquisitionJobRuntime({
     if (!job) return null;
     return Object.freeze({
       jobId: job.jobId,
+      requestId: job.requestId,
       status: job.status,
       createdAt: job.createdAt,
       startedAt: job.startedAt,
@@ -155,6 +179,7 @@ export function createRecognitionAcquisitionJobRuntime({
       }
       const job = {
         jobId: randomUUID(),
+        requestId: safeRequestId(input?.requestId),
         accessToken: randomBytes(24).toString("base64url"),
         status: RECOGNITION_ACQUISITION_JOB_STATUS.QUEUED,
         createdAt: now(),

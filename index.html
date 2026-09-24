@@ -5520,8 +5520,16 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     imageInput.addEventListener("change", () => {
-      if (agenticCoordinateController?.enabled) void recognizeImageWithAgenticCoordinate();
-      else void recognizeImage();
+      const selectedFile = imageInput.files[0];
+      if (!selectedFile) return;
+      void (async () => {
+        if (await shouldUseAsyncCoordinateRecognition(selectedFile)) {
+          await recognizeImage();
+          return;
+        }
+        if (agenticCoordinateController?.enabled) await recognizeImageWithAgenticCoordinate();
+        else await recognizeImage();
+      })();
     });
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
     judgeImageInput.multiple = false;
@@ -5531,6 +5539,14 @@ Au值 = 纯度 × 10 后取整数</div>
       setTimeout(() => {
         void (async () => {
           await agenticCoordinateInitializationPromise;
+          if (getPendingCoordinateRecognitionJob()) {
+            await resumePendingCoordinateWorkOnPageShow();
+            return;
+          }
+          if (getPendingCoordinateCommitRequestId()) {
+            await resumePendingCoordinateWorkOnPageShow();
+            return;
+          }
           if (agenticCoordinateController?.enabled) {
             try {
               const recovered = await agenticCoordinateController.recoverPending();
@@ -5544,7 +5560,7 @@ Au值 = 纯度 × 10 后取整数</div>
             }
             return;
           }
-          await recoverPendingCoordinateCommitOnPageShow();
+          await resumePendingCoordinateWorkOnPageShow();
         })();
       }, 0);
     });
@@ -14535,6 +14551,9 @@ ${placemarks}
     }
 
     const PENDING_COORDINATE_COMMIT_REQUEST_KEY = "geokit_pending_coordinate_commit_request_id";
+    const PENDING_COORDINATE_RECOGNITION_JOB_KEY = "geokit_pending_coordinate_recognition_job_v1";
+    const COORDINATE_ASYNC_JOB_POLL_INTERVAL_MS = 1500;
+    const COORDINATE_ASYNC_JOB_CLIENT_WAIT_MS = 4 * 60 * 1000;
 
     function isRecognitionRequestId(value) {
       return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
@@ -14556,6 +14575,124 @@ ${placemarks}
 
     function clearPendingCoordinateCommitRequestId() {
       try { sessionStorage.removeItem(PENDING_COORDINATE_COMMIT_REQUEST_KEY); } catch { /* memory-only fallback */ }
+    }
+
+    function isRecognitionJobId(value) {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+    }
+
+    function isRecognitionJobAccessToken(value) {
+      return /^[A-Za-z0-9_-]{32,128}$/.test(String(value || ""));
+    }
+
+    function getPendingCoordinateRecognitionJob() {
+      try {
+        const parsed = JSON.parse(sessionStorage.getItem(PENDING_COORDINATE_RECOGNITION_JOB_KEY) || "null");
+        if (!isRecognitionJobId(parsed?.jobId)
+          || !isRecognitionJobAccessToken(parsed?.jobAccessToken)
+          || !isRecognitionRequestId(parsed?.requestId)) return null;
+        return {
+          jobId: String(parsed.jobId).toLowerCase(),
+          jobAccessToken: String(parsed.jobAccessToken),
+          requestId: String(parsed.requestId).toLowerCase(),
+          createdAt: String(parsed.createdAt || "")
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    function rememberPendingCoordinateRecognitionJob(job) {
+      if (!isRecognitionJobId(job?.jobId)
+        || !isRecognitionJobAccessToken(job?.jobAccessToken)
+        || !isRecognitionRequestId(job?.requestId)) return false;
+      try {
+        sessionStorage.setItem(PENDING_COORDINATE_RECOGNITION_JOB_KEY, JSON.stringify({
+          jobId: String(job.jobId).toLowerCase(),
+          jobAccessToken: String(job.jobAccessToken),
+          requestId: String(job.requestId).toLowerCase(),
+          createdAt: String(job.createdAt || new Date().toISOString())
+        }));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function clearPendingCoordinateRecognitionJob() {
+      try { sessionStorage.removeItem(PENDING_COORDINATE_RECOGNITION_JOB_KEY); } catch { /* memory-only fallback */ }
+    }
+
+    async function shouldUseAsyncCoordinateRecognition(file) {
+      if (!file) return false;
+      if (Number(file.size) >= 1_500_000) return true;
+      try {
+        const image = await loadImageForCompression(file);
+        const width = Math.max(1, Number(image.naturalWidth || image.width) || 0);
+        const height = Math.max(1, Number(image.naturalHeight || image.height) || 0);
+        const aspectRatio = Math.max(width / height, height / width);
+        return aspectRatio >= 2.4 || (width * height) >= 6_000_000;
+      } catch {
+        return false;
+      }
+    }
+
+    function waitForCoordinateRecognitionPoll(delayMs) {
+      return new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+
+    async function pollCoordinateRecognitionJob(job) {
+      const startedAt = Date.now();
+      let lastStatus = "";
+      while ((Date.now() - startedAt) < COORDINATE_ASYNC_JOB_CLIENT_WAIT_MS) {
+        const response = await fetch(`/api/recognize-coordinates/jobs/${encodeURIComponent(job.jobId)}`, {
+          method: "GET",
+          headers: getSourceHeaders({
+            "x-recognition-job-token": job.jobAccessToken
+          }),
+          cache: "no-store"
+        });
+        let snapshot;
+        try {
+          snapshot = await response.json();
+        } catch {
+          snapshot = { success: false, reason: "recognition_job_invalid_response" };
+        }
+        const status = String(snapshot?.status || "").toUpperCase();
+        if (status && status !== lastStatus) {
+          lastStatus = status;
+          appendDebug(`异步任务状态：${status}\n任务编号：${job.jobId}\n请求编号：${job.requestId}`);
+        }
+        if (status === "SUCCEEDED" || status === "FAILED") {
+          clearPendingCoordinateRecognitionJob();
+          const result = snapshot?.result && typeof snapshot.result === "object" ? snapshot.result : {};
+          return {
+            response,
+            data: {
+              ...result,
+              success: status === "SUCCEEDED" && result.success !== false,
+              code: result.code || result.reason || snapshot?.error?.code,
+              error: result.error || snapshot?.error?.message,
+              requestId: result.requestId || snapshot.requestId || job.requestId,
+              jobId: snapshot.jobId || job.jobId,
+              jobStatus: status,
+              httpStatus: Number(snapshot.httpStatus || response.status) || response.status
+            }
+          };
+        }
+        if (!response.ok) {
+          clearPendingCoordinateRecognitionJob();
+          const error = new Error(snapshot?.error?.message || snapshot?.reason || "异步识别任务无法读取。");
+          error.code = snapshot?.reason || "RECOGNITION_ASYNC_JOB_POLL_FAILED";
+          throw error;
+        }
+        await waitForCoordinateRecognitionPoll(COORDINATE_ASYNC_JOB_POLL_INTERVAL_MS);
+      }
+      const error = new Error(`异步识别仍在后台运行，页面已停止等待。任务编号：${job.jobId}；请求编号：${job.requestId}`);
+      error.code = "RECOGNITION_ASYNC_JOB_CLIENT_WAIT_EXCEEDED";
+      error.jobId = job.jobId;
+      error.requestId = job.requestId;
+      throw error;
     }
 
     function createRecognitionRequestId() {
@@ -14600,8 +14737,9 @@ ${placemarks}
 
     let pendingCoordinateRecoveryPromise = null;
 
-    async function recoverPendingCoordinateCommitOnPageShow() {
-      if (!getPendingCoordinateCommitRequestId() || pendingCoordinateRecoveryPromise) return;
+    async function resumePendingCoordinateWorkOnPageShow() {
+      if ((!getPendingCoordinateRecognitionJob() && !getPendingCoordinateCommitRequestId())
+        || pendingCoordinateRecoveryPromise) return;
       pendingCoordinateRecoveryPromise = recognizeImage();
       try {
         await pendingCoordinateRecoveryPromise;
@@ -14613,9 +14751,16 @@ ${placemarks}
     async function recognizeImage() {
       const file = imageInput.files[0];
       const currentVisitorId = ensureVisitorId();
-      const pendingCoordinateCommitRequestId = getPendingCoordinateCommitRequestId();
-      const recognitionRequestId = pendingCoordinateCommitRequestId || createRecognitionRequestId();
-      const recoveryOnly = Boolean(pendingCoordinateCommitRequestId);
+      const pendingCoordinateRecognitionJob = getPendingCoordinateRecognitionJob();
+      const pendingCoordinateCommitRequestId = pendingCoordinateRecognitionJob
+        ? ""
+        : getPendingCoordinateCommitRequestId();
+      const recognitionRequestId = pendingCoordinateRecognitionJob?.requestId
+        || pendingCoordinateCommitRequestId
+        || createRecognitionRequestId();
+      const jobRecoveryOnly = Boolean(pendingCoordinateRecognitionJob);
+      const usageRecoveryOnly = Boolean(pendingCoordinateCommitRequestId);
+      const recoveryOnly = jobRecoveryOnly || usageRecoveryOnly;
 
       if (!file && !recoveryOnly) {
         return;
@@ -14667,7 +14812,11 @@ ${placemarks}
       setDebugRunning(true);
       setCoordinateOrderReviewVisible(false);
       refreshMapPreviewAction();
-      showRecognitionProgress(recoveryOnly ? "正在恢复识别结果..." : "正在上传图片...", "loading");
+      showRecognitionProgress(jobRecoveryOnly
+        ? "正在恢复异步识别任务..."
+        : usageRecoveryOnly
+          ? "正在恢复识别结果..."
+          : "正在上传图片...", "loading");
       if (file) {
         trackEvent("image_upload_select", {
           fileSize: file.size,
@@ -14675,6 +14824,9 @@ ${placemarks}
         });
         setDebug(`正在上传图片\n文件名：${file.name}\n大小：${Math.round(file.size / 1024)} KB`);
         showMessage("正在上传图片……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
+      } else if (jobRecoveryOnly) {
+        setDebug(`正在恢复异步识别任务\n任务编号：${pendingCoordinateRecognitionJob.jobId}\n请求编号：${recognitionRequestId}`);
+        showMessage("正在恢复上次异步识别任务……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
       } else {
         setDebug(`正在恢复识别结果\n请求编号：${recognitionRequestId}`);
         showMessage("正在恢复上次识别结果……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
@@ -14683,8 +14835,12 @@ ${placemarks}
       try {
         let response;
         let data;
-        let responseWasRecovery = recoveryOnly;
-        if (recoveryOnly) {
+        let responseWasRecovery = usageRecoveryOnly;
+        if (jobRecoveryOnly) {
+          const polled = await pollCoordinateRecognitionJob(pendingCoordinateRecognitionJob);
+          response = polled.response;
+          data = polled.data;
+        } else if (usageRecoveryOnly) {
           const recovered = await recoverCommittedCoordinateResult(recognitionRequestId, currentVisitorId);
           response = recovered.response;
           data = recovered.data;
@@ -14698,8 +14854,9 @@ ${placemarks}
           showMessage("正在调用识别接口……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
           showRecognitionProgress("正在识别坐标...", "loading");
           await prepareCoordinateUsageSession(currentVisitorId);
-          rememberPendingCoordinateCommitRequestId(recognitionRequestId);
-          response = await fetch("/api/recognize-coordinates", {
+          const useAsyncJob = await shouldUseAsyncCoordinateRecognition(file);
+          if (!useAsyncJob) rememberPendingCoordinateCommitRequestId(recognitionRequestId);
+          response = await fetch(useAsyncJob ? "/api/recognize-coordinates/jobs" : "/api/recognize-coordinates", {
             method: "POST",
             headers: getSourceHeaders({
               "x-visitor-id": currentVisitorId,
@@ -14711,6 +14868,22 @@ ${placemarks}
             data = await response.json();
           } catch (error) {
             data = { error: "后端没有返回 JSON，可能是服务异常。" };
+          }
+          if (useAsyncJob && response.ok) {
+            const job = {
+              jobId: data?.jobId,
+              jobAccessToken: data?.jobAccessToken,
+              requestId: data?.requestId || recognitionRequestId,
+              createdAt: data?.createdAt
+            };
+            if (!rememberPendingCoordinateRecognitionJob(job)) {
+              throw new Error("异步识别任务凭证保存失败，已停止轮询以避免重复提交。");
+            }
+            appendDebug(`已创建异步识别任务\n任务编号：${job.jobId}\n请求编号：${job.requestId}`);
+            showRecognitionProgress("异步任务已创建，正在识别坐标...", "loading");
+            const polled = await pollCoordinateRecognitionJob(job);
+            response = polled.response;
+            data = polled.data;
           }
         }
         if (data.code === "USAGE_COMMIT_OUTCOME_UNKNOWN") {
@@ -14733,6 +14906,25 @@ ${placemarks}
         else if (!responseWasRecovery && data?.usageConsumed === false) clearPendingCoordinateCommitRequestId();
         else if (responseWasRecovery && data?.usageConsumed === true) clearPendingCoordinateCommitRequestId();
         else if (responseWasRecovery && data?.recoveryTerminal === true && data?.usageConsumed === false) clearPendingCoordinateCommitRequestId();
+        const asyncTerminalMustStop = data?.jobStatus === "FAILED"
+          || (data?.jobStatus === "SUCCEEDED" && data?.usageConsumed === false);
+        if (asyncTerminalMustStop) {
+          appendDebug(`异步任务终态：${data.jobStatus}\nHTTP状态：${data.httpStatus || response.status}\nProvider状态：${data.providerCompletionState || "FAILED"}\nProvider调用次数：${Number(data.providerCallCount) || 0}\n是否扣次：${data.usageConsumed === true ? "是" : "否"}\n是否需要恢复：${data.recoveryRequired === true ? "是" : "否"}`);
+          const terminalNoCharge = data?.usageConsumed === false;
+          const terminalMessage = terminalNoCharge
+            ? "本次异步识别未完成，未扣除使用次数。"
+            : "本次异步识别任务失败，结果未开放。";
+          setRecognitionStatus(terminalMessage, "error");
+          showMessage(terminalMessage, true, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showUploadSupportMessage(`${terminalMessage} 任务编号：${data.jobId || "未知"}；请求编号：${data.requestId || recognitionRequestId}`);
+          trackEvent("image_recognize_fail", {
+            code: data.code || data.reason || "RECOGNITION_ASYNC_JOB_FAILED",
+            httpStatus: data.httpStatus || response.status,
+            providerCallCount: Number(data.providerCallCount) || 0,
+            usageConsumed: data.usageConsumed === true
+          });
+          return;
+        }
         showRecognitionProgress("正在解析坐标...", "loading");
 
         if (!response.ok && data.reason === "limit_exceeded") {
@@ -15088,10 +15280,16 @@ ${placemarks}
         trackEvent("image_recognize_fail", {
           message: error.message
         });
-        setRecognitionStatus("", "");
-        showMessage("识别失败，请检查图片或稍后重试。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
-        showUploadSupportMessage(getRecognitionFailureMessage(error.message));
-        openManualSupport();
+        if (error?.code === "RECOGNITION_ASYNC_JOB_CLIENT_WAIT_EXCEEDED") {
+          setRecognitionStatus("异步任务仍在后台运行，页面已停止等待", "warning");
+          showMessage("页面已停止等待，不会自动重试或重复扣次；刷新页面可凭任务令牌继续查询。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showUploadSupportMessage(publicErrorMessage);
+        } else {
+          setRecognitionStatus("", "");
+          showMessage("识别失败，请检查图片或稍后重试。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showUploadSupportMessage(getRecognitionFailureMessage(error.message));
+          openManualSupport();
+        }
       } finally {
         setDebugRunning(false);
         imageInput.disabled = false;

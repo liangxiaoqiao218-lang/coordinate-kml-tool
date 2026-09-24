@@ -15202,7 +15202,11 @@ async function recognizeCoordinatesHandler(req, res) {
           const originalStatus = Number(res.statusCode);
           res.status(body?.success === false && originalStatus >= 400 && originalStatus < 600 ? originalStatus : 422);
           const unchargedBody = buildUnchargedCoordinateFailureResponse({
-            body,
+            body: {
+              ...body,
+              providerCompletionState: body?.providerCompletionState || recognitionBudget?.providerCompletionState,
+              providerCallCount: body?.providerCallCount ?? recognitionBudget?.providerAttemptCount ?? 0
+            },
             recognitionRequestId: recognitionBudget?.requestId || null
           });
           logUnifiedRecognitionAcquisitionFinalState({
@@ -19947,7 +19951,11 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
           code: RECOGNITION_BUDGET_CODE,
           error: "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。",
           requestId: recognitionBudget?.requestId || null,
+          providerCompletionState: recognitionBudget?.providerCompletionState || "FAILED",
+          providerCallCount: recognitionBudget?.providerAttemptCount || 0,
           usageConsumed: false,
+          userUsageConsumed: false,
+          recoveryRequired: false,
           retryAllowed: true,
           rawText: "",
           coordinates: ""
@@ -19960,6 +19968,11 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
           reason: "local_ocr_failed",
           code: LOCAL_OCR_FAILURE_CODE,
           error: "图片无法安全解析，请更换有效图片后重试。",
+          providerCompletionState: recognitionBudget?.providerCompletionState || "FAILED",
+          providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+          usageConsumed: false,
+          userUsageConsumed: false,
+          recoveryRequired: false,
           rawText: "",
           coordinates: ""
         });
@@ -19970,6 +19983,11 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         reason: "recognition_failed_closed",
         code: "COORDINATE_RECOGNITION_FAILED_CLOSED",
         error: "坐标识别与备用识别均未完成，请稍后重试。",
+        providerCompletionState: recognitionBudget?.providerCompletionState || "FAILED",
+        providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+        usageConsumed: false,
+        userUsageConsumed: false,
+        recoveryRequired: false,
         rawText: "",
         coordinates: ""
       });
@@ -20038,13 +20056,19 @@ app.post(
 
 app.post("/api/recognize-coordinates/jobs", upload.single("image"), (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, reason: "image_required" });
+  const suppliedRequestId = String(req.get("x-recognition-request-id") || "").trim().toLowerCase();
+  const recognitionRequestId = isRecognitionRequestId(suppliedRequestId)
+    ? suppliedRequestId
+    : crypto.randomUUID();
   const forwardHeaders = {};
   for (const headerName of ["authorization", "cookie", "x-visitor-id", "x-user-id", "user-agent"]) {
     const value = req.get(headerName);
     if (value) forwardHeaders[headerName] = value;
   }
+  forwardHeaders["x-recognition-request-id"] = recognitionRequestId;
   try {
     const job = recognitionAcquisitionJobRuntime.enqueue({
+      requestId: recognitionRequestId,
       file: {
         buffer: Buffer.from(req.file.buffer),
         mimetype: req.file.mimetype,
@@ -20057,6 +20081,7 @@ app.post("/api/recognize-coordinates/jobs", upload.single("image"), (req, res) =
     return res.status(202).json({
       success: true,
       async: true,
+      requestId: recognitionRequestId,
       ...job
     });
   } catch (error) {
