@@ -129,6 +129,11 @@ import {
   createRecognitionImageVariants
 } from "./server/recognition/recognition-first-acquisition.js";
 import {
+  ACQUISITION_REVIEW_STATUS,
+  formatProviderDmsReviewCoordinates,
+  normalizeProviderDmsReviewResult
+} from "./server/recognition/recognition-review-result.js";
+import {
   createRecognitionAcquisitionJobRuntime,
   getRecognitionAcquisitionJobHttpStatus
 } from "./server/recognition/recognition-acquisition-job-runtime.js";
@@ -7428,6 +7433,62 @@ function extractProviderDmsReviewEvidence(text) {
   });
 }
 
+function buildProviderGroupedDmsEngine(reviewResult, { forceRequiresReview = true, model = "" } = {}) {
+  const retainedGroups = Array.isArray(reviewResult?.candidateGroups) && reviewResult.candidateGroups.length > 0
+    ? reviewResult.candidateGroups
+    : [{
+      groupId: "candidate_unbound_rows",
+      visibleTitle: "未绑定候选坐标行",
+      rows: Array.isArray(reviewResult?.unboundCandidates) ? reviewResult.unboundCandidates : []
+    }];
+  return normalizeCoordinateEngineV2Result({
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: "dms",
+    coordinate_family: "provider-grouped-dms",
+    precision_mode: forceRequiresReview ? "provider-dms-candidate-review" : "dms-grouped-coordinates",
+    source_crs: reviewResult?.geographicCrsExplicit === true ? "EPSG:4326" : null,
+    confidence: forceRequiresReview ? 0.7 : 0.9,
+    requires_review: forceRequiresReview,
+    source: {
+      image_count: 1,
+      ocr_engine: model,
+      fallback_used: false
+    },
+    groups: retainedGroups.map((group, groupIndex) => ({
+      group_id: group.groupId || `candidate_group_${groupIndex + 1}`,
+      group_name: group.visibleTitle || `候选坐标组${groupIndex + 1}`,
+      geometry: forceRequiresReview ? "point" : "polygon",
+      confidence: forceRequiresReview ? 0.7 : 0.9,
+      requires_review: forceRequiresReview,
+      kml_ready: !forceRequiresReview,
+      warnings: forceRequiresReview
+        ? ["识别采集已完成；点号、分组、CRS 或几何仍需复核，Map/KML 保持关闭。"]
+        : [],
+      points: (Array.isArray(group.rows) ? group.rows : []).map(row => ({
+        label: row.sourceLabel || null,
+        raw: row.sourceText,
+        lat: Number(row.latitude),
+        lon: Number(row.longitude),
+        x: null,
+        y: null,
+        projection: null,
+        source_crs: reviewResult?.geographicCrsExplicit === true ? "EPSG:4326" : null,
+        confidence: forceRequiresReview ? 0.7 : 0.9,
+        requires_review: forceRequiresReview,
+        warnings: []
+      }))
+    })),
+    warnings: forceRequiresReview
+      ? ["识别采集已完成；候选坐标仅供复核，不代表已授权矿区边界。"]
+      : [],
+    debug: {
+      matched_detectors: ["provider_grouped_dms_review_result_v2"],
+      blocked_fallbacks: forceRequiresReview ? ["boundary", "map", "kml"] : [],
+      supplemental_fallbacks: []
+    }
+  }, { forceRequiresReview });
+}
+
 function extractCoordinateLines(text) {
   const dmsGroupedLines = extractDmsGroupedCoordinateLines(text);
   if (dmsGroupedLines) {
@@ -14332,7 +14393,7 @@ function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = 
   return { ...response, evidenceAcquisition, pointGeometryIntentReview };
 }
 
-function keepRecognizedCoordinatesAsPointReview(response = {}, warning = "") {
+function keepRecognizedCoordinatesAsPointReview(response = {}, warning = "", { blockMap = false } = {}) {
   const points = (Array.isArray(response?.coordinateEngineV2?.groups) ? response.coordinateEngineV2.groups : [])
     .flatMap(group => Array.isArray(group?.points) ? group.points : [])
     .map(point => [Number(point?.lon), Number(point?.lat)])
@@ -14358,6 +14419,7 @@ function keepRecognizedCoordinatesAsPointReview(response = {}, warning = "") {
     confirmationStatus: "pending",
     qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
     technicalKmlReady: false,
+    ...(blockMap ? { mapReady: false } : {}),
     currentAuthorizedGeometryExportable: false,
     requiresReview: true,
     kmlReady: false,
@@ -16261,20 +16323,43 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             : "REVIEW_REQUIRED"
         });
         if (wgs84PrimaryConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
+          const acquisitionEvidence = buildRecognitionAcquisitionEvidence({
+            rawText: wgs84PrimaryRawText,
+            acquisition: recognitionImageAcquisition,
+            providerResponseId: providerLayoutResponseId
+          });
+          const acquisitionCompleted = acquisitionEvidence.candidateCoordinateLines.length > 0;
+          const consumeResult = acquisitionCompleted
+            ? await consumeCoordinateUsage({ note: "Coordinate recognition consumed after WGS84 Provider acquisition completed for review" })
+            : null;
+          if (consumeResult && !consumeResult.success) {
+            return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+              success: false,
+              reason: consumeResult.reason || "db_error",
+              code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+              error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+              rawText: "",
+              coordinates: ""
+            });
+          }
           const contractReviewPayload = {
-            success: false,
-            reason: "acquisition_contract_review_required",
+            success: acquisitionCompleted,
+            reason: acquisitionCompleted ? "acquisition_completed_review_required" : "acquisition_contract_review_required",
             code: "ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED",
             model: `${aliyunVisionModel}+wgs84-table-primary`,
             rawText: wgs84PrimaryRawText,
-            coordinates: buildRecognitionAcquisitionEvidence({
-              rawText: wgs84PrimaryRawText,
-              acquisition: recognitionImageAcquisition,
-              providerResponseId: providerLayoutResponseId
-            }).candidateCoordinateLines.map(line => line.text).join("\n"),
+            coordinates: acquisitionEvidence.candidateCoordinateLines.map(line => line.text).join("\n"),
             precisionMode: "one-shot-acquisition-contract-review",
+            acquisitionStatus: acquisitionEvidence.status,
+            authorizationStatus: "REVIEW_REQUIRED",
+            resultStatus: "needs_review",
             requiresReview: true,
+            kmlReady: false,
             warning: "The WGS84 primary output did not satisfy its pre-Provider structure, value, source, and observation-set contract and remains review-only.",
+            candidateCoordinates: acquisitionEvidence.candidateCoordinateLines,
+            visibleCrsEvidence: acquisitionEvidence.visibleCrsEvidence,
+            imageAcquisitionEvidence: acquisitionEvidence.imageEvidence,
+            reviewReasons: [wgs84PrimaryConformance.reason],
             acquisitionContractConformance: wgs84PrimaryConformance,
             parserTrace: [
               "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
@@ -16285,7 +16370,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             forceRequiresReview: true,
             rawHint: ""
           });
-          return res.json(buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine));
+          const contractReviewResponse = buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine);
+          return res.status(acquisitionCompleted ? 200 : 422).json(acquisitionCompleted
+            ? keepRecognizedCoordinatesAsPointReview(contractReviewResponse, "", { blockMap: true })
+            : contractReviewResponse);
         }
         const wgs84PrimaryInfo = getWgs84TableCoordinatesInfo(wgs84PrimaryRawText, {
           preserveDuplicatePoints: true
@@ -16470,6 +16558,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     });
     const providerMessageDiagnostic = buildProviderMessageDiagnostic(response, rawText);
     const providerDmsDiagnostic = extractProviderDmsReviewEvidence(rawText);
+    const providerGroupedDmsDiagnostic = normalizeProviderDmsReviewResult(rawText);
     const providerProjectedDiagnostic = extractProviderProjectedCoordinateEvidence({ sourceText: rawText });
     console.log("One-shot acquisition conformance:", {
       family: oneShotAcquisitionConformance.family,
@@ -16500,6 +16589,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerDmsSourceRowCount: providerDmsDiagnostic.sourceRowCount,
       providerDmsCoordinateRowCount: providerDmsDiagnostic.coordinateRowCount,
       providerDmsAxisDirectionBound: providerDmsDiagnostic.axisDirectionBound,
+      providerReviewStatus: providerGroupedDmsDiagnostic.status,
+      providerReviewReasons: providerGroupedDmsDiagnostic.reviewReasons,
+      providerReviewCandidatePointCount: providerGroupedDmsDiagnostic.candidatePointCount,
+      providerReviewCandidateGroupCount: providerGroupedDmsDiagnostic.candidateGroupCount,
+      providerReviewBoundRowCount: providerGroupedDmsDiagnostic.boundRowCount,
+      providerReviewUnboundRowCount: providerGroupedDmsDiagnostic.unboundRowCount,
       providerProjectedStatus: providerProjectedDiagnostic.status,
       providerProjectedContractTitlePresent: providerProjectedDiagnostic.diagnostics?.contractTitlePresent === true,
       providerProjectedHeaderPresent: providerProjectedDiagnostic.diagnostics?.headerPresent === true,
@@ -16843,6 +16938,91 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           })
         });
       }
+      const groupedProviderDmsEvidence = providerGroupedDmsDiagnostic;
+      const groupedProviderReviewApplies = groupedProviderDmsEvidence.candidatePointCount >= 3
+        && (groupedProviderDmsEvidence.candidateGroupCount > 1
+          || groupedProviderDmsEvidence.unboundRowCount > 0
+          || groupedProviderDmsEvidence.rejectedRows.length > 0
+          || groupedProviderDmsEvidence.reviewReasons.some(reason => reason.startsWith("SOURCE_LABELS_")));
+      if (groupedProviderReviewApplies) {
+        const authorizeForGeometryValidation = groupedProviderDmsEvidence.status
+          === ACQUISITION_REVIEW_STATUS.AUTHORIZATION_CANDIDATE;
+        const groupedAcquisitionEvidence = buildRecognitionAcquisitionEvidence({
+          rawText,
+          acquisition: recognitionImageAcquisition,
+          providerResponseId: providerLayoutResponseId
+        });
+        const consumeResult = await consumeCoordinateUsage({
+          note: authorizeForGeometryValidation
+            ? "Coordinate recognition consumed after grouped Provider DMS acquisition"
+            : "Coordinate recognition consumed after Provider acquisition completed for review"
+        });
+        if (!consumeResult.success) {
+          return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+            success: false,
+            reason: consumeResult.reason || "db_error",
+            code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+            error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const providerReviewPayload = {
+          success: true,
+          ...(authorizeForGeometryValidation ? {} : {
+            code: "ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED",
+            reason: "acquisition_completed_review_required"
+          }),
+          model: `${selectedProviderModel}+provider-grouped-dms-review-v2`,
+          rawText,
+          coordinates: formatProviderDmsReviewCoordinates(groupedProviderDmsEvidence),
+          precisionMode: authorizeForGeometryValidation
+            ? "dms-grouped-coordinates"
+            : "provider-dms-candidate-review",
+          coordinateFamily: "provider-grouped-dms",
+          acquisitionStatus: "COMPLETED",
+          authorizationStatus: authorizeForGeometryValidation ? "VALIDATION_PENDING" : "REVIEW_REQUIRED",
+          resultStatus: authorizeForGeometryValidation ? "validation_pending" : "needs_review",
+          requiresReview: !authorizeForGeometryValidation,
+          kmlReady: false,
+          warning: authorizeForGeometryValidation
+            ? "识别采集已完成；完整分组、连续点号和可见 CRS 证据已保留，现进入既有几何与 KML 安全验证。"
+            : "识别采集已完成并保留全部候选坐标；点号、分组、CRS 或几何仍需复核，地图边界与 KML 保持关闭。",
+          candidateCoordinates: Object.freeze([
+            ...groupedProviderDmsEvidence.candidateGroups.flatMap(group => group.rows),
+            ...groupedProviderDmsEvidence.unboundCandidates
+          ]),
+          candidateCoordinateGroups: groupedProviderDmsEvidence.candidateGroups,
+          visibleCrsEvidence: groupedProviderDmsEvidence.visibleCrsEvidence,
+          imageAcquisitionEvidence: groupedAcquisitionEvidence.imageEvidence,
+          providerReviewEvidence: groupedProviderDmsEvidence,
+          acquisitionContractConformance: oneShotAcquisitionConformance,
+          reviewReasons: groupedProviderDmsEvidence.reviewReasons,
+          parserTrace: [
+            "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
+            "PROVIDER_ACQUISITION:completed",
+            authorizeForGeometryValidation
+              ? "PROVIDER_GROUPED_DMS:existing_geometry_validation_required"
+              : "PROVIDER_GROUPED_DMS:candidate_review_only"
+          ],
+          quota: consumeResult.quota
+        };
+        const providerReviewEngine = buildProviderGroupedDmsEngine(groupedProviderDmsEvidence, {
+          forceRequiresReview: !authorizeForGeometryValidation,
+          model: providerReviewPayload.model
+        });
+        const providerReviewResponse = buildCoordinateVerificationResponse(
+          providerReviewPayload,
+          providerReviewEngine
+        );
+        return res.json(authorizeForGeometryValidation
+          ? providerReviewResponse
+          : keepRecognizedCoordinatesAsPointReview(
+            providerReviewResponse,
+            "识别采集已完成；候选点仅供列表复核，地图与 KML 保持关闭。",
+            { blockMap: true }
+          ));
+      }
       const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText);
       if (trustedProviderDmsEvidence.status === "COMPLETE") {
         const pointAzFamilyRecovered = trustedProviderDmsEvidence.coordinateFamily === "point-az-dms-table";
@@ -16897,20 +17077,43 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ? providerDmsReviewResponse
           : promoteRecognizedCoordinatesToSafeBoundary(providerDmsReviewResponse, ""));
       }
+      const acquisitionEvidence = buildRecognitionAcquisitionEvidence({
+        rawText,
+        acquisition: recognitionImageAcquisition,
+        providerResponseId: providerLayoutResponseId
+      });
+      const acquisitionCompleted = acquisitionEvidence.candidateCoordinateLines.length > 0;
+      const consumeResult = acquisitionCompleted
+        ? await consumeCoordinateUsage({ note: "Coordinate recognition consumed after Provider acquisition completed for review" })
+        : null;
+      if (consumeResult && !consumeResult.success) {
+        return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+          success: false,
+          reason: consumeResult.reason || "db_error",
+          code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+          error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+          rawText: "",
+          coordinates: ""
+        });
+      }
       const contractReviewPayload = {
-        success: false,
-        reason: "acquisition_contract_review_required",
+        success: acquisitionCompleted,
+        reason: acquisitionCompleted ? "acquisition_completed_review_required" : "acquisition_contract_review_required",
         code: "ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED",
         model: selectedProviderModel,
         rawText,
-        coordinates: buildRecognitionAcquisitionEvidence({
-          rawText,
-          acquisition: recognitionImageAcquisition,
-          providerResponseId: providerLayoutResponseId
-        }).candidateCoordinateLines.map(line => line.text).join("\n"),
+        coordinates: acquisitionEvidence.candidateCoordinateLines.map(line => line.text).join("\n"),
         precisionMode: "one-shot-acquisition-contract-review",
+        acquisitionStatus: acquisitionEvidence.status,
+        authorizationStatus: "REVIEW_REQUIRED",
+        resultStatus: "needs_review",
         requiresReview: true,
+        kmlReady: false,
         warning: "The one-shot acquisition output did not satisfy its pre-Provider structural and source-binding contract and remains review-only.",
+        candidateCoordinates: acquisitionEvidence.candidateCoordinateLines,
+        visibleCrsEvidence: acquisitionEvidence.visibleCrsEvidence,
+        imageAcquisitionEvidence: acquisitionEvidence.imageEvidence,
+        reviewReasons: [oneShotAcquisitionConformance.reason],
         acquisitionContractConformance: oneShotAcquisitionConformance,
         parserTrace: [
           "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
@@ -16921,7 +17124,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         forceRequiresReview: true,
         rawHint: ""
       });
-      return res.json(buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine));
+      const contractReviewResponse = buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine);
+      return res.status(acquisitionCompleted ? 200 : 422).json(acquisitionCompleted
+        ? keepRecognizedCoordinatesAsPointReview(contractReviewResponse, "", { blockMap: true })
+        : contractReviewResponse);
     }
     const stage1HandwrittenCandidateInput = formatHandwrittenDmsRawRows(rawText);
     retainP0QualificationAcquisition(req, response, recognitionBudget);

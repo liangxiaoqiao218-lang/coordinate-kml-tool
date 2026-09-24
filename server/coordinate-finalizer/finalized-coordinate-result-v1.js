@@ -222,6 +222,7 @@ export function finalizeCoordinateResult(candidate = {}, { clock = () => new Dat
     qualityGateStatus: effectiveCandidate.qualityGateStatus || null,
     decisionState: gate.decisionState,
     technicalKmlReady: effectiveCandidate.technicalKmlReady === true,
+    ...(candidate.mapReady === false ? { mapReady: false } : {}),
     ...(effectiveCandidate.kmlAuthorityBlocked === true ? { kmlAuthorityBlocked: true } : {}),
     requiresReview: effectiveCandidate.requiresReview !== false,
     kmlReady: gate.kmlReady === true,

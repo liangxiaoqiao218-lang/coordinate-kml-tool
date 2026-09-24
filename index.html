@@ -7510,9 +7510,10 @@ Au值 = 纯度 × 10 后取整数</div>
       }
       const projectedReviewPending = projectedCrsSelectionNeedsConfirmation();
       const unresolvedProjectedReview = projectedReviewPending && !activeProjectedAutoCrs;
+      const acquisitionReviewMapBlocked = activeFinalizedCoordinateResult?.mapReady === false;
       const validationRequired = Boolean(activeFinalizedCoordinateResult)
         && (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || ""));
-      const state = !spatialResultEnabled || !hasText || unresolvedProjectedReview
+      const state = !spatialResultEnabled || !hasText || unresolvedProjectedReview || acquisitionReviewMapBlocked
         ? "blocked"
         : projectedReviewPending || validationRequired
           ? "validation_required"
@@ -7524,7 +7525,9 @@ Au值 = 纯度 × 10 后取整数</div>
       mapPreviewAction.textContent = "查看地图";
       mapPreviewAction.title = unresolvedProjectedReview
         ? "图片缺少完整定位信息，暂时无法显示地图"
-        : "查看地图";
+        : acquisitionReviewMapBlocked
+          ? "识别采集已完成，当前候选结果仍需复核，地图暂未开放"
+          : "查看地图";
       refreshSpatialShareActions();
       syncKmlActionVisualState();
     }
@@ -14913,6 +14916,13 @@ ${placemarks}
         appendDebug(`前端DMS兜底提取结果：\n${isDmsGrouped ? "已使用后端分组结果，跳过本地兜底" : (dmsCoordinates || "无")}`);
         appendDebug(`精度模式：${data.precisionMode || "未知"}`);
         appendDebug(`识别提示：${data.warning || "无"}`);
+        if (data.acquisitionStatus === "COMPLETED") {
+          appendDebug(`采集状态：已完成`);
+          appendDebug(`坐标授权状态：${data.authorizationStatus || "等待复核"}`);
+          appendDebug(`候选点数：${Array.isArray(data.candidateCoordinates) ? data.candidateCoordinates.length : 0}`);
+          appendDebug(`候选组数：${Array.isArray(data.candidateCoordinateGroups) ? data.candidateCoordinateGroups.length : 0}`);
+          appendDebug(`复核原因：${Array.isArray(data.reviewReasons) && data.reviewReasons.length > 0 ? data.reviewReasons.join("、") : "无"}`);
+        }
         if (data.bftmLongTable?.isBftmLongTable) {
           appendDebug(`BFTM长表识别：已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行`);
           appendDebug(`BFTM缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}`);
@@ -14933,13 +14943,30 @@ ${placemarks}
 
         const summaryEngine = data.coordinateEngineV2 || data.coordinate_engine_v2 || {};
         const summaryGroups = Array.isArray(summaryEngine.groups) ? summaryEngine.groups : [];
+        const acquisitionReviewOnly = data.acquisitionStatus === "COMPLETED"
+          && data.authorizationStatus === "REVIEW_REQUIRED";
+        const acquisitionCandidateDisplayText = acquisitionReviewOnly
+          && Array.isArray(data.candidateCoordinateGroups)
+          ? data.candidateCoordinateGroups.map(group => {
+            const titlePath = Array.isArray(group?.titlePath) ? group.titlePath.filter(Boolean) : [];
+            const heading = titlePath.length > 0 ? `[${titlePath.join(" > ")}]\n` : "";
+            const rows = Array.isArray(group?.rows) ? group.rows.map(row => {
+              const label = row?.sourceLabel ? `${row.sourceLabel} | ` : "";
+              const latitude = row?.latitudeSource || row?.latitude || "";
+              const longitude = row?.longitudeSource || row?.longitude || "";
+              return `${label}${latitude} | ${longitude}`;
+            }).filter(Boolean) : [];
+            return `${heading}${rows.join("\n")}`.trim();
+          }).filter(Boolean).join("\n\n")
+          : "";
         const sourceCoordinateRepresentation = data.sourceCoordinateRepresentation || {};
         const sourceDisplayText = sourceCoordinateRepresentation.schema_version === "source_coordinate_representation_v1"
           && sourceCoordinateRepresentation.editable === true
           ? String(sourceCoordinateRepresentation.displayText || "")
           : "";
         const existingFamilySourceText = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
-        const displayCoordinates = sourceDisplayText
+        const displayCoordinates = acquisitionCandidateDisplayText
+          || sourceDisplayText
           || existingFamilySourceText
           || finalCoordinates
           || getCanonicalCoordinateDisplayText(data.finalizedCoordinateResult);
@@ -14985,6 +15012,9 @@ ${placemarks}
         });
         input.focus();
         coordinateUploadPanel?.classList.add("is-complete");
+        if (acquisitionReviewOnly) {
+          setRecognitionStatus("采集完成，等待复核", "warning");
+        }
         trackEvent("image_recognize_success", {
           rows: countCoordinateRows(finalCoordinates),
           cadastralGrid: isCadastralGrid,
@@ -14996,7 +15026,9 @@ ${placemarks}
           kyrgyzGk: isKyrgyzGk,
           projected: hasProjectedCoordinateRows(finalCoordinates)
         });
-        if (isCadastralGrid) {
+        if (acquisitionReviewOnly) {
+          showMessage("图片证据和候选坐标已完整保留；当前结果仍需核对点号、分组、坐标系或几何，地图边界与 KML 暂不开放。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
+        } else if (isCadastralGrid) {
           showMessage(`已识别矿权网格表 ${cadastralGridRows.length} 行，已提取 num / XV / YV。已识别为马达加斯加矿权格网，生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isMgrs) {
           showMessage(`已识别 ${mgrsRows.length} 个 MGRS / UTM Grid Reference 点，并转换为 WGS84 经纬度；生成 KML 时将使用 longitude,latitude,0。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
