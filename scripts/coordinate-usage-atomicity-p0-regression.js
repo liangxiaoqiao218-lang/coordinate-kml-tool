@@ -603,7 +603,7 @@ test("frontend and server bind one request ID to recovery without Provider repla
   assert.match(index, /"x-recognition-request-id": recognitionRequestId/);
   assert.match(index, /recoverCommittedCoordinateResult\(recognitionRequestId, currentVisitorId\)/);
   assert.match(index, /sessionStorage\.setItem\(PENDING_COORDINATE_COMMIT_REQUEST_KEY, String\(value\)\.toLowerCase\(\)\)/);
-  assert.match(index, /if \(!recoveryOnly\) \{\s*const recovered = await recoverCommittedCoordinateResult/);
+  assert.match(index, /shouldRecoverCoordinateUsageOutcome\(\{[\s\S]*terminalJobSnapshot: terminalRecognitionJobSnapshot/);
   assert.match(index, /let responseWasRecovery = usageRecoveryOnly/);
   assert.match(index, /await agenticCoordinateInitializationPromise/);
   assert.match(index, /agenticCoordinateController\?\.enabled[\s\S]*agenticCoordinateController\.recoverPending\(\)[\s\S]*resumePendingCoordinateWorkOnPageShow\(\)/);
@@ -611,7 +611,8 @@ test("frontend and server bind one request ID to recovery without Provider repla
   assert.match(index, /if \(!file && !recoveryOnly\) \{\s*return;\s*\}/);
   assert.match(index, /pendingCoordinateRecoveryPromise = recognizeImage\(\)/);
   assert.match(index, /!responseWasRecovery && data\?\.usageConsumed === false/);
-  assert.match(index, /responseWasRecovery && data\?\.recoveryTerminal === true && data\?\.usageConsumed === false/);
+  assert.match(index, /responseWasRecovery[\s\S]*data\?\.usageConsumed === false\s*&& data\?\.recoveryRequired !== true/);
+  assert.match(index, /clearPendingCommitAfterResultApplied = true/);
   assert.doesNotMatch(index, /data\?\.usageConsumed === false \|\| recoveryOnly/);
   assert.match(deadline, /request_hard_deadline_during_usage_commit/);
   assert.match(deadline, /usageConsumed: null/);

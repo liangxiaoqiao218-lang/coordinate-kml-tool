@@ -211,7 +211,10 @@ try {
   assert.doesNotMatch(stderr, /(?:Error|ERR_|Unhandled|AssertionError)/u);
 
   const indexSource = await readFile(path.join(root, "index.html"), "utf8");
-  assert.match(indexSource, /markPendingCoordinateRecognitionJobTerminalApplied\(terminalRecognitionJob, data, \{ applied: true \}\)/u);
+  assert.match(
+    indexSource,
+    /markPendingCoordinateRecognitionJobTerminalApplied\(\s*terminalRecognitionJobSnapshot,\s*terminalRecognitionJobSnapshot,\s*\{ applied: true \}/u
+  );
   assert.doesNotMatch(indexSource, /if \(status === "SUCCEEDED" \|\| status === "FAILED"\) \{\s*clearPendingCoordinateRecognitionJob\(\)/u);
   assert.match(indexSource, /activeRecognitionAcquisitionResult\?\.mapStatus === "CLOSED"[\s\S]*agenticCoordinateController\?\.enabled/u);
   assert.match(indexSource, /activeRecognitionAcquisitionResult\?\.kmlStatus === "CLOSED"[\s\S]*agenticCoordinateController\?\.enabled/u);

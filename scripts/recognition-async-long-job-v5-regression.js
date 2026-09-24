@@ -93,7 +93,7 @@ for (const script of inlineScripts) {
   assert.doesNotThrow(() => new Function(script[1]));
 }
 
-const helperStart = indexSource.indexOf("const PENDING_COORDINATE_RECOGNITION_JOB_KEY");
+const helperStart = indexSource.indexOf("const PENDING_COORDINATE_COMMIT_REQUEST_KEY");
 const helperEnd = indexSource.indexOf("function createRecognitionRequestId", helperStart);
 assert.ok(helperStart > 0 && helperEnd > helperStart);
 const helperSource = indexSource.slice(helperStart, helperEnd);
@@ -118,7 +118,7 @@ const clientHelpers = new Function(
   "getSourceHeaders",
   "appendDebug",
   "loadImageForCompression",
-  `${helperSource}\nreturn { getPendingCoordinateRecognitionJob, rememberPendingCoordinateRecognitionJob, clearPendingCoordinateRecognitionJob, markPendingCoordinateRecognitionJobTerminalApplied, shouldUseAsyncCoordinateRecognition, pollCoordinateRecognitionJob };`
+  `${helperSource}\nreturn { getPendingCoordinateCommitRequestId, rememberPendingCoordinateCommitRequestId, clearPendingCoordinateCommitRequestId, getPendingCoordinateRecognitionJob, rememberPendingCoordinateRecognitionJob, clearPendingCoordinateRecognitionJob, markPendingCoordinateRecognitionJobTerminalApplied, createCoordinateRecognitionTerminalSnapshot, shouldRecoverCoordinateUsageOutcome, shouldUseAsyncCoordinateRecognition, pollCoordinateRecognitionJob };`
 )(
   sessionStorage,
   async (_url, options) => {
@@ -189,6 +189,157 @@ assert.deepEqual(clientHelpers.getPendingCoordinateRecognitionJob(), storedJob);
 assert.equal(clientHelpers.markPendingCoordinateRecognitionJobTerminalApplied(storedJob, polledReview.data, { applied: true }), true);
 assert.equal(clientHelpers.getPendingCoordinateRecognitionJob(), null);
 
+const usageUnknownTerminal = {
+  ...polledReview.data,
+  success: false,
+  code: "USAGE_COMMIT_OUTCOME_UNKNOWN",
+  usageConsumed: null,
+  recoveryRequired: true
+};
+const terminalSnapshot = clientHelpers.createCoordinateRecognitionTerminalSnapshot(storedJob, usageUnknownTerminal);
+assert.deepEqual(terminalSnapshot, {
+  jobId: storedJob.jobId,
+  requestId,
+  jobStatus: "SUCCEEDED",
+  httpStatus: 200,
+  providerCompletionState: "",
+  providerCallCount: 1,
+  usageConsumed: null,
+  recoveryRequired: true,
+  code: "USAGE_COMMIT_OUTCOME_UNKNOWN"
+});
+assert.equal("jobAccessToken" in terminalSnapshot, false);
+assert.equal(clientHelpers.shouldRecoverCoordinateUsageOutcome({
+  result: usageUnknownTerminal,
+  responseWasRecovery: false,
+  recoveryOnly: false,
+  terminalJobSnapshot: terminalSnapshot
+}), true);
+assert.equal(clientHelpers.shouldRecoverCoordinateUsageOutcome({
+  result: usageUnknownTerminal,
+  responseWasRecovery: false,
+  recoveryOnly: true,
+  terminalJobSnapshot: terminalSnapshot
+}), true);
+assert.equal(clientHelpers.shouldRecoverCoordinateUsageOutcome({
+  result: polledReview.data,
+  responseWasRecovery: false,
+  recoveryOnly: true,
+  terminalJobSnapshot: terminalSnapshot
+}), false);
+let ordinaryRefreshRecoverCallCount = 0;
+if (clientHelpers.shouldRecoverCoordinateUsageOutcome({
+  result: polledReview.data,
+  responseWasRecovery: false,
+  recoveryOnly: true,
+  terminalJobSnapshot: terminalSnapshot
+})) ordinaryRefreshRecoverCallCount += 1;
+assert.equal(ordinaryRefreshRecoverCallCount, 0);
+assert.equal(clientHelpers.shouldRecoverCoordinateUsageOutcome({
+  result: usageUnknownTerminal,
+  responseWasRecovery: true,
+  recoveryOnly: true,
+  terminalJobSnapshot: terminalSnapshot
+}), false);
+
+async function simulateTerminalUsageRecovery({ fromRefresh = false, recoveredResult, applyRecoveredResult = true }) {
+  storageValues.clear();
+  let jobCreateCount = 1;
+  let providerCallCount = 1;
+  let recoverCallCount = 0;
+  let loading = true;
+  clientHelpers.rememberPendingCoordinateRecognitionJob(storedJob);
+  clientHelpers.rememberPendingCoordinateCommitRequestId(requestId);
+  const snapshot = clientHelpers.createCoordinateRecognitionTerminalSnapshot(storedJob, usageUnknownTerminal);
+  const shouldRecover = clientHelpers.shouldRecoverCoordinateUsageOutcome({
+    result: usageUnknownTerminal,
+    responseWasRecovery: false,
+    recoveryOnly: fromRefresh,
+    terminalJobSnapshot: snapshot
+  });
+  if (shouldRecover) recoverCallCount += 1;
+  assert.equal(clientHelpers.markPendingCoordinateRecognitionJobTerminalApplied(
+    snapshot,
+    snapshot,
+    { applied: false }
+  ), false);
+  if (recoveredResult.code === "USAGE_COMMIT_OUTCOME_UNKNOWN") {
+    loading = false;
+  } else if (recoveredResult.success === true && applyRecoveredResult) {
+    clientHelpers.clearPendingCoordinateCommitRequestId();
+    clientHelpers.markPendingCoordinateRecognitionJobTerminalApplied(snapshot, snapshot, { applied: true });
+    loading = false;
+  } else if (recoveredResult.recoveryRequired === false) {
+    clientHelpers.clearPendingCoordinateCommitRequestId();
+    clientHelpers.markPendingCoordinateRecognitionJobTerminalApplied(snapshot, snapshot, { applied: true });
+    loading = false;
+  }
+  return {
+    fromRefresh,
+    jobCreateCount,
+    providerCallCount,
+    recoverCallCount,
+    loading,
+    pendingJob: clientHelpers.getPendingCoordinateRecognitionJob(),
+    pendingCommitRequestId: clientHelpers.getPendingCoordinateCommitRequestId()
+  };
+}
+
+const recoveredSuccess = { success: true, usageConsumed: true, requestId };
+const recoveredBeforeApplication = await simulateTerminalUsageRecovery({
+  fromRefresh: true,
+  recoveredResult: recoveredSuccess,
+  applyRecoveredResult: false
+});
+assert.deepEqual(recoveredBeforeApplication.pendingJob, storedJob);
+assert.equal(recoveredBeforeApplication.pendingCommitRequestId, requestId);
+for (const fromRefresh of [false, true]) {
+  const recovered = await simulateTerminalUsageRecovery({ fromRefresh, recoveredResult: recoveredSuccess });
+  assert.equal(recovered.jobCreateCount, 1);
+  assert.equal(recovered.providerCallCount, 1);
+  assert.equal(recovered.recoverCallCount, 1);
+  assert.equal(recovered.loading, false);
+  assert.equal(recovered.pendingJob, null);
+  assert.equal(recovered.pendingCommitRequestId, "");
+}
+
+storageValues.clear();
+clientHelpers.rememberPendingCoordinateRecognitionJob(storedJob);
+clientHelpers.rememberPendingCoordinateCommitRequestId(requestId);
+assert.equal(clientHelpers.markPendingCoordinateRecognitionJobTerminalApplied(
+  terminalSnapshot,
+  terminalSnapshot,
+  { applied: false }
+), false);
+assert.deepEqual(clientHelpers.getPendingCoordinateRecognitionJob(), storedJob);
+assert.equal(clientHelpers.getPendingCoordinateCommitRequestId(), requestId);
+
+const recoveryStillUnknown = await simulateTerminalUsageRecovery({
+  fromRefresh: true,
+  recoveredResult: usageUnknownTerminal
+});
+assert.equal(recoveryStillUnknown.recoverCallCount, 1);
+assert.equal(recoveryStillUnknown.jobCreateCount, 1);
+assert.equal(recoveryStillUnknown.providerCallCount, 1);
+assert.equal(recoveryStillUnknown.loading, false);
+assert.deepEqual(recoveryStillUnknown.pendingJob, storedJob);
+assert.equal(recoveryStillUnknown.pendingCommitRequestId, requestId);
+
+const terminalNoCharge = await simulateTerminalUsageRecovery({
+  fromRefresh: true,
+  recoveredResult: {
+    success: false,
+    code: "COORDINATE_USAGE_RECOVERY_UNAVAILABLE",
+    usageConsumed: false,
+    recoveryTerminal: true,
+    recoveryRequired: false
+  }
+});
+assert.equal(terminalNoCharge.recoverCallCount, 1);
+assert.equal(terminalNoCharge.loading, false);
+assert.equal(terminalNoCharge.pendingJob, null);
+assert.equal(terminalNoCharge.pendingCommitRequestId, "");
+
 assert.match(indexSource, /PENDING_COORDINATE_RECOGNITION_JOB_KEY/);
 assert.match(indexSource, /sessionStorage\.setItem\(PENDING_COORDINATE_RECOGNITION_JOB_KEY/);
 assert.match(indexSource, /x-recognition-job-token/);
@@ -203,8 +354,13 @@ assert.match(
   "refresh must independently prioritize async-job and usage-commit recovery before any alternate recognition controller"
 );
 assert.match(indexSource, /RECOGNITION_ASYNC_JOB_CLIENT_WAIT_EXCEEDED/);
-assert.match(indexSource, /const asyncTerminalMustStop = data\?\.jobStatus === "FAILED"/);
-assert.match(indexSource, /data\?\.jobStatus === "SUCCEEDED" && data\?\.usageConsumed === false/);
+assert.match(indexSource, /terminalRecognitionJobSnapshot = createCoordinateRecognitionTerminalSnapshot/);
+assert.match(indexSource, /shouldRecoverCoordinateUsageOutcome\(\{[\s\S]*terminalJobSnapshot: terminalRecognitionJobSnapshot/);
+assert.match(indexSource, /clearPendingCommitAfterResultApplied = true/);
+assert.match(indexSource, /if \(clearPendingCommitAfterResultApplied\) clearPendingCoordinateCommitRequestId\(\);/);
+assert.match(indexSource, /data\?\.usageConsumed === false\s*&& data\?\.recoveryRequired !== true\) clearPendingCoordinateCommitRequestId\(\);/);
+assert.match(indexSource, /markPendingCoordinateRecognitionJobTerminalApplied\(\s*terminalRecognitionJobSnapshot,\s*terminalRecognitionJobSnapshot/);
+assert.match(indexSource, /const asyncTerminalMustStop = Boolean\(terminalRecognitionJobSnapshot\)/);
 assert.ok(
   indexSource.indexOf("if (asyncTerminalMustStop)") < indexSource.indexOf('showRecognitionProgress("正在解析坐标...", "loading")'),
   "terminal FAILED or uncharged jobs must stop before coordinate parsing"
@@ -229,6 +385,10 @@ console.log(JSON.stringify({
     usageConsumed: failureSnapshot.result.usageConsumed,
     refreshJobStateSeparated: true,
     refreshUsageCommitBeforeAgentic: true,
+    terminalUsageUnknownRecovery: true,
+    refreshedTerminalUsageUnknownRecovery: true,
+    recoverCallCount: 1,
+    jobCreateCount: 1,
     boundedClientPolling: true,
     productionCalls: 0
   }
