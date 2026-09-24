@@ -193,8 +193,8 @@ assert.match(indexSource, /aspectRatio >= 2\.4 \|\| \(width \* height\) >= 6_000
 assert.match(indexSource, /if \(await shouldUseAsyncCoordinateRecognition\(selectedFile\)\) \{\s*await recognizeImage\(\);\s*return;/);
 assert.match(
   indexSource,
-  /await agenticCoordinateInitializationPromise;\s*if \(getPendingCoordinateRecognitionJob\(\)\) \{\s*await resumePendingCoordinateWorkOnPageShow\(\);\s*return;\s*\}\s*if \(agenticCoordinateController\?\.enabled\)/,
-  "refresh must resume an existing async job before any alternate recognition controller"
+  /await agenticCoordinateInitializationPromise;\s*if \(getPendingCoordinateRecognitionJob\(\)\) \{\s*await resumePendingCoordinateWorkOnPageShow\(\);\s*return;\s*\}\s*if \(getPendingCoordinateCommitRequestId\(\)\) \{\s*await resumePendingCoordinateWorkOnPageShow\(\);\s*return;\s*\}\s*if \(agenticCoordinateController\?\.enabled\)/,
+  "refresh must independently prioritize async-job and usage-commit recovery before any alternate recognition controller"
 );
 assert.match(indexSource, /RECOGNITION_ASYNC_JOB_CLIENT_WAIT_EXCEEDED/);
 assert.match(indexSource, /const asyncTerminalMustStop = data\?\.jobStatus === "FAILED"/);
@@ -222,6 +222,7 @@ console.log(JSON.stringify({
     providerCallCount: failureSnapshot.result.providerCallCount,
     usageConsumed: failureSnapshot.result.usageConsumed,
     refreshJobStateSeparated: true,
+    refreshUsageCommitBeforeAgentic: true,
     boundedClientPolling: true,
     productionCalls: 0
   }

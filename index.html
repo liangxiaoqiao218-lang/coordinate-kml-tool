@@ -5543,6 +5543,10 @@ Au值 = 纯度 × 10 后取整数</div>
             await resumePendingCoordinateWorkOnPageShow();
             return;
           }
+          if (getPendingCoordinateCommitRequestId()) {
+            await resumePendingCoordinateWorkOnPageShow();
+            return;
+          }
           if (agenticCoordinateController?.enabled) {
             try {
               const recovered = await agenticCoordinateController.recoverPending();
