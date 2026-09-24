@@ -22,6 +22,9 @@
     "ocr-golden": "node scripts/ocr-golden-runner.js",
     "sr08c-manual-regression": "node scripts/sr08c-manual-finalizer-regression.js",
     "sr08c-evidence": "node scripts/sr08c-build-release-evidence.js",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed --workers=1",
+    "test:e2e:report": "playwright show-report artifacts/playwright/report",
     "start": "node server.js"
   },
   "dependencies": {
@@ -32,6 +35,7 @@
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "yaml": "^2.8.1"
   }
 }

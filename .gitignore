@@ -16,3 +16,6 @@ Cache/
 *.backup-*
 preview-*.png
 point_table_crop.jpg
+artifacts/playwright/
+playwright-report/
+test-results/

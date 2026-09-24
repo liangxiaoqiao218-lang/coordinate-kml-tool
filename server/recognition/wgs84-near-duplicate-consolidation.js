@@ -346,7 +346,7 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
   if (bindings.some(binding => !binding) || observations.some(observation => !observation)) commonReasons.push("UNBOUND_OBSERVATION");
   if (!trustedLayoutCapability) commonReasons.push("TRUSTED_LAYOUT_ATTESTATION_MISSING");
   if (new Set(observations.filter(Boolean).map(item => item.observation_id)).size !== 2) commonReasons.push("OBSERVATION_IDENTITY_INVALID");
-  if (observations.some(observation => !trustedObservation(observation, revision))) commonReasons.push("PROVENANCE_MISSING_OR_MALFORMED");
+  if (observations.some(observation => !observation || !trustedObservation(observation, revision))) commonReasons.push("PROVENANCE_MISSING_OR_MALFORMED");
   if (bindings.some((binding, index) => !binding || !observations[index]
     || !trustedBinding(binding, observations[index], revision))) commonReasons.push("TRUSTED_ROW_BINDING_INVALID");
   if (observations.length === 2 && observations.every(Boolean)) {

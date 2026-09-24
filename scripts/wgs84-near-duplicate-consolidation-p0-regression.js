@@ -232,6 +232,19 @@ test("ND-02", "missing trusted provenance fails closed", () => {
   assert.equal(result.authorityBlocked, true);
 });
 
+test("ND-02B", "missing bound observation fails closed without throwing", () => {
+  const input = prepare([low, high]);
+  input.evidenceAcquisition = {
+    ...input.evidenceAcquisition,
+    observations: input.evidenceAcquisition.observations.slice(0, 1)
+  };
+  const result = evaluateWgs84NearDuplicateConsolidation(input);
+  assert.equal(result.decision.decision, NEAR_DUPLICATE_DECISION.PROVENANCE_INSUFFICIENT);
+  assert.ok(result.decision.reason_codes.includes("UNBOUND_OBSERVATION"));
+  assert.ok(result.decision.reason_codes.includes("PROVENANCE_MISSING_OR_MALFORMED"));
+  assert.equal(result.authorityBlocked, true);
+});
+
 test("ND-03", "distance never substitutes for exact rounding containment", () => {
   const result = evaluateWgs84NearDuplicateConsolidation(prepare([
     "35.4478190,83.1789910",

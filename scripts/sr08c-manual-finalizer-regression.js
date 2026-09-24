@@ -165,11 +165,16 @@ const numberedPolygon = [
   "3. 116.392245,39.908654",
   "4. 116.391245,39.908654"
 ].join("\n");
+const rawLineString = [
+  "116.391245,39.907654",
+  "116.392245,39.908654"
+].join("\n");
 const normalizedRequestCases = [
   ["RAW_DECIMAL", exactCoordinate, "Point", [116.391245, 39.907654]],
   ["NUMBERED_DOT", `1. ${exactCoordinate}`, "Point", [116.391245, 39.907654]],
   ["NUMBERED_PAREN", `1) ${exactCoordinate}`, "Point", [116.391245, 39.907654]],
   ["NUMBERED_COLON", `1: ${exactCoordinate}`, "Point", [116.391245, 39.907654]],
+  ["RAW_LINESTRING", rawLineString, "LineString", null],
   ["NUMBERED_POLYGON", numberedPolygon, "Polygon", null]
 ];
 
@@ -182,6 +187,9 @@ for (const [name, rawText, geometryType, pointCoordinates] of normalizedRequestC
   assert.equal(finalized.decisionState, "AUTO_EXPORT", `${name} Gate`);
   assert.equal(finalized.kmlReady, true, `${name} KML readiness`);
   if (pointCoordinates) assert.deepEqual(finalized.geometry.coordinates, pointCoordinates, `${name} axis order`);
+  if (geometryType === "LineString") {
+    assert.equal(finalized.geometry.coordinates.length, 2, "LineString must preserve both manual points");
+  }
   if (geometryType === "Polygon") {
     assert.equal(finalized.geometry.coordinates[0].length, 5, "Polygon must close without mutating request text");
   }
@@ -197,7 +205,7 @@ assert.match(html, /fetch\("\/api\/coordinate-manual-finalize"/);
 
 console.log(JSON.stringify({
   suite: "sr08c-manual-finalizer-regression",
-  passed: 16,
-  cases: ["MANUAL_FINALIZE", "MANUAL_REVISION", "STALE_REJECTED", "INVALID_BLOCKED", "REVIEW_PENDING_MANUAL_IDENTITY", "REVIEW_PENDING_EDIT_REOPENS_CONFIRMATION", "REVIEW_PENDING_SECOND_EDIT", "REVIEW_PENDING_REVERT_CURRENT_IDENTITY", "REVIEW_PENDING_CONFIRM_RELEASES_KML", "RAW_DECIMAL", "NUMBERED_DOT", "NUMBERED_PAREN", "NUMBERED_COLON", "NUMBERED_POLYGON", "SERVER_STRICT_BOUNDARY", "KML_AUTHORITY_ORDER"]
+  passed: 17,
+  cases: ["MANUAL_FINALIZE", "MANUAL_REVISION", "STALE_REJECTED", "INVALID_BLOCKED", "REVIEW_PENDING_MANUAL_IDENTITY", "REVIEW_PENDING_EDIT_REOPENS_CONFIRMATION", "REVIEW_PENDING_SECOND_EDIT", "REVIEW_PENDING_REVERT_CURRENT_IDENTITY", "REVIEW_PENDING_CONFIRM_RELEASES_KML", "RAW_DECIMAL", "NUMBERED_DOT", "NUMBERED_PAREN", "NUMBERED_COLON", "RAW_LINESTRING", "NUMBERED_POLYGON", "SERVER_STRICT_BOUNDARY", "KML_AUTHORITY_ORDER"]
 }, null, 2));
 
