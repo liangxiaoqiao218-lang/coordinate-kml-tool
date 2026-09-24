@@ -1975,16 +1975,17 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
     if (scenario === 'observed') {
       assert.equal(payload.indonesiaUtm50?.isIndonesiaUtm50 === true, false);
       assert.equal(payload.coordinateEngineV2.coordinate_type === 'handwritten_dms_experimental', false);
-      assert.equal(payload.geometryMode, 'boundary');
-      assert.equal(payload.boundaryBlocked, false);
+      assert.equal(payload.acquisitionStatus, 'COMPLETED');
+      assert.equal(payload.authorizationStatus, 'REVIEW_REQUIRED');
+      assert.equal(payload.geometryMode, 'points_only');
+      assert.equal(payload.boundaryBlocked, true);
       assert.equal(payload.sourceCoordinateRepresentation.displayText, observedText);
       assert.equal(payload.sourceCoordinateRepresentation.axisOrder, 'longitude_latitude');
       assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence, 'pointwise_dms_semantic_match');
-      assert.equal(payload.finalizedCoordinateResult.decisionState, 'AUTO_EXPORT');
-      assert.equal(payload.finalizedCoordinateResult.geometry.type, 'Polygon');
-      assert.equal(payload.finalizedCoordinateResult.geometry.coordinates[0].length, 5);
-      assert.notEqual(payload.finalizedCoordinateResult.kmlAuthorityBlocked, true);
-      assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+      assert.equal(payload.finalizedCoordinateResult.decisionState, 'REVIEW_REQUIRED');
+      assert.equal(payload.finalizedCoordinateResult.geometry.type, 'MultiPoint');
+      assert.equal(payload.finalizedCoordinateResult.geometry.coordinates.length, 4);
+      assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
     } else if (scenario === 'structured') {
       assert.equal(payload.coordinateEngineV2.coordinate_type, 'projected_xy');
       assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, 'EXPLICIT');
@@ -2009,7 +2010,7 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
       assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
       assert.equal(payload.projectedMapPreview.mapPreviewObject.geometry.type, 'MultiPoint');
     }
-    assert.equal(payload.finalizedCoordinateResult.kmlReady, scenario !== 'mismatch');
+    assert.equal(payload.finalizedCoordinateResult.kmlReady, scenario === 'structured');
   });
 }
 

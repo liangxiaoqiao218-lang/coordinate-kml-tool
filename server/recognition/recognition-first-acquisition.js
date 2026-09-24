@@ -188,6 +188,8 @@ export function buildRecognitionFirstPromptPrefix(acquisition) {
     + `The attached images are one source page: image 1 is the whole-page overview and the next ${detailCount} image(s) are overlapping high-resolution detail tiles in source reading order.\n`
     + "Use the overview for page, table, group, header, and CRS context. Use detail tiles to transcribe every visible coordinate row.\n"
     + "Overlaps are duplicate visual evidence: emit each physical source row once, preserving its visible label, order, precision, group boundary, table header, and CRS text.\n"
+    + "Emit each visible title or nested section title that owns coordinate rows as `HEADING | <verbatim visible title>` immediately before those rows; repeat a visible title when it is repeated in the source.\n"
+    + "For DMS rows emit exactly `<visible point label or empty> | <complete first DMS field> | <complete second DMS field>` and keep unlabelled rows unlabelled.\n"
     + "Do not infer missing rows, labels, signs, axis order, CRS, zone, hemisphere, or geometry. Do not omit a readable row merely because a format-specific contract is not yet satisfied.\n"
     + "Acquisition is evidence collection only. Return all visible coordinate candidates and visible CRS evidence; downstream validation decides authority, Map, and KML.\n\n";
 }

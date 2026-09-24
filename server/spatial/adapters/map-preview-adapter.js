@@ -20,7 +20,8 @@ const BLOCK_REASON = Object.freeze({
   STALE_SOURCE_REVISION: "STALE_SOURCE_REVISION",
   GEOMETRY_HASH_MISMATCH: "GEOMETRY_HASH_MISMATCH",
   ACQUISITION_DELTA_CONFIRMATION_REQUIRED: "ACQUISITION_DELTA_CONFIRMATION_REQUIRED",
-  CRS_NOT_DRAWABLE_AS_WGS84: "CRS_NOT_DRAWABLE_AS_WGS84"
+  CRS_NOT_DRAWABLE_AS_WGS84: "CRS_NOT_DRAWABLE_AS_WGS84",
+  REVIEW_RESULT_NOT_MAP_READY: "REVIEW_RESULT_NOT_MAP_READY"
 });
 
 function uniqueStrings(values) {
@@ -73,6 +74,9 @@ export class MapPreviewAdapter {
     if (!input || typeof input !== "object" || Array.isArray(input)
       || input.schemaVersion !== FINALIZED_COORDINATE_SCHEMA_VERSION) {
       return blocked(input || {}, BLOCK_REASON.NO_STRUCTURED_RESULT, clock);
+    }
+    if (input.mapReady === false) {
+      return blocked(input, BLOCK_REASON.REVIEW_RESULT_NOT_MAP_READY, clock);
     }
     const acquisitionDeltaPolicy = input.familySafetyPolicy?.policyId === DMS_GROUPED_ACQUISITION_DELTA_POLICY.policyId;
     if (isPendingDmsGroupedAcquisitionDeltaPolicy(input.familySafetyPolicy)
