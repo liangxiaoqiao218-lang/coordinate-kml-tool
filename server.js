@@ -15087,29 +15087,72 @@ async function recognizeCoordinatesHandler(req, res) {
     if (!context || !body || typeof body !== "object" || Array.isArray(body)) return body;
     const { evidence, decision } = context;
     if (decision.acquisitionStatus !== "COMPLETED") return body;
-    const finalAuthorization = evaluateUnifiedRecognitionFinalAuthorization({ body });
+    const finalAuthorization = evaluateUnifiedRecognitionFinalAuthorization({
+      body,
+      evidence,
+      decision,
+      conformance: context.conformance
+    });
     const { authorized } = finalAuthorization;
     const authorizationStatus = authorized ? "AUTHORIZED" : "REVIEW_REQUIRED";
+    const finalizedRequiresFailClose = !authorized
+      && body.finalizedCoordinateResult && typeof body.finalizedCoordinateResult === "object"
+      && (body.finalizedCoordinateResult.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
+        || body.finalizedCoordinateResult.kmlReady === true
+        || body.finalizedCoordinateResult.mapReady !== false);
+    const finalizedCoordinateResult = body.finalizedCoordinateResult && typeof body.finalizedCoordinateResult === "object"
+      ? !finalizedRequiresFailClose
+        ? body.finalizedCoordinateResult
+        : coordinateConfirmationRuntime.register(finalizeCoordinateResult({
+          ...body.finalizedCoordinateResult,
+          currentRevision: body.finalizedCoordinateResult.resultRevision,
+          confirmedRevision: null,
+          confirmationStatus: "pending",
+          qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+          technicalKmlReady: false,
+          mapReady: false,
+          kmlAuthorityBlocked: true,
+          currentAuthorizedGeometryExportable: false,
+          requiresReview: true,
+          kmlReady: false,
+          groups: Array.isArray(body.finalizedCoordinateResult.groups)
+            ? body.finalizedCoordinateResult.groups.map(group => ({
+              ...group,
+              requiresReview: true,
+              kmlReady: false
+            }))
+            : body.finalizedCoordinateResult.groups
+        }))
+      : body.finalizedCoordinateResult;
+    const contractReasons = [...new Set([
+      ...(Array.isArray(decision.contractReasons) ? decision.contractReasons : []),
+      ...(Array.isArray(body.contractReasons) ? body.contractReasons : [])
+    ])];
     return {
       ...body,
+      providerCompletionState: decision.providerCompletionState || evidence.providerCompletionState,
+      providerCallCount: Math.max(0, Number(recognitionBudget?.providerAttemptCount) || 0),
       recognitionAcquisition: evidence,
       acquisitionStatus: "COMPLETED",
       authorizationStatus,
       resultStatus: authorized ? "authorized" : "needs_review",
       requiresReview: !authorized,
+      boundaryBlocked: !authorized || body.boundaryBlocked === true,
       mapReady: finalAuthorization.mapReady,
       kmlReady: finalAuthorization.kmlReady,
       mapStatus: finalAuthorization.mapReady ? "ENABLED" : "CLOSED",
       kmlStatus: finalAuthorization.kmlReady ? "ENABLED" : "CLOSED",
+      ...(finalizedCoordinateResult ? { finalizedCoordinateResult } : {}),
       candidateCoordinates: evidence.candidateCoordinates,
       candidateCoordinateLines: evidence.candidateCoordinateLines,
       candidateCoordinateGroups: evidence.candidateCoordinateGroups,
       visibleCrsEvidence: evidence.visibleCrsEvidence,
       imageAcquisitionEvidence: evidence.imageEvidence,
+      contractReasons,
       reviewReasons: [...new Set([
         ...(Array.isArray(body.reviewReasons) ? body.reviewReasons : []),
-        ...decision.contractReasons,
-        ...evidence.reviewReasons
+        ...contractReasons,
+        ...(Array.isArray(evidence.reviewReasons) ? evidence.reviewReasons : [])
       ])]
     };
   };
@@ -15161,6 +15204,7 @@ async function recognizeCoordinatesHandler(req, res) {
             error: "本次识别已完成，扣次状态仍在确认中。请使用本次请求编号恢复结果，不要重新上传图片。",
             requestId: recognitionBudget?.requestId || null,
             usageConsumed: null,
+            userUsageConsumed: null,
             recoveryRequired: true,
             retryAllowed: false,
             rawText: "",
@@ -15187,6 +15231,8 @@ async function recognizeCoordinatesHandler(req, res) {
             error: limitExceeded ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
             requestId: recognitionBudget?.requestId || null,
             usageConsumed: false,
+            userUsageConsumed: false,
+            recoveryRequired: false,
             rawText: "",
             coordinates: ""
           };
@@ -15222,9 +15268,18 @@ async function recognizeCoordinatesHandler(req, res) {
             ...body,
             quota: settlement.commitResult?.quota || body.quota || null,
             requestId: recognitionBudget?.requestId || null,
-            usageConsumed: true
+            usageConsumed: true,
+            userUsageConsumed: true,
+            recoveryRequired: false
           }
-          : body;
+          : body && typeof body === "object"
+            ? {
+              ...body,
+              usageConsumed: body.usageConsumed ?? false,
+              userUsageConsumed: body.userUsageConsumed ?? body.usageConsumed ?? false,
+              recoveryRequired: body.recoveryRequired === true
+            }
+            : body;
         logUnifiedRecognitionAcquisitionFinalState({
           body: committedBody,
           usageConsumed: settlement.kind === "USAGE_COMMITTED" ? true : false,
@@ -15243,6 +15298,8 @@ async function recognizeCoordinatesHandler(req, res) {
             error: "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。",
             requestId: recognitionBudget?.requestId || null,
             usageConsumed: false,
+            userUsageConsumed: false,
+            recoveryRequired: false,
             retryAllowed: true,
             rawText: "",
             coordinates: ""
@@ -15269,6 +15326,8 @@ async function recognizeCoordinatesHandler(req, res) {
             : "CONVERT_QUOTA_CONSUME_FAILED",
           requestId: recognitionBudget?.requestId || null,
           usageConsumed: false,
+          userUsageConsumed: false,
+          recoveryRequired: false,
           rawText: "",
           coordinates: ""
         };
@@ -20065,6 +20124,7 @@ app.post("/api/recognize-coordinates/jobs", upload.single("image"), (req, res) =
     const value = req.get(headerName);
     if (value) forwardHeaders[headerName] = value;
   }
+  if (getRegressionTestMode(req).active) forwardHeaders["x-regression-test"] = "1";
   forwardHeaders["x-recognition-request-id"] = recognitionRequestId;
   try {
     const job = recognitionAcquisitionJobRuntime.enqueue({

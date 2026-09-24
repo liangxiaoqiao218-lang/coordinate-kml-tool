@@ -409,11 +409,31 @@ export function createRecognitionAcquisitionEvidenceStore({
   });
 }
 
-export function evaluateUnifiedRecognitionFinalAuthorization({ body = {} } = {}) {
+export function evaluateUnifiedRecognitionFinalAuthorization({
+  body = {},
+  evidence = body?.recognitionAcquisition,
+  decision = null,
+  conformance = body?.acquisitionContractConformance
+} = {}) {
   const finalized = body?.finalizedCoordinateResult || {};
+  const hasUnifiedEvidence = Boolean(evidence && typeof evidence === "object"
+    && Array.isArray(evidence.candidateCoordinates)
+    && evidence.candidateCoordinates.length > 0
+    && Array.isArray(evidence.candidateCoordinateGroups)
+    && evidence.candidateCoordinateGroups.length > 0
+    && Array.isArray(evidence.visibleCrsEvidence)
+    && evidence.imageEvidence && typeof evidence.imageEvidence === "object");
+  const contractRequiresReview = String(conformance?.status || "").toUpperCase() === "REVIEW_REQUIRED";
+  const unifiedDecisionRequiresReview = decision?.authorizationStatus === "REVIEW_REQUIRED"
+    || decision?.resultStatus === "needs_review";
   const finalRequiresReview = body?.requiresReview === true
     || finalized.requiresReview === true
-    || finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED;
+    || finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED
+    || body?.authorizationStatus === "REVIEW_REQUIRED"
+    || body?.resultStatus === "needs_review"
+    || contractRequiresReview
+    || unifiedDecisionRequiresReview
+    || !hasUnifiedEvidence;
   const finalizerGatePassed = finalized.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
     && finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.PASSED
     && finalized.requiresReview === false
@@ -429,6 +449,9 @@ export function evaluateUnifiedRecognitionFinalAuthorization({ body = {} } = {})
   return Object.freeze({
     authorized,
     finalRequiresReview,
+    hasUnifiedEvidence,
+    contractRequiresReview,
+    unifiedDecisionRequiresReview,
     finalizerGatePassed,
     mapGatePassed,
     kmlGatePassed,

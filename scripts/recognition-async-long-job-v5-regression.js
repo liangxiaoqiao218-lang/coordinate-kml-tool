@@ -118,7 +118,7 @@ const clientHelpers = new Function(
   "getSourceHeaders",
   "appendDebug",
   "loadImageForCompression",
-  `${helperSource}\nreturn { getPendingCoordinateRecognitionJob, rememberPendingCoordinateRecognitionJob, clearPendingCoordinateRecognitionJob, shouldUseAsyncCoordinateRecognition, pollCoordinateRecognitionJob };`
+  `${helperSource}\nreturn { getPendingCoordinateRecognitionJob, rememberPendingCoordinateRecognitionJob, clearPendingCoordinateRecognitionJob, markPendingCoordinateRecognitionJobTerminalApplied, shouldUseAsyncCoordinateRecognition, pollCoordinateRecognitionJob };`
 )(
   sessionStorage,
   async (_url, options) => {
@@ -162,6 +162,8 @@ assert.equal(polledFailure.response.status, 422);
 assert.equal(polledFailure.data.jobStatus, "FAILED");
 assert.equal(polledFailure.data.providerCallCount, 1);
 assert.equal(polledFailure.data.usageConsumed, false);
+assert.deepEqual(clientHelpers.getPendingCoordinateRecognitionJob(), storedJob);
+assert.equal(clientHelpers.markPendingCoordinateRecognitionJobTerminalApplied(storedJob, polledFailure.data, { applied: true }), true);
 assert.equal(clientHelpers.getPendingCoordinateRecognitionJob(), null);
 assert.ok(debugEvents.some(message => message.includes(storedJob.jobId) && message.includes(requestId)));
 
@@ -181,6 +183,10 @@ const polledReview = await clientHelpers.pollCoordinateRecognitionJob(refreshedJ
 assert.equal(polledReview.data.jobStatus, "SUCCEEDED");
 assert.equal(polledReview.data.authorizationStatus, "REVIEW_REQUIRED");
 assert.equal(polledReview.data.mapStatus, "CLOSED");
+assert.deepEqual(clientHelpers.getPendingCoordinateRecognitionJob(), storedJob);
+assert.equal(clientHelpers.markPendingCoordinateRecognitionJobTerminalApplied(storedJob, polledReview.data), false);
+assert.deepEqual(clientHelpers.getPendingCoordinateRecognitionJob(), storedJob);
+assert.equal(clientHelpers.markPendingCoordinateRecognitionJobTerminalApplied(storedJob, polledReview.data, { applied: true }), true);
 assert.equal(clientHelpers.getPendingCoordinateRecognitionJob(), null);
 
 assert.match(indexSource, /PENDING_COORDINATE_RECOGNITION_JOB_KEY/);

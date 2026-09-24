@@ -5351,6 +5351,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeCoordinateEngineV2 = null;
     let activeCoordinateFieldConflictCount = 0;
     let activeFinalizedCoordinateResult = null;
+    let activeRecognitionAcquisitionResult = null;
     let activePointGeometryIntentReview = null;
     let finalizedCoordinateTextSnapshot = "";
     let finalizedCoordinateDirty = false;
@@ -7514,10 +7515,13 @@ Au值 = 纯度 × 10 后取整数</div>
     function refreshMapPreviewAction() {
       if (!mapPreviewAction) return;
       const hasText = Boolean(String(input?.value || "").trim());
+      const acquisitionReviewMapBlocked = activeRecognitionAcquisitionResult?.mapStatus === "CLOSED"
+        || activeRecognitionAcquisitionResult?.authorizationStatus === "REVIEW_REQUIRED"
+        || activeFinalizedCoordinateResult?.mapReady === false;
       if (agenticCoordinateController?.enabled) {
-        const state = hasText ? "enabled" : "blocked";
+        const state = hasText && !acquisitionReviewMapBlocked ? "enabled" : "blocked";
         mapPreviewAction.hidden = false;
-        mapPreviewAction.disabled = !hasText;
+        mapPreviewAction.disabled = state === "blocked";
         mapPreviewAction.dataset.state = state;
         mapPreviewAction.setAttribute("aria-disabled", String(mapPreviewAction.disabled));
         mapPreviewAction.textContent = "查看地图";
@@ -7526,7 +7530,6 @@ Au值 = 纯度 × 10 后取整数</div>
       }
       const projectedReviewPending = projectedCrsSelectionNeedsConfirmation();
       const unresolvedProjectedReview = projectedReviewPending && !activeProjectedAutoCrs;
-      const acquisitionReviewMapBlocked = activeFinalizedCoordinateResult?.mapReady === false;
       const validationRequired = Boolean(activeFinalizedCoordinateResult)
         && (finalizedCoordinateDirty || finalizedCoordinateTextSnapshot !== String(input.value || ""));
       const state = !spatialResultEnabled || !hasText || unresolvedProjectedReview || acquisitionReviewMapBlocked
@@ -7550,6 +7553,9 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function coordinateKmlVisualState() {
       if (!String(input?.value || "").trim()) return "blocked";
+      if (activeRecognitionAcquisitionResult?.kmlStatus === "CLOSED"
+        || activeRecognitionAcquisitionResult?.authorizationStatus === "REVIEW_REQUIRED"
+        || activeFinalizedCoordinateResult?.kmlReady === false) return "blocked";
       if (agenticCoordinateController?.enabled) return "enabled";
       if (projectedCrsSelectionNeedsConfirmation()) return "blocked";
       if (!activeFinalizedCoordinateResult) return "enabled";
@@ -13513,6 +13519,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       resetProjectedCoordinateUiState();
       activeCoordinateEngineV2 = null;
       activeFinalizedCoordinateResult = null;
+      activeRecognitionAcquisitionResult = null;
       finalizedCoordinateTextSnapshot = "";
       finalizedCoordinateDirty = false;
       renderProjectedCrsReviewPanel();
@@ -14623,6 +14630,17 @@ ${placemarks}
       try { sessionStorage.removeItem(PENDING_COORDINATE_RECOGNITION_JOB_KEY); } catch { /* memory-only fallback */ }
     }
 
+    function markPendingCoordinateRecognitionJobTerminalApplied(job, result, { applied = false } = {}) {
+      const status = String(result?.jobStatus || "").toUpperCase();
+      const sameJob = isRecognitionJobId(job?.jobId)
+        && String(result?.jobId || "").toLowerCase() === String(job.jobId).toLowerCase();
+      const sameRequest = isRecognitionRequestId(job?.requestId)
+        && String(result?.requestId || "").toLowerCase() === String(job.requestId).toLowerCase();
+      if (!applied || !sameJob || !sameRequest || !["SUCCEEDED", "FAILED"].includes(status)) return false;
+      clearPendingCoordinateRecognitionJob();
+      return true;
+    }
+
     async function shouldUseAsyncCoordinateRecognition(file) {
       if (!file) return false;
       if (Number(file.size) >= 1_500_000) return true;
@@ -14664,7 +14682,6 @@ ${placemarks}
           appendDebug(`异步任务状态：${status}\n任务编号：${job.jobId}\n请求编号：${job.requestId}`);
         }
         if (status === "SUCCEEDED" || status === "FAILED") {
-          clearPendingCoordinateRecognitionJob();
           const result = snapshot?.result && typeof snapshot.result === "object" ? snapshot.result : {};
           return {
             response,
@@ -14835,11 +14852,13 @@ ${placemarks}
       try {
         let response;
         let data;
+        let terminalRecognitionJob = null;
         let responseWasRecovery = usageRecoveryOnly;
         if (jobRecoveryOnly) {
           const polled = await pollCoordinateRecognitionJob(pendingCoordinateRecognitionJob);
           response = polled.response;
           data = polled.data;
+          terminalRecognitionJob = pendingCoordinateRecognitionJob;
         } else if (usageRecoveryOnly) {
           const recovered = await recoverCommittedCoordinateResult(recognitionRequestId, currentVisitorId);
           response = recovered.response;
@@ -14884,6 +14903,7 @@ ${placemarks}
             const polled = await pollCoordinateRecognitionJob(job);
             response = polled.response;
             data = polled.data;
+            terminalRecognitionJob = job;
           }
         }
         if (data.code === "USAGE_COMMIT_OUTCOME_UNKNOWN") {
@@ -14923,6 +14943,7 @@ ${placemarks}
             providerCallCount: Number(data.providerCallCount) || 0,
             usageConsumed: data.usageConsumed === true
           });
+          markPendingCoordinateRecognitionJobTerminalApplied(terminalRecognitionJob, data, { applied: true });
           return;
         }
         showRecognitionProgress("正在解析坐标...", "loading");
@@ -15167,6 +15188,22 @@ ${placemarks}
           ? data.handwrittenVisionRouting.fieldConflicts.length
           : 0;
         activeFinalizedCoordinateResult = data.finalizedCoordinateResult || null;
+        activeRecognitionAcquisitionResult = data.recognitionAcquisition && typeof data.recognitionAcquisition === "object"
+          ? {
+            recognitionAcquisition: data.recognitionAcquisition,
+            acquisitionStatus: data.acquisitionStatus || null,
+            authorizationStatus: data.authorizationStatus || null,
+            resultStatus: data.resultStatus || null,
+            mapStatus: data.mapStatus || null,
+            kmlStatus: data.kmlStatus || null,
+            reviewReasons: Array.isArray(data.reviewReasons) ? data.reviewReasons : [],
+            contractReasons: Array.isArray(data.contractReasons) ? data.contractReasons : [],
+            candidateCoordinates: Array.isArray(data.candidateCoordinates) ? data.candidateCoordinates : [],
+            candidateCoordinateGroups: Array.isArray(data.candidateCoordinateGroups) ? data.candidateCoordinateGroups : [],
+            visibleCrsEvidence: Array.isArray(data.visibleCrsEvidence) ? data.visibleCrsEvidence : [],
+            imageAcquisitionEvidence: data.imageAcquisitionEvidence || null
+          }
+          : null;
         activePointGeometryIntentReview = data.pointGeometryIntentReview || null;
         invalidateSpatialPreview();
 
@@ -15271,9 +15308,14 @@ ${placemarks}
           geometry: summaryGroups[0]?.geometry || inferGeometry(summaryPointCount),
           precisionMode: data.precisionMode || "",
           coordinateType: summaryEngine.coordinate_type || "",
-          requiresReview: Boolean(summaryEngine.requires_review),
+          requiresReview: Boolean(
+            data.requiresReview === true
+            || data.authorizationStatus === "REVIEW_REQUIRED"
+            || summaryEngine.requires_review
+          ),
           engine: summaryEngine
         });
+        markPendingCoordinateRecognitionJobTerminalApplied(terminalRecognitionJob, data, { applied: true });
       } catch (error) {
         const publicErrorMessage = sanitizeUserFacingTechMessage(error.message);
         appendDebug(`错误信息：${publicErrorMessage}`);
