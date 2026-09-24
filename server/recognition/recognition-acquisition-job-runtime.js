@@ -7,6 +7,40 @@ export const RECOGNITION_ACQUISITION_JOB_STATUS = Object.freeze({
   FAILED: "FAILED"
 });
 
+function normalizeHttpStatus(value, fallback = 500) {
+  const status = Number(value);
+  return Number.isInteger(status) && status >= 100 && status <= 599 ? status : fallback;
+}
+
+function safeFailureCode(value, fallback = "RECOGNITION_ASYNC_JOB_FAILED") {
+  const code = String(value || "").trim();
+  return /^[A-Za-z0-9_.:-]{1,160}$/u.test(code) ? code : fallback;
+}
+
+function buildSafeFailureResult(output, fallbackCode) {
+  const source = output?.result && typeof output.result === "object" ? output.result : {};
+  const result = {
+    success: false,
+    reason: safeFailureCode(
+      source.reason || source.responseCode || source.code || output?.code,
+      fallbackCode
+    )
+  };
+  if (typeof source.userUsageConsumed === "boolean") result.userUsageConsumed = source.userUsageConsumed;
+  if (typeof source.usageConsumed === "boolean") result.usageConsumed = source.usageConsumed;
+  if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(String(source.requestId || ""))) {
+    result.requestId = source.requestId;
+  }
+  return Object.freeze(result);
+}
+
+export function getRecognitionAcquisitionJobHttpStatus(job) {
+  if (!job) return 404;
+  if (job.status !== RECOGNITION_ACQUISITION_JOB_STATUS.FAILED) return 200;
+  const status = normalizeHttpStatus(job.httpStatus, 500);
+  return status >= 300 ? status : 500;
+}
+
 export function createRecognitionAcquisitionJobRuntime({
   execute,
   ttlMs = 30 * 60 * 1000,
@@ -35,7 +69,10 @@ export function createRecognitionAcquisitionJobRuntime({
       startedAt: job.startedAt,
       completedAt: job.completedAt,
       httpStatus: job.httpStatus,
-      result: job.status === RECOGNITION_ACQUISITION_JOB_STATUS.SUCCEEDED ? job.result : null,
+      result: [
+        RECOGNITION_ACQUISITION_JOB_STATUS.SUCCEEDED,
+        RECOGNITION_ACQUISITION_JOB_STATUS.FAILED
+      ].includes(job.status) ? job.result : null,
       error: job.status === RECOGNITION_ACQUISITION_JOB_STATUS.FAILED ? job.error : null
     });
   }
@@ -55,6 +92,18 @@ export function createRecognitionAcquisitionJobRuntime({
     }
   }
 
+  function makeRoomForOneJob() {
+    prune();
+    while (jobs.size >= maxJobs) {
+      const completed = [...jobs.values()]
+        .filter(job => job.completedAt)
+        .sort((a, b) => a.completedAt - b.completedAt)[0];
+      if (!completed) return false;
+      jobs.delete(completed.jobId);
+    }
+    return true;
+  }
+
   async function drain() {
     if (running) return;
     running = true;
@@ -66,15 +115,25 @@ export function createRecognitionAcquisitionJobRuntime({
         job.startedAt = now();
         try {
           const output = await execute(job.input, { jobId: job.jobId });
-          job.status = RECOGNITION_ACQUISITION_JOB_STATUS.SUCCEEDED;
-          job.httpStatus = Number(output?.httpStatus || 200);
-          job.result = output?.result ?? output;
+          job.httpStatus = normalizeHttpStatus(output?.httpStatus, 500);
+          if (job.httpStatus >= 200 && job.httpStatus < 300) {
+            job.status = RECOGNITION_ACQUISITION_JOB_STATUS.SUCCEEDED;
+            job.result = output?.result ?? output;
+          } else {
+            job.status = RECOGNITION_ACQUISITION_JOB_STATUS.FAILED;
+            job.result = buildSafeFailureResult(output, "RECOGNITION_ASYNC_HTTP_FAILED");
+            job.error = Object.freeze({
+              code: job.result.reason,
+              message: "Recognition acquisition job failed"
+            });
+          }
         } catch (error) {
           job.status = RECOGNITION_ACQUISITION_JOB_STATUS.FAILED;
-          job.httpStatus = Number(error?.httpStatus || 500);
+          job.httpStatus = normalizeHttpStatus(error?.httpStatus, 500);
+          job.result = buildSafeFailureResult(error, "RECOGNITION_ASYNC_JOB_FAILED");
           job.error = Object.freeze({
-            code: String(error?.code || "RECOGNITION_ASYNC_JOB_FAILED"),
-            message: String(error?.message || "Recognition acquisition job failed")
+            code: job.result.reason,
+            message: "Recognition acquisition job failed"
           });
         } finally {
           job.completedAt = now();
@@ -89,8 +148,7 @@ export function createRecognitionAcquisitionJobRuntime({
 
   return Object.freeze({
     enqueue(input) {
-      prune();
-      if (jobs.size >= maxJobs) {
+      if (!makeRoomForOneJob()) {
         const error = new Error("recognition_job_capacity_reached");
         error.code = "RECOGNITION_JOB_CAPACITY_REACHED";
         throw error;

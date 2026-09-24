@@ -128,7 +128,10 @@ import {
   buildRecognitionFirstPromptPrefix,
   createRecognitionImageVariants
 } from "./server/recognition/recognition-first-acquisition.js";
-import { createRecognitionAcquisitionJobRuntime } from "./server/recognition/recognition-acquisition-job-runtime.js";
+import {
+  createRecognitionAcquisitionJobRuntime,
+  getRecognitionAcquisitionJobHttpStatus
+} from "./server/recognition/recognition-acquisition-job-runtime.js";
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
 import {
   createAgenticCoordinateApi,
@@ -19521,7 +19524,7 @@ app.get("/api/recognize-coordinates/jobs/:jobId", (req, res) => {
   const job = recognitionAcquisitionJobRuntime.get(req.params.jobId, req.get("x-recognition-job-token"));
   if (!job) return res.status(404).json({ success: false, reason: "job_not_found" });
   res.setHeader("Cache-Control", "no-store");
-  return res.status(job.status === "FAILED" ? (job.httpStatus || 500) : 200).json({
+  return res.status(getRecognitionAcquisitionJobHttpStatus(job)).json({
     success: job.status === "SUCCEEDED",
     async: true,
     ...job

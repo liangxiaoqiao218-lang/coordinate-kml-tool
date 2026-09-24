@@ -11,7 +11,8 @@ import {
 } from "../server/recognition/recognition-first-acquisition.js";
 import {
   RECOGNITION_ACQUISITION_JOB_STATUS,
-  createRecognitionAcquisitionJobRuntime
+  createRecognitionAcquisitionJobRuntime,
+  getRecognitionAcquisitionJobHttpStatus
 } from "../server/recognition/recognition-acquisition-job-runtime.js";
 import { recognitionDeadlineMiddleware } from "../server/coordinate-finalizer/recognition-deadline.js";
 
@@ -110,6 +111,76 @@ while (runtime.get(secondJob.jobId, secondJob.jobAccessToken).status !== RECOGNI
 assert.deepEqual(executionOrder, [1, 2]);
 assert.deepEqual(runtime.get(secondJob.jobId, secondJob.jobAccessToken).result, { id: 2 });
 
+const non2xxRuntime = createRecognitionAcquisitionJobRuntime({
+  execute: async () => ({
+    httpStatus: 422,
+    result: {
+      success: false,
+      reason: "COORDINATE_RECOGNITION_FAILED_CLOSED",
+      userUsageConsumed: false,
+      rawText: "must-not-leak",
+      coordinates: "must-not-leak"
+    }
+  })
+});
+const non2xxJob = non2xxRuntime.enqueue({});
+let non2xxSnapshot;
+while (non2xxSnapshot?.completedAt == null) {
+  await new Promise(resolve => setImmediate(resolve));
+  non2xxSnapshot = non2xxRuntime.get(non2xxJob.jobId, non2xxJob.jobAccessToken);
+}
+assert.equal(non2xxSnapshot.status, RECOGNITION_ACQUISITION_JOB_STATUS.FAILED);
+assert.equal(non2xxSnapshot.httpStatus, 422);
+assert.equal(getRecognitionAcquisitionJobHttpStatus(non2xxSnapshot), 422);
+assert.deepEqual(non2xxSnapshot.result, {
+  success: false,
+  reason: "COORDINATE_RECOGNITION_FAILED_CLOSED",
+  userUsageConsumed: false
+});
+assert.equal(non2xxSnapshot.error.code, "COORDINATE_RECOGNITION_FAILED_CLOSED");
+
+const completedCapacityRuntime = createRecognitionAcquisitionJobRuntime({
+  maxJobs: 1,
+  execute: async input => ({ httpStatus: 200, result: { id: input.id } })
+});
+const completedCapacityFirst = completedCapacityRuntime.enqueue({ id: 1 });
+while (completedCapacityRuntime.get(
+  completedCapacityFirst.jobId,
+  completedCapacityFirst.jobAccessToken
+)?.completedAt == null) {
+  await new Promise(resolve => setImmediate(resolve));
+}
+const completedCapacitySecond = completedCapacityRuntime.enqueue({ id: 2 });
+assert.equal(completedCapacityRuntime.get(
+  completedCapacityFirst.jobId,
+  completedCapacityFirst.jobAccessToken
+), null);
+assert.equal(completedCapacityRuntime.get(
+  completedCapacitySecond.jobId,
+  completedCapacitySecond.jobAccessToken
+).status, RECOGNITION_ACQUISITION_JOB_STATUS.QUEUED);
+
+let releaseCapacityJob;
+const capacityGate = new Promise(resolve => { releaseCapacityJob = resolve; });
+const runningCapacityRuntime = createRecognitionAcquisitionJobRuntime({
+  maxJobs: 1,
+  execute: async () => {
+    await capacityGate;
+    return { httpStatus: 200, result: { success: true } };
+  }
+});
+const runningCapacityJob = runningCapacityRuntime.enqueue({});
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(runningCapacityRuntime.get(
+  runningCapacityJob.jobId,
+  runningCapacityJob.jobAccessToken
+).status, RECOGNITION_ACQUISITION_JOB_STATUS.RUNNING);
+assert.throws(
+  () => runningCapacityRuntime.enqueue({}),
+  error => error?.code === "RECOGNITION_JOB_CAPACITY_REACHED"
+);
+releaseCapacityJob();
+
 assert.doesNotThrow(() => recognitionDeadlineMiddleware({
   profile: "async",
   deadlineMs: 180_000,
@@ -127,6 +198,7 @@ assert.match(serverSource, /rawText:\s*wgs84PrimaryRawText/);
 assert.match(serverSource, /rawText,\s*\n\s*coordinates:\s*buildRecognitionAcquisitionEvidence/);
 assert.match(serverSource, /\/api\/recognize-coordinates\/jobs/);
 assert.match(serverSource, /x-recognition-job-token/);
+assert.match(serverSource, /getRecognitionAcquisitionJobHttpStatus\(job\)/);
 assert.match(serverSource, /profile:\s*"async"/);
 const availabilityBlock = serverSource.slice(serverSource.indexOf("if (enforcedAvailability)"), serverSource.indexOf("let mozambiqueTypeLock"));
 assert.doesNotMatch(availabilityBlock, /return res\./);
