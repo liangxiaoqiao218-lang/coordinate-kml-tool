@@ -488,6 +488,15 @@ async function runHttpCandidate(scenario) {
           geometryHash: finalized.geometryHash })
       });
       const mapPreview = await mapResponse.json();
+      const mapMustRemainClosed = baseScenario === 'structured'
+        || baseScenario === 'generic-dms-point-az'
+        || baseScenario === 'generic-projected-utm50-five-column-boundary';
+      if (mapMustRemainClosed) {
+        assert.equal(mapResponse.status, 422, JSON.stringify({ mapPreview, finalized }));
+        assert.equal(mapPreview.mapPreviewObject?.previewEligibility?.allowed, false);
+        return { ...payload, mapPreview, providerCallCount: stats.acquisitions,
+          providerRequestControl: stats.requestControl };
+      }
       assert.equal(mapResponse.status, 200, JSON.stringify({ mapPreview, finalized }));
       return { ...payload, mapPreview, providerCallCount: stats.acquisitions,
         providerRequestControl: stats.requestControl };
@@ -1993,11 +2002,13 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
       assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, 'S');
       assert.equal(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
       assert.equal(payload.geometryMode, 'boundary');
-      assert.equal(payload.boundaryBlocked, false);
+      assert.equal(payload.boundaryBlocked, true);
       assert.equal(payload.finalizedCoordinateResult.geometry.type, 'Polygon');
-      assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
-      assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, 'Polygon');
-      assert.equal(payload.mapPreview.kmlEligibility.allowed, true);
+      assert.notEqual(payload.finalizedCoordinateResult.decisionState, 'AUTO_EXPORT');
+      assert.equal(payload.finalizedCoordinateResult.requiresReview, true);
+      assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+      assert.equal(payload.mapPreview.mapPreviewObject.geometry, null);
+      assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
     } else {
       assert.equal(payload.coordinateEngineV2.coordinate_type, 'projected_xy');
       assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, 'EXPLICIT');
@@ -2010,7 +2021,7 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
       assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
       assert.equal(payload.projectedMapPreview.mapPreviewObject.geometry.type, 'MultiPoint');
     }
-    assert.equal(payload.finalizedCoordinateResult.kmlReady, scenario === 'structured');
+    assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
   });
 }
 
@@ -2378,7 +2389,7 @@ test("Provider DMS recovery preserves independent A-Z family identity and blocks
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
   assert.ok(["BLOCKED", "REVIEW_REQUIRED"].includes(payload.finalizedCoordinateResult.decisionState));
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-  assert.equal(payload.mapPreview.kmlEligibility.allowed, false);
+  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
   assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
 });
 
@@ -2641,7 +2652,7 @@ test("frontend projection detection accepts UTM zones 1 through 60 with hemisphe
   assert.doesNotMatch(indexSource, /return\s+["']utm30n["'];\s*\/\/.*default/iu);
 });
 
-test("generic five-column UTM50S table forms a safe six-point boundary without language-specific keywords", async () => {
+test("generic five-column UTM50S table remains closed when unified review overrides source-parser safety", async () => {
   const payload = await runHttpCandidate("generic-projected-utm50-five-column-boundary");
   assert.equal(payload.success, true);
   assert.equal(payload.providerCallCount, 1);
@@ -2653,11 +2664,13 @@ test("generic five-column UTM50S table forms a safe six-point boundary without l
   assert.equal(payload.coordinateEngineV2.groups[0].points.length, 6);
   assert.ok(payload.parserTrace.includes("PROJECTED_BOUNDARY_AUTHORITY:safe_auto_release"));
   assert.equal(payload.geometryMode, "boundary");
-  assert.equal(payload.boundaryBlocked, false);
+  assert.equal(payload.boundaryBlocked, true);
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
-  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
-  assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "Polygon");
-  assert.equal(payload.mapPreview.kmlEligibility.allowed, true);
+  assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
+  assert.equal(payload.finalizedCoordinateResult.requiresReview, true);
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.mapPreview.mapPreviewObject.geometry, null);
+  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
 });
 
 for (const scenario of [
