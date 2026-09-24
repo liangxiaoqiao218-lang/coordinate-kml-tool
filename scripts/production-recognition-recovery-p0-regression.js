@@ -684,7 +684,7 @@ test("production source orders Provider admission before attempt and defers usag
   const indexSource = await readFile(path.join(root, "index.html"), "utf8");
   const providerFunction = serverSource.slice(
     serverSource.indexOf("async function callAliyunVision"),
-    serverSource.indexOf("async function callAliyunOcr")
+    serverSource.indexOf("async function readHandwrittenDmsWithPrompt")
   );
   assert.ok(providerFunction.indexOf("assertCanStartProvider") >= 0);
   assert.ok(providerFunction.indexOf("assertCanStartProvider") < providerFunction.indexOf("markProviderAttempted"));
@@ -699,8 +699,8 @@ test("production source orders Provider admission before attempt and defers usag
   const usageEligibilitySource = serverSource.slice(usageEligibilityIndex, usageEligibilityEnd);
   assert.match(usageEligibilitySource, /checkUsage\(visitorId, "convert"\)/);
   assert.doesNotMatch(usageEligibilitySource, /updateSupabaseUserVisitMeta/);
-  const recognitionRouteStart = serverSource.indexOf('app.post("/api/recognize-coordinates"');
-  const recognitionRouteEnd = serverSource.indexOf('app.get("/admin"', recognitionRouteStart);
+  const recognitionRouteStart = serverSource.indexOf("async function recognizeCoordinatesHandler");
+  const recognitionRouteEnd = serverSource.indexOf("const recognitionAcquisitionJobRuntime", recognitionRouteStart);
   assert.ok(recognitionRouteStart >= 0 && recognitionRouteEnd > recognitionRouteStart);
   const recognitionRouteSource = serverSource.slice(recognitionRouteStart, recognitionRouteEnd);
   assert.doesNotMatch(recognitionRouteSource, /updateSupabaseUserVisitMeta/);
@@ -2133,7 +2133,7 @@ test("one-shot structured family routing fails closed without complete structura
 });
 
 test("one-shot structured server integration preserves one Provider and one local OCR boundaries", () => {
-  const routeStart = serverSource.indexOf('app.post("/api/recognize-coordinates"');
+  const routeStart = serverSource.indexOf("async function recognizeCoordinatesHandler");
   const classificationIndex = serverSource.indexOf("await runLocalOcrFamilyClassification", routeStart);
   const selectedPromptIndex = serverSource.indexOf("prompt: selectedProviderPrompt", routeStart);
   assert.ok(classificationIndex >= 0 && selectedPromptIndex > classificationIndex);
@@ -2427,7 +2427,7 @@ test("projected table OCR acquisition hint is generic, structure-bound, and revi
   assert.match(prompt, /Never infer a zone, hemisphere, CRS, missing digit, missing row/u);
   assert.doesNotMatch(prompt, /727250|1219700|Burkina|布基纳/u);
   assert.match(serverSource, /const selectedProviderModel = aliyunVisionModel;/u);
-  assert.match(serverSource, /const selectedProviderMaxTokens = projectedTableOcrAcquisition \? 4096 : 12000;/u);
+  assert.match(serverSource, /const selectedProviderMaxTokens = 12000;/u);
   assert.match(serverSource, /enableThinking: false/u);
   assert.doesNotMatch(serverSource, /projectedTableOcrAcquisition\s*\?\s*aliyunOcrModel\s*:\s*aliyunVisionModel/u);
 });
@@ -2812,7 +2812,7 @@ test("one-shot structured manual projected entry requires location review and ke
 });
 
 test("one-shot structured server gates conformance before parsing and returns sanitized review", () => {
-  const routeStart = serverSource.indexOf('app.post("/api/recognize-coordinates"');
+  const routeStart = serverSource.indexOf("async function recognizeCoordinatesHandler");
   const conformanceIndex = serverSource.indexOf("validateOneShotAcquisitionContract", routeStart);
   const dmsFormatIndex = serverSource.indexOf("formatHandwrittenDmsRawRows", conformanceIndex);
   const parseIndex = serverSource.indexOf("extractCoordinateLines", conformanceIndex);
@@ -2822,8 +2822,9 @@ test("one-shot structured server gates conformance before parsing and returns sa
   assert.match(reviewBlock, /forceRequiresReview:\s*true/);
   assert.match(reviewBlock, /extractProviderDmsReviewEvidence/);
   assert.match(reviewBlock, /DMS_AUTHORITY:safe_boundary_auto_release/);
-  assert.match(reviewBlock, /rawText:\s*""/);
-  assert.match(reviewBlock, /coordinates:\s*""/);
+  assert.match(reviewBlock, /rawText:\s*wgs84PrimaryRawText|rawText,/);
+  assert.match(reviewBlock, /buildRecognitionAcquisitionEvidence/);
+  assert.match(reviewBlock, /candidateCoordinateLines/);
 });
 
 test("one-shot structured conformance diagnostics remain bounded", () => {
@@ -3278,7 +3279,8 @@ test("one-shot structured fresh per-run eleven-class acceptance is line-break to
 });
 
 test("one-shot structured production classification recovery stays contract-bound and synthetic", () => {
-  assert.match(serverSource, /format:\s*oneShotAcquisitionContract\.format/u);
+  assert.match(serverSource, /family:\s*ONE_SHOT_STRUCTURED_FAMILY\.GENERIC_REVIEW/u);
+  assert.match(serverSource, /buildRecognitionFirstPromptPrefix\(recognitionImageAcquisition\)/u);
   assert.match(primaryRouting.buildOneShotStructuredFamilyPrompt({
     family: primaryRouting.ONE_SHOT_STRUCTURED_FAMILY.WGS84_SINGLE_POINT,
     format: "DMS_SINGLE_POINT"

@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "recognition_first_acquisition_blind_baseline_v1",
+  "scope": "offline_acquisition_only",
+  "providerCalls": 0,
+  "productionRecognitionCalls": 0,
+  "scoring": {
+    "acquisitionRenderSuccess": "fixture can be decoded into one overview plus planned detail tiles without data loss or Provider I/O",
+    "providerTranscriptionAccuracy": "NOT_MEASURED_OFFLINE",
+    "authorityAccuracy": "NOT_MEASURED_IN_ACQUISITION_PHASE"
+  },
+  "records": [
+    {
+      "id": "blind-dms-table",
+      "category": "DMS",
+      "fixture": "../OCR_GOLDEN/fixtures/cote-divoire-dms-real-001.jpeg",
+      "sha256": "cf2b03310403b5389765dbc5e436152e6d58bb847ead8f69fcf83c79c52d1e05",
+      "expectedPointCount": 4,
+      "expectedContinuity": "1..4",
+      "expectedCrsEvidence": "visible geographic DMS axis and direction evidence",
+      "expectedGeometry": "single non-self-intersecting polygon",
+      "expectedKmlState": "eligible_only_after_post_acquisition_validation"
+    },
+    {
+      "id": "blind-wgs84-decimal-multigroup",
+      "category": "WGS84_DECIMAL",
+      "fixture": "../fixtures/刚果，两个坐标在同一张图.jpg",
+      "sha256": "b3835c80e6ab4709542c91335cf363efc2b08b3d72bf5dfda37f60395fa6a41a",
+      "expectedPointCount": 11,
+      "expectedContinuity": "group labels preserved; duplicate source row preserved as evidence",
+      "expectedCrsEvidence": "visible longitude and latitude headers",
+      "expectedGeometry": "multiple source areas; grouping requires validation",
+      "expectedKmlState": "review_required"
+    },
+    {
+      "id": "blind-bftm-table",
+      "category": "BFTM",
+      "fixture": "../fixtures/布基纳法索02.jpg",
+      "sha256": "4567ce9889c47d65414b19e543c06b5322b86c53b76bb53e87da761bc0988e1d",
+      "expectedPointCount": 20,
+      "expectedContinuity": "1..20",
+      "expectedCrsEvidence": "visible ITRF 2008 and BFTM projection text",
+      "expectedGeometry": "single boundary after validation",
+      "expectedKmlState": "eligible_only_after_post_acquisition_validation"
+    },
+    {
+      "id": "blind-utm-table",
+      "category": "UTM",
+      "fixture": "../fixtures/布基纳法索03.png",
+      "sha256": "d2952399ac7a5222ec60f9a8f5ba0a4776b6508199dbe6e72e2474659313440e",
+      "expectedPointCount": 8,
+      "expectedContinuity": "A..H",
+      "expectedCrsEvidence": "explicit UTM zone and hemisphere required",
+      "expectedGeometry": "single boundary after validation",
+      "expectedKmlState": "fail_closed_without_explicit_crs"
+    },
+    {
+      "id": "blind-gk-long-table",
+      "category": "GK",
+      "fixture": "../fixtures/吉尔吉斯斯坦矿地坐标.png",
+      "sha256": "94522774b1311a48f44b8c52370639add50cb8eb7734bbd812cad2fb6f954235",
+      "expectedPointCount": 65,
+      "expectedContinuity": "1..65",
+      "expectedCrsEvidence": "explicit projected CRS evidence required",
+      "expectedGeometry": "single long boundary after validation",
+      "expectedKmlState": "fail_closed_without_explicit_crs"
+    },
+    {
+      "id": "blind-mgrs-table",
+      "category": "MGRS",
+      "fixture": "../fixtures/缅甸坐标.jpg",
+      "sha256": "af999328e3232af304e03901c5e8d58cad794ea588ee31709aef6668974f4004",
+      "expectedPointCount": 7,
+      "expectedContinuity": "A..G",
+      "expectedCrsEvidence": "complete MGRS zone band grid square and equal precision digits",
+      "expectedGeometry": "single boundary after validation",
+      "expectedKmlState": "eligible_only_after_post_acquisition_validation"
+    },
+    {
+      "id": "blind-long-table",
+      "category": "LONG_TABLE",
+      "fixture": "../fixtures/长坐标.png",
+      "sha256": "c581989f570c437ac3d2bacdc64d3663e7b904a7e00044f3a322636e05df068f",
+      "expectedPointCount": 20,
+      "expectedContinuity": "1..20",
+      "expectedCrsEvidence": "visible ITRF 2008 and BFTM projection text",
+      "expectedGeometry": "single boundary after validation",
+      "expectedKmlState": "eligible_only_after_post_acquisition_validation"
+    },
+    {
+      "id": "blind-multisite",
+      "category": "MULTISITE",
+      "fixture": "../fixtures/科特迪瓦4个矿区坐标.jpg",
+      "sha256": "71f7ad08d2bc588cf18b0c64ec1b1042aab4f212e773e72db312283a6f13decf",
+      "expectedPointCount": 16,
+      "expectedGroupCount": 4,
+      "expectedContinuity": "four independent groups of four points",
+      "expectedCrsEvidence": "visible DMS directions in every row",
+      "expectedGeometry": "four independent polygons; no cross-group connection",
+      "expectedKmlState": "review_required_until_group_validation"
+    }
+  ]
+}
