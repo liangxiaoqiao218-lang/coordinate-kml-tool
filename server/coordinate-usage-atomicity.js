@@ -23,6 +23,7 @@ import { evaluateAgenticCoordinateUsageAuthority } from "./agentic-coordinate-us
 export const COORDINATE_USAGE_ATOMICITY_VERSION = "coordinate_usage_atomicity_p0_v1";
 export const COORDINATE_USAGE_SEAL_VERSION = "AES_256_GCM_V1";
 export const PROJECTED_COORDINATE_REVIEW_USAGE_AUTHORITY_VERSION = "projected_coordinate_review_usage_authority/v1";
+export const RECOGNITION_ACQUISITION_REVIEW_USAGE_AUTHORITY_VERSION = "recognition_acquisition_review_usage_authority/v1";
 export const COORDINATE_USAGE_SESSION_COOKIE = "__Host-geokit_coordinate_usage_session";
 export const COORDINATE_USAGE_COMMIT_STATE = Object.freeze({
   PREPARED: "PREPARED",
@@ -134,6 +135,8 @@ export function buildUnchargedCoordinateFailureResponse({ body = null, recogniti
     error: UNCHARGED_FAILURE_MESSAGE,
     requestId: isRecognitionRequestId(recognitionRequestId) ? String(recognitionRequestId).toLowerCase() : null,
     usageConsumed: false,
+    recoveryRequired: false,
+    recoveryTerminal: true,
     retryAllowed: true,
     rawText: "",
     coordinates: ""
@@ -518,9 +521,107 @@ export function evaluateProjectedCoordinateReviewUsageAuthority({ httpStatus = 2
   });
 }
 
+function normalizeRecognitionAcquisitionReviewAuthorityEvidence(body = null) {
+  if (!body
+    || body.success !== true
+    || body.acquisitionStatus !== "COMPLETED"
+    || body.authorizationStatus !== "REVIEW_REQUIRED"
+    || body.resultStatus !== "needs_review"
+    || body.requiresReview !== true
+    || body.kmlReady !== false) return null;
+  const acquisition = body.recognitionAcquisition;
+  const candidates = Array.isArray(body.candidateCoordinates) ? body.candidateCoordinates : [];
+  const groups = Array.isArray(body.candidateCoordinateGroups) ? body.candidateCoordinateGroups : [];
+  const crs = Array.isArray(body.visibleCrsEvidence) ? body.visibleCrsEvidence : [];
+  const reasons = Array.isArray(body.reviewReasons) ? body.reviewReasons.map(value => String(value).slice(0, 160)) : [];
+  if (acquisition?.providerCompletionState !== "SUCCEEDED"
+    || acquisition?.acquisitionStatus !== "COMPLETED"
+    || acquisition?.authorizationStatus !== "REVIEW_REQUIRED"
+    || !Number.isSafeInteger(acquisition?.diagnostics?.candidatePointCount)
+    || acquisition.diagnostics.candidatePointCount < 1
+    || acquisition.diagnostics.candidatePointCount > 2000
+    || candidates.length !== acquisition.diagnostics.candidatePointCount
+    || String(body.rawText || "") !== String(acquisition.rawProviderText || "")) return null;
+  if (body.finalizedCoordinateResult?.kmlReady === true
+    || body.finalizedCoordinateResult?.mapReady === true
+    || body.mapReady === true) return null;
+  return Object.freeze({
+    acquisitionVersion: String(acquisition.version || ""),
+    providerResponseId: acquisition.providerResponseId ? String(acquisition.providerResponseId) : null,
+    rawProviderText: String(acquisition.rawProviderText || ""),
+    candidateCoordinates: candidates,
+    candidateCoordinateGroups: groups,
+    visibleCrsEvidence: crs,
+    imageAcquisitionEvidence: body.imageAcquisitionEvidence || acquisition.imageEvidence || null,
+    reviewReasons: reasons,
+    acquisitionContractConformance: body.acquisitionContractConformance || null,
+    diagnostics: acquisition.diagnostics
+  });
+}
+
+export function hashRecognitionAcquisitionReviewResult(body) {
+  const evidence = normalizeRecognitionAcquisitionReviewAuthorityEvidence(body);
+  if (!evidence) return null;
+  return createHash("sha256").update(canonicalJson(evidence)).digest("hex");
+}
+
+export function buildRecognitionAcquisitionReviewUsageAuthority({ recognitionRequestId, body } = {}) {
+  const requestId = String(recognitionRequestId || "").trim().toLowerCase();
+  const resultHash = hashRecognitionAcquisitionReviewResult(body);
+  if (!isRecognitionRequestId(requestId) || !resultHash) {
+    throw fixedError(COORDINATE_USAGE_ERROR_CODE.AUTHORITY_NOT_ESTABLISHED);
+  }
+  return Object.freeze({
+    schemaVersion: RECOGNITION_ACQUISITION_REVIEW_USAGE_AUTHORITY_VERSION,
+    recognitionRequestId: requestId,
+    resultId: `acquisition-review:${requestId}`,
+    resultRevision: 1,
+    decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+    resultHash
+  });
+}
+
+export function evaluateRecognitionAcquisitionReviewUsageAuthority({ httpStatus = 200, body = null } = {}) {
+  const reject = reason => Object.freeze({ eligible: false, reason, identity: null });
+  if (!Number.isInteger(Number(httpStatus)) || Number(httpStatus) < 200 || Number(httpStatus) >= 300 || body?.success !== true) {
+    return reject("HTTP_OR_BODY_NOT_SUCCESSFUL");
+  }
+  const authority = body?.recognitionAcquisitionReviewAuthority;
+  const requestId = String(body?.requestId || "").trim().toLowerCase();
+  if (!authority || authority.schemaVersion !== RECOGNITION_ACQUISITION_REVIEW_USAGE_AUTHORITY_VERSION) {
+    return reject("ACQUISITION_REVIEW_AUTHORITY_MISSING");
+  }
+  if (!isRecognitionRequestId(requestId)
+    || authority.recognitionRequestId !== requestId
+    || authority.resultId !== `acquisition-review:${requestId}`
+    || authority.resultRevision !== 1
+    || authority.decisionState !== COORDINATE_DECISION_STATE.REVIEW_REQUIRED) {
+    return reject("ACQUISITION_REVIEW_AUTHORITY_IDENTITY_INVALID");
+  }
+  const resultHash = hashRecognitionAcquisitionReviewResult(body);
+  if (!resultHash
+    || !/^[a-f0-9]{64}$/i.test(String(authority.resultHash || ""))
+    || !constantTimeEqual(authority.resultHash, resultHash)) {
+    return reject("ACQUISITION_REVIEW_RESULT_HASH_MISMATCH");
+  }
+  return Object.freeze({
+    eligible: true,
+    reason: "ACQUISITION_REVIEW_SERVER_AUTHORITY_ESTABLISHED",
+    identity: Object.freeze({
+      resultId: authority.resultId,
+      resultRevision: authority.resultRevision,
+      decisionState: authority.decisionState,
+      geometryHash: `sha256:${resultHash}`
+    })
+  });
+}
+
 export function evaluateCoordinateUsageAuthority({ httpStatus = 200, body = null } = {}) {
   if (body?.agenticCoordinateAuthority) {
     return evaluateAgenticCoordinateUsageAuthority({ httpStatus, body });
+  }
+  if (body?.recognitionAcquisitionReviewAuthority) {
+    return evaluateRecognitionAcquisitionReviewUsageAuthority({ httpStatus, body });
   }
   if (body?.projectedCoordinateReviewAuthority) {
     return evaluateProjectedCoordinateReviewUsageAuthority({ httpStatus, body });

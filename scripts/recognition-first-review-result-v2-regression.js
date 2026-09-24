@@ -237,11 +237,13 @@ for (const forbidden of ["indonesia", "kyrgyz", "cote", "ivory", ".jpg", ".png"]
 const serverSource = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const deadlineSource = fs.readFileSync(path.join(root, "server", "coordinate-finalizer", "recognition-deadline.js"), "utf8");
 const uiSource = fs.readFileSync(path.join(root, "index.html"), "utf8");
-assert.match(serverSource, /success:\s*acquisitionCompleted/);
-assert.equal((serverSource.match(/res\.status\(acquisitionCompleted \? 200 : 422\)\.json/gu) || []).length, 2);
+assert.equal((serverSource.match(/acquisitionEvidence\.acquisitionStatus === "COMPLETED"/gu) || []).length, 2);
+assert.equal((serverSource.match(/if \(!acquisitionCompleted\) return res\.status\(422\)\.json/gu) || []).length, 2);
+assert.equal((serverSource.match(/return res\.status\(200\)\.json\(reviewOnlyResponse\)/gu) || []).length, 2);
 assert.match(serverSource, /const consumeResult = acquisitionCompleted\s*\n\s*\? await consumeCoordinateUsage/);
 assert.match(serverSource, /rawText,\s*\n\s*coordinates:\s*formatProviderDmsReviewCoordinates/);
-assert.equal((serverSource.match(/acquisitionStatus:\s*acquisitionEvidence\.status/gu) || []).length, 2);
+assert.equal((serverSource.match(/recognitionAcquisitionReviewAuthority = buildRecognitionAcquisitionReviewUsageAuthority/gu) || []).length, 2);
+assert.equal((serverSource.match(/candidateCoordinates:\s*acquisitionEvidence\.candidateCoordinates/gu) || []).length, 4);
 assert.match(serverSource, /candidateCoordinateGroups:\s*groupedProviderDmsEvidence\.candidateGroups/);
 assert.match(serverSource, /visibleCrsEvidence:\s*groupedProviderDmsEvidence\.visibleCrsEvidence/);
 assert.match(serverSource, /imageAcquisitionEvidence:\s*groupedAcquisitionEvidence\.imageEvidence/);
