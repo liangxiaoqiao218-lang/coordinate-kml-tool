@@ -143,6 +143,7 @@ if (process.argv[2] === '--http-candidate') {
       };
       const prompt = requestBody.messages.map(message => JSON.stringify(message.content)).join(' ');
       if (baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
+        || baseScenario === 'generic-dms-point-az'
         || baseScenario === 'generic-projected-review' || baseScenario === 'generic-projected-explicit'
         || baseScenario === 'generic-projected-contextual-utm30'
         || baseScenario === 'generic-projected-contextual-utm30-safe'
@@ -170,6 +171,20 @@ if (process.argv[2] === '--http-candidate') {
       'C | 728400,1218500',
       'D | 727250,1218500'
     ];
+    const formatDms = (value, positiveDirection) => {
+      let remainingSeconds = Math.round(Math.abs(value) * 3600 * 100) / 100;
+      const degrees = Math.floor(remainingSeconds / 3600);
+      remainingSeconds -= degrees * 3600;
+      const minutes = Math.floor(remainingSeconds / 60);
+      const seconds = (remainingSeconds - minutes * 60).toFixed(2);
+      return `${String(degrees).padStart(2, '0')}°${String(minutes).padStart(2, '0')}'${seconds.padStart(5, '0')}\"${positiveDirection}`;
+    };
+    const pointAzRows = Array.from({ length: 26 }, (_, index) => {
+      const angle = (2 * Math.PI * index) / 26;
+      const latitude = 10 + (0.1 * Math.sin(angle));
+      const longitude = 20 + (0.1 * Math.cos(angle));
+      return `${String.fromCharCode(65 + index)} | ${formatDms(latitude, 'N')} | ${formatDms(longitude, 'E')}`;
+    });
     const bftmBoundaryRows = [
       '1 | 655000,1333600', '2 | 654500,1333600', '3 | 654500,1334100',
       '4 | 653700,1334100', '5 | 653700,1335600', '6 | 653100,1335600',
@@ -223,6 +238,12 @@ if (process.argv[2] === '--http-candidate') {
             : baseScenario === 'generic-projected-bftm-boundary'
               ? bftmBoundaryRows
               : crossedProjectedRows)
+        ].join('\n')
+      : baseScenario === 'generic-dms-point-az'
+      ? [
+          'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
+          'Point | Latitude north | Longitude east',
+          ...pointAzRows
         ].join('\n')
       : baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
       ? [
@@ -382,6 +403,7 @@ async function runHttpCandidate(scenario) {
       || baseScenario === 'generic-projected-bftm-boundary'
       || baseScenario === 'generic-projected-kyrgyz-real'
       || baseScenario === 'generic-dms-review'
+      || baseScenario === 'generic-dms-point-az'
       || baseScenario === 'generic-dms-review-array') {
       const finalized = payload.finalizedCoordinateResult;
       const mapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
@@ -2196,6 +2218,25 @@ test("one-shot structured actual HTTP generic DMS recovery auto-releases a safe 
     confirmationStatus: payload.finalizedCoordinateResult.confirmationStatus,
     qualityGateStatus: payload.finalizedCoordinateResult.qualityGateStatus
   } }));
+});
+
+test("Provider DMS recovery preserves independent A-Z family identity and blocks export until confirmation", async () => {
+  const payload = await runHttpCandidate("generic-dms-point-az");
+  assert.equal(payload.success, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.providerDmsReviewEvidence.status, "COMPLETE");
+  assert.equal(payload.providerDmsReviewEvidence.coordinateRowCount, 26);
+  assert.equal(payload.providerDmsReviewEvidence.coordinateFamily, "point-az-dms-table");
+  assert.equal(payload.coordinateEngineV2.coordinate_type, "standard_dms_table");
+  assert.equal(payload.coordinateEngineV2.coordinate_family, "point-az-dms-table");
+  assert.equal(payload.coordinateEngineV2.precision_mode, "preserve-original-decimals-and-parse-dms");
+  assert.equal(payload.finalizedCoordinateResult.family, "point-az-dms-table");
+  assert.equal(payload.finalizedCoordinateResult.familySafetyPolicy?.policyId, "POINT_AZ_TEMPORARY_REVIEW_POLICY");
+  assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
+  assert.ok(["BLOCKED", "REVIEW_REQUIRED"].includes(payload.finalizedCoordinateResult.decisionState));
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.mapPreview.kmlEligibility.allowed, false);
+  assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
 });
 
 test("one-shot structured HTTP generic DMS recovery accepts Provider text-block arrays", async () => {

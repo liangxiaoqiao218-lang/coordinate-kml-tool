@@ -1,5 +1,9 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { isCanonicalCoordinateImageIdentity } from "./coordinate-image-safety.js";
+import {
+  extractProviderProjectedCoordinateEvidence,
+  LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS
+} from "../evidence-acquisition/local-ocr-map-layout-classifier.js";
 
 export const WGS84_PRIMARY_STAGE_CAP_MS = 25_000;
 export const KYRGYZ_PRIMARY_STAGE_CAP_MS = 25_000;
@@ -1689,7 +1693,7 @@ function normalizeBindingDecimal(value, limit = Number.POSITIVE_INFINITY) {
 function normalizeBindingDms(value, expectedDirections) {
   const normalized = String(value || "").normalize("NFKC").trim();
   const match = normalized.match(
-    /^(\d{1,3})\s*[°º]\s*(\d{1,2})\s*(['′’]?)\s*(\d{1,2}(?:[.,]\d+)?)\s*(["″”]?)\s*([NSEWO])\s*$/iu
+    /^(\d{1,3})\s*[°º˚]\s*(\d{1,2})\s*(['′’]?)\s*(\d{1,2}(?:[.,]\d+)?)\s*((?:["″”]|'{2})?)\s*([NSEWO])\s*$/iu
   );
   if (!match) return "";
   const direction = match[6].toUpperCase() === "O" ? "W" : match[6].toUpperCase();
@@ -3036,18 +3040,13 @@ function parseMapProviderEvidence(text) {
   });
 }
 
-function parseProjectedProviderEvidence(text) {
+function parseProjectedProviderEvidence(text, normalizedProjected = null) {
   const lines = normalizeCoordinateEvidenceText(text).split("\n").map(line => line.trim()).filter(Boolean);
-  const pointRows = lines.filter(line => {
-    const fields = splitStructuredFields(line, "|");
-    return fields.length === 4 && /^POINT$/iu.test(fields[0]) && Boolean(fields[1])
-      && /^[-+]?\d{4,9}(?:[.,]\d+)?$/u.test(fields[2])
-      && /^[-+]?\d{4,9}(?:[.,]\d+)?$/u.test(fields[3]);
+  const projected = normalizedProjected || extractProviderProjectedCoordinateEvidence({
+    sourceText: text,
+    minimumRows: 1
   });
   const mgrsRows = lines.map(parseStrictMgrsCoordinateLine).filter(Boolean);
-  const coordinateBearingLines = lines.filter(line => (
-    /^POINT\s*\|/iu.test(line) || /^MGRS\s*[|:]/iu.test(line)
-  ));
   const identity = extractProjectedContractIdentity(text);
   const crsFieldCount = [
     identity.datumClass,
@@ -3059,10 +3058,13 @@ function parseProjectedProviderEvidence(text) {
   ]
     .filter(value => value !== "" && value !== null).length;
   return Object.freeze({
-    projectedCoordinateRowCount: pointRows.length + mgrsRows.length,
+    projectedCoordinateRowCount: projected.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
+      ? projected.rows.length
+      : mgrsRows.length,
     crsFieldCount,
     identity,
-    closed: pointRows.length + mgrsRows.length === coordinateBearingLines.length && identity.complete
+    closed: (projected.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE || mgrsRows.length > 0)
+      && identity.complete
   });
 }
 
@@ -3096,9 +3098,16 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
       reason: ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.GENERIC_REVIEW_ONLY
     });
   }
+  const normalizedProvider = normalizeOneShotProviderOutput({
+    family: payload.family,
+    providerText
+  });
+  const conformanceText = normalizedProvider.complete
+    ? normalizedProvider.bindingText
+    : providerText;
 
   if (payload.family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED) {
-    const evidence = parseGroupedDmsProviderEvidence(providerText);
+    const evidence = parseGroupedDmsProviderEvidence(conformanceText);
     const counts = evidence;
     const rowsMatch = evidence.coordinateRowCount === payload.structure.coordinateRowCount;
     const groupsMatch = evidence.groupBoundaryCount === payload.structure.groupBoundaryCount
@@ -3107,7 +3116,7 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
     return buildStructurallyValidatedConformanceResult({
       contract,
       payload,
-      providerText,
+      providerText: conformanceText,
       structuralConformant: evidence.closed && rowsMatch && groupsMatch,
       structuralReason: groupsMatch
         ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH
@@ -3132,7 +3141,7 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
   }
 
   if (payload.family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE) {
-    const evidence = parseProjectedProviderEvidence(providerText);
+    const evidence = parseProjectedProviderEvidence(providerText, normalizedProvider.projected);
     const identityMatch = projectedIdentityMatches(payload.structure.crs, evidence.identity);
     const conformant = evidence.closed
       && identityMatch
@@ -3140,7 +3149,7 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
     return buildStructurallyValidatedConformanceResult({
       contract,
       payload,
-      providerText,
+      providerText: normalizedProvider.complete ? normalizedProvider.bindingText : providerText,
       structuralConformant: conformant,
       structuralReason: identityMatch
         ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.STRUCTURE_COUNT_MISMATCH
@@ -3149,9 +3158,9 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
     });
   }
 
-  const providerRoute = classifyOneShotStructuredFamily({ text: providerText });
+  const providerRoute = classifyOneShotStructuredFamily({ text: conformanceText });
   const sameFamily = providerRoute.matched === true && providerRoute.family === payload.family;
-  const providerFormat = getAcquisitionFormat(providerRoute.family, providerRoute.evidence, providerText);
+  const providerFormat = getAcquisitionFormat(providerRoute.family, providerRoute.evidence, conformanceText);
   const formatMatches = providerFormat === payload.format;
   const rowCountMatches = providerRoute.evidence.coordinateRowCount === payload.structure.coordinateRowCount;
   const headerCountMatches = !payload.structure.headerRequired
@@ -3160,7 +3169,7 @@ export function validateOneShotAcquisitionContract({ contract, providerText = ""
   return buildStructurallyValidatedConformanceResult({
     contract,
     payload,
-    providerText,
+    providerText: conformanceText,
     structuralConformant: conformant,
     structuralReason: !sameFamily || !formatMatches
       ? ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.FAMILY_MISMATCH
@@ -3250,6 +3259,187 @@ For a row containing a complete coordinate pair, keep the visible row label when
 Do not stop after the title. Do not summarize, omit, convert, reorder, or merge visible coordinate rows.
 This output must remain review-only.`;
   }
+}
+
+const PROVIDER_DMS_COMPONENT_PATTERN = /(\d{1,3}\s*[°º˚]\s*\d{1,2}\s*['′’]?\s*\d{1,2}(?:[.,]\d+)?\s*(?:["″”]|'{2})?\s*[NSEWO])\b/giu;
+
+function parseProviderDmsPointLine(value) {
+  const line = normalizeCoordinateEvidenceText(value).trim();
+  const components = Array.from(line.matchAll(PROVIDER_DMS_COMPONENT_PATTERN));
+  if (components.length !== 2) return null;
+  const first = components[0];
+  const second = components[1];
+  const prefix = line.slice(0, first.index).trim();
+  const separator = line.slice(first.index + first[0].length, second.index);
+  const suffix = line.slice(second.index + second[0].length);
+  const label = prefix
+    .replace(/^POINT\b/iu, "")
+    .replace(/[\s|:;,]+/gu, "")
+    .toUpperCase();
+  if (!/^(?:[A-Z]|\d{1,3})$/u.test(label)
+    || !/^[\s|:;,]*$/u.test(separator)
+    || suffix.trim() !== "") return null;
+  const parsed = components.map(component => {
+    const direction = component[0].match(/([NSEWO])\s*$/iu)?.[1]?.toUpperCase() || "";
+    const axis = /[NS]/u.test(direction) ? "LATITUDE" : /[EWO]/u.test(direction) ? "LONGITUDE" : "";
+    const canonical = axis === "LATITUDE"
+      ? normalizeBindingDms(component[0], "NS")
+      : normalizeBindingDms(component[0], "EW");
+    return Object.freeze({ axis, canonical });
+  });
+  const latitudes = parsed.filter(component => component.axis === "LATITUDE" && component.canonical);
+  const longitudes = parsed.filter(component => component.axis === "LONGITUDE" && component.canonical);
+  if (latitudes.length !== 1 || longitudes.length !== 1) return null;
+  return Object.freeze({
+    label,
+    latitude: latitudes[0].canonical,
+    longitude: longitudes[0].canonical
+  });
+}
+
+function parseProviderDmsHeader(value) {
+  const withoutProviderPrefix = normalizeCoordinateEvidenceText(value)
+    .trim()
+    .replace(/^HEADER\s*\|\s*/iu, "");
+  const parsedHeader = parseExplicitAxisHeaderLine(withoutProviderPrefix, 0);
+  if (parsedHeader) return parsedHeader;
+  const normalized = withoutProviderPrefix
+    .replace(/\b(?:LATITUDE|LAT)\s+(?:NORTH|SOUTH|NORD|SUD|NORTE|SUL)\b/giu, "LATITUDE")
+    .replace(/\b(?:LONGITUDE|LON)\s+(?:EAST|WEST|EST|OUEST|OESTE|LESTE)\b/giu, "LONGITUDE")
+    .replace(/[|:;,]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toUpperCase();
+  const tokens = normalized.split(" ").filter(Boolean).map(token => (
+    /^(?:LATITUDE|LAT)$/u.test(token) ? "LATITUDE"
+      : /^(?:LONGITUDE|LON)$/u.test(token) ? "LONGITUDE"
+        : /^(?:POINT|NO|NUMBER|ROW|ID|LABEL)$/u.test(token) ? "POINT" : ""
+  ));
+  if (tokens.some(token => !token) || tokens.length < 2 || tokens.length > 3
+    || tokens.filter(token => token === "LATITUDE").length !== 1
+    || tokens.filter(token => token === "LONGITUDE").length !== 1
+    || tokens.filter(token => token === "POINT").length > 1) return null;
+  return Object.freeze({
+    index: 0,
+    delimiter: " ",
+    fieldCount: tokens.length,
+    latitudeIndex: tokens.indexOf("LATITUDE"),
+    longitudeIndex: tokens.indexOf("LONGITUDE"),
+    labelIndex: tokens.indexOf("POINT") >= 0 ? tokens.indexOf("POINT") : null
+  });
+}
+
+function parseProviderDmsGroupHeading(value) {
+  const line = normalizeCoordinateEvidenceText(value).trim();
+  if (/^GROUP\s*\|\s*\S/iu.test(line)) {
+    return normalizeGroupHeading(line.split("|").slice(1).join("|"));
+  }
+  const match = line.match(
+    /^(?:(?:LOCATION|COORDINATE)\s+GROUP|GROUP|SITE|AREA|MINING\s+AREA|ZONE|BLOCK|PARCEL|CONCESSION|矿区|礦區)\s*(?:[|:#-]\s*|\s+)([A-Z0-9][A-Z0-9 _-]{0,63})$/iu
+  );
+  return match ? normalizeGroupHeading(`${line.slice(0, line.length - match[1].length)}${match[1]}`) : "";
+}
+
+function normalizeProviderDmsStructure(value, { grouped = false } = {}) {
+  const lines = normalizeCoordinateEvidenceText(value).split("\n").map(line => line.trim()).filter(Boolean);
+  const segments = [];
+  let pendingHeading = "";
+  let active = null;
+  let invalid = false;
+  let sawExplicitHeading = false;
+  const closeActive = () => {
+    if (!active) return;
+    if (active.rows.length === 0) invalid = true;
+    segments.push(active);
+    active = null;
+  };
+  for (const line of lines) {
+    if (/^(?:UNCLASSIFIED\s+)?STRUCTURED COORDINATE EVIDENCE$/iu.test(line)) continue;
+    const heading = parseProviderDmsGroupHeading(line);
+    if (heading) {
+      if (!grouped || pendingHeading) {
+        invalid = true;
+        break;
+      }
+      closeActive();
+      pendingHeading = heading;
+      sawExplicitHeading = true;
+      continue;
+    }
+    const header = parseProviderDmsHeader(line);
+    if (header) {
+      if (grouped && sawExplicitHeading && !pendingHeading) {
+        invalid = true;
+        break;
+      }
+      closeActive();
+      active = { heading: pendingHeading || "REPEATED_HEADER_BOUNDARY", rows: [] };
+      pendingHeading = "";
+      continue;
+    }
+    const row = parseProviderDmsPointLine(line);
+    if (!row || !active) {
+      invalid = true;
+      break;
+    }
+    active.rows.push(row);
+  }
+  closeActive();
+  if (pendingHeading) invalid = true;
+  const expectedSegmentShape = grouped ? segments.length >= 2 : segments.length === 1;
+  const labelsClosed = segments.every(segment => (
+    segment.rows.length > 0
+      && new Set(segment.rows.map(row => row.label)).size === segment.rows.length
+      && structuredLabelsAreContinuous(segment.rows)
+  ));
+  if (invalid || !expectedSegmentShape || !labelsClosed) {
+    return Object.freeze({ complete: false, text: "", segments: Object.freeze([]) });
+  }
+  const normalizedLines = grouped
+    ? segments.flatMap(segment => [
+        `GROUP | ${segment.heading}`,
+        "HEADER | Point | Latitude | Longitude",
+        ...segment.rows.map(row => `POINT | ${row.label} | ${row.latitude} | ${row.longitude}`)
+      ])
+    : [
+        "Point | Latitude | Longitude",
+        ...segments[0].rows.map(row => `${row.label} | ${row.latitude} | ${row.longitude}`)
+      ];
+  return Object.freeze({
+    complete: true,
+    text: normalizedLines.join("\n"),
+    segments: Object.freeze(segments.map(segment => Object.freeze({
+      heading: segment.heading,
+      rows: Object.freeze(segment.rows.slice())
+    })))
+  });
+}
+
+export function normalizeOneShotProviderOutput({ family = "", providerText = "" } = {}) {
+  const sourceText = normalizeCoordinateEvidenceText(providerText).trim();
+  if (family === ONE_SHOT_STRUCTURED_FAMILY.PROJECTED_CRS_TABLE) {
+    const projected = extractProviderProjectedCoordinateEvidence({ sourceText, minimumRows: 1 });
+    return Object.freeze({
+      complete: projected.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE,
+      sourceText,
+      bindingText: projected.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
+        ? projected.rows.map(row => `POINT | ${row.label} | ${row.x} | ${row.y}`).join("\n")
+        : "",
+      projected
+    });
+  }
+  if (family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED || family === ONE_SHOT_STRUCTURED_FAMILY.DMS_TABLE) {
+    const normalized = normalizeProviderDmsStructure(sourceText, {
+      grouped: family === ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED
+    });
+    return Object.freeze({
+      complete: normalized.complete,
+      sourceText,
+      bindingText: normalized.text,
+      dms: normalized
+    });
+  }
+  return Object.freeze({ complete: true, sourceText, bindingText: sourceText });
 }
 
 export function shouldRunWgs84TimeoutRescue({ localOcrAttempted = false } = {}) {

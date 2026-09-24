@@ -7376,6 +7376,14 @@ function extractProviderDmsReviewEvidence(text) {
     (line.match(/[°º˚]/gu) || []).length === 2
   ));
   const sourceRows = candidateRows.filter(line => hasCompleteProviderDmsPair(line));
+  const sourceLabels = sourceRows.map(line => {
+    const pipeFields = line.replace(/[｜]/gu, "|").split("|").map(field => field.trim()).filter(Boolean);
+    const pipeLabel = pipeFields.length >= 3
+      ? (/^POINT$/iu.test(pipeFields[0]) ? pipeFields[1] : pipeFields[0])
+      : "";
+    const whitespaceLabel = line.match(/^\s*(?:POINT\s+)?([A-Z]|\d{1,3})(?=\s|[|:;,])/iu)?.[1] || "";
+    return String(pipeLabel || whitespaceLabel).trim().toUpperCase();
+  });
   const coordinateLines = extractDmsCoordinateLines(sourceText);
   const explicitHeaderDirection = lines.some(line => {
     const hasLatitude = /(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu.test(line);
@@ -7392,6 +7400,12 @@ function extractProviderDmsReviewEvidence(text) {
     && sourceRows.length === candidateRows.length
     && coordinateLines.length === sourceRows.length
     && (explicitHeaderDirection || everyRowHasDirections);
+  const pointAzLabels = Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index));
+  const coordinateFamily = complete
+    && sourceLabels.length === pointAzLabels.length
+    && sourceLabels.every((label, index) => label === pointAzLabels[index])
+    ? "point-az-dms-table"
+    : "";
 
   return Object.freeze({
     status: complete ? "COMPLETE" : "REVIEW_REQUIRED",
@@ -7399,6 +7413,7 @@ function extractProviderDmsReviewEvidence(text) {
     sourceRowCount: sourceRows.length,
     candidateRowCount: candidateRows.length,
     axisDirectionBound: explicitHeaderDirection || everyRowHasDirections,
+    coordinateFamily,
     coordinates: complete ? coordinateLines.join("\n") : ""
   });
 }
@@ -10395,6 +10410,7 @@ function buildCoordinateEngineV2Groups(payload = {}, coordinateType = "") {
 
 function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
   const coordinateType = String(result.coordinate_type || "");
+  const coordinateFamily = String(result.coordinate_family || "");
   const precisionMode = String(result.precision_mode || "");
   const warnings = normalizeCoordinateEngineV2WarningList(result.warnings);
   const fallbackUsed = Boolean(result.source?.fallback_used) || /fallback/i.test(String(result.source?.ocr_engine || "")) || /fallback/i.test(precisionMode);
@@ -10464,6 +10480,7 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
   const normalizedResult = {
     schema_version: "coordinate_engine_v2",
     coordinate_type: coordinateType,
+    coordinate_family: coordinateFamily,
     precision_mode: precisionMode,
     source_crs: result.source_crs || null,
     confidence: requiresReview ? Math.min(confidence, 0.75) : confidence,
@@ -10564,6 +10581,7 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
     return normalizeCoordinateEngineV2Result({
     schema_version: "coordinate_engine_v2",
     coordinate_type: coordinateType,
+    coordinate_family: String(payload.coordinateFamily || payload.coordinate_family || ""),
     precision_mode: precisionMode,
     axisOrderEvidence: payload.axisOrderEvidence || null,
     source_crs: coordinateType === "projected_xy"
@@ -16766,6 +16784,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       }
       const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText);
       if (trustedProviderDmsEvidence.status === "COMPLETE") {
+        const pointAzFamilyRecovered = trustedProviderDmsEvidence.coordinateFamily === "point-az-dms-table";
         const consumeResult = await consumeCoordinateUsage({
           note: "Coordinate recognition consumed after trusted Provider DMS review recovery"
         });
@@ -16785,13 +16804,17 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           rawText,
           coordinates: trustedProviderDmsEvidence.coordinates,
           precisionMode: "preserve-original-decimals-and-parse-dms",
-          requiresReview: false,
-          warning: "已完整提取具有明确方向证据的 DMS 坐标行，并按原图点号顺序形成矿区边界。",
+          coordinateFamily: trustedProviderDmsEvidence.coordinateFamily,
+          requiresReview: pointAzFamilyRecovered,
+          warning: pointAzFamilyRecovered
+            ? "已完整提取具有明确方向证据的 A–Z DMS 坐标行；按照家族安全策略，确认前仅供复核，不生成 KML。"
+            : "已完整提取具有明确方向证据的 DMS 坐标行，并按原图点号顺序形成矿区边界。",
           providerDmsReviewEvidence: {
             status: trustedProviderDmsEvidence.status,
             coordinateRowCount: trustedProviderDmsEvidence.coordinateRowCount,
             sourceRowCount: trustedProviderDmsEvidence.sourceRowCount,
-            axisDirectionBound: trustedProviderDmsEvidence.axisDirectionBound
+            axisDirectionBound: trustedProviderDmsEvidence.axisDirectionBound,
+            coordinateFamily: trustedProviderDmsEvidence.coordinateFamily
           },
           acquisitionContractConformance: oneShotAcquisitionConformance,
           parserTrace: [
@@ -16802,17 +16825,16 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           quota: consumeResult.quota
         };
         const providerDmsReviewEngine = buildCoordinateEngineV2ShadowResult(providerDmsReviewPayload, {
-          forceRequiresReview: false,
+          forceRequiresReview: pointAzFamilyRecovered,
           rawHint: ""
         });
         const providerDmsReviewResponse = buildCoordinateVerificationResponse(
           providerDmsReviewPayload,
           providerDmsReviewEngine
         );
-        return res.json(promoteRecognizedCoordinatesToSafeBoundary(
-          providerDmsReviewResponse,
-          ""
-        ));
+        return res.json(pointAzFamilyRecovered
+          ? providerDmsReviewResponse
+          : promoteRecognizedCoordinatesToSafeBoundary(providerDmsReviewResponse, ""));
       }
       const contractReviewPayload = {
         success: false,

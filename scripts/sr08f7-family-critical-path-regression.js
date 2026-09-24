@@ -1294,6 +1294,67 @@ test("R21C", "grouped DMS binding accepts exact curved marker source representat
   assertConformant(contract, provider);
 });
 
+test("R21D", "grouped DMS contract normalizes fully consumed whitespace Provider structure", () => {
+  const source = [
+    "GROUP A", "Point | Latitude | Longitude",
+    `A | 12°01'01.00\"N | 64°01'01.00\"E`,
+    `B | 12°01'02.00\"N | 64°01'02.00\"E`,
+    "GROUP B", "Point | Latitude | Longitude",
+    `A | 13°01'01.00\"N | 65°01'01.00\"E`,
+    `B | 13°01'02.00\"N | 65°01'02.00\"E`
+  ].join("\n");
+  const provider = [
+    "GROUP A", "Point Latitude Longitude",
+    `A 12°01'01.00\"N 64°01'01.00\"E`,
+    `B 12°01'02.00\"N 64°01'02.00\"E`,
+    "GROUP B", "Point\tLatitude\tLongitude",
+    `A\t13°01'01.00\"N\t65°01'01.00\"E`,
+    `B\t13°01'02.00\"N\t65°01'02.00\"E`
+  ].join("\n");
+  const contract = contractFor(source);
+  assertConformant(contract, provider);
+  for (const unsafe of [
+    provider.replace(`B 12°01'02.00\"N 64°01'02.00\"E`, `A 12°01'02.00\"N 64°01'02.00\"E`),
+    provider.replace(`B\t13°01'02.00\"N\t65°01'02.00\"E`, `C\t13°01'02.00\"N\t65°01'02.00\"E`),
+    provider.replace(`A 12°01'01.00\"N 64°01'01.00\"E`, `A 12°01'01.00\"N 64°01'01.00\"E 999`),
+    provider.replace("GROUP B\n", "")
+  ]) assertReview(contract, unsafe);
+});
+
+test("R21E", "four-group DMS Provider structure preserves every group and row", () => {
+  const groups = Array.from({ length: 4 }, (_, groupIndex) => {
+    const groupName = String.fromCharCode(65 + groupIndex);
+    const degree = 12 + groupIndex;
+    return {
+      groupName,
+      rows: Array.from({ length: 4 }, (_, pointIndex) => {
+        const label = String.fromCharCode(65 + pointIndex);
+        const second = String(pointIndex + 1).padStart(2, "0");
+        return `${label} | ${degree}°01'${second}.00\"N | ${64 + groupIndex}°01'${second}.00\"E`;
+      })
+    };
+  });
+  const source = groups.flatMap(({ groupName, rows }) => [
+    `GROUP ${groupName}`,
+    "Point | Latitude | Longitude",
+    ...rows
+  ]).join("\n");
+  const provider = groups.flatMap(({ groupName, rows }, groupIndex) => [
+    `GROUP ${groupName}`,
+    groupIndex % 2 === 0 ? "Point Latitude Longitude" : "Point\tLatitude\tLongitude",
+    ...rows.map((row, rowIndex) => row.replaceAll(" | ", (groupIndex + rowIndex) % 2 === 0 ? " " : "\t"))
+  ]).join("\n");
+  const contract = contractFor(source);
+  assert.equal(contract.family, ONE_SHOT_STRUCTURED_FAMILY.DMS_GROUPED);
+  assert.deepEqual(contract.structure.groupRowCounts, [4, 4, 4, 4]);
+  assertConformant(contract, provider);
+  for (const unsafe of [
+    provider.replace("GROUP D\n", ""),
+    provider.replace("D 15°01'04.00\"N 67°01'04.00\"E", "C 15°01'04.00\"N 67°01'04.00\"E"),
+    provider.replace("B\t14°01'02.00\"N\t66°01'02.00\"E", "B\t14°01'02.00\"N\t66°01'02.00\"E\t7")
+  ]) assertReview(contract, unsafe);
+});
+
 test("R23", "projected contract requires exact complete CRS identity", () => {
   const source = "Projection UTM | Datum WGS 84 | Zone 43N | Hemisphere N\nPoint | Easting | Northing\nA | 500100 | 2065100";
   const contract = contractFor(source);
@@ -1307,6 +1368,30 @@ test("R23", "projected contract requires exact complete CRS identity", () => {
   assertReview(contract, provider.replace("43N", "44N"), ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH);
   assertReview(contract, provider.replace("Zone 43N | Hemisphere N", "Zone 43"), ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH);
   assertReview(contract, provider.replace("EASTING | NORTHING", "NORTHING | EASTING"), ONE_SHOT_ACQUISITION_CONFORMANCE_REASON.PROJECTED_CRS_MISMATCH);
+});
+
+test("R23C", "projected contract normalizes equivalent whitespace rows without weakening closure", () => {
+  const source = [
+    "Projection UTM | Datum WGS 84 | Zone 50S | Hemisphere S",
+    "Point | Easting | Northing",
+    "1 | 500100 | 9065100", "2 | 500200 | 9065200", "3 | 500300 | 9065300",
+    "4 | 500400 | 9065400", "5 | 500500 | 9065500", "6 | 500600 | 9065600"
+  ].join("\n");
+  const provider = [
+    "Projection UTM | Datum WGS 84 | Zone 50S | Hemisphere S",
+    "AXIS ORDER EASTING NORTHING",
+    "Point Easting Northing",
+    "1 500100 9065100", "2\t500200\t9065200", "3 500300 9065300",
+    "4\t500400\t9065400", "5 500500 9065500", "6\t500600\t9065600"
+  ].join("\n");
+  const contract = contractFor(source);
+  assertConformant(contract, provider);
+  for (const unsafe of [
+    provider.replace("6\t500600\t9065600", "6\t500600\t9065600\t99999"),
+    provider.replace("5 500500 9065500", "4 500500 9065500"),
+    provider.replace("5 500500 9065500\n", ""),
+    provider.replace("Zone 50S", "Zone 50N")
+  ]) assertReview(contract, unsafe);
 });
 
 test("R23B", "MGRS contract requires the same explicit CRS and bounded row count", () => {

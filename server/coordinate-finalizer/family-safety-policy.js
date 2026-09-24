@@ -59,7 +59,12 @@ const STAGE1_FULL_MULTISITE_POLICY_SIGNING_SECRET = randomBytes(32);
 
 function isPointAzFamily(structuredResult = {}) {
   return String(structuredResult.coordinate_type || "").toLowerCase() === "standard_dms_table"
-    && String(structuredResult.precision_mode || "").toLowerCase() === POINT_AZ_TEMPORARY_REVIEW_POLICY.family;
+    && String(
+      structuredResult.coordinate_family
+      || structuredResult.coordinateFamily
+      || structuredResult.precision_mode
+      || ""
+    ).toLowerCase() === POINT_AZ_TEMPORARY_REVIEW_POLICY.family;
 }
 
 function hasBoundThreeGroupTopology(structuredResult = {}, provenance = {}) {

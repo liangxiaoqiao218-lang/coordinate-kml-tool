@@ -169,7 +169,12 @@ function commonInput({
     kmlReady: group?.kml_ready === true
   }));
   const familyPolicyApplies = String(structuredResult.coordinate_type || "").toLowerCase() === "standard_dms_table"
-    && String(structuredResult.precision_mode || "").toLowerCase() === "point-az-dms-table";
+    && String(
+      structuredResult.coordinate_family
+      || structuredResult.coordinateFamily
+      || structuredResult.precision_mode
+      || ""
+    ).toLowerCase() === "point-az-dms-table";
   const reviewOnlyTechnicalKmlReady = verification?.status === "REVIEW" && technicalKmlReady;
   const needsConfirmation = confirmationRequired(structuredResult)
     || familyPolicyApplies
@@ -201,7 +206,7 @@ function commonInput({
   const productionSource = ["legacy", "manual_input", "coordinate_engine_v2"].includes(sourceAuthority);
   const currentAuthorizedGeometryExportable = geometryResult.ok && productionSource
     && !technicalFailure && !authorityRejected && !invalidCrs
-    && !acquisitionDeltaDeclared && !partialRecoveryDeclared && !nearDuplicateBlocked
+    && !familyPolicyApplies && !acquisitionDeltaDeclared && !partialRecoveryDeclared && !nearDuplicateBlocked
     && nearDuplicateAuthority.trustedPointIntent !== true;
   // Provider availability governs acquisition, not an already valid deterministic result.
   const availabilityStatus = currentAuthorizedGeometryExportable ? FAMILY_AVAILABILITY_STATUS.AVAILABLE
@@ -215,7 +220,8 @@ function commonInput({
     sourceAuthority,
     coordinateType: structuredResult.coordinate_type || recognitionResult.coordinateType || null,
     precisionMode: structuredResult.precision_mode || recognitionResult.precisionMode || null,
-    family: familyAvailability?.family || structuredResult.coordinate_type || recognitionResult.coordinateType || null,
+    family: familyAvailability?.family || structuredResult.coordinate_family
+      || structuredResult.coordinate_type || recognitionResult.coordinateType || null,
     availabilityStatus,
     availabilityReasonCode: familyAvailability?.reasonCode || null,
     familyAvailabilityPolicy: familyAvailability || null,

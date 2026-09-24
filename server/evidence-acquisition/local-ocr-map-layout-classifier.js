@@ -848,10 +848,15 @@ export function extractProviderProjectedCoordinateEvidence({
 } = {}) {
   const lines = String(sourceText || "").split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
   const unclassifiedTitleIndex = lines.findIndex(line => /UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE/iu.test(line));
-  const headerIndex = lines.findIndex(line => (
+  const labelledHeaderIndex = lines.findIndex(line => (
     /\b(?:POINT|SOMMETS?|LABEL|ID|N[°O])\b[^\r\n]*(?:\bX\b|\bEASTING\b)[^\r\n]*(?:\bY\b|\bNORTHING\b)/iu.test(line)
-      || /(?:\bX\b|\bEASTING\b)[^\r\n]+(?:\bY\b|\bNORTHING\b)/iu.test(line)
   ));
+  const axisHeaderIndex = lines.findIndex(line => (
+    /(?:\bX\b|\bEASTING\b)[^\r\n]+(?:\bY\b|\bNORTHING\b)/iu.test(line)
+  ));
+  // Prefer the explicit label/X/Y header over an earlier AXIS_ORDER line so
+  // labelled Provider rows retain their required point identifiers.
+  const headerIndex = labelledHeaderIndex >= 0 ? labelledHeaderIndex : axisHeaderIndex;
   // Generic acquisition sometimes preserves all labelled rows and visible CRS
   // text but omits a separate X/Y header. The server-issued unclassified title
   // is then the required contract boundary; ordinary headerless number lists

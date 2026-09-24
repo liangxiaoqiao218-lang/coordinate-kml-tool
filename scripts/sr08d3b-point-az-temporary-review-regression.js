@@ -47,15 +47,13 @@ test("PAZ-P01", () => {
 });
 test("PAZ-P02", () => assert.equal(pointAzResult().familySafetyPolicy.reasonCode, COORDINATE_GATE_REASON.PROVIDER_EVIDENCE_COVERAGE_INSUFFICIENT));
 test("PAZ-P03", () => {
-  assert.equal(pointAzResult().kmlReady, true);
+  assert.equal(pointAzResult().kmlReady, false);
   assert.equal(pointAzResult().decisionState, "REVIEW_REQUIRED");
 });
 test("PAZ-P04", () => {
   const result = registerFinalizedCoordinateResult(pointAzResult());
   const adapted = new FinalizedResultSpatialGeometryAdapter().adapt(result);
-  assert.equal(adapted.ok, true);
-  assert.equal(adapted.geometry.gate.decisionState, "REVIEW_REQUIRED");
-  assert.ok(adapted.geometry.warnings.length > 0);
+  assert.equal(adapted.ok, false);
 });
 test("PAZ-P05", () => {
   const runtime = new CoordinateConfirmationRuntime();
@@ -90,6 +88,18 @@ test("PAZ-P08", () => {
   assert.equal(runtime.confirm({ resultId: failed.resultId, resultRevision: 1, geometryHash: failed.geometryHash, action: "accept" }).finalizedCoordinateResult.decisionState, "BLOCKED");
 });
 test("PAZ-P09", () => assert.equal(pointAzResult({ structured: engine({ precision_mode: "preserve-original-decimals-and-parse-dms" }) }).familySafetyPolicy, null));
+test("PAZ-P09A", () => {
+  const result = pointAzResult({
+    structured: engine({
+      coordinate_family: "point-az-dms-table",
+      precision_mode: "preserve-original-decimals-and-parse-dms"
+    })
+  });
+  assert.equal(result.family, "point-az-dms-table");
+  assert.equal(result.familySafetyPolicy?.policyId, "POINT_AZ_TEMPORARY_REVIEW_POLICY");
+  assert.ok(["REVIEW_REQUIRED", "BLOCKED"].includes(result.decisionState));
+  assert.notEqual(result.decisionState, "AUTO_EXPORT");
+});
 test("PAZ-P10", () => assert.equal(pointAzResult({ structured: engine({ coordinate_type: "wgs84_decimal", precision_mode: "wgs84-table-coordinates" }) }).familySafetyPolicy, null));
 test("PAZ-P11", () => assert.equal(pointAzResult({ structured: engine({ coordinate_type: "projected_xy", precision_mode: "utm30n-projected-x-y" }) }).familySafetyPolicy, null));
 test("PAZ-P12", () => assert.equal(pointAzResult({ structured: engine({ coordinate_type: "madagascar_cadastral_grid", precision_mode: "cadastral-grid-num-xv-yv" }) }).familySafetyPolicy, null));
