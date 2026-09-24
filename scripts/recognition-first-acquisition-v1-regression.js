@@ -117,13 +117,18 @@ const non2xxRuntime = createRecognitionAcquisitionJobRuntime({
     result: {
       success: false,
       reason: "COORDINATE_RECOGNITION_FAILED_CLOSED",
+      providerCompletionState: "TIMED_OUT",
+      providerCallCount: 1,
+      usageConsumed: false,
       userUsageConsumed: false,
+      recoveryRequired: false,
+      requestId: "11111111-1111-4111-8111-111111111111",
       rawText: "must-not-leak",
       coordinates: "must-not-leak"
     }
   })
 });
-const non2xxJob = non2xxRuntime.enqueue({});
+const non2xxJob = non2xxRuntime.enqueue({ requestId: "11111111-1111-4111-8111-111111111111" });
 let non2xxSnapshot;
 while (non2xxSnapshot?.completedAt == null) {
   await new Promise(resolve => setImmediate(resolve));
@@ -135,8 +140,15 @@ assert.equal(getRecognitionAcquisitionJobHttpStatus(non2xxSnapshot), 422);
 assert.deepEqual(non2xxSnapshot.result, {
   success: false,
   reason: "COORDINATE_RECOGNITION_FAILED_CLOSED",
-  userUsageConsumed: false
+  code: "COORDINATE_RECOGNITION_FAILED_CLOSED",
+  providerCompletionState: "TIMED_OUT",
+  providerCallCount: 1,
+  usageConsumed: false,
+  userUsageConsumed: false,
+  recoveryRequired: false,
+  requestId: "11111111-1111-4111-8111-111111111111"
 });
+assert.equal(non2xxSnapshot.requestId, "11111111-1111-4111-8111-111111111111");
 assert.equal(non2xxSnapshot.error.code, "COORDINATE_RECOGNITION_FAILED_CLOSED");
 
 const completedCapacityRuntime = createRecognitionAcquisitionJobRuntime({

@@ -126,6 +126,12 @@ export function buildUnchargedCoordinateFailureResponse({ body = null, recogniti
     ? originalCode
     : COORDINATE_USAGE_ERROR_CODE.AUTHORITY_NOT_ESTABLISHED;
   const quota = sanitizeQuota(body?.quota);
+  const providerCallCount = Math.min(1, Math.max(0, Number(body?.providerCallCount) || 0));
+  const providerCompletionState = ["NOT_STARTED", "SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"].includes(
+    String(body?.providerCompletionState || "").trim().toUpperCase()
+  )
+    ? String(body.providerCompletionState).trim().toUpperCase()
+    : providerCallCount > 0 ? "FAILED" : "NOT_STARTED";
   return Object.freeze({
     success: false,
     reason,
@@ -134,7 +140,10 @@ export function buildUnchargedCoordinateFailureResponse({ body = null, recogniti
     ...(quota ? { quota } : {}),
     error: UNCHARGED_FAILURE_MESSAGE,
     requestId: isRecognitionRequestId(recognitionRequestId) ? String(recognitionRequestId).toLowerCase() : null,
+    providerCompletionState,
+    providerCallCount,
     usageConsumed: false,
+    userUsageConsumed: false,
     recoveryRequired: false,
     recoveryTerminal: true,
     retryAllowed: true,

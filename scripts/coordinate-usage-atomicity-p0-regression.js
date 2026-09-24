@@ -421,7 +421,7 @@ test("uncharged responses are fixed-field failures and cannot disclose Provider-
     }
   });
   assert.deepEqual(Object.keys(request).sort(), [
-    "code", "coordinates", "error", "quota", "rawText", "reason", "recoveryRequired", "recoveryTerminal", "requestId", "retryAllowed", "success", "usageConsumed"
+    "code", "coordinates", "error", "providerCallCount", "providerCompletionState", "quota", "rawText", "reason", "recoveryRequired", "recoveryTerminal", "requestId", "retryAllowed", "success", "usageConsumed", "userUsageConsumed"
   ].sort());
   assert.equal(request.success, false);
   assert.equal(request.reason, "coordinate_authority_not_established");
@@ -429,6 +429,9 @@ test("uncharged responses are fixed-field failures and cannot disclose Provider-
   assert.equal(request.coordinates, "");
   assert.equal(request.recoveryRequired, false);
   assert.equal(request.recoveryTerminal, true);
+  assert.equal(request.providerCompletionState, "NOT_STARTED");
+  assert.equal(request.providerCallCount, 0);
+  assert.equal(request.userUsageConsumed, false);
   assert.deepEqual(request.quota, { free_convert_count: 2 });
   assert.equal(JSON.stringify(request).includes("provider-derived"), false);
   assert.equal(JSON.stringify(request).includes("do-not-copy"), false);
@@ -595,15 +598,16 @@ test("frontend and server bind one request ID to recovery without Provider repla
   assert.doesNotMatch(server, /settlement\.kind === "UNCHARGED_RESPONSE"\s*&& body\?\.success === true/);
   assert.match(index, /crypto\?\.randomUUID/);
   assert.match(index, /prepareCoordinateUsageSession\(currentVisitorId\)/);
-  assert.match(index, /prepareCoordinateUsageSession\(currentVisitorId\);\s*rememberPendingCoordinateCommitRequestId\(recognitionRequestId\);\s*response = await fetch\("\/api\/recognize-coordinates"/);
+  assert.match(index, /prepareCoordinateUsageSession\(currentVisitorId\);\s*const useAsyncJob = await shouldUseAsyncCoordinateRecognition\(file\);\s*if \(!useAsyncJob\) rememberPendingCoordinateCommitRequestId\(recognitionRequestId\);/);
+  assert.match(index, /response = await fetch\(useAsyncJob \? "\/api\/recognize-coordinates\/jobs" : "\/api\/recognize-coordinates"/);
   assert.match(index, /"x-recognition-request-id": recognitionRequestId/);
   assert.match(index, /recoverCommittedCoordinateResult\(recognitionRequestId, currentVisitorId\)/);
   assert.match(index, /sessionStorage\.setItem\(PENDING_COORDINATE_COMMIT_REQUEST_KEY, String\(value\)\.toLowerCase\(\)\)/);
   assert.match(index, /if \(!recoveryOnly\) \{\s*const recovered = await recoverCommittedCoordinateResult/);
-  assert.match(index, /let responseWasRecovery = recoveryOnly/);
+  assert.match(index, /let responseWasRecovery = usageRecoveryOnly/);
   assert.match(index, /await agenticCoordinateInitializationPromise/);
-  assert.match(index, /agenticCoordinateController\?\.enabled[\s\S]*agenticCoordinateController\.recoverPending\(\)[\s\S]*recoverPendingCoordinateCommitOnPageShow\(\)/);
-  assert.match(index, /async function recoverPendingCoordinateCommitOnPageShow\(\)/);
+  assert.match(index, /agenticCoordinateController\?\.enabled[\s\S]*agenticCoordinateController\.recoverPending\(\)[\s\S]*resumePendingCoordinateWorkOnPageShow\(\)/);
+  assert.match(index, /async function resumePendingCoordinateWorkOnPageShow\(\)/);
   assert.match(index, /if \(!file && !recoveryOnly\) \{\s*return;\s*\}/);
   assert.match(index, /pendingCoordinateRecoveryPromise = recognizeImage\(\)/);
   assert.match(index, /!responseWasRecovery && data\?\.usageConsumed === false/);
