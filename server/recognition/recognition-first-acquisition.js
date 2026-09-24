@@ -382,3 +382,97 @@ export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, prov
     authority: "EVIDENCE_ONLY"
   });
 }
+
+const AUTHORIZATION_ELIGIBLE_FORMATS = Object.freeze(new Set([
+  "DMS",
+  "WGS84_DECIMAL"
+]));
+
+export function evaluateUnifiedRecognitionAcquisition({
+  evidence,
+  contractStatus = "UNKNOWN",
+  contractReason = null
+} = {}) {
+  const acquisitionStatus = String(evidence?.acquisitionStatus || "EMPTY");
+  const providerCompletionState = String(evidence?.providerCompletionState || "UNKNOWN");
+  const candidates = Array.isArray(evidence?.candidateCoordinates)
+    ? evidence.candidateCoordinates
+    : [];
+  const reviewReasons = Array.isArray(evidence?.reviewReasons)
+    ? evidence.reviewReasons.map(reason => String(reason || "").trim()).filter(Boolean)
+    : [];
+  const normalizedContractStatus = String(contractStatus || "UNKNOWN");
+  const normalizedContractReason = String(contractReason || "").trim();
+  const contractReasonSet = new Set([
+    ...(normalizedContractStatus === "CONFORMANT" ? [] : [normalizedContractReason]),
+    ...reviewReasons
+  ].filter(Boolean));
+  const completed = providerCompletionState === "SUCCEEDED"
+    && acquisitionStatus === "COMPLETED"
+    && candidates.length > 0;
+  const normalizationComplete = evidence?.normalizationStatus === "COMPLETED";
+  const allRowsBound = Number(evidence?.diagnostics?.unboundRowCount || 0) === 0;
+  const hasUniqueGroups = Number(evidence?.diagnostics?.candidateGroupCount || 0) > 0;
+  const formatsEligible = candidates.length > 0
+    && candidates.every(candidate => AUTHORIZATION_ELIGIBLE_FORMATS.has(String(candidate?.format || "")));
+  const contractConformant = normalizedContractStatus === "CONFORMANT";
+  if (completed && !contractConformant) contractReasonSet.add("ACQUISITION_CONTRACT_NOT_CONFORMANT");
+  if (completed && !normalizationComplete) contractReasonSet.add("CANDIDATE_NORMALIZATION_INCOMPLETE");
+  if (completed && !allRowsBound) contractReasonSet.add("COORDINATE_ROW_UNBOUND");
+  if (completed && !hasUniqueGroups) contractReasonSet.add("GROUP_BOUNDARY_NOT_ESTABLISHED");
+  if (completed && !formatsEligible) contractReasonSet.add("COORDINATE_FORMAT_REQUIRES_VALIDATION");
+  const contractReasons = [...contractReasonSet];
+  const mayProceedToGeometryValidation = completed
+    && contractConformant
+    && normalizationComplete
+    && allRowsBound
+    && hasUniqueGroups
+    && formatsEligible
+    && reviewReasons.length === 0;
+
+  if (!completed) {
+    return Object.freeze({
+      providerCompletionState,
+      acquisitionStatus,
+      authorizationStatus: "NOT_ESTABLISHED",
+      resultStatus: "failed",
+      finalState: "FAILED_NO_COORDINATE_EVIDENCE",
+      mapStatus: "CLOSED",
+      kmlStatus: "CLOSED",
+      contractReasons: Object.freeze(contractReasons),
+      mayProceedToGeometryValidation: false,
+      shouldReturnReview: false,
+      shouldReturnFailure: true
+    });
+  }
+
+  if (!mayProceedToGeometryValidation) {
+    return Object.freeze({
+      providerCompletionState,
+      acquisitionStatus: "COMPLETED",
+      authorizationStatus: "REVIEW_REQUIRED",
+      resultStatus: "needs_review",
+      finalState: "COMPLETED_REVIEW_REQUIRED",
+      mapStatus: "CLOSED",
+      kmlStatus: "CLOSED",
+      contractReasons: Object.freeze(contractReasons),
+      mayProceedToGeometryValidation: false,
+      shouldReturnReview: true,
+      shouldReturnFailure: false
+    });
+  }
+
+  return Object.freeze({
+    providerCompletionState,
+    acquisitionStatus: "COMPLETED",
+    authorizationStatus: "VALIDATION_PENDING",
+    resultStatus: "validation_pending",
+    finalState: "VALIDATION_PENDING",
+    mapStatus: "CLOSED",
+    kmlStatus: "CLOSED",
+    contractReasons: Object.freeze(contractReasons),
+    mayProceedToGeometryValidation: true,
+    shouldReturnReview: false,
+    shouldReturnFailure: false
+  });
+}
