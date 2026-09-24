@@ -7,6 +7,7 @@ export const RECOGNITION_PROVIDER_ATTEMPT_LIMIT_CODE = "RECOGNITION_PROVIDER_ATT
 export const RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_CODE = "RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_REACHED";
 export const DEFAULT_RECOGNITION_HARD_DEADLINE_MS = 55_000;
 export const MAX_RECOGNITION_HARD_DEADLINE_MS = 59_000;
+export const MAX_ASYNC_RECOGNITION_HARD_DEADLINE_MS = 180_000;
 export const DEFAULT_RECOGNITION_PREFLIGHT_DEADLINE_MS = 12_500;
 export const DEFAULT_RECOGNITION_EXECUTION_DEADLINE_MS = 42_500;
 export const DEFAULT_RECOGNITION_RESPONSE_RESERVE_MS = 2_500;
@@ -28,6 +29,7 @@ export const RECOGNITION_STAGE_RESULTS = Object.freeze(new Set([
 
 const SANITIZED_STAGE_NAMES = Object.freeze(new Set([
   "upload",
+  "image_prepare",
   "image_safety",
   "permissions",
   "usage_eligibility",
@@ -767,9 +769,21 @@ export function composeAbortSignals(signals = []) {
   };
 }
 
-export function recognitionDeadlineMiddleware({ deadlineMs = getRecognitionHardDeadlineMs() } = {}) {
-  if (!Number.isFinite(deadlineMs) || deadlineMs <= 0 || deadlineMs >= 60_000) {
-    throw new RangeError("recognition_deadline_must_be_below_60000ms");
+export function recognitionDeadlineMiddleware({
+  deadlineMs = getRecognitionHardDeadlineMs(),
+  profile = "interactive",
+  preflightDeadlineMs,
+  executionDeadlineMs,
+  responseReserveMs,
+  lowValueFallbackCutoffMs
+} = {}) {
+  const maximumDeadlineMs = profile === "async"
+    ? MAX_ASYNC_RECOGNITION_HARD_DEADLINE_MS
+    : MAX_RECOGNITION_HARD_DEADLINE_MS;
+  if (!Number.isFinite(deadlineMs) || deadlineMs <= 0 || deadlineMs > maximumDeadlineMs) {
+    throw new RangeError(profile === "async"
+      ? "async_recognition_deadline_must_not_exceed_180000ms"
+      : "recognition_deadline_must_be_below_60000ms");
   }
   return function enforceRecognitionDeadline(req, res, next) {
     const controller = new AbortController();
@@ -781,7 +795,17 @@ export function recognitionDeadlineMiddleware({ deadlineMs = getRecognitionHardD
     const requestId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suppliedRequestId)
       ? suppliedRequestId.toLowerCase()
       : randomUUID();
-    const budget = new RecognitionBudget({ signal: controller.signal, startedAt, deadlineMs, caseId, requestId });
+    const budget = new RecognitionBudget({
+      signal: controller.signal,
+      startedAt,
+      deadlineMs,
+      caseId,
+      requestId,
+      ...(Number.isFinite(preflightDeadlineMs) ? { preflightDeadlineMs } : {}),
+      ...(Number.isFinite(executionDeadlineMs) ? { executionDeadlineMs } : {}),
+      ...(Number.isFinite(responseReserveMs) ? { responseReserveMs } : {}),
+      ...(Number.isFinite(lowValueFallbackCutoffMs) ? { lowValueFallbackCutoffMs } : {})
+    });
     budget.startIngressUpload();
     res.setHeader?.("X-Recognition-Request-Id", budget.requestId);
     let deadlineResponseSent = false;
@@ -843,6 +867,7 @@ export function recognitionDeadlineMiddleware({ deadlineMs = getRecognitionHardD
       startedAt,
       deadlineAt,
       deadlineMs,
+      profile,
       budget
     });
     Object.defineProperty(req, "recognitionDeadlineContext", {

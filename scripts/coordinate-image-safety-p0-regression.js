@@ -192,7 +192,7 @@ test("unsupported types receive no JPEG compatibility treatment", () => {
 
 test("server installs the safety boundary before user data and every image consumer", async () => {
   const source = await readFile(new URL("../server.js", import.meta.url), "utf8");
-  const routeStart = source.indexOf('app.post("/api/recognize-coordinates"');
+  const routeStart = source.indexOf("async function recognizeCoordinatesHandler");
   const route = source.slice(routeStart);
   const safety = route.indexOf("canonicalizeCoordinateImageUpload(req.file)");
   const replacement = route.indexOf("req.file = imageCanonicalization.file");
@@ -200,7 +200,7 @@ test("server installs the safety boundary before user data and every image consu
   for (const marker of [
     "readAdminData()",
     "validateCoordinateImageUpload(req.file)",
-    "req.file.buffer.toString(\"base64\")",
+    "createRecognitionImageVariants({",
     "runLocalOcrFallback(req.file.buffer"
   ]) {
     assert.ok(route.indexOf(marker) > replacement, `${marker} must use the canonical file`);

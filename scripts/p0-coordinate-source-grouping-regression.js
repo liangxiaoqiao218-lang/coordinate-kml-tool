@@ -3269,8 +3269,8 @@ staticAssertion("retry rejection no longer logs raw provider preview", () => {
   const providerHelperStart = server.indexOf("async function callAliyunVision(");
   const providerHelperEnd = server.indexOf("function getHandwrittenDmsTranscriptionPrompt", providerHelperStart);
   const providerHelper = server.slice(providerHelperStart, providerHelperEnd > providerHelperStart ? providerHelperEnd : undefined);
-  const routeStart = server.indexOf('app.post("/api/recognize-coordinates"');
-  const routeEnd = server.indexOf("app.use((error, req, res, next) =>", routeStart);
+  const routeStart = server.indexOf("async function recognizeCoordinatesHandler");
+  const routeEnd = server.indexOf("const recognitionAcquisitionJobRuntime", routeStart);
   assert.ok(routeStart >= 0, "recognition route start marker must exist");
   assert.ok(routeEnd > routeStart, "recognition route end marker must follow its start");
   const recognitionRoute = server.slice(routeStart, routeEnd > routeStart ? routeEnd : undefined);

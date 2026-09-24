@@ -123,6 +123,12 @@ import {
 } from "./server/evidence-acquisition/local-ocr-map-layout-classifier.js";
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
+import {
+  buildRecognitionAcquisitionEvidence,
+  buildRecognitionFirstPromptPrefix,
+  createRecognitionImageVariants
+} from "./server/recognition/recognition-first-acquisition.js";
+import { createRecognitionAcquisitionJobRuntime } from "./server/recognition/recognition-acquisition-job-runtime.js";
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
 import {
   createAgenticCoordinateApi,
@@ -176,6 +182,7 @@ import {
 } from "./server/coordinate-finalizer/index.js";
 
 const app = express();
+const recognitionAsyncInternalToken = crypto.randomUUID();
 const mapPreviewAdapter = new MapPreviewAdapter();
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -14867,7 +14874,7 @@ app.post(
   (req, res) => agenticCoordinateApi.finalize(req, res)
 );
 
-app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.single("image"), async (req, res) => {
+async function recognizeCoordinatesHandler(req, res) {
   activateRecognitionDeadlineContext(req);
   const recognitionBudget = getRecognitionBudget();
   recognitionBudget?.setIngressMetadata({
@@ -14898,6 +14905,7 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
   let coordinateImageIdentity = null;
   let providerLayoutCandidates = [];
   let providerLayoutResponseId = "";
+  let recognitionImageAcquisition = null;
   let localOcrStructuredLayoutRows = null;
   let oneShotLocalOcrAttempted = false;
   let oneShotLocalOcrLayoutLines = Object.freeze([]);
@@ -14950,6 +14958,13 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
             value: localOcrStructuredLayoutRows,
             enumerable: false,
             configurable: true
+          });
+        }
+        if (recognitionImageAcquisition && typeof payload.rawText === "string") {
+          payload.recognitionAcquisition = buildRecognitionAcquisitionEvidence({
+            rawText: payload.rawText,
+            acquisition: recognitionImageAcquisition,
+            providerResponseId: providerLayoutResponseId
           });
         }
       }
@@ -15277,7 +15292,18 @@ app.post("/api/recognize-coordinates", recognitionDeadlineMiddleware(), upload.s
     console.log("图片大小：", `${req.file.size} bytes`);
     console.log("使用阿里云视觉模型：", aliyunVisionModel);
 
-    const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+    recognitionImageAcquisition = await runBudgetedStage("image_prepare", () => createRecognitionImageVariants({
+      buffer: req.file.buffer,
+      bytes: req.file.size
+    }));
+    console.log("Recognition-first image acquisition prepared:", {
+      version: recognitionImageAcquisition.version,
+      sourceWidth: recognitionImageAcquisition.width,
+      sourceHeight: recognitionImageAcquisition.height,
+      imageCount: recognitionImageAcquisition.images.length,
+      detailTileCount: recognitionImageAcquisition.images.filter(image => image.role === "detail").length,
+      asyncRecommended: recognitionImageAcquisition.asyncRecommended
+    });
     const coordinateEngineV2ContextHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || req.body?.country || req.body?.projectCountry || "");
     const coordinateRawHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || "");
     const handwrittenDmsUploadContext = hasExplicitHandwrittenDmsUploadContext(req.file, coordinateRawHint);
@@ -15697,21 +15723,17 @@ A | 16.0320 | 3.7638
 B | 16.0407 | 3.7634
 
 If no longitude/latitude decimal table is visible, output only: ${noCoordinatesText}`;
-    const imageItems = [
-      {
+    const imageItems = recognitionImageAcquisition.images.map(image => ({
         type: "image_url",
         image_url: {
-          url: imageDataUrl
+          url: image.dataUrl
         }
-      }
-    ];
-    const selectedProviderPrompt = projectedTableOcrAcquisition
-      ? buildProjectedTableOcrAcquisitionPrompt()
-      : buildOneShotStructuredFamilyPrompt({
-          family: oneShotStructuredFamilyRoute.family,
-          format: oneShotAcquisitionContract.format,
-          noCoordinatesText
-        });
+      }));
+    const selectedProviderPrompt = buildRecognitionFirstPromptPrefix(recognitionImageAcquisition)
+      + buildOneShotStructuredFamilyPrompt({
+        family: ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW,
+        noCoordinatesText
+      });
     // Keep the already-qualified production vision model for the single
     // Provider call. The structure hint changes only the transcription
     // contract; it must not silently switch this request to another model.
@@ -15719,7 +15741,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     // Coordinate acquisition is a bounded transcription task. Hybrid Qwen
     // models otherwise enable thinking by default, which can consume the
     // request deadline before a long coordinate table returns any text.
-    const selectedProviderMaxTokens = projectedTableOcrAcquisition ? 4096 : 12000;
+    const selectedProviderMaxTokens = 12000;
 
     // Legacy country/file-name selectors remain available to older parsers but
     // no longer control the first (and only) Provider call. The primary route
@@ -15732,10 +15754,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     });
     const wgs84StrongRouteEvidence = Object.freeze({
       ...oneShotStructuredFamilyRoute.evidence,
-      matched: oneShotStructuredFamilyRoute.matched === true
-        && oneShotStructuredFamilyRoute.family === ONE_SHOT_STRUCTURED_FAMILY.WGS84_TABLE,
-      source: "visible_structure",
-      reasons: Object.freeze([oneShotStructuredFamilyRoute.reason])
+      matched: false,
+      source: "recognition_first_acquisition_deferred",
+      reasons: Object.freeze(["ACQUISITION_MUST_COMPLETE_BEFORE_FAMILY_VALIDATION"])
     });
     const wgs84PrimaryRoute = buildPrimaryRouteDecision({
       family: "wgs84_table",
@@ -15787,21 +15808,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       .find(candidate => candidate.availability.enforced === true
         && candidate.availability.providerCallAllowed === false);
     if (enforcedAvailability) {
-      recognitionBudget?.recordSkippedStage(
-        "generic_provider",
-        `${enforcedAvailability.family}_availability_blocked`,
-        "skipped"
-      );
-      recognitionBudget?.recordSkippedStage(
-        "family_retry",
-        `${enforcedAvailability.family}_availability_blocked`,
-        "skipped"
-      );
-      return res.status(503).json(buildFamilyAvailabilityBlockedPayload({
-        availability: enforcedAvailability.availability,
-        coordinateType: enforcedAvailability.coordinateType,
-        precisionMode: enforcedAvailability.precisionMode
-      }));
+      console.log("Recognition-first acquisition deferred a pre-Provider family availability decision:", {
+        family: enforcedAvailability.family,
+        status: enforcedAvailability.availability.status
+      });
     }
     let mozambiqueTypeLock = getMozambiqueTypeLockEvidence(req.file, coordinateEngineV2ContextHint, {
       detectorMatched: useMozambiqueGeographicPromptFirst
@@ -16253,8 +16263,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             reason: "acquisition_contract_review_required",
             code: "ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED",
             model: `${aliyunVisionModel}+wgs84-table-primary`,
-            rawText: "",
-            coordinates: "",
+            rawText: wgs84PrimaryRawText,
+            coordinates: buildRecognitionAcquisitionEvidence({
+              rawText: wgs84PrimaryRawText,
+              acquisition: recognitionImageAcquisition,
+              providerResponseId: providerLayoutResponseId
+            }).candidateCoordinateLines.map(line => line.text).join("\n"),
             precisionMode: "one-shot-acquisition-contract-review",
             requiresReview: true,
             warning: "The WGS84 primary output did not satisfy its pre-Provider structure, value, source, and observation-set contract and remains review-only.",
@@ -16423,6 +16437,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       temperature: 0.1,
       maxTokens: selectedProviderMaxTokens,
       enableThinking: false,
+      highResolutionImages: recognitionImageAcquisition.images.length > 1,
+      timeoutMs: (recognitionBudget?.deadlineMs || 0) >= 120_000 ? 120_000 : 35_000,
       stageName: oneShotStructuredFamilyRoute.matched ? "pre_route" : "generic_provider",
       lowValue: false,
       familyEvidence: oneShotStructuredFamilyRoute.matched
@@ -16883,8 +16899,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         reason: "acquisition_contract_review_required",
         code: "ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED",
         model: selectedProviderModel,
-        rawText: "",
-        coordinates: "",
+        rawText,
+        coordinates: buildRecognitionAcquisitionEvidence({
+          rawText,
+          acquisition: recognitionImageAcquisition,
+          providerResponseId: providerLayoutResponseId
+        }).candidateCoordinateLines.map(line => line.text).join("\n"),
         precisionMode: "one-shot-acquisition-contract-review",
         requiresReview: true,
         warning: "The one-shot acquisition output did not satisfy its pre-Provider structural and source-binding contract and remains review-only.",
@@ -19411,6 +19431,101 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
       storeRegressionRecognitionTrace(recognitionBudget?.toSanitizedTrace());
     }
   }
+}
+
+const recognitionAcquisitionJobRuntime = createRecognitionAcquisitionJobRuntime({
+  maxJobs: 8,
+  execute: async input => {
+    const form = new FormData();
+    form.append("image", new Blob([input.file.buffer], { type: input.file.mimetype }), input.file.originalname);
+    for (const [key, value] of Object.entries(input.body || {})) {
+      if (typeof value === "string") form.append(key, value);
+    }
+    const response = await fetch(`http://127.0.0.1:${port}/api/internal/recognize-coordinates-long`, {
+      method: "POST",
+      headers: {
+        ...input.forwardHeaders,
+        "x-recognition-async-internal-token": recognitionAsyncInternalToken
+      },
+      body: form
+    });
+    const result = await response.json().catch(() => ({
+      success: false,
+      reason: "async_response_invalid",
+      rawText: "",
+      coordinates: ""
+    }));
+    return { httpStatus: response.status, result };
+  }
+});
+
+app.post(
+  "/api/recognize-coordinates",
+  recognitionDeadlineMiddleware(),
+  upload.single("image"),
+  recognizeCoordinatesHandler
+);
+
+app.post(
+  "/api/internal/recognize-coordinates-long",
+  (req, res, next) => {
+    if (String(req.get("x-recognition-async-internal-token") || "") !== recognitionAsyncInternalToken) {
+      return res.status(404).json({ success: false, reason: "not_found" });
+    }
+    return next();
+  },
+  recognitionDeadlineMiddleware({
+    profile: "async",
+    deadlineMs: 180_000,
+    preflightDeadlineMs: 30_000,
+    executionDeadlineMs: 150_000,
+    responseReserveMs: 5_000,
+    lowValueFallbackCutoffMs: 145_000
+  }),
+  upload.single("image"),
+  recognizeCoordinatesHandler
+);
+
+app.post("/api/recognize-coordinates/jobs", upload.single("image"), (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, reason: "image_required" });
+  const forwardHeaders = {};
+  for (const headerName of ["authorization", "cookie", "x-visitor-id", "x-user-id", "user-agent"]) {
+    const value = req.get(headerName);
+    if (value) forwardHeaders[headerName] = value;
+  }
+  try {
+    const job = recognitionAcquisitionJobRuntime.enqueue({
+      file: {
+        buffer: Buffer.from(req.file.buffer),
+        mimetype: req.file.mimetype,
+        originalname: getUploadedFileDisplayName(req.file) || "coordinate-image"
+      },
+      body: { ...req.body },
+      forwardHeaders
+    });
+    res.setHeader("Location", `/api/recognize-coordinates/jobs/${job.jobId}`);
+    return res.status(202).json({
+      success: true,
+      async: true,
+      ...job
+    });
+  } catch (error) {
+    return res.status(error?.code === "RECOGNITION_JOB_CAPACITY_REACHED" ? 503 : 500).json({
+      success: false,
+      reason: error?.code || "RECOGNITION_ASYNC_JOB_FAILED"
+    });
+  }
+});
+
+app.get("/api/recognize-coordinates/jobs/:jobId", (req, res) => {
+  const job = recognitionAcquisitionJobRuntime.get(req.params.jobId, req.get("x-recognition-job-token"));
+  if (!job) return res.status(404).json({ success: false, reason: "job_not_found" });
+  res.setHeader("Cache-Control", "no-store");
+  return res.status(job.status === "FAILED" ? (job.httpStatus || 500) : 200).json({
+    success: job.status === "SUCCEEDED",
+    async: true,
+    ...job
+  });
 });
 
 app.use((error, req, res, next) => {
