@@ -416,8 +416,21 @@ export function buildRecognitionAcquisitionLogSummary({
   evidence,
   providerCallCount = 0,
   contractReason = null,
+  contractReasons = [],
+  acquisitionStatus = null,
+  authorizationStatus = null,
+  resultStatus = null,
+  mapStatus = null,
+  kmlStatus = null,
+  userUsageConsumed = null,
+  recoveryRequired = null,
   finalState = null
 } = {}) {
+  const normalizedContractReasons = [...new Set([
+    String(contractReason || "").trim(),
+    ...(Array.isArray(contractReasons) ? contractReasons : [])
+      .map(reason => String(reason || "").trim())
+  ].filter(Boolean))].map(reason => reason.slice(0, 160));
   return Object.freeze({
     providerCompletionState: String(evidence?.providerCompletionState || "UNKNOWN"),
     providerCallCount: Math.max(0, Number(providerCallCount) || 0),
@@ -429,6 +442,14 @@ export function buildRecognitionAcquisitionLogSummary({
     boundRowCount: Math.max(0, Number(evidence?.diagnostics?.boundRowCount) || 0),
     unboundRowCount: Math.max(0, Number(evidence?.diagnostics?.unboundRowCount) || 0),
     contractReason: String(contractReason || "NONE").slice(0, 160),
+    contractReasons: Object.freeze(normalizedContractReasons),
+    acquisitionStatus: String(acquisitionStatus || evidence?.acquisitionStatus || "UNKNOWN").slice(0, 80),
+    authorizationStatus: String(authorizationStatus || evidence?.authorizationStatus || "UNKNOWN").slice(0, 80),
+    resultStatus: String(resultStatus || "UNKNOWN").slice(0, 80),
+    mapStatus: String(mapStatus || "UNKNOWN").slice(0, 80),
+    kmlStatus: String(kmlStatus || "UNKNOWN").slice(0, 80),
+    userUsageConsumed: typeof userUsageConsumed === "boolean" ? userUsageConsumed : null,
+    recoveryRequired: typeof recoveryRequired === "boolean" ? recoveryRequired : null,
     finalState: String(finalState || evidence?.authorizationStatus || "UNKNOWN").slice(0, 80)
   });
 }

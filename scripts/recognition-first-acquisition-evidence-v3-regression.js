@@ -4,7 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildRecognitionAcquisitionEvidence,
-  buildRecognitionAcquisitionLogSummary
+  buildRecognitionAcquisitionLogSummary,
+  createRecognitionAcquisitionEvidenceStore,
+  evaluateUnifiedRecognitionFinalAuthorization,
+  evaluateUnifiedRecognitionAcquisition
 } from "../server/recognition/recognition-first-acquisition.js";
 import {
   RECOGNITION_ACQUISITION_JOB_STATUS,
@@ -50,6 +53,80 @@ assert.equal(longEvidence.providerCompletionState, "SUCCEEDED");
 assert.equal(longEvidence.acquisitionStatus, "COMPLETED");
 assert.equal(longEvidence.normalizationStatus, "COMPLETED");
 assert.equal(longEvidence.authorizationStatus, "REVIEW_REQUIRED");
+
+for (const contractStatus of ["CONFORMANT", "REVIEW_REQUIRED", "NON_FAILURE_UNKNOWN"]) {
+  let buildCount = 0;
+  const evidenceStore = createRecognitionAcquisitionEvidenceStore({
+    buildEvidence: input => {
+      buildCount += 1;
+      return buildRecognitionAcquisitionEvidence(input);
+    }
+  });
+  const firstEvidence = evidenceStore.getOrBuild({
+    rawText: longTable,
+    acquisition,
+    providerResponseId: `provider-${contractStatus}`
+  });
+  const firstDecision = evaluateUnifiedRecognitionAcquisition({
+    evidence: firstEvidence,
+    contractStatus,
+    contractReason: `${contractStatus}_REASON`
+  });
+  const reusedByFinalizer = evidenceStore.getOrBuild({ rawText: "must not be reparsed" });
+  const reusedByGroupedRoute = evidenceStore.getOrBuild({ rawText: "must not create a second snapshot" });
+  assert.strictEqual(reusedByFinalizer, firstEvidence, contractStatus);
+  assert.strictEqual(reusedByGroupedRoute, firstEvidence, contractStatus);
+  assert.equal(buildCount, 1, contractStatus);
+  assert.equal(evidenceStore.getBuildCount(), 1, contractStatus);
+  assert.ok(["VALIDATION_PENDING", "COMPLETED_REVIEW_REQUIRED"].includes(firstDecision.finalState), contractStatus);
+}
+
+const safeFinalizedCoordinateResult = Object.freeze({
+  decisionState: "AUTO_EXPORT",
+  qualityGateStatus: "passed",
+  requiresReview: false,
+  kmlReady: true,
+  geometry: Object.freeze({ type: "Polygon", coordinates: [] }),
+  crs: Object.freeze({ type: "name", properties: Object.freeze({ name: "canonical" }) })
+});
+const safeFinalAuthorization = evaluateUnifiedRecognitionFinalAuthorization({
+  body: { finalizedCoordinateResult: safeFinalizedCoordinateResult }
+});
+assert.equal(safeFinalAuthorization.authorized, true);
+assert.equal(safeFinalAuthorization.mapReady, true);
+assert.equal(safeFinalAuthorization.kmlReady, true);
+
+const contradictoryAuthorization = evaluateUnifiedRecognitionFinalAuthorization({
+  body: {
+    authorizationStatus: "AUTHORIZED",
+    requiresReview: true,
+    mapReady: true,
+    kmlReady: true,
+    finalizedCoordinateResult: safeFinalizedCoordinateResult
+  }
+});
+assert.equal(contradictoryAuthorization.authorized, false);
+assert.equal(contradictoryAuthorization.finalRequiresReview, true);
+assert.equal(contradictoryAuthorization.mapReady, false);
+assert.equal(contradictoryAuthorization.kmlReady, false);
+
+for (const unsafeBody of [
+  { authorizationStatus: "AUTHORIZED", mapReady: true, kmlReady: true },
+  { mapReady: false, finalizedCoordinateResult: safeFinalizedCoordinateResult },
+  { kmlReady: false, finalizedCoordinateResult: safeFinalizedCoordinateResult },
+  {
+    finalizedCoordinateResult: {
+      ...safeFinalizedCoordinateResult,
+      qualityGateStatus: "review_required",
+      requiresReview: true
+    }
+  }
+]) {
+  const finalAuthorization = evaluateUnifiedRecognitionFinalAuthorization({ body: unsafeBody });
+  assert.equal(finalAuthorization.authorized, false);
+  assert.equal(finalAuthorization.mapReady, false);
+  assert.equal(finalAuthorization.kmlReady, false);
+}
 assert.equal(longEvidence.candidateCoordinates.length, 20);
 assert.equal(longEvidence.candidateCoordinateLines.length, 20);
 assert.equal(longEvidence.candidateCoordinateGroups.length, 1);
@@ -57,6 +134,15 @@ assert.deepEqual(longEvidence.candidateCoordinates.map(candidate => candidate.so
 assert.equal(longEvidence.imageEvidence.imageCount, 4);
 assert.equal(longEvidence.imageEvidence.detailTileCount, 3);
 assert.ok(longEvidence.visibleCrsEvidence.some(item => /BFTM/iu.test(item.text)));
+const longUnifiedDecision = evaluateUnifiedRecognitionAcquisition({
+  evidence: longEvidence,
+  contractStatus: "CONFORMANT",
+  contractReason: "CONTRACT_CONFORMANT"
+});
+assert.equal(longUnifiedDecision.shouldReturnReview, true);
+assert.equal(longUnifiedDecision.mayProceedToGeometryValidation, false);
+assert.equal(longUnifiedDecision.authorizationStatus, "REVIEW_REQUIRED");
+assert.ok(longUnifiedDecision.contractReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"));
 
 const gkRows = Array.from({ length: 65 }, (_, index) => (
   `${index + 1}\t${13_640_000 + (index * 19)}\t${4_650_000 + (index * 23)}`
@@ -70,6 +156,10 @@ assert.equal(gkEvidence.candidateCoordinates.length, 65);
 assert.equal(gkEvidence.candidateCoordinateGroups.length, 1);
 assert.deepEqual(gkEvidence.candidateCoordinates.map(candidate => candidate.sourceLabel), Array.from({ length: 65 }, (_, index) => String(index + 1)));
 assert.ok(gkEvidence.visibleCrsEvidence.some(item => /GAUSS|GK/iu.test(item.text)));
+assert.equal(evaluateUnifiedRecognitionAcquisition({
+  evidence: gkEvidence,
+  contractStatus: "CONFORMANT"
+}).shouldReturnReview, true);
 
 const decimalEvidence = buildRecognitionAcquisitionEvidence({
   rawText: ["CONTEXT | WGS 84", "Point | Latitude | Longitude", "1 | 6.752778 | -4.369444"].join("\n")
@@ -170,6 +260,30 @@ assert.equal(mixedEvidence.candidateCoordinateGroups.length, 4);
 assert.deepEqual(mixedEvidence.candidateCoordinateGroups.map(group => group.rows.length), [4, 4, 4, 4]);
 assert.ok(mixedEvidence.candidateCoordinateGroups[2].rows.every(row => row.sourceLabel === null && row.sourceLabelInferred === false));
 assert.ok(mixedEvidence.reviewReasons.includes("SOURCE_LABELS_MISSING"));
+assert.equal(evaluateUnifiedRecognitionAcquisition({
+  evidence: mixedEvidence,
+  contractStatus: "CONFORMANT"
+}).shouldReturnReview, true);
+
+const safeDmsEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: [
+    "CONTEXT | WGS 84",
+    dmsGroup("Parent", "Unique Area", [
+      dmsRow("1", "10", "10"),
+      dmsRow("2", "11", "11"),
+      dmsRow("3", "12", "12"),
+      dmsRow("4", "13", "13")
+    ])
+  ].join("\n"),
+  acquisition
+});
+const safeDmsDecision = evaluateUnifiedRecognitionAcquisition({
+  evidence: safeDmsEvidence,
+  contractStatus: "CONFORMANT"
+});
+assert.equal(safeDmsDecision.shouldReturnReview, false);
+assert.equal(safeDmsDecision.mayProceedToGeometryValidation, true);
+assert.equal(safeDmsDecision.authorizationStatus, "VALIDATION_PENDING");
 
 const multiPair = buildRecognitionAcquisitionEvidence({
   rawText: ["CONTEXT | BFTM", "Point | X1 | Y1 | X2 | Y2", "A | 658800 | 1364200 | 658900 | 1364300"].join("\n")
@@ -214,6 +328,12 @@ for (const nonCoordinate of [
   const evidence = buildRecognitionAcquisitionEvidence({ rawText: nonCoordinate, acquisition });
   assert.notEqual(evidence.acquisitionStatus, "COMPLETED", nonCoordinate);
   assert.equal(evidence.candidateCoordinates.length, 0, nonCoordinate);
+  const decision = evaluateUnifiedRecognitionAcquisition({
+    evidence,
+    contractStatus: "CONFORMANT"
+  });
+  assert.equal(decision.shouldReturnFailure, true, nonCoordinate);
+  assert.equal(decision.authorizationStatus, "NOT_ESTABLISHED", nonCoordinate);
 }
 
 const reviewBody = {
@@ -320,6 +440,14 @@ const logSummary = buildRecognitionAcquisitionLogSummary({
   evidence: longEvidence,
   providerCallCount: 1,
   contractReason: "FORMAT_CONTRACT_REVIEW_REQUIRED",
+  contractReasons: ["COORDINATE_FORMAT_REQUIRES_VALIDATION"],
+  acquisitionStatus: "COMPLETED",
+  authorizationStatus: "REVIEW_REQUIRED",
+  resultStatus: "needs_review",
+  mapStatus: "CLOSED",
+  kmlStatus: "CLOSED",
+  userUsageConsumed: true,
+  recoveryRequired: false,
   finalState: "COMPLETED_REVIEW_REQUIRED"
 });
 assert.deepEqual(logSummary, {
@@ -333,6 +461,14 @@ assert.deepEqual(logSummary, {
   boundRowCount: 20,
   unboundRowCount: 0,
   contractReason: "FORMAT_CONTRACT_REVIEW_REQUIRED",
+  contractReasons: ["FORMAT_CONTRACT_REVIEW_REQUIRED", "COORDINATE_FORMAT_REQUIRES_VALIDATION"],
+  acquisitionStatus: "COMPLETED",
+  authorizationStatus: "REVIEW_REQUIRED",
+  resultStatus: "needs_review",
+  mapStatus: "CLOSED",
+  kmlStatus: "CLOSED",
+  userUsageConsumed: true,
+  recoveryRequired: false,
   finalState: "COMPLETED_REVIEW_REQUIRED"
 });
 assert.equal(JSON.stringify(logSummary).includes("658800"), false);
@@ -343,9 +479,18 @@ for (const forbidden of ["kyrgyz", "cote", "ivory", ".jpg", ".png"]) {
 }
 const serverSource = fs.readFileSync(path.join(root, "server.js"), "utf8");
 assert.equal((serverSource.match(/acquisitionEvidence\.acquisitionStatus === "COMPLETED"/gu) || []).length, 2);
-assert.equal((serverSource.match(/recognitionAcquisitionReviewAuthority = buildRecognitionAcquisitionReviewUsageAuthority/gu) || []).length, 2);
-assert.equal((serverSource.match(/Recognition acquisition evidence:/gu) || []).length, 2);
+assert.equal((serverSource.match(/recognitionAcquisitionReviewAuthority = buildRecognitionAcquisitionReviewUsageAuthority/gu) || []).length, 3);
+assert.equal((serverSource.match(/registerUnifiedRecognitionAcquisition\(\{/gu) || []).length, 2);
+assert.equal((serverSource.match(/returnUnifiedRecognitionAcquisitionTerminal\(\{/gu) || []).length, 3);
+assert.equal((serverSource.match(/requestRecognitionAcquisitionEvidenceStore\.getOrBuild\(\{/gu) || []).length, 3);
+assert.doesNotMatch(serverSource, /buildRecognitionAcquisitionEvidence\(\{/u);
+assert.match(serverSource, /const wgs84UnifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore\.getOrBuild[\s\S]+const acquisitionEvidence = wgs84UnifiedAcquisitionEvidence/u);
+assert.match(serverSource, /const unifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore\.getOrBuild[\s\S]+const groupedAcquisitionEvidence = unifiedAcquisitionEvidence/u);
+assert.match(serverSource, /if \(unifiedRecognitionAcquisitionContext\?\.evidence\)[\s\S]+requestRecognitionAcquisitionEvidenceStore\.getOrBuild/u);
+assert.match(serverSource, /evaluateUnifiedRecognitionFinalAuthorization\(\{ body \}\)/u);
+assert.doesNotMatch(serverSource, /const explicitlyAuthorized =/u);
+assert.match(serverSource, /Recognition acquisition final state:/u);
 assert.match(serverSource, /recovered\.result === COORDINATE_USAGE_COMMIT_RESULT\.NOT_FOUND/);
 assert.doesNotMatch(serverSource, /res\.status\(acquisitionCompleted \? 200 : 422\)\.json/);
 
-console.log("recognition-first acquisition-evidence v3 regression: PASS (20-row, 65-row, 4-group DMS, evidence retention, async, usage/recovery, fail-close)");
+console.log("recognition-first acquisition-evidence v4 regression: PASS (unified conformant/nonconformant routing, 20-row, 65-row, 4-group DMS, evidence retention, async, usage/recovery, fail-close)");

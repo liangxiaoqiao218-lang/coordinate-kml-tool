@@ -2824,14 +2824,16 @@ test("one-shot structured server gates conformance before parsing and returns sa
   assert.match(reviewBlock, /extractProviderDmsReviewEvidence/);
   assert.match(reviewBlock, /DMS_AUTHORITY:safe_boundary_auto_release/);
   assert.match(reviewBlock, /rawText:\s*wgs84PrimaryRawText|rawText,/);
-  assert.match(reviewBlock, /buildRecognitionAcquisitionEvidence/);
+  assert.match(reviewBlock, /requestRecognitionAcquisitionEvidenceStore\.getOrBuild/);
   assert.match(reviewBlock, /candidateCoordinateLines/);
 });
 
 test("one-shot structured conformance diagnostics remain bounded", () => {
   const start = serverSource.indexOf('console.log("One-shot acquisition conformance:"');
-  const diagnostic = serverSource.slice(start, serverSource.indexOf("if (oneShotAcquisitionConformance.status", start));
+  const end = serverSource.indexOf("// SANITIZED_ONE_SHOT_ACQUISITION_LOG_END", start);
   assert.ok(start >= 0);
+  assert.ok(end > start);
+  const diagnostic = serverSource.slice(start, end);
   assert.match(diagnostic, /family|status|reason|counts|providerCallCount|localOcrCallCount|terminalState/);
   assert.match(diagnostic, /sourceRegionCount/);
   assert.match(diagnostic, /observedCandidateCount|boundCandidateCount|unassignedCandidateCount/);
@@ -2972,8 +2974,12 @@ test("one-shot structured WGS84 specialized route gates parsing and usage behind
   assert.ok(block.indexOf("getWgs84TableCoordinatesInfo") > conformance);
   assert.ok(block.indexOf("consumeCoordinateUsage") > conformance);
   assert.match(block, /ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED/);
+  const diagnosticStart = block.indexOf('console.log("One-shot WGS84 primary acquisition conformance:"');
+  const diagnosticEnd = block.indexOf("// SANITIZED_WGS84_PRIMARY_ACQUISITION_LOG_END", diagnosticStart);
+  assert.ok(diagnosticStart >= 0);
+  assert.ok(diagnosticEnd > diagnosticStart);
   assert.doesNotMatch(
-    block.slice(block.indexOf('console.log("One-shot WGS84 primary acquisition conformance:"'), block.indexOf("if (wgs84PrimaryConformance.status")),
+    block.slice(diagnosticStart, diagnosticEnd),
     /rawText|providerRawText|imageDataUrl|authorization|cookie|apiKey|secret|headers|bbox|observationIdentity/iu
   );
 });

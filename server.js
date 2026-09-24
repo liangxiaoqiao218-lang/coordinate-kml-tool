@@ -125,10 +125,12 @@ import {
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
 import {
-  buildRecognitionAcquisitionEvidence,
   buildRecognitionAcquisitionLogSummary,
   buildRecognitionFirstPromptPrefix,
-  createRecognitionImageVariants
+  createRecognitionAcquisitionEvidenceStore,
+  createRecognitionImageVariants,
+  evaluateUnifiedRecognitionFinalAuthorization,
+  evaluateUnifiedRecognitionAcquisition
 } from "./server/recognition/recognition-first-acquisition.js";
 import {
   ACQUISITION_REVIEW_STATUS,
@@ -14983,6 +14985,9 @@ async function recognizeCoordinatesHandler(req, res) {
   let oneShotStructuredFamilyRoute = classifyOneShotStructuredFamily();
   let oneShotAcquisitionContract = createOneShotAcquisitionContract({ route: oneShotStructuredFamilyRoute });
   let responseCommitPromise = null;
+  let unifiedRecognitionAcquisitionContext = null;
+  let unifiedRecognitionAcquisitionFinalLogged = false;
+  const requestRecognitionAcquisitionEvidenceStore = createRecognitionAcquisitionEvidenceStore();
   const sendRecognitionJson = res.json.bind(res);
   const runBudgetedStage = async (stageName, action) => {
     recognitionBudget?.assertCanContinue({ stageName });
@@ -15028,8 +15033,12 @@ async function recognizeCoordinatesHandler(req, res) {
             configurable: true
           });
         }
-        if (recognitionImageAcquisition && typeof payload.rawText === "string") {
-          payload.recognitionAcquisition = buildRecognitionAcquisitionEvidence({
+        if (unifiedRecognitionAcquisitionContext?.evidence) {
+          payload.recognitionAcquisition = unifiedRecognitionAcquisitionContext.evidence;
+        } else if (!payload.recognitionAcquisition
+          && recognitionImageAcquisition
+          && typeof payload.rawText === "string") {
+          payload.recognitionAcquisition = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
             rawText: payload.rawText,
             acquisition: recognitionImageAcquisition,
             providerResponseId: providerLayoutResponseId
@@ -15057,8 +15066,86 @@ async function recognizeCoordinatesHandler(req, res) {
     metadata,
     checkedCoordinateUsageStatus?.quota || null
   );
+  const registerUnifiedRecognitionAcquisition = ({ evidence, decision, conformance }) => {
+    if (unifiedRecognitionAcquisitionContext?.evidence === evidence) return;
+    unifiedRecognitionAcquisitionContext = Object.freeze({ evidence, decision, conformance });
+    console.log("Recognition acquisition evidence:", buildRecognitionAcquisitionLogSummary({
+      evidence,
+      providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+      contractReason: conformance?.reason,
+      contractReasons: decision.contractReasons,
+      acquisitionStatus: decision.acquisitionStatus,
+      authorizationStatus: decision.authorizationStatus,
+      resultStatus: decision.resultStatus,
+      mapStatus: decision.mapStatus,
+      kmlStatus: decision.kmlStatus,
+      finalState: decision.finalState
+    }));
+  };
+  const attachUnifiedRecognitionAcquisition = body => {
+    const context = unifiedRecognitionAcquisitionContext;
+    if (!context || !body || typeof body !== "object" || Array.isArray(body)) return body;
+    const { evidence, decision } = context;
+    if (decision.acquisitionStatus !== "COMPLETED") return body;
+    const finalAuthorization = evaluateUnifiedRecognitionFinalAuthorization({ body });
+    const { authorized } = finalAuthorization;
+    const authorizationStatus = authorized ? "AUTHORIZED" : "REVIEW_REQUIRED";
+    return {
+      ...body,
+      recognitionAcquisition: evidence,
+      acquisitionStatus: "COMPLETED",
+      authorizationStatus,
+      resultStatus: authorized ? "authorized" : "needs_review",
+      requiresReview: !authorized,
+      mapReady: finalAuthorization.mapReady,
+      kmlReady: finalAuthorization.kmlReady,
+      mapStatus: finalAuthorization.mapReady ? "ENABLED" : "CLOSED",
+      kmlStatus: finalAuthorization.kmlReady ? "ENABLED" : "CLOSED",
+      candidateCoordinates: evidence.candidateCoordinates,
+      candidateCoordinateLines: evidence.candidateCoordinateLines,
+      candidateCoordinateGroups: evidence.candidateCoordinateGroups,
+      visibleCrsEvidence: evidence.visibleCrsEvidence,
+      imageAcquisitionEvidence: evidence.imageEvidence,
+      reviewReasons: [...new Set([
+        ...(Array.isArray(body.reviewReasons) ? body.reviewReasons : []),
+        ...decision.contractReasons,
+        ...evidence.reviewReasons
+      ])]
+    };
+  };
+  const logUnifiedRecognitionAcquisitionFinalState = ({
+    body,
+    usageConsumed = null,
+    recoveryRequired = false,
+    finalState = null
+  } = {}) => {
+    if (unifiedRecognitionAcquisitionFinalLogged || !unifiedRecognitionAcquisitionContext) return;
+    unifiedRecognitionAcquisitionFinalLogged = true;
+    const { evidence, decision, conformance } = unifiedRecognitionAcquisitionContext;
+    console.log("Recognition acquisition final state:", buildRecognitionAcquisitionLogSummary({
+      evidence,
+      providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+      contractReason: conformance?.reason,
+      contractReasons: decision.contractReasons,
+      acquisitionStatus: body?.acquisitionStatus || decision.acquisitionStatus,
+      authorizationStatus: body?.authorizationStatus || decision.authorizationStatus,
+      resultStatus: body?.resultStatus || decision.resultStatus,
+      mapStatus: body?.mapStatus || decision.mapStatus,
+      kmlStatus: body?.kmlStatus || decision.kmlStatus,
+      userUsageConsumed: usageConsumed,
+      recoveryRequired,
+      finalState: finalState || (
+        body?.authorizationStatus === "AUTHORIZED"
+          ? "AUTHORIZED"
+          : body?.resultStatus === "needs_review"
+            ? "COMPLETED_REVIEW_REQUIRED"
+            : decision.finalState
+      )
+    }));
+  };
   res.json = function usageSafeRecognitionJson(body) {
     if (responseCommitPromise) return res;
+    body = attachUnifiedRecognitionAcquisition(body);
     responseCommitPromise = (async () => {
       try {
         const settlement = await usageCommitController.settle({
@@ -15067,7 +15154,7 @@ async function recognizeCoordinatesHandler(req, res) {
         });
         if (settlement.kind === "USAGE_COMMIT_OUTCOME_UNKNOWN") {
           res.status(503);
-          return sendRecognitionJson({
+          const unknownBody = {
             success: false,
             reason: "usage_commit_outcome_unknown",
             code: COORDINATE_USAGE_ERROR_CODE.COMMIT_OUTCOME_UNKNOWN,
@@ -15078,13 +15165,20 @@ async function recognizeCoordinatesHandler(req, res) {
             retryAllowed: false,
             rawText: "",
             coordinates: ""
+          };
+          logUnifiedRecognitionAcquisitionFinalState({
+            body: unknownBody,
+            usageConsumed: null,
+            recoveryRequired: true,
+            finalState: "USAGE_COMMIT_OUTCOME_UNKNOWN"
           });
+          return sendRecognitionJson(unknownBody);
         }
         if (settlement.kind === "USAGE_COMMIT_FAILED") {
           const commitResult = settlement.commitResult || {};
           const limitExceeded = commitResult.result === COORDINATE_USAGE_COMMIT_RESULT.QUOTA_EXHAUSTED;
           res.status(limitExceeded ? 403 : 500);
-          return sendRecognitionJson({
+          const failedCommitBody = {
             success: false,
             reason: limitExceeded ? "limit_exceeded" : "usage_commit_failed",
             code: limitExceeded ? getQuotaExhaustedCode("convert") : "CONVERT_QUOTA_CONSUME_FAILED",
@@ -15095,15 +15189,29 @@ async function recognizeCoordinatesHandler(req, res) {
             usageConsumed: false,
             rawText: "",
             coordinates: ""
+          };
+          logUnifiedRecognitionAcquisitionFinalState({
+            body: failedCommitBody,
+            usageConsumed: false,
+            recoveryRequired: false,
+            finalState: "USAGE_COMMIT_FAILED"
           });
+          return sendRecognitionJson(failedCommitBody);
         }
         if (settlement.kind === "UNCHARGED_RESPONSE" && settlement.authorityReason !== "REGRESSION_TEST") {
           const originalStatus = Number(res.statusCode);
           res.status(body?.success === false && originalStatus >= 400 && originalStatus < 600 ? originalStatus : 422);
-          return sendRecognitionJson(buildUnchargedCoordinateFailureResponse({
+          const unchargedBody = buildUnchargedCoordinateFailureResponse({
             body,
             recognitionRequestId: recognitionBudget?.requestId || null
-          }));
+          });
+          logUnifiedRecognitionAcquisitionFinalState({
+            body: unchargedBody,
+            usageConsumed: false,
+            recoveryRequired: false,
+            finalState: "FAILED_NO_COORDINATE_EVIDENCE"
+          });
+          return sendRecognitionJson(unchargedBody);
         }
         const committedBody = settlement.kind === "USAGE_COMMITTED" && body && typeof body === "object"
           ? {
@@ -15113,13 +15221,18 @@ async function recognizeCoordinatesHandler(req, res) {
             usageConsumed: true
           }
           : body;
+        logUnifiedRecognitionAcquisitionFinalState({
+          body: committedBody,
+          usageConsumed: settlement.kind === "USAGE_COMMITTED" ? true : false,
+          recoveryRequired: false
+        });
         if (!res.headersSent) sendRecognitionJson(committedBody);
         return res;
       } catch (error) {
         if (res.headersSent) return res;
         if (error?.code === RECOGNITION_BUDGET_CODE || error?.code === RECOGNITION_DEADLINE_CODE) {
           res.status(503);
-          return sendRecognitionJson({
+          const budgetFailureBody = {
             success: false,
             reason: error.reason || "budget_exhausted",
             code: RECOGNITION_BUDGET_CODE,
@@ -15129,12 +15242,19 @@ async function recognizeCoordinatesHandler(req, res) {
             retryAllowed: true,
             rawText: "",
             coordinates: ""
+          };
+          logUnifiedRecognitionAcquisitionFinalState({
+            body: budgetFailureBody,
+            usageConsumed: false,
+            recoveryRequired: false,
+            finalState: "BUDGET_EXHAUSTED"
           });
+          return sendRecognitionJson(budgetFailureBody);
         }
         const atomicityUnavailable = error?.code === COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE
           || error?.code === COORDINATE_USAGE_ERROR_CODE.COMMIT_FAILED;
         res.status(atomicityUnavailable ? 503 : 500);
-        return sendRecognitionJson({
+        const atomicityFailureBody = {
           success: false,
           reason: atomicityUnavailable ? "usage_atomicity_unavailable" : "usage_commit_failed",
           code: atomicityUnavailable
@@ -15147,10 +15267,125 @@ async function recognizeCoordinatesHandler(req, res) {
           usageConsumed: false,
           rawText: "",
           coordinates: ""
+        };
+        logUnifiedRecognitionAcquisitionFinalState({
+          body: atomicityFailureBody,
+          usageConsumed: false,
+          recoveryRequired: false,
+          finalState: "USAGE_ATOMICITY_UNAVAILABLE"
         });
+        return sendRecognitionJson(atomicityFailureBody);
       }
     })();
     return res;
+  };
+  const returnUnifiedRecognitionAcquisitionTerminal = async ({
+    rawText,
+    evidence,
+    decision,
+    conformance,
+    model,
+    warning = "识别采集已完成；候选坐标尚未通过完整授权验证，地图与 KML 保持关闭。"
+  }) => {
+    if (decision.mayProceedToGeometryValidation) return null;
+    if (decision.shouldReturnFailure) {
+      const failurePayload = {
+        success: false,
+        reason: "recognition_failed_closed",
+        code: "COORDINATE_RECOGNITION_FAILED_CLOSED",
+        model,
+        rawText: "",
+        coordinates: "",
+        acquisitionStatus: decision.acquisitionStatus,
+        authorizationStatus: decision.authorizationStatus,
+        resultStatus: decision.resultStatus,
+        requiresReview: false,
+        mapReady: false,
+        kmlReady: false,
+        mapStatus: "CLOSED",
+        kmlStatus: "CLOSED",
+        reviewReasons: decision.contractReasons,
+        acquisitionContractConformance: conformance
+      };
+      return res.status(422).json(failurePayload);
+    }
+
+    const consumeResult = await consumeCoordinateUsage({
+      note: "Coordinate recognition consumed after unified Provider acquisition completed for review"
+    });
+    if (!consumeResult.success) {
+      return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+        success: false,
+        reason: consumeResult.reason || "db_error",
+        code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+        error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+    const reviewPayload = {
+      success: true,
+      reason: "acquisition_completed_review_required",
+      code: "UNIFIED_RECOGNITION_ACQUISITION_REVIEW_REQUIRED",
+      model,
+      rawText,
+      coordinates: evidence.candidateCoordinateLines.map(line => line.text).join("\n"),
+      precisionMode: "unified-recognition-acquisition-review",
+      acquisitionStatus: "COMPLETED",
+      authorizationStatus: "REVIEW_REQUIRED",
+      resultStatus: "needs_review",
+      requiresReview: true,
+      mapReady: false,
+      kmlReady: false,
+      mapStatus: "CLOSED",
+      kmlStatus: "CLOSED",
+      warning,
+      recognitionAcquisition: evidence,
+      candidateCoordinates: evidence.candidateCoordinates,
+      candidateCoordinateLines: evidence.candidateCoordinateLines,
+      candidateCoordinateGroups: evidence.candidateCoordinateGroups,
+      visibleCrsEvidence: evidence.visibleCrsEvidence,
+      imageAcquisitionEvidence: evidence.imageEvidence,
+      reviewReasons: decision.contractReasons,
+      acquisitionContractConformance: conformance,
+      parserTrace: [
+        "UNIFIED_RECOGNITION_ACQUISITION:completed",
+        "UNIFIED_RECOGNITION_AUTHORIZATION:review_required"
+      ],
+      quota: consumeResult.quota
+    };
+    const reviewEngine = buildCoordinateEngineV2ShadowResult(reviewPayload, {
+      forceRequiresReview: true,
+      rawHint: ""
+    });
+    const reviewResponse = {
+      ...keepRecognizedCoordinatesAsPointReview(
+        buildCoordinateVerificationResponse(reviewPayload, reviewEngine),
+        warning,
+        { blockMap: true }
+      ),
+      requestId: recognitionBudget?.requestId || null,
+      acquisitionStatus: "COMPLETED",
+      authorizationStatus: "REVIEW_REQUIRED",
+      resultStatus: "needs_review",
+      requiresReview: true,
+      mapReady: false,
+      kmlReady: false,
+      mapStatus: "CLOSED",
+      kmlStatus: "CLOSED",
+      recognitionAcquisition: evidence,
+      candidateCoordinates: evidence.candidateCoordinates,
+      candidateCoordinateLines: evidence.candidateCoordinateLines,
+      candidateCoordinateGroups: evidence.candidateCoordinateGroups,
+      visibleCrsEvidence: evidence.visibleCrsEvidence,
+      imageAcquisitionEvidence: evidence.imageEvidence,
+      reviewReasons: decision.contractReasons
+    };
+    reviewResponse.recognitionAcquisitionReviewAuthority = buildRecognitionAcquisitionReviewUsageAuthority({
+      recognitionRequestId: recognitionBudget?.requestId,
+      body: reviewResponse
+    });
+    return res.status(200).json(reviewResponse);
   };
   const parserTrace = ["OCR"];
   let stage1ProviderSucceeded = false;
@@ -16325,12 +16560,32 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             ? "CANDIDATE_EVIDENCE_ALLOWED"
             : "REVIEW_REQUIRED"
         });
+        // SANITIZED_WGS84_PRIMARY_ACQUISITION_LOG_END
+        const wgs84UnifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
+          rawText: wgs84PrimaryRawText,
+          acquisition: recognitionImageAcquisition,
+          providerResponseId: providerLayoutResponseId
+        });
+        const wgs84UnifiedAcquisitionDecision = evaluateUnifiedRecognitionAcquisition({
+          evidence: wgs84UnifiedAcquisitionEvidence,
+          contractStatus: wgs84PrimaryConformance.status,
+          contractReason: wgs84PrimaryConformance.reason
+        });
+        registerUnifiedRecognitionAcquisition({
+          evidence: wgs84UnifiedAcquisitionEvidence,
+          decision: wgs84UnifiedAcquisitionDecision,
+          conformance: wgs84PrimaryConformance
+        });
+        const wgs84UnifiedTerminalResponse = await returnUnifiedRecognitionAcquisitionTerminal({
+          rawText: wgs84PrimaryRawText,
+          evidence: wgs84UnifiedAcquisitionEvidence,
+          decision: wgs84UnifiedAcquisitionDecision,
+          conformance: wgs84PrimaryConformance,
+          model: `${aliyunVisionModel}+wgs84-table-primary`
+        });
+        if (wgs84UnifiedTerminalResponse) return wgs84UnifiedTerminalResponse;
         if (wgs84PrimaryConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
-          const acquisitionEvidence = buildRecognitionAcquisitionEvidence({
-            rawText: wgs84PrimaryRawText,
-            acquisition: recognitionImageAcquisition,
-            providerResponseId: providerLayoutResponseId
-          });
+          const acquisitionEvidence = wgs84UnifiedAcquisitionEvidence;
           const acquisitionCompleted = acquisitionEvidence.acquisitionStatus === "COMPLETED";
           console.log("Recognition acquisition evidence:", buildRecognitionAcquisitionLogSummary({
             evidence: acquisitionEvidence,
@@ -16633,6 +16888,47 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerProjectedParsedRowCount: providerProjectedDiagnostic.diagnostics?.parsedProjectedRowCount || 0,
       providerProjectedRejectedCandidateLineCount: providerProjectedDiagnostic.diagnostics?.rejectedProjectedCandidateLineCount || 0
     });
+    // SANITIZED_ONE_SHOT_ACQUISITION_LOG_END
+    const unifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
+      rawText,
+      acquisition: recognitionImageAcquisition,
+      providerResponseId: providerLayoutResponseId
+    });
+    const unifiedAcquisitionDecision = evaluateUnifiedRecognitionAcquisition({
+      evidence: unifiedAcquisitionEvidence,
+      contractStatus: oneShotAcquisitionConformance.status,
+      contractReason: oneShotAcquisitionConformance.reason
+    });
+    const unifiedFormatRequiresReview = unifiedAcquisitionDecision.contractReasons
+      .includes("COORDINATE_FORMAT_REQUIRES_VALIDATION");
+    const conformantWouldBypassReview = oneShotAcquisitionConformance.status
+      === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT
+      && !unifiedAcquisitionDecision.mayProceedToGeometryValidation;
+    registerUnifiedRecognitionAcquisition({
+      evidence: unifiedAcquisitionEvidence,
+      decision: unifiedAcquisitionDecision,
+      conformance: oneShotAcquisitionConformance
+    });
+    if (unifiedFormatRequiresReview || conformantWouldBypassReview) {
+      const unifiedTerminalResponse = await returnUnifiedRecognitionAcquisitionTerminal({
+        rawText,
+        evidence: unifiedAcquisitionEvidence,
+        decision: unifiedAcquisitionDecision,
+        conformance: oneShotAcquisitionConformance,
+        model: selectedProviderModel
+      });
+      if (unifiedTerminalResponse) return unifiedTerminalResponse;
+    }
+    if (unifiedAcquisitionDecision.shouldReturnFailure
+      && oneShotAcquisitionConformance.status === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
+      return returnUnifiedRecognitionAcquisitionTerminal({
+        rawText,
+        evidence: unifiedAcquisitionEvidence,
+        decision: unifiedAcquisitionDecision,
+        conformance: oneShotAcquisitionConformance,
+        model: selectedProviderModel
+      });
+    }
     if (oneShotAcquisitionConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
       const trustedLocalSourceRows = oneShotLocalOcrSourceText.split(/\r?\n/u)
         .map(line => line.trim())
@@ -16978,11 +17274,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       if (groupedProviderReviewApplies) {
         const authorizeForGeometryValidation = groupedProviderDmsEvidence.status
           === ACQUISITION_REVIEW_STATUS.AUTHORIZATION_CANDIDATE;
-        const groupedAcquisitionEvidence = buildRecognitionAcquisitionEvidence({
-          rawText,
-          acquisition: recognitionImageAcquisition,
-          providerResponseId: providerLayoutResponseId
-        });
+        const groupedAcquisitionEvidence = unifiedAcquisitionEvidence;
         const consumeResult = await consumeCoordinateUsage({
           note: authorizeForGeometryValidation
             ? "Coordinate recognition consumed after grouped Provider DMS acquisition"
@@ -17108,18 +17400,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ? providerDmsReviewResponse
           : promoteRecognizedCoordinatesToSafeBoundary(providerDmsReviewResponse, ""));
       }
-      const acquisitionEvidence = buildRecognitionAcquisitionEvidence({
-        rawText,
-        acquisition: recognitionImageAcquisition,
-        providerResponseId: providerLayoutResponseId
-      });
+      const acquisitionEvidence = unifiedAcquisitionEvidence;
       const acquisitionCompleted = acquisitionEvidence.acquisitionStatus === "COMPLETED";
-      console.log("Recognition acquisition evidence:", buildRecognitionAcquisitionLogSummary({
-        evidence: acquisitionEvidence,
-        providerCallCount: recognitionBudget?.providerAttemptCount || 0,
-        contractReason: oneShotAcquisitionConformance.reason,
-        finalState: acquisitionCompleted ? "COMPLETED_REVIEW_REQUIRED" : "FAILED_NO_COORDINATE_EVIDENCE"
-      }));
       const consumeResult = acquisitionCompleted
         ? await consumeCoordinateUsage({ note: "Coordinate recognition consumed after Provider acquisition completed for review" })
         : null;

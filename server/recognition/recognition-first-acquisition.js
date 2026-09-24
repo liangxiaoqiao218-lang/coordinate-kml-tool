@@ -1,5 +1,9 @@
 import sharp from "sharp";
 import {
+  COORDINATE_DECISION_STATE,
+  COORDINATE_QUALITY_GATE_STATUS
+} from "../coordinate-finalizer/reason-codes.js";
+import {
   buildRecognitionAcquisitionLogSummary,
   extractRecognitionCandidateEvidence
 } from "./recognition-candidate-evidence.js";
@@ -380,5 +384,149 @@ export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, prov
       asyncRecommended: acquisition?.asyncRecommended === true
     }),
     authority: "EVIDENCE_ONLY"
+  });
+}
+
+export function createRecognitionAcquisitionEvidenceStore({
+  buildEvidence = buildRecognitionAcquisitionEvidence
+} = {}) {
+  let evidence = null;
+  let buildCount = 0;
+  return Object.freeze({
+    getOrBuild(input) {
+      if (!evidence) {
+        evidence = buildEvidence(input);
+        buildCount += 1;
+      }
+      return evidence;
+    },
+    peek() {
+      return evidence;
+    },
+    getBuildCount() {
+      return buildCount;
+    }
+  });
+}
+
+export function evaluateUnifiedRecognitionFinalAuthorization({ body = {} } = {}) {
+  const finalized = body?.finalizedCoordinateResult || {};
+  const finalRequiresReview = body?.requiresReview === true
+    || finalized.requiresReview === true
+    || finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED;
+  const finalizerGatePassed = finalized.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
+    && finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.PASSED
+    && finalized.requiresReview === false
+    && finalized.kmlReady === true
+    && Boolean(finalized.geometry)
+    && Boolean(finalized.crs);
+  const mapGatePassed = body?.mapReady !== false && finalized.mapReady !== false;
+  const kmlGatePassed = body?.kmlReady !== false && finalized.kmlReady === true;
+  const authorized = !finalRequiresReview
+    && finalizerGatePassed
+    && mapGatePassed
+    && kmlGatePassed;
+  return Object.freeze({
+    authorized,
+    finalRequiresReview,
+    finalizerGatePassed,
+    mapGatePassed,
+    kmlGatePassed,
+    mapReady: authorized && mapGatePassed,
+    kmlReady: authorized && kmlGatePassed
+  });
+}
+
+const AUTHORIZATION_ELIGIBLE_FORMATS = Object.freeze(new Set([
+  "DMS",
+  "WGS84_DECIMAL"
+]));
+
+export function evaluateUnifiedRecognitionAcquisition({
+  evidence,
+  contractStatus = "UNKNOWN",
+  contractReason = null
+} = {}) {
+  const acquisitionStatus = String(evidence?.acquisitionStatus || "EMPTY");
+  const providerCompletionState = String(evidence?.providerCompletionState || "UNKNOWN");
+  const candidates = Array.isArray(evidence?.candidateCoordinates)
+    ? evidence.candidateCoordinates
+    : [];
+  const reviewReasons = Array.isArray(evidence?.reviewReasons)
+    ? evidence.reviewReasons.map(reason => String(reason || "").trim()).filter(Boolean)
+    : [];
+  const normalizedContractStatus = String(contractStatus || "UNKNOWN");
+  const normalizedContractReason = String(contractReason || "").trim();
+  const contractReasonSet = new Set([
+    ...(normalizedContractStatus === "CONFORMANT" ? [] : [normalizedContractReason]),
+    ...reviewReasons
+  ].filter(Boolean));
+  const completed = providerCompletionState === "SUCCEEDED"
+    && acquisitionStatus === "COMPLETED"
+    && candidates.length > 0;
+  const normalizationComplete = evidence?.normalizationStatus === "COMPLETED";
+  const allRowsBound = Number(evidence?.diagnostics?.unboundRowCount || 0) === 0;
+  const hasUniqueGroups = Number(evidence?.diagnostics?.candidateGroupCount || 0) > 0;
+  const formatsEligible = candidates.length > 0
+    && candidates.every(candidate => AUTHORIZATION_ELIGIBLE_FORMATS.has(String(candidate?.format || "")));
+  const contractConformant = normalizedContractStatus === "CONFORMANT";
+  if (completed && !contractConformant) contractReasonSet.add("ACQUISITION_CONTRACT_NOT_CONFORMANT");
+  if (completed && !normalizationComplete) contractReasonSet.add("CANDIDATE_NORMALIZATION_INCOMPLETE");
+  if (completed && !allRowsBound) contractReasonSet.add("COORDINATE_ROW_UNBOUND");
+  if (completed && !hasUniqueGroups) contractReasonSet.add("GROUP_BOUNDARY_NOT_ESTABLISHED");
+  if (completed && !formatsEligible) contractReasonSet.add("COORDINATE_FORMAT_REQUIRES_VALIDATION");
+  const contractReasons = [...contractReasonSet];
+  const mayProceedToGeometryValidation = completed
+    && contractConformant
+    && normalizationComplete
+    && allRowsBound
+    && hasUniqueGroups
+    && formatsEligible
+    && reviewReasons.length === 0;
+
+  if (!completed) {
+    return Object.freeze({
+      providerCompletionState,
+      acquisitionStatus,
+      authorizationStatus: "NOT_ESTABLISHED",
+      resultStatus: "failed",
+      finalState: "FAILED_NO_COORDINATE_EVIDENCE",
+      mapStatus: "CLOSED",
+      kmlStatus: "CLOSED",
+      contractReasons: Object.freeze(contractReasons),
+      mayProceedToGeometryValidation: false,
+      shouldReturnReview: false,
+      shouldReturnFailure: true
+    });
+  }
+
+  if (!mayProceedToGeometryValidation) {
+    return Object.freeze({
+      providerCompletionState,
+      acquisitionStatus: "COMPLETED",
+      authorizationStatus: "REVIEW_REQUIRED",
+      resultStatus: "needs_review",
+      finalState: "COMPLETED_REVIEW_REQUIRED",
+      mapStatus: "CLOSED",
+      kmlStatus: "CLOSED",
+      contractReasons: Object.freeze(contractReasons),
+      mayProceedToGeometryValidation: false,
+      shouldReturnReview: true,
+      shouldReturnFailure: false
+    });
+  }
+
+  return Object.freeze({
+    providerCompletionState,
+    acquisitionStatus: "COMPLETED",
+    authorizationStatus: "VALIDATION_PENDING",
+    resultStatus: "validation_pending",
+    finalState: "VALIDATION_PENDING",
+    mapStatus: "CLOSED",
+    kmlStatus: "CLOSED",
+    contractReasons: Object.freeze(contractReasons),
+    mayProceedToGeometryValidation: true,
+    shouldReturnReview: false,
+    shouldReturnFailure: false
   });
 }
