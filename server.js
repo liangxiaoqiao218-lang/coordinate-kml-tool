@@ -125,10 +125,11 @@ import {
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
 import {
-  buildRecognitionAcquisitionEvidence,
   buildRecognitionAcquisitionLogSummary,
   buildRecognitionFirstPromptPrefix,
+  createRecognitionAcquisitionEvidenceStore,
   createRecognitionImageVariants,
+  evaluateUnifiedRecognitionFinalAuthorization,
   evaluateUnifiedRecognitionAcquisition
 } from "./server/recognition/recognition-first-acquisition.js";
 import {
@@ -14986,6 +14987,7 @@ async function recognizeCoordinatesHandler(req, res) {
   let responseCommitPromise = null;
   let unifiedRecognitionAcquisitionContext = null;
   let unifiedRecognitionAcquisitionFinalLogged = false;
+  const requestRecognitionAcquisitionEvidenceStore = createRecognitionAcquisitionEvidenceStore();
   const sendRecognitionJson = res.json.bind(res);
   const runBudgetedStage = async (stageName, action) => {
     recognitionBudget?.assertCanContinue({ stageName });
@@ -15031,8 +15033,12 @@ async function recognizeCoordinatesHandler(req, res) {
             configurable: true
           });
         }
-        if (recognitionImageAcquisition && typeof payload.rawText === "string") {
-          payload.recognitionAcquisition = buildRecognitionAcquisitionEvidence({
+        if (unifiedRecognitionAcquisitionContext?.evidence) {
+          payload.recognitionAcquisition = unifiedRecognitionAcquisitionContext.evidence;
+        } else if (!payload.recognitionAcquisition
+          && recognitionImageAcquisition
+          && typeof payload.rawText === "string") {
+          payload.recognitionAcquisition = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
             rawText: payload.rawText,
             acquisition: recognitionImageAcquisition,
             providerResponseId: providerLayoutResponseId
@@ -15081,14 +15087,8 @@ async function recognizeCoordinatesHandler(req, res) {
     if (!context || !body || typeof body !== "object" || Array.isArray(body)) return body;
     const { evidence, decision } = context;
     if (decision.acquisitionStatus !== "COMPLETED") return body;
-    const finalized = body.finalizedCoordinateResult || {};
-    const explicitlyAuthorized = body.authorizationStatus === "AUTHORIZED";
-    const finalMapReady = body.mapReady === true || finalized.mapReady === true;
-    const finalKmlReady = body.kmlReady === true || finalized.kmlReady === true;
-    const finalRequiresReview = body.requiresReview === true
-      || finalized.requiresReview === true
-      || finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED;
-    const authorized = explicitlyAuthorized || (!finalRequiresReview && (finalMapReady || finalKmlReady));
+    const finalAuthorization = evaluateUnifiedRecognitionFinalAuthorization({ body });
+    const { authorized } = finalAuthorization;
     const authorizationStatus = authorized ? "AUTHORIZED" : "REVIEW_REQUIRED";
     return {
       ...body,
@@ -15097,10 +15097,10 @@ async function recognizeCoordinatesHandler(req, res) {
       authorizationStatus,
       resultStatus: authorized ? "authorized" : "needs_review",
       requiresReview: !authorized,
-      mapReady: authorized && finalMapReady,
-      kmlReady: authorized && finalKmlReady,
-      mapStatus: authorized && finalMapReady ? "ENABLED" : "CLOSED",
-      kmlStatus: authorized && finalKmlReady ? "ENABLED" : "CLOSED",
+      mapReady: finalAuthorization.mapReady,
+      kmlReady: finalAuthorization.kmlReady,
+      mapStatus: finalAuthorization.mapReady ? "ENABLED" : "CLOSED",
+      kmlStatus: finalAuthorization.kmlReady ? "ENABLED" : "CLOSED",
       candidateCoordinates: evidence.candidateCoordinates,
       candidateCoordinateLines: evidence.candidateCoordinateLines,
       candidateCoordinateGroups: evidence.candidateCoordinateGroups,
@@ -16561,7 +16561,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             : "REVIEW_REQUIRED"
         });
         // SANITIZED_WGS84_PRIMARY_ACQUISITION_LOG_END
-        const wgs84UnifiedAcquisitionEvidence = buildRecognitionAcquisitionEvidence({
+        const wgs84UnifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
           rawText: wgs84PrimaryRawText,
           acquisition: recognitionImageAcquisition,
           providerResponseId: providerLayoutResponseId
@@ -16585,11 +16585,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         });
         if (wgs84UnifiedTerminalResponse) return wgs84UnifiedTerminalResponse;
         if (wgs84PrimaryConformance.status !== ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
-          const acquisitionEvidence = buildRecognitionAcquisitionEvidence({
-            rawText: wgs84PrimaryRawText,
-            acquisition: recognitionImageAcquisition,
-            providerResponseId: providerLayoutResponseId
-          });
+          const acquisitionEvidence = wgs84UnifiedAcquisitionEvidence;
           const acquisitionCompleted = acquisitionEvidence.acquisitionStatus === "COMPLETED";
           console.log("Recognition acquisition evidence:", buildRecognitionAcquisitionLogSummary({
             evidence: acquisitionEvidence,
@@ -16893,7 +16889,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerProjectedRejectedCandidateLineCount: providerProjectedDiagnostic.diagnostics?.rejectedProjectedCandidateLineCount || 0
     });
     // SANITIZED_ONE_SHOT_ACQUISITION_LOG_END
-    const unifiedAcquisitionEvidence = buildRecognitionAcquisitionEvidence({
+    const unifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
       rawText,
       acquisition: recognitionImageAcquisition,
       providerResponseId: providerLayoutResponseId
@@ -17278,11 +17274,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       if (groupedProviderReviewApplies) {
         const authorizeForGeometryValidation = groupedProviderDmsEvidence.status
           === ACQUISITION_REVIEW_STATUS.AUTHORIZATION_CANDIDATE;
-        const groupedAcquisitionEvidence = buildRecognitionAcquisitionEvidence({
-          rawText,
-          acquisition: recognitionImageAcquisition,
-          providerResponseId: providerLayoutResponseId
-        });
+        const groupedAcquisitionEvidence = unifiedAcquisitionEvidence;
         const consumeResult = await consumeCoordinateUsage({
           note: authorizeForGeometryValidation
             ? "Coordinate recognition consumed after grouped Provider DMS acquisition"

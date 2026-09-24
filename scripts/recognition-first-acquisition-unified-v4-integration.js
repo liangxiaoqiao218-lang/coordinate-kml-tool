@@ -135,6 +135,8 @@ try {
   assert.equal(stats.submittedImageCount, result.imageAcquisitionEvidence.imageCount);
   assert.match(stdout, /Recognition acquisition evidence:/u);
   assert.match(stdout, /Recognition acquisition final state:/u);
+  assert.equal((stdout.match(/Recognition acquisition evidence:/gu) || []).length, 1);
+  assert.equal((stdout.match(/Recognition acquisition final state:/gu) || []).length, 1);
   assert.doesNotMatch(stdout, /655000/u);
   assert.doesNotMatch(stderr, /(?:Error|ERR_|Unhandled|AssertionError)/u);
   console.log("recognition-first acquisition unified v4 integration: PASS (HTTP 200, 20 candidates, one mock Provider call, one multi-image request, review-only Map/KML fail-close)");

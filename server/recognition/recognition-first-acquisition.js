@@ -1,5 +1,9 @@
 import sharp from "sharp";
 import {
+  COORDINATE_DECISION_STATE,
+  COORDINATE_QUALITY_GATE_STATUS
+} from "../coordinate-finalizer/reason-codes.js";
+import {
   buildRecognitionAcquisitionLogSummary,
   extractRecognitionCandidateEvidence
 } from "./recognition-candidate-evidence.js";
@@ -380,6 +384,56 @@ export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, prov
       asyncRecommended: acquisition?.asyncRecommended === true
     }),
     authority: "EVIDENCE_ONLY"
+  });
+}
+
+export function createRecognitionAcquisitionEvidenceStore({
+  buildEvidence = buildRecognitionAcquisitionEvidence
+} = {}) {
+  let evidence = null;
+  let buildCount = 0;
+  return Object.freeze({
+    getOrBuild(input) {
+      if (!evidence) {
+        evidence = buildEvidence(input);
+        buildCount += 1;
+      }
+      return evidence;
+    },
+    peek() {
+      return evidence;
+    },
+    getBuildCount() {
+      return buildCount;
+    }
+  });
+}
+
+export function evaluateUnifiedRecognitionFinalAuthorization({ body = {} } = {}) {
+  const finalized = body?.finalizedCoordinateResult || {};
+  const finalRequiresReview = body?.requiresReview === true
+    || finalized.requiresReview === true
+    || finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED;
+  const finalizerGatePassed = finalized.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
+    && finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.PASSED
+    && finalized.requiresReview === false
+    && finalized.kmlReady === true
+    && Boolean(finalized.geometry)
+    && Boolean(finalized.crs);
+  const mapGatePassed = body?.mapReady !== false && finalized.mapReady !== false;
+  const kmlGatePassed = body?.kmlReady !== false && finalized.kmlReady === true;
+  const authorized = !finalRequiresReview
+    && finalizerGatePassed
+    && mapGatePassed
+    && kmlGatePassed;
+  return Object.freeze({
+    authorized,
+    finalRequiresReview,
+    finalizerGatePassed,
+    mapGatePassed,
+    kmlGatePassed,
+    mapReady: authorized && mapGatePassed,
+    kmlReady: authorized && kmlGatePassed
   });
 }
 

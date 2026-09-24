@@ -2824,7 +2824,7 @@ test("one-shot structured server gates conformance before parsing and returns sa
   assert.match(reviewBlock, /extractProviderDmsReviewEvidence/);
   assert.match(reviewBlock, /DMS_AUTHORITY:safe_boundary_auto_release/);
   assert.match(reviewBlock, /rawText:\s*wgs84PrimaryRawText|rawText,/);
-  assert.match(reviewBlock, /buildRecognitionAcquisitionEvidence/);
+  assert.match(reviewBlock, /requestRecognitionAcquisitionEvidenceStore\.getOrBuild/);
   assert.match(reviewBlock, /candidateCoordinateLines/);
 });
 
