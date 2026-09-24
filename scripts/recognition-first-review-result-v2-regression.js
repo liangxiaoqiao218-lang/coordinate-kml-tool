@@ -7,6 +7,7 @@ import {
   formatProviderDmsReviewCoordinates,
   normalizeProviderDmsReviewResult
 } from "../server/recognition/recognition-review-result.js";
+import { buildRecognitionAcquisitionEvidence } from "../server/recognition/recognition-first-acquisition.js";
 import { finalizeCoordinateResult } from "../server/coordinate-finalizer/finalized-coordinate-result-v1.js";
 import { MapPreviewAdapter } from "../server/spatial/adapters/map-preview-adapter.js";
 
@@ -20,6 +21,40 @@ const group = (parent, title, rows) => [
   "Point | Latitude | Longitude",
   ...rows
 ].join("\n");
+
+for (const nonCoordinateText of [
+  "Report 2024 revision 3 area 12",
+  "Scale 1:5000 sheet 12",
+  "Survey date 2026-09-24 area 4.97 ha",
+  "Version 2 section 4 page 7",
+  "CONTEXT | Map scale 1:10000, surveyed 2025-04-12, area 18.7 ha",
+  "2026 | 09 | 24",
+  "Explanation of X and Y values\n2026 09 24"
+]) {
+  const evidence = buildRecognitionAcquisitionEvidence({ rawText: nonCoordinateText });
+  assert.equal(evidence.status, "NO_COORDINATE_EVIDENCE");
+  assert.equal(evidence.candidateCoordinateLines.length, 0);
+}
+
+const strictCoordinateEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: [
+    "CONTEXT | WGS 84 / UTM ZONE 50S",
+    "No. | X | Y | Latitude | Longitude",
+    "1 778984.492 9721476.737 2° 31' 2.794\" S 119° 30' 31.553\" E",
+    "2 | 779099.680 | 9721476.848 | 2° 31' 2.783\" S | 119° 30' 35.279\" E"
+  ].join("\n")
+});
+assert.equal(strictCoordinateEvidence.status, "COMPLETED");
+assert.equal(strictCoordinateEvidence.candidateCoordinateLines.length, 2);
+
+const headerBoundProjectedEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: ["Point X Y", "1 778984 9721476", "2 779099 9721476"].join("\n")
+});
+assert.equal(headerBoundProjectedEvidence.candidateCoordinateLines.length, 2);
+
+const mgrsEvidence = buildRecognitionAcquisitionEvidence({ rawText: "1 | 33 U XP 12345 67890" });
+assert.equal(mgrsEvidence.status, "COMPLETED");
+assert.equal(mgrsEvidence.candidateCoordinateLines.length, 1);
 
 const mixedFourGroupText = [
   "CONTEXT | WGS 84",
@@ -55,6 +90,42 @@ assert.equal(fullyLabelled.status, ACQUISITION_REVIEW_STATUS.AUTHORIZATION_CANDI
 assert.equal(fullyLabelled.authorizationCandidate, true);
 assert.equal(fullyLabelled.candidateGroupCount, 4);
 assert.ok(fullyLabelled.candidateGroups.every(candidate => candidate.sourceLabelsContinuous));
+
+const duplicateTitlePaths = normalizeProviderDmsReviewResult([
+  "CONTEXT | WGS 84",
+  group("Repeated Parent", "Repeated Area", [row("1", "10", "10"), row("2", "11", "11"), row("3", "12", "12")]),
+  group("Repeated Parent", "Repeated Area", [row("1", "20", "20"), row("2", "21", "21"), row("3", "22", "22")])
+].join("\n"));
+assert.equal(duplicateTitlePaths.status, ACQUISITION_REVIEW_STATUS.REVIEW_REQUIRED);
+assert.equal(duplicateTitlePaths.authorizationCandidate, false);
+assert.equal(duplicateTitlePaths.candidatePointCount, 6);
+assert.equal(duplicateTitlePaths.candidateGroupCount, 0);
+assert.equal(duplicateTitlePaths.unboundRowCount, 6);
+assert.ok(duplicateTitlePaths.reviewReasons.includes("GROUP_TITLE_PATH_DUPLICATE"));
+
+const repeatedPageHeading = normalizeProviderDmsReviewResult([
+  "CONTEXT | WGS 84",
+  group("Page Heading", "Coordinate Table", [row("1", "10", "10"), row("2", "11", "11")]),
+  group("Page Heading", "Coordinate Table", [row("3", "12", "12"), row("4", "13", "13")])
+].join("\n"));
+assert.equal(repeatedPageHeading.authorizationCandidate, false);
+assert.equal(repeatedPageHeading.candidateGroupCount, 0);
+assert.ok(repeatedPageHeading.reviewReasons.includes("GROUP_TITLE_PATH_DUPLICATE"));
+
+const repeatedHeaderContinuation = normalizeProviderDmsReviewResult([
+  "CONTEXT | WGS 84",
+  "HEADING | Parent",
+  "HEADING | Area",
+  "Point | Latitude | Longitude",
+  row("1", "10", "10"), row("2", "11", "11"),
+  "Point | Latitude | Longitude",
+  row("3", "12", "12"), row("4", "13", "13")
+].join("\n"));
+assert.equal(repeatedHeaderContinuation.authorizationCandidate, false);
+assert.equal(repeatedHeaderContinuation.candidatePointCount, 4);
+assert.equal(repeatedHeaderContinuation.candidateGroupCount, 0);
+assert.equal(repeatedHeaderContinuation.unboundRowCount, 4);
+assert.ok(repeatedHeaderContinuation.reviewReasons.includes("REPEATED_HEADER_CONTINUATION_UNRESOLVED"));
 
 const noHeading = normalizeProviderDmsReviewResult([
   "CONTEXT | WGS 84",
@@ -167,8 +238,10 @@ const serverSource = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const deadlineSource = fs.readFileSync(path.join(root, "server", "coordinate-finalizer", "recognition-deadline.js"), "utf8");
 const uiSource = fs.readFileSync(path.join(root, "index.html"), "utf8");
 assert.match(serverSource, /success:\s*acquisitionCompleted/);
+assert.equal((serverSource.match(/res\.status\(acquisitionCompleted \? 200 : 422\)\.json/gu) || []).length, 2);
+assert.match(serverSource, /const consumeResult = acquisitionCompleted\s*\n\s*\? await consumeCoordinateUsage/);
 assert.match(serverSource, /rawText,\s*\n\s*coordinates:\s*formatProviderDmsReviewCoordinates/);
-assert.match(serverSource, /acquisitionStatus:\s*acquisitionCompleted\s*\?\s*"COMPLETED"/);
+assert.equal((serverSource.match(/acquisitionStatus:\s*acquisitionEvidence\.status/gu) || []).length, 2);
 assert.match(serverSource, /candidateCoordinateGroups:\s*groupedProviderDmsEvidence\.candidateGroups/);
 assert.match(serverSource, /visibleCrsEvidence:\s*groupedProviderDmsEvidence\.visibleCrsEvidence/);
 assert.match(serverSource, /imageAcquisitionEvidence:\s*groupedAcquisitionEvidence\.imageEvidence/);
@@ -185,4 +258,4 @@ assert.match(uiSource, /采集完成，等待复核/);
 assert.match(uiSource, /候选点数/);
 assert.match(uiSource, /候选组数/);
 
-console.log("recognition-first review-result v2 regression: PASS (mixed groups, authority candidate, ambiguity fail-close, response/log/UI contracts)");
+console.log("recognition-first review-result v2 regression: PASS (strict coordinate evidence, unique grouping, ambiguity fail-close, response/log/UI contracts)");

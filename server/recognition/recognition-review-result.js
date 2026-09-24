@@ -146,6 +146,13 @@ function reviewReasonForLabelState(state) {
   return null;
 }
 
+function normalizedTitlePathKey(titlePath) {
+  return titlePath
+    .map(value => String(value || "").trim().replace(/\s+/gu, " ").toLocaleUpperCase())
+    .filter(Boolean)
+    .join("\u001f");
+}
+
 export function normalizeProviderDmsReviewResult(rawText = "") {
   const source = String(rawText || "");
   const visibleCrsEvidence = extractVisibleCrsEvidence(source);
@@ -227,11 +234,16 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
   }
 
   const groups = provisionalGroups.map(freezeGroup);
-  const boundariesUnique = groups.every(group => group.titlePath.length > 0)
+  const titlePathKeys = groups.map(group => normalizedTitlePathKey(group.titlePath));
+  const nonEmptyTitlePaths = titlePathKeys.every(Boolean);
+  const titlePathsUnique = nonEmptyTitlePaths && new Set(titlePathKeys).size === titlePathKeys.length;
+  const repeatedHeaderContinuationUnresolved = groups.some(group => (
+    group.boundaryEvidence === "repeated_visible_header" && group.titlePath.length === 0
+  ));
+  const boundariesUnique = titlePathsUnique
     && (groups.length === 1 || groups.slice(1).every(group => [
       "visible_group_marker",
-      "visible_heading_transition",
-      "repeated_visible_header"
+      "visible_heading_transition"
     ].includes(group.boundaryEvidence)));
   const candidateGroups = boundariesUnique ? groups : [];
   const unboundCandidates = boundariesUnique ? [] : allCandidates.map((row, index) => Object.freeze({
@@ -240,6 +252,8 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
   }));
   const reasons = new Set();
   if (!boundariesUnique) reasons.add("GROUP_BOUNDARY_UNRESOLVED");
+  if (nonEmptyTitlePaths && !titlePathsUnique) reasons.add("GROUP_TITLE_PATH_DUPLICATE");
+  if (repeatedHeaderContinuationUnresolved) reasons.add("REPEATED_HEADER_CONTINUATION_UNRESOLVED");
   for (const rejected of rejectedRows) reasons.add(rejected.reason);
   for (const group of groups) {
     const reason = reviewReasonForLabelState(group.sourceLabelState);

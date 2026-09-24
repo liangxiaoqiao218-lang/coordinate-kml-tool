@@ -16350,7 +16350,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             rawText: wgs84PrimaryRawText,
             coordinates: acquisitionEvidence.candidateCoordinateLines.map(line => line.text).join("\n"),
             precisionMode: "one-shot-acquisition-contract-review",
-            acquisitionStatus: acquisitionCompleted ? "COMPLETED" : "EMPTY",
+            acquisitionStatus: acquisitionEvidence.status,
             authorizationStatus: "REVIEW_REQUIRED",
             resultStatus: "needs_review",
             requiresReview: true,
@@ -16371,7 +16371,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             rawHint: ""
           });
           const contractReviewResponse = buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine);
-          return res.json(acquisitionCompleted
+          return res.status(acquisitionCompleted ? 200 : 422).json(acquisitionCompleted
             ? keepRecognizedCoordinatesAsPointReview(contractReviewResponse, "", { blockMap: true })
             : contractReviewResponse);
         }
@@ -17104,7 +17104,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         rawText,
         coordinates: acquisitionEvidence.candidateCoordinateLines.map(line => line.text).join("\n"),
         precisionMode: "one-shot-acquisition-contract-review",
-        acquisitionStatus: acquisitionCompleted ? "COMPLETED" : "EMPTY",
+        acquisitionStatus: acquisitionEvidence.status,
         authorizationStatus: "REVIEW_REQUIRED",
         resultStatus: "needs_review",
         requiresReview: true,
@@ -17125,7 +17125,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         rawHint: ""
       });
       const contractReviewResponse = buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine);
-      return res.json(acquisitionCompleted
+      return res.status(acquisitionCompleted ? 200 : 422).json(acquisitionCompleted
         ? keepRecognizedCoordinatesAsPointReview(contractReviewResponse, "", { blockMap: true })
         : contractReviewResponse);
     }

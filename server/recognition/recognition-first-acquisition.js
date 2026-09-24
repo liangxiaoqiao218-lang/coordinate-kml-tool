@@ -209,23 +209,112 @@ export function extractVisibleCrsEvidence(rawText) {
   return Object.freeze(matches);
 }
 
-function isCoordinateCandidateLine(line) {
+const STRICT_NUMBER_SOURCE = String.raw`[+-]?\d+(?:[.,]\d+)?`;
+const STRICT_DMS_SOURCE = String.raw`[-+]?\d{1,3}\s*[°º]\s*\d{1,2}\s*(?:['′\s]*)?\d{1,2}(?:[.,]\d+)?\s*(?:["″\s]*)?(?:N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST)\b`;
+const STRICT_DMS_PATTERN = new RegExp(STRICT_DMS_SOURCE, "giu");
+const STRICT_DMS_SIGNAL_PATTERN = new RegExp(STRICT_DMS_SOURCE, "iu");
+const STRICT_NUMBER_PATTERN = new RegExp(`^${STRICT_NUMBER_SOURCE}$`, "u");
+const VERIFIED_COORDINATE_HEADER_PATTERN = /(?:\b(?:LAT(?:ITUDE)?|PARALLÈLE)\b[\s\S]*\b(?:LON(?:GITUDE)?|MÉRIDIEN)\b|\b(?:LON(?:GITUDE)?|MÉRIDIEN)\b[\s\S]*\b(?:LAT(?:ITUDE)?|PARALLÈLE)\b|\b(?:EASTING|X)\b[\s\S]*\b(?:NORTHING|Y)\b|\b(?:NORTHING|Y)\b[\s\S]*\b(?:EASTING|X)\b)/iu;
+
+function isVerifiedCoordinateHeaderLine(line) {
   const text = String(line || "").trim();
+  if (!text || !VERIFIED_COORDINATE_HEADER_PATTERN.test(text)) return false;
+  if (STRICT_DMS_SIGNAL_PATTERN.test(text)) return false;
+  const tokens = text
+    .replace(/[|\t,;:/#()[\]{}._°º-]+/gu, " ")
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean);
+  const allowedHeaderToken = /^(?:NO|N|NUMBER|NUM|POINT|PT|VERTEX|SOMMET|ID|X|Y|EASTING|NORTHING|LAT|LATITUDE|LON|LONG|LONGITUDE|PARALLÈLE|MÉRIDIEN)$/iu;
+  return tokens.length >= 2 && tokens.every(token => allowedHeaderToken.test(token));
+}
+
+function hasOneLatitudeAndOneLongitudeDms(matches) {
+  if (matches.length !== 2) return false;
+  const directions = matches.map(match => (
+    String(match[0] || "").match(/(?:N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST)\s*$/iu)?.[0] || ""
+  ).toUpperCase());
+  const latitudeCount = directions.filter(value => /^(?:N|S|NORTH|SOUTH|NORD|SUD)$/u.test(value)).length;
+  const longitudeCount = directions.filter(value => /^(?:E|W|O|EAST|WEST|EST|OUEST)$/u.test(value)).length;
+  return latitudeCount === 1 && longitudeCount === 1;
+}
+
+function isStrictNumericCoordinateRow(line, { headerBound = false } = {}) {
+  let text = String(line || "").trim();
   if (!text) return false;
-  const numericTokens = text.match(/[+-]?\d+(?:[.,]\d+)?/g) || [];
-  const hasCoordinateMarks = /[°º'"′″]|\b[NSWE]\b|\b(?:LAT(?:ITUDE)?|LON(?:GITUDE)?|EASTING|NORTHING|POINT|SOMMET|X|Y)\b/iu.test(text);
-  return numericTokens.length >= 2 && (hasCoordinateMarks || numericTokens.length >= 3);
+  text = text.replace(/^\s*(?:ROW|COORDINATE)\s*\|\s*/iu, "").trim();
+
+  const keyedProjected = new RegExp(
+    `^(?:(?:POINT|PT|VERTEX|SOMMET)\\s*)?[1-9]\\d{0,5}\\s+(?:X|EASTING)\\s*[:=]?\\s*${STRICT_NUMBER_SOURCE}\\s+(?:Y|NORTHING)\\s*[:=]?\\s*${STRICT_NUMBER_SOURCE}$`,
+    "iu"
+  );
+  const keyedGeographic = new RegExp(
+    `^(?:(?:(?:POINT|PT|VERTEX|SOMMET)\\s*)?[1-9]\\d{0,5}\\s+)?(?:LAT(?:ITUDE)?\\s*[:=]?\\s*${STRICT_NUMBER_SOURCE}\\s+(?:LON(?:GITUDE)?|LONGITUDE)\\s*[:=]?\\s*${STRICT_NUMBER_SOURCE}|(?:LON(?:GITUDE)?|LONGITUDE)\\s*[:=]?\\s*${STRICT_NUMBER_SOURCE}\\s+LAT(?:ITUDE)?\\s*[:=]?\\s*${STRICT_NUMBER_SOURCE})$`,
+    "iu"
+  );
+  if (keyedProjected.test(text) || keyedGeographic.test(text)) return true;
+
+  if (text.includes("|") || text.includes("\t") || text.includes(";")) {
+    const fields = text.split(/[|\t;]/u).map(value => value.trim()).filter(Boolean);
+    if (fields.length === 2) return headerBound && fields.every(value => STRICT_NUMBER_PATTERN.test(value));
+    const structuredTriplet = fields.length === 3
+      && /^[1-9]\d{0,5}$/u.test(fields[0])
+      && fields.slice(1).every(value => STRICT_NUMBER_PATTERN.test(value));
+    return structuredTriplet && (headerBound || fields.slice(1).some(value => /[.,]|^[+-]/u.test(value)));
+  }
+
+  if (/^[+-]?\d+(?:\.\d+)?\s*,\s*[+-]?\d+(?:\.\d+)?$/u.test(text)) return true;
+  if (!headerBound) return false;
+  const fields = text.split(/\s+/u);
+  if (fields.length === 2) return fields.every(value => STRICT_NUMBER_PATTERN.test(value));
+  return fields.length === 3
+    && /^[1-9]\d{0,5}$/u.test(fields[0])
+    && fields.slice(1).every(value => STRICT_NUMBER_PATTERN.test(value));
+}
+
+function isFullyConsumedDmsCoordinateRow(line, options = {}) {
+  const text = String(line || "").trim();
+  const matches = [...text.matchAll(STRICT_DMS_PATTERN)];
+  if (!hasOneLatitudeAndOneLongitudeDms(matches)) return false;
+  let remainder = text;
+  for (const match of [...matches].reverse()) {
+    remainder = `${remainder.slice(0, match.index)} ${remainder.slice(match.index + match[0].length)}`;
+  }
+  remainder = remainder.replace(/^\s*(?:ROW|COORDINATE)\s*\|\s*/iu, "").trim();
+  const structuralRemainder = remainder.replace(/[\s|:;,()\[\]{}-]+/gu, "");
+  if (!structuralRemainder) return true;
+  if (/^(?:(?:POINT|PT|VERTEX|SOMMET))?[1-9]\d{0,5}$/iu.test(structuralRemainder)) return true;
+  return isStrictNumericCoordinateRow(remainder, { ...options, headerBound: true });
+}
+
+function isCoordinateCandidateLine(line, options = {}) {
+  return isFullyConsumedDmsCoordinateRow(line, options)
+    || isStrictNumericCoordinateRow(line, options)
+    || /^\s*(?:(?:POINT|PT|VERTEX)\s*\|\s*)?(?:[1-9]\d{0,5}\s*\|\s*)?(?:[1-9]|[1-5]\d|60)\s*[C-HJ-NP-X]\s*[A-HJ-NP-Z]{2}(?:\s*\d{2,10}){1,2}\s*$/iu.test(String(line || ""));
 }
 
 export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, providerResponseId = null } = {}) {
   const exactRawText = String(rawText || "");
-  const candidateLines = exactRawText
-    .split(/\r?\n/u)
-    .map((line, index) => ({ lineNumber: index + 1, text: line }))
-    .filter(({ text }) => isCoordinateCandidateLine(text));
+  const candidateLines = [];
+  let headerBound = false;
+  exactRawText.split(/\r?\n/u).forEach((line, index) => {
+    const text = String(line || "").trim();
+    if (!text) return;
+    if (isVerifiedCoordinateHeaderLine(text)) {
+      headerBound = true;
+      return;
+    }
+    if (isCoordinateCandidateLine(text, { headerBound })) {
+      candidateLines.push({ lineNumber: index + 1, text: line });
+      return;
+    }
+    if (!/^\s*(?:CONTEXT|GROUP|HEADING|SECTION|TITLE)\s*\|/iu.test(text)) headerBound = false;
+  });
   return Object.freeze({
     version: RECOGNITION_FIRST_ACQUISITION_VERSION,
-    status: exactRawText.trim() ? "COMPLETED" : "EMPTY",
+    status: candidateLines.length > 0
+      ? "COMPLETED"
+      : (exactRawText.trim() ? "NO_COORDINATE_EVIDENCE" : "EMPTY"),
     providerResponseId: providerResponseId ? String(providerResponseId) : null,
     rawProviderText: exactRawText,
     candidateCoordinateLines: Object.freeze(candidateLines.map(value => Object.freeze(value))),
