@@ -95,6 +95,62 @@ assert.equal(mgrsEvidence.candidateCoordinates[0].sourceLabel, "1");
 const dmsRow = (label, latSeconds, lonSeconds) => (
   `${label ? `${label} | ` : "| "}6° 45' ${latSeconds}\" N | 4° 22' ${lonSeconds}\" W`
 );
+const spacedDmsPair = (latSeconds, lonSeconds) => (
+  `6\u00b0 45' ${latSeconds}\" N 4\u00b0 22' ${lonSeconds}\" W`
+);
+const compactDmsPair = (latSeconds, lonSeconds) => (
+  `6\u00b045'${latSeconds}\"N 4\u00b022'${lonSeconds}\"W`
+);
+const separatedDmsPair = (separator, latSeconds, lonSeconds) => (
+  `6\u00b0 45' ${latSeconds}\" N${separator}4\u00b0 22' ${lonSeconds}\" W`
+);
+
+for (const { row, label } of [
+  { row: `POINT 1 ${spacedDmsPair("10", "10")}`, label: "1" },
+  { row: `Point 2 ${spacedDmsPair("11", "11")}`, label: "2" },
+  { row: `PT 3 ${spacedDmsPair("12", "12")}`, label: "3" },
+  { row: `4 ${spacedDmsPair("13", "13")}`, label: "4" },
+  { row: spacedDmsPair("14", "14"), label: null },
+  { row: `POINT 5 ${compactDmsPair("15", "15")}`, label: "5" },
+  { row: `6 | ${separatedDmsPair(" | ", "16", "16")}`, label: "6" },
+  { row: `7\t${separatedDmsPair("\t", "17", "17")}`, label: "7" },
+  { row: `8;${separatedDmsPair(";", "18", "18")}`, label: "8" }
+]) {
+  const evidence = buildRecognitionAcquisitionEvidence({
+    rawText: ["CONTEXT | WGS 84", row].join("\n"),
+    acquisition
+  });
+  assert.equal(evidence.candidateCoordinates.length, 1, row);
+  assert.equal(evidence.candidateCoordinates[0].sourceLabel, label, row);
+  assert.equal(evidence.candidateCoordinates[0].sourceLabelInferred, false, row);
+  assert.equal(evidence.candidateCoordinates[0].sourceText, row, row);
+}
+
+const mixedSpaceSeparatedDms = [
+  "CONTEXT | WGS 84",
+  "HEADING | Parent",
+  "HEADING | Explicit labels",
+  "Point Latitude Longitude",
+  `POINT 1 ${spacedDmsPair("20", "20")}`,
+  `2 ${compactDmsPair("21", "21")}`,
+  "HEADING | Parent",
+  "HEADING | Visible order only",
+  "Point Latitude Longitude",
+  spacedDmsPair("22", "22"),
+  compactDmsPair("23", "23")
+].join("\n");
+const mixedSpaceSeparatedEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: mixedSpaceSeparatedDms,
+  acquisition
+});
+assert.equal(mixedSpaceSeparatedEvidence.candidateCoordinates.length, 4);
+assert.equal(mixedSpaceSeparatedEvidence.candidateCoordinateGroups.length, 2);
+assert.deepEqual(mixedSpaceSeparatedEvidence.candidateCoordinateGroups[0].rows.map(row => row.sourceLabel), ["1", "2"]);
+assert.ok(mixedSpaceSeparatedEvidence.candidateCoordinateGroups[1].rows.every(row => (
+  row.sourceLabel === null && row.sourceLabelInferred === false
+)));
+assert.ok(mixedSpaceSeparatedEvidence.reviewReasons.includes("SOURCE_LABELS_MISSING"));
+
 const dmsGroup = (parent, title, rows) => [
   `HEADING | ${parent}`,
   `HEADING | ${title}`,
@@ -152,6 +208,7 @@ for (const nonCoordinate of [
   "Explanation of X and Y values\n2026 09 24",
   "Point | X | Y\nReport date 2026-09-24\n1 | 12 | 24",
   "Point | Latitude | Longitude\n1 | 6° 45' 10\" N | incomplete",
+  `POINT 1 6\u00b0 45' 10\" N 4\u00b0 22' 10\" S`,
   "Point | X | Y\n1 | 658800 | 1364200 | 99"
 ]) {
   const evidence = buildRecognitionAcquisitionEvidence({ rawText: nonCoordinate, acquisition });

@@ -124,7 +124,7 @@ function parseDmsCoordinateRow(line, lineNumber, { header = null } = {}) {
   }
   remainder = remainder.replace(/^\s*(?:ROW|COORDINATE)\s*\|\s*/iu, "").trim();
   let sourceLabel = null;
-  const labelMatch = remainder.match(/^\s*(?:(?:POINT|PT|VERTEX|SOMMET)\s*)?([1-9]\d{0,5}|[\p{L}][\p{L}\d._-]{0,31})(?=\s|[|:;,.#)\-])/iu);
+  const labelMatch = remainder.match(/^\s*(?:(?:POINT|PT|VERTEX|SOMMET)\s*)?([1-9]\d{0,5}|[\p{L}][\p{L}\d._-]{0,31})(?=$|\s|[|:;,.#)\-])/iu);
   if (labelMatch) {
     sourceLabel = labelMatch[1];
     remainder = remainder.slice(labelMatch[0].length).trim();
