@@ -421,12 +421,14 @@ test("uncharged responses are fixed-field failures and cannot disclose Provider-
     }
   });
   assert.deepEqual(Object.keys(request).sort(), [
-    "code", "coordinates", "error", "quota", "rawText", "reason", "requestId", "retryAllowed", "success", "usageConsumed"
+    "code", "coordinates", "error", "quota", "rawText", "reason", "recoveryRequired", "recoveryTerminal", "requestId", "retryAllowed", "success", "usageConsumed"
   ].sort());
   assert.equal(request.success, false);
   assert.equal(request.reason, "coordinate_authority_not_established");
   assert.equal(request.rawText, "");
   assert.equal(request.coordinates, "");
+  assert.equal(request.recoveryRequired, false);
+  assert.equal(request.recoveryTerminal, true);
   assert.deepEqual(request.quota, { free_convert_count: 2 });
   assert.equal(JSON.stringify(request).includes("provider-derived"), false);
   assert.equal(JSON.stringify(request).includes("do-not-copy"), false);
@@ -584,7 +586,7 @@ test("frontend and server bind one request ID to recovery without Provider repla
   assert.match(server, /\/api\/recognize-coordinates\/session/);
   assert.match(server, /coordinateUsageAtomicity\.recover/);
   assert.match(server, /USAGE_COMMIT_OUTCOME_UNKNOWN/);
-  assert.match(server, /const terminalNoCharge = \(recovered\.result === COORDINATE_USAGE_COMMIT_RESULT\.EXPIRED/);
+  assert.match(server, /const terminalNoCharge = recovered\.result === COORDINATE_USAGE_COMMIT_RESULT\.NOT_FOUND\s*\|\| \(recovered\.result === COORDINATE_USAGE_COMMIT_RESULT\.EXPIRED/);
   assert.match(server, /recoveryTerminal: terminalNoCharge/);
   assert.match(server, /usageConsumed: terminalNoCharge \? false : null/);
   assert.match(server, /const recognitionPayload = \{\s*success: true,/);

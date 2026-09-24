@@ -1,4 +1,10 @@
 import sharp from "sharp";
+import {
+  buildRecognitionAcquisitionLogSummary,
+  extractRecognitionCandidateEvidence
+} from "./recognition-candidate-evidence.js";
+
+export { buildRecognitionAcquisitionLogSummary };
 
 export const RECOGNITION_FIRST_ACQUISITION_VERSION = "recognition_first_acquisition_v1";
 
@@ -293,7 +299,7 @@ function isCoordinateCandidateLine(line, options = {}) {
     || /^\s*(?:(?:POINT|PT|VERTEX)\s*\|\s*)?(?:[1-9]\d{0,5}\s*\|\s*)?(?:[1-9]|[1-5]\d|60)\s*[C-HJ-NP-X]\s*[A-HJ-NP-Z]{2}(?:\s*\d{2,10}){1,2}\s*$/iu.test(String(line || ""));
 }
 
-export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, providerResponseId = null } = {}) {
+function buildLegacyRecognitionAcquisitionEvidence({ rawText, acquisition, providerResponseId = null } = {}) {
   const exactRawText = String(rawText || "");
   const candidateLines = [];
   let headerBound = false;
@@ -319,6 +325,51 @@ export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, prov
     rawProviderText: exactRawText,
     candidateCoordinateLines: Object.freeze(candidateLines.map(value => Object.freeze(value))),
     visibleCrsEvidence: extractVisibleCrsEvidence(exactRawText),
+    imageEvidence: Object.freeze({
+      sourceWidth: Number(acquisition?.width || 0),
+      sourceHeight: Number(acquisition?.height || 0),
+      sourceBytes: Number(acquisition?.bytes || 0),
+      imageCount: Number(acquisition?.images?.length || 0),
+      overviewCount: Number(acquisition?.images?.filter(image => image.role === "overview").length || 0),
+      detailTileCount: Number(acquisition?.images?.filter(image => image.role === "detail").length || 0),
+      asyncRecommended: acquisition?.asyncRecommended === true
+    }),
+    authority: "EVIDENCE_ONLY"
+  });
+}
+
+export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, providerResponseId = null } = {}) {
+  const exactRawText = String(rawText || "");
+  const visibleCrsEvidence = extractVisibleCrsEvidence(exactRawText);
+  const candidates = extractRecognitionCandidateEvidence({
+    rawText: exactRawText,
+    visibleCrsEvidence
+  });
+  const acquisitionStatus = candidates.candidateCoordinates.length > 0
+    ? "COMPLETED"
+    : (exactRawText.trim() ? "NO_COORDINATE_EVIDENCE" : "EMPTY");
+  return Object.freeze({
+    version: RECOGNITION_FIRST_ACQUISITION_VERSION,
+    providerCompletionState: exactRawText.trim() || providerResponseId ? "SUCCEEDED" : "EMPTY",
+    acquisitionStatus,
+    normalizationStatus: candidates.candidateCoordinates.length === 0
+      ? "NOT_AVAILABLE"
+      : candidates.rejectedRows.length > 0 ? "PARTIAL" : "COMPLETED",
+    authorizationStatus: candidates.candidateCoordinates.length > 0 ? "REVIEW_REQUIRED" : "NOT_ESTABLISHED",
+    status: acquisitionStatus,
+    providerResponseId: providerResponseId ? String(providerResponseId) : null,
+    rawProviderText: exactRawText,
+    candidateCoordinateLines: candidates.candidateCoordinateLines,
+    candidateCoordinates: candidates.candidateCoordinates,
+    candidateCoordinateGroups: candidates.candidateCoordinateGroups,
+    unboundCandidates: candidates.unboundCandidates,
+    rejectedRows: candidates.rejectedRows,
+    visibleCrsEvidence,
+    reviewReasons: candidates.reviewReasons,
+    diagnostics: Object.freeze({
+      ...candidates.diagnostics,
+      providerOutputLength: exactRawText.length
+    }),
     imageEvidence: Object.freeze({
       sourceWidth: Number(acquisition?.width || 0),
       sourceHeight: Number(acquisition?.height || 0),

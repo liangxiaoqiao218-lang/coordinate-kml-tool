@@ -24,6 +24,7 @@ import {
   COORDINATE_USAGE_SESSION_COOKIE,
   CoordinateUsageAtomicityService,
   buildProjectedCoordinateReviewUsageAuthority,
+  buildRecognitionAcquisitionReviewUsageAuthority,
   buildUnchargedCoordinateFailureResponse,
   createCoordinateUsageCommitController,
   createCoordinateUsageRuntimeDiagnostic,
@@ -125,6 +126,7 @@ import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-nea
 import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
 import {
   buildRecognitionAcquisitionEvidence,
+  buildRecognitionAcquisitionLogSummary,
   buildRecognitionFirstPromptPrefix,
   createRecognitionImageVariants
 } from "./server/recognition/recognition-first-acquisition.js";
@@ -14761,7 +14763,8 @@ app.post("/api/recognize-coordinates/recover", async (req, res) => {
         retryAllowed: false
       });
     }
-    const terminalNoCharge = (recovered.result === COORDINATE_USAGE_COMMIT_RESULT.EXPIRED
+    const terminalNoCharge = recovered.result === COORDINATE_USAGE_COMMIT_RESULT.NOT_FOUND
+      || (recovered.result === COORDINATE_USAGE_COMMIT_RESULT.EXPIRED
       && recovered.state === COORDINATE_USAGE_COMMIT_STATE.EXPIRED)
       || (recovered.result === COORDINATE_USAGE_COMMIT_RESULT.FAILED
         && recovered.state === COORDINATE_USAGE_COMMIT_STATE.FAILED);
@@ -16328,7 +16331,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             acquisition: recognitionImageAcquisition,
             providerResponseId: providerLayoutResponseId
           });
-          const acquisitionCompleted = acquisitionEvidence.candidateCoordinateLines.length > 0;
+          const acquisitionCompleted = acquisitionEvidence.acquisitionStatus === "COMPLETED";
+          console.log("Recognition acquisition evidence:", buildRecognitionAcquisitionLogSummary({
+            evidence: acquisitionEvidence,
+            providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+            contractReason: wgs84PrimaryConformance.reason,
+            finalState: acquisitionCompleted ? "COMPLETED_REVIEW_REQUIRED" : "FAILED_NO_COORDINATE_EVIDENCE"
+          }));
           const consumeResult = acquisitionCompleted
             ? await consumeCoordinateUsage({ note: "Coordinate recognition consumed after WGS84 Provider acquisition completed for review" })
             : null;
@@ -16356,10 +16365,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             requiresReview: true,
             kmlReady: false,
             warning: "The WGS84 primary output did not satisfy its pre-Provider structure, value, source, and observation-set contract and remains review-only.",
-            candidateCoordinates: acquisitionEvidence.candidateCoordinateLines,
+            candidateCoordinates: acquisitionEvidence.candidateCoordinates,
+            candidateCoordinateLines: acquisitionEvidence.candidateCoordinateLines,
+            candidateCoordinateGroups: acquisitionEvidence.candidateCoordinateGroups,
             visibleCrsEvidence: acquisitionEvidence.visibleCrsEvidence,
             imageAcquisitionEvidence: acquisitionEvidence.imageEvidence,
-            reviewReasons: [wgs84PrimaryConformance.reason],
+            reviewReasons: [...new Set([wgs84PrimaryConformance.reason, ...acquisitionEvidence.reviewReasons])],
             acquisitionContractConformance: wgs84PrimaryConformance,
             parserTrace: [
               "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
@@ -16371,9 +16382,29 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             rawHint: ""
           });
           const contractReviewResponse = buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine);
-          return res.status(acquisitionCompleted ? 200 : 422).json(acquisitionCompleted
-            ? keepRecognizedCoordinatesAsPointReview(contractReviewResponse, "", { blockMap: true })
-            : contractReviewResponse);
+          if (!acquisitionCompleted) return res.status(422).json(contractReviewResponse);
+          const reviewOnlyResponse = {
+            ...keepRecognizedCoordinatesAsPointReview(contractReviewResponse, "", { blockMap: true }),
+            requestId: recognitionBudget?.requestId || null,
+            success: true,
+            acquisitionStatus: "COMPLETED",
+            authorizationStatus: "REVIEW_REQUIRED",
+            resultStatus: "needs_review",
+            requiresReview: true,
+            kmlReady: false,
+            recognitionAcquisition: acquisitionEvidence,
+            candidateCoordinates: acquisitionEvidence.candidateCoordinates,
+            candidateCoordinateLines: acquisitionEvidence.candidateCoordinateLines,
+            candidateCoordinateGroups: acquisitionEvidence.candidateCoordinateGroups,
+            visibleCrsEvidence: acquisitionEvidence.visibleCrsEvidence,
+            imageAcquisitionEvidence: acquisitionEvidence.imageEvidence,
+            reviewReasons: contractReviewPayload.reviewReasons
+          };
+          reviewOnlyResponse.recognitionAcquisitionReviewAuthority = buildRecognitionAcquisitionReviewUsageAuthority({
+            recognitionRequestId: recognitionBudget?.requestId,
+            body: reviewOnlyResponse
+          });
+          return res.status(200).json(reviewOnlyResponse);
         }
         const wgs84PrimaryInfo = getWgs84TableCoordinatesInfo(wgs84PrimaryRawText, {
           preserveDuplicatePoints: true
@@ -17082,7 +17113,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         acquisition: recognitionImageAcquisition,
         providerResponseId: providerLayoutResponseId
       });
-      const acquisitionCompleted = acquisitionEvidence.candidateCoordinateLines.length > 0;
+      const acquisitionCompleted = acquisitionEvidence.acquisitionStatus === "COMPLETED";
+      console.log("Recognition acquisition evidence:", buildRecognitionAcquisitionLogSummary({
+        evidence: acquisitionEvidence,
+        providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+        contractReason: oneShotAcquisitionConformance.reason,
+        finalState: acquisitionCompleted ? "COMPLETED_REVIEW_REQUIRED" : "FAILED_NO_COORDINATE_EVIDENCE"
+      }));
       const consumeResult = acquisitionCompleted
         ? await consumeCoordinateUsage({ note: "Coordinate recognition consumed after Provider acquisition completed for review" })
         : null;
@@ -17110,10 +17147,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         requiresReview: true,
         kmlReady: false,
         warning: "The one-shot acquisition output did not satisfy its pre-Provider structural and source-binding contract and remains review-only.",
-        candidateCoordinates: acquisitionEvidence.candidateCoordinateLines,
+        candidateCoordinates: acquisitionEvidence.candidateCoordinates,
+        candidateCoordinateLines: acquisitionEvidence.candidateCoordinateLines,
+        candidateCoordinateGroups: acquisitionEvidence.candidateCoordinateGroups,
         visibleCrsEvidence: acquisitionEvidence.visibleCrsEvidence,
         imageAcquisitionEvidence: acquisitionEvidence.imageEvidence,
-        reviewReasons: [oneShotAcquisitionConformance.reason],
+        reviewReasons: [...new Set([oneShotAcquisitionConformance.reason, ...acquisitionEvidence.reviewReasons])],
         acquisitionContractConformance: oneShotAcquisitionConformance,
         parserTrace: [
           "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
@@ -17125,9 +17164,29 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         rawHint: ""
       });
       const contractReviewResponse = buildCoordinateVerificationResponse(contractReviewPayload, contractReviewEngine);
-      return res.status(acquisitionCompleted ? 200 : 422).json(acquisitionCompleted
-        ? keepRecognizedCoordinatesAsPointReview(contractReviewResponse, "", { blockMap: true })
-        : contractReviewResponse);
+      if (!acquisitionCompleted) return res.status(422).json(contractReviewResponse);
+      const reviewOnlyResponse = {
+        ...keepRecognizedCoordinatesAsPointReview(contractReviewResponse, "", { blockMap: true }),
+        requestId: recognitionBudget?.requestId || null,
+        success: true,
+        acquisitionStatus: "COMPLETED",
+        authorizationStatus: "REVIEW_REQUIRED",
+        resultStatus: "needs_review",
+        requiresReview: true,
+        kmlReady: false,
+        recognitionAcquisition: acquisitionEvidence,
+        candidateCoordinates: acquisitionEvidence.candidateCoordinates,
+        candidateCoordinateLines: acquisitionEvidence.candidateCoordinateLines,
+        candidateCoordinateGroups: acquisitionEvidence.candidateCoordinateGroups,
+        visibleCrsEvidence: acquisitionEvidence.visibleCrsEvidence,
+        imageAcquisitionEvidence: acquisitionEvidence.imageEvidence,
+        reviewReasons: contractReviewPayload.reviewReasons
+      };
+      reviewOnlyResponse.recognitionAcquisitionReviewAuthority = buildRecognitionAcquisitionReviewUsageAuthority({
+        recognitionRequestId: recognitionBudget?.requestId,
+        body: reviewOnlyResponse
+      });
+      return res.status(200).json(reviewOnlyResponse);
     }
     const stage1HandwrittenCandidateInput = formatHandwrittenDmsRawRows(rawText);
     retainP0QualificationAcquisition(req, response, recognitionBudget);

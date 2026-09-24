@@ -30,6 +30,7 @@
     "ocr-golden": "node scripts/ocr-golden-runner.js",
     "recognition-first-acquisition-v1-regression": "node scripts/recognition-first-acquisition-v1-regression.js",
     "recognition-first-review-result-v2-regression": "node scripts/recognition-first-review-result-v2-regression.js",
+    "recognition-first-acquisition-evidence-v3-regression": "node scripts/recognition-first-acquisition-evidence-v3-regression.js",
     "sr08c-manual-regression": "node scripts/sr08c-manual-finalizer-regression.js",
     "sr08c-evidence": "node scripts/sr08c-build-release-evidence.js",
     "start": "node server.js"
