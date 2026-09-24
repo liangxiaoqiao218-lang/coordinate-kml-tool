@@ -7512,11 +7512,80 @@ Au值 = 纯度 × 10 后取整数</div>
       refreshMapPreviewAction();
     });
 
+    function hasCompleteUnifiedRecognitionEvidence(payload = {}) {
+      const evidence = payload?.recognitionAcquisition;
+      return Boolean(evidence && typeof evidence === "object"
+        && String(payload.acquisitionStatus || evidence.acquisitionStatus || "").toUpperCase() === "COMPLETED"
+        && Array.isArray(payload.candidateCoordinates || evidence.candidateCoordinates)
+        && (payload.candidateCoordinates || evidence.candidateCoordinates).length > 0
+        && Array.isArray(payload.candidateCoordinateGroups || evidence.candidateCoordinateGroups)
+        && (payload.candidateCoordinateGroups || evidence.candidateCoordinateGroups).length > 0
+        && Array.isArray(payload.visibleCrsEvidence || evidence.visibleCrsEvidence)
+        && (payload.imageAcquisitionEvidence || evidence.imageEvidence)
+        && typeof (payload.imageAcquisitionEvidence || evidence.imageEvidence) === "object");
+    }
+
+    function createRecognitionAuthorizationState(payload = {}) {
+      const evidenceComplete = hasCompleteUnifiedRecognitionEvidence(payload);
+      const finalized = payload?.finalizedCoordinateResult || {};
+      const explicitlyAuthorized = evidenceComplete
+        && String(payload.authorizationStatus || "").toUpperCase() === "AUTHORIZED"
+        && String(payload.resultStatus || "").toLowerCase() === "authorized"
+        && payload.requiresReview !== true
+        && payload.boundaryBlocked !== true
+        && String(payload.mapStatus || "").toUpperCase() === "ENABLED"
+        && String(payload.kmlStatus || "").toUpperCase() === "ENABLED"
+        && payload.kmlReady === true
+        && finalized.requiresReview !== true
+        && finalized.mapReady !== false
+        && finalized.kmlReady === true;
+      return {
+        recognitionAcquisition: payload.recognitionAcquisition && typeof payload.recognitionAcquisition === "object"
+          ? payload.recognitionAcquisition
+          : null,
+        acquisitionStatus: payload.acquisitionStatus || payload.recognitionAcquisition?.acquisitionStatus || "INCOMPLETE",
+        authorizationStatus: explicitlyAuthorized ? "AUTHORIZED" : "REVIEW_REQUIRED",
+        resultStatus: explicitlyAuthorized ? "authorized" : "needs_review",
+        requiresReview: !explicitlyAuthorized,
+        boundaryBlocked: !explicitlyAuthorized,
+        mapStatus: explicitlyAuthorized ? "ENABLED" : "CLOSED",
+        kmlStatus: explicitlyAuthorized ? "ENABLED" : "CLOSED",
+        kmlReady: explicitlyAuthorized,
+        evidenceComplete,
+        reviewReasons: Array.isArray(payload.reviewReasons) ? payload.reviewReasons : [],
+        contractReasons: Array.isArray(payload.contractReasons) ? payload.contractReasons : [],
+        candidateCoordinates: Array.isArray(payload.candidateCoordinates) ? payload.candidateCoordinates : [],
+        candidateCoordinateGroups: Array.isArray(payload.candidateCoordinateGroups) ? payload.candidateCoordinateGroups : [],
+        visibleCrsEvidence: Array.isArray(payload.visibleCrsEvidence) ? payload.visibleCrsEvidence : [],
+        imageAcquisitionEvidence: payload.imageAcquisitionEvidence || null
+      };
+    }
+
+    function coordinateRecognitionActionBlocked(action = "map") {
+      if (!activeRecognitionAcquisitionResult) return agenticCoordinateController?.enabled === true;
+      const status = action === "kml"
+        ? activeRecognitionAcquisitionResult.kmlStatus
+        : activeRecognitionAcquisitionResult.mapStatus;
+      return activeRecognitionAcquisitionResult.evidenceComplete !== true
+        || activeRecognitionAcquisitionResult.requiresReview === true
+        || activeRecognitionAcquisitionResult.boundaryBlocked === true
+        || activeRecognitionAcquisitionResult.authorizationStatus !== "AUTHORIZED"
+        || activeRecognitionAcquisitionResult.resultStatus !== "authorized"
+        || status !== "ENABLED"
+        || (action === "kml" && activeRecognitionAcquisitionResult.kmlReady !== true);
+    }
+
+    function stopBlockedCoordinateAction(action = "map") {
+      if (!coordinateRecognitionActionBlocked(action)) return false;
+      const label = action === "kml" ? "KML" : "地图";
+      showMessage(`当前识别结果仍需复核，${label}暂未开放。`, true, 7000);
+      return true;
+    }
+
     function refreshMapPreviewAction() {
       if (!mapPreviewAction) return;
       const hasText = Boolean(String(input?.value || "").trim());
-      const acquisitionReviewMapBlocked = activeRecognitionAcquisitionResult?.mapStatus === "CLOSED"
-        || activeRecognitionAcquisitionResult?.authorizationStatus === "REVIEW_REQUIRED"
+      const acquisitionReviewMapBlocked = coordinateRecognitionActionBlocked("map")
         || activeFinalizedCoordinateResult?.mapReady === false;
       if (agenticCoordinateController?.enabled) {
         const state = hasText && !acquisitionReviewMapBlocked ? "enabled" : "blocked";
@@ -7553,8 +7622,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function coordinateKmlVisualState() {
       if (!String(input?.value || "").trim()) return "blocked";
-      if (activeRecognitionAcquisitionResult?.kmlStatus === "CLOSED"
-        || activeRecognitionAcquisitionResult?.authorizationStatus === "REVIEW_REQUIRED"
+      if (coordinateRecognitionActionBlocked("kml")
         || activeFinalizedCoordinateResult?.kmlReady === false) return "blocked";
       if (agenticCoordinateController?.enabled) return "enabled";
       if (projectedCrsSelectionNeedsConfirmation()) return "blocked";
@@ -7830,6 +7898,8 @@ Au值 = 纯度 × 10 后取整数</div>
     function createAgenticSpatialPayload(outcome) {
       const geometry = outcome.map.feature.geometry;
       const reviewRequired = outcome.result?.resultStatus === "needs_review";
+      const previewAllowed = !reviewRequired && !coordinateRecognitionActionBlocked("map");
+      const kmlAllowed = !reviewRequired && !coordinateRecognitionActionBlocked("kml");
       return {
         mapPreviewObject: {
           schemaVersion: "map_preview_object_v1",
@@ -7841,12 +7911,12 @@ Au值 = 纯度 × 10 后取整数</div>
           geometryType: geometry.type,
           geometry,
           previewWarnings: reviewRequired ? ["coordinate_review_required"] : [],
-          previewEligibility: { allowed: true }
+          previewEligibility: { allowed: previewAllowed }
         },
         kmlEligibility: {
-          allowed: true,
-          kmlReady: true,
-          technicalKmlReady: true,
+          allowed: kmlAllowed,
+          kmlReady: kmlAllowed,
+          technicalKmlReady: kmlAllowed,
           confirmationStatus: reviewRequired ? "REVIEW_REQUIRED" : "NOT_REQUIRED",
           qualityGateStatus: reviewRequired ? "REVIEW" : "PASS",
           decisionState: reviewRequired ? "NEEDS_REVIEW" : "USABLE",
@@ -7859,6 +7929,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function openAgenticSpatialResult() {
+      if (stopBlockedCoordinateAction("map")) return null;
       mapPreviewAction.disabled = true;
       try {
         const outcome = await agenticCoordinateController.finalize({ name: "GeoKit Lab Coordinate Result" });
@@ -7880,6 +7951,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function openSpatialResult() {
+      if (stopBlockedCoordinateAction("map")) return null;
       if (agenticCoordinateController?.enabled) return openAgenticSpatialResult();
       if (!spatialResultEnabled) return;
       if (projectedCrsSelectionNeedsConfirmation()) {
@@ -13913,6 +13985,7 @@ ${placemarks}
     }
 
     async function downloadAgenticCoordinateKml() {
+      if (stopBlockedCoordinateAction("kml")) return null;
       const outcome = await agenticCoordinateController.finalize({ name: "GeoKit Lab Coordinate Result" });
       const blob = new Blob([outcome.kml.content], {
         type: "application/vnd.google-earth.kml+xml;charset=utf-8"
@@ -13951,6 +14024,8 @@ ${placemarks}
 
     async function downloadKmlInternal() {
       await loadUserConfig();
+
+      if (stopBlockedCoordinateAction("kml")) return null;
 
       if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。")) {
         showKmlPermissionFailure("当前账户暂未开通 KML 导出权限。");
@@ -15215,8 +15290,13 @@ ${placemarks}
 
         const summaryEngine = data.coordinateEngineV2 || data.coordinate_engine_v2 || {};
         const summaryGroups = Array.isArray(summaryEngine.groups) ? summaryEngine.groups : [];
-        const acquisitionReviewOnly = data.acquisitionStatus === "COMPLETED"
-          && data.authorizationStatus === "REVIEW_REQUIRED";
+        const acquisitionReviewOnly = data.authorizationStatus === "REVIEW_REQUIRED"
+          || data.resultStatus === "needs_review"
+          || data.requiresReview === true
+          || data.boundaryBlocked === true
+          || data.mapStatus === "CLOSED"
+          || data.kmlStatus === "CLOSED"
+          || !hasCompleteUnifiedRecognitionEvidence(data);
         const acquisitionCandidateDisplayText = acquisitionReviewOnly
           && Array.isArray(data.candidateCoordinateGroups)
           ? data.candidateCoordinateGroups.map(group => {
@@ -15247,22 +15327,7 @@ ${placemarks}
           ? data.handwrittenVisionRouting.fieldConflicts.length
           : 0;
         activeFinalizedCoordinateResult = data.finalizedCoordinateResult || null;
-        activeRecognitionAcquisitionResult = data.recognitionAcquisition && typeof data.recognitionAcquisition === "object"
-          ? {
-            recognitionAcquisition: data.recognitionAcquisition,
-            acquisitionStatus: data.acquisitionStatus || null,
-            authorizationStatus: data.authorizationStatus || null,
-            resultStatus: data.resultStatus || null,
-            mapStatus: data.mapStatus || null,
-            kmlStatus: data.kmlStatus || null,
-            reviewReasons: Array.isArray(data.reviewReasons) ? data.reviewReasons : [],
-            contractReasons: Array.isArray(data.contractReasons) ? data.contractReasons : [],
-            candidateCoordinates: Array.isArray(data.candidateCoordinates) ? data.candidateCoordinates : [],
-            candidateCoordinateGroups: Array.isArray(data.candidateCoordinateGroups) ? data.candidateCoordinateGroups : [],
-            visibleCrsEvidence: Array.isArray(data.visibleCrsEvidence) ? data.visibleCrsEvidence : [],
-            imageAcquisitionEvidence: data.imageAcquisitionEvidence || null
-          }
-          : null;
+        activeRecognitionAcquisitionResult = createRecognitionAuthorizationState(data);
         activePointGeometryIntentReview = data.pointGeometryIntentReview || null;
         invalidateSpatialPreview();
 

@@ -416,7 +416,12 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
   conformance = body?.acquisitionContractConformance
 } = {}) {
   const finalized = body?.finalizedCoordinateResult || {};
+  const evidenceAcquisitionCompleted = String(evidence?.acquisitionStatus || "").toUpperCase() === "COMPLETED";
+  const decisionAcquisitionCompleted = !decision
+    || String(decision?.acquisitionStatus || "").toUpperCase() === "COMPLETED";
   const hasUnifiedEvidence = Boolean(evidence && typeof evidence === "object"
+    && evidenceAcquisitionCompleted
+    && decisionAcquisitionCompleted
     && Array.isArray(evidence.candidateCoordinates)
     && evidence.candidateCoordinates.length > 0
     && Array.isArray(evidence.candidateCoordinateGroups)
@@ -426,6 +431,7 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
   const contractRequiresReview = String(conformance?.status || "").toUpperCase() === "REVIEW_REQUIRED";
   const unifiedDecisionRequiresReview = decision?.authorizationStatus === "REVIEW_REQUIRED"
     || decision?.resultStatus === "needs_review";
+  const acquisitionIncomplete = !evidenceAcquisitionCompleted || !decisionAcquisitionCompleted;
   const finalRequiresReview = body?.requiresReview === true
     || finalized.requiresReview === true
     || finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED
@@ -433,6 +439,7 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     || body?.resultStatus === "needs_review"
     || contractRequiresReview
     || unifiedDecisionRequiresReview
+    || acquisitionIncomplete
     || !hasUnifiedEvidence;
   const finalizerGatePassed = finalized.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
     && finalized.qualityGateStatus === COORDINATE_QUALITY_GATE_STATUS.PASSED
@@ -450,6 +457,7 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     authorized,
     finalRequiresReview,
     hasUnifiedEvidence,
+    acquisitionIncomplete,
     contractRequiresReview,
     unifiedDecisionRequiresReview,
     finalizerGatePassed,
