@@ -13765,12 +13765,14 @@ function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = 
     coordinateEngineV2: engine,
     resultRevision: normalizedRevision
   });
-  const prepared = applyWgs84NearDuplicateAuthority({
-    recognitionResult: payload,
-    coordinateEngineV2: engine,
-    evidenceAcquisition,
-    revision: normalizedRevision
-  });
+  const prepared = finalizerOptions.sourceAuthority === "manual_input"
+    ? { recognitionResult: payload, coordinateEngineV2: engine, evaluation: { applies: false } }
+    : applyWgs84NearDuplicateAuthority({
+      recognitionResult: payload,
+      coordinateEngineV2: engine,
+      evidenceAcquisition,
+      revision: normalizedRevision
+    });
   const response = buildCoordinateVerificationResponseBase(
     prepared.recognitionResult,
     prepared.coordinateEngineV2,
