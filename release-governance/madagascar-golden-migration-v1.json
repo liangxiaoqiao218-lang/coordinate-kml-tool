@@ -1,6 +1,6 @@
 {
   "schemaVersion": "madagascar_golden_migration_v1",
-  "status": "APPROVED_REGRESSION_ONLY_RECONCILIATION",
+  "status": "SUPERSEDED_BY_V8_STRICT_FINALIZER_POLICY",
   "approvalReference": "PRODUCTION_RECOGNITION_P0_REPOSITORY_GOVERNANCE_AUDIT",
   "fixtureSha256": "ef023b37d07676437cc24804c70a8681d851974828f1bb232538aa222e36ec5e",
   "oldExpectation": {
@@ -22,7 +22,17 @@
     "requiresReview": true,
     "qualityGateStatus": "review_required",
     "confirmationStatus": "pending",
-    "kmlPolicy": "AVAILABLE_WITH_WARNING_WHEN_CURRENT_AUTHORIZED_GEOMETRY_IS_VALID"
+    "kmlPolicy": "REVIEW_REQUIRED_KML_CLOSED",
+    "sourceCrsAuthorityScope": "GOLDEN_REPLAY_TRANSFORM_METADATA_ONLY",
+    "authoritativeAcquisitionCrsEvidence": false
+  },
+  "policySupersession": {
+    "status": "APPROVED",
+    "supersedesPolicy": "AVAILABLE_WITH_WARNING_WHEN_CURRENT_AUTHORIZED_GEOMETRY_IS_VALID",
+    "authority": "V8_STRICT_FINALIZER",
+    "authorityCommit": "3c0f52cb49158c239b360acc60b5f9a326a92beb",
+    "productionBaseline": "40abc5e08e0589189994604697a2b232e1c9dfcf",
+    "coordinateTruthChanged": false
   },
   "reason": "The prior baseline preserved the confirmed 32-row source truth but used superseded CRS, geometry, provider-availability, and release semantics.",
   "evidence": [
