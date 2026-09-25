@@ -55,13 +55,22 @@
       "truthMaturity": "CONFIRMED_TRUTH",
       "policyMaturity": "CONFIRMED_POLICY",
       "approvedTruthSha256": "5c52ae6afac0589dc9f628c83fd30043b559544a7e35aeda2c659b1b7f8cd655",
+      "supersession": {
+        "status": "APPROVED",
+        "supersedesPolicy": "AVAILABLE_WITH_WARNING",
+        "authority": "V8_STRICT_FINALIZER",
+        "authorityCommit": "3c0f52cb49158c239b360acc60b5f9a326a92beb",
+        "productionBaseline": "40abc5e08e0589189994604697a2b232e1c9dfcf",
+        "effectivePolicy": "REVIEW_REQUIRED_KML_CLOSED",
+        "coordinateTruthChanged": false
+      },
       "releasePolicy": {
-        "policy": "AVAILABLE_WITH_WARNING",
-        "expectedAvailability": "AVAILABLE_WITH_WARNING",
+        "policy": "REVIEW_REQUIRED",
+        "expectedAvailability": "REVIEW_REQUIRED",
         "expectedFamily": "madagascar_cadastral_grid",
         "projectedXyTakeover": true,
         "expectedRequiresReview": true,
-        "expectedKmlReady": true,
+        "expectedKmlReady": false,
         "expectedDecisionStates": ["REVIEW_REQUIRED"],
         "expectedConfirmationStatus": "pending",
         "confirmationMayOverrideAvailability": false
@@ -76,19 +85,31 @@
         "cellCount": 32,
         "cellSizeMeters": 625,
         "valueConflict": false,
-        "maturityGovernanceConflict": "RESOLVED"
+        "maturityGovernanceConflict": "RESOLVED",
+        "expectedReviewGroupIndexes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+        "sourceCrsAuthorityScope": "GOLDEN_REPLAY_TRANSFORM_METADATA_ONLY",
+        "authoritativeAcquisitionCrsEvidence": false
       }
     },
     "indonesia-dms-real-001": {
       "truthMaturity": "CONFIRMED_TRUTH",
       "policyMaturity": "CONFIRMED_POLICY",
       "approvedTruthSha256": "615d5acb906c4ff07cd767983336a3c1a4d99fcd85e34c327eb674655cdc7044",
+      "supersession": {
+        "status": "APPROVED",
+        "supersedesPolicy": "AVAILABLE_WITH_WARNING",
+        "authority": "V8_STRICT_FINALIZER",
+        "authorityCommit": "3c0f52cb49158c239b360acc60b5f9a326a92beb",
+        "productionBaseline": "40abc5e08e0589189994604697a2b232e1c9dfcf",
+        "effectivePolicy": "REVIEW_REQUIRED_KML_CLOSED",
+        "coordinateTruthChanged": false
+      },
       "releasePolicy": {
-        "policy": "AVAILABLE_WITH_WARNING",
-        "expectedAvailability": "AVAILABLE_WITH_WARNING",
+        "policy": "REVIEW_REQUIRED",
+        "expectedAvailability": "REVIEW_REQUIRED",
         "expectedFamily": "indonesia_utm50_projected",
         "expectedRequiresReview": true,
-        "expectedKmlReady": true,
+        "expectedKmlReady": false,
         "expectedDecisionStates": ["REVIEW_REQUIRED"],
         "expectedConfirmationStatus": "pending",
         "confirmationMayOverrideAvailability": false
@@ -99,19 +120,31 @@
         "approvalDate": "2026-09-02",
         "confirmedPointCount": 4,
         "sourceCrs": "EPSG:4326",
-        "axisOrder": "longitude_latitude"
+        "axisOrder": "longitude_latitude",
+        "expectedReviewGroupIndexes": [1],
+        "visibleProjectedCrsEvidence": "UTM WGS 1984 ZONA 50S",
+        "visibleProjectedCrsAuthority": "APPROVED_REPLAY_ACQUISITION_EVIDENCE"
       }
     },
     "indonesia-projected-real-002": {
       "truthMaturity": "CONFIRMED_TRUTH",
       "policyMaturity": "CONFIRMED_POLICY",
       "approvedTruthSha256": "1cc1b22b83a13f634a32f0f37772a7d1c3695f5c4394166a1d9f8819ff75cd03",
+      "supersession": {
+        "status": "APPROVED",
+        "supersedesPolicy": "AVAILABLE_WITH_WARNING",
+        "authority": "V8_STRICT_FINALIZER",
+        "authorityCommit": "3c0f52cb49158c239b360acc60b5f9a326a92beb",
+        "productionBaseline": "40abc5e08e0589189994604697a2b232e1c9dfcf",
+        "effectivePolicy": "REVIEW_REQUIRED_KML_CLOSED",
+        "coordinateTruthChanged": false
+      },
       "releasePolicy": {
-        "policy": "AVAILABLE_WITH_WARNING",
-        "expectedAvailability": "AVAILABLE_WITH_WARNING",
+        "policy": "REVIEW_REQUIRED",
+        "expectedAvailability": "REVIEW_REQUIRED",
         "expectedFamily": "indonesia_utm50_projected",
         "expectedRequiresReview": true,
-        "expectedKmlReady": true,
+        "expectedKmlReady": false,
         "expectedDecisionStates": ["REVIEW_REQUIRED"],
         "expectedConfirmationStatus": "pending",
         "confirmationMayOverrideAvailability": false
@@ -123,7 +156,10 @@
         "confirmedPointCount": 6,
         "sourceCrs": "EPSG:32750",
         "axisOrder": "easting_northing",
-        "repeatedSequenceCollapsed": true
+        "repeatedSequenceCollapsed": true,
+        "expectedReviewGroupIndexes": [1],
+        "visibleProjectedCrsEvidence": "UTM WGS 1984 ZONA 50S",
+        "visibleProjectedCrsAuthority": "APPROVED_REPLAY_ACQUISITION_EVIDENCE"
       }
     },
     "utm30_burkina_003": {

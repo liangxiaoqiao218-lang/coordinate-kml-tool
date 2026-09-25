@@ -24,7 +24,7 @@
       ],
       "geometry": { "type": "Polygon", "sourcePointCount": 4, "ringClosedAtExport": true },
       "reviewState": "review_required",
-      "kmlBehavior": "available_with_warning"
+      "kmlBehavior": "review_required_kml_closed"
     },
     {
       "id": "indonesia-projected-real-002",
@@ -52,7 +52,7 @@
       ],
       "geometry": { "type": "Polygon", "sourcePointCount": 6, "ringClosedAtExport": true },
       "reviewState": "review_required",
-      "kmlBehavior": "available_with_warning",
+      "kmlBehavior": "review_required_kml_closed",
       "duplicatePolicy": "collapse_exact_contiguous_repeated_full_sequence_only"
     },
     {
@@ -80,7 +80,7 @@
       "normalizedCoordinates": { "kind": "grid_cell_centers", "count": 32, "cellSizeMeters": 625 },
       "geometry": { "type": "MultiPolygon", "cellCount": 32, "construction": "625m cells centered on XV/YV" },
       "reviewState": "review_required",
-      "kmlBehavior": "available_when_current_cell_geometry_converts_to_finite_WGS84"
+      "kmlBehavior": "review_required_kml_closed_missing_authoritative_acquisition_crs"
     }
   ]
 }
