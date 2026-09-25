@@ -182,7 +182,8 @@ if (process.argv[2] === '--http-candidate') {
         || baseScenario === 'generic-projected-utm50-dms-conflict'
         || baseScenario === 'generic-projected-utm50-self-intersection'
         || baseScenario === 'generic-projected-kyrgyz-real'
-        || baseScenario === 'generic-projected-kyrgyz-unbound') {
+        || baseScenario === 'generic-projected-kyrgyz-unbound'
+        || baseScenario === 'generic-cadastral-grid') {
         assert.ok(prompt.includes('UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE'));
         assert.ok(prompt.includes('CONTEXT |'));
       } else {
@@ -228,12 +229,12 @@ if (process.argv[2] === '--http-candidate') {
       '19 | 645000,1356200', '20 | 655000,1356200'
     ];
     const utm50SafeBoundary = [
-      [500000, 9700100], [500100, 9700050], [500100, 9699950],
-      [500000, 9699900], [499900, 9699950], [499900, 9700050]
+      [510000, 9700100], [510100, 9700050], [510100, 9699950],
+      [510000, 9699900], [509900, 9699950], [509900, 9700050]
     ];
     const utm50CrossedBoundary = [
-      [499900, 9700100], [500100, 9699900], [499900, 9699900],
-      [500100, 9700100], [500150, 9700000], [499850, 9700000]
+      [509900, 9700100], [510100, 9699900], [509900, 9699900],
+      [510100, 9700100], [510150, 9700000], [509850, 9700000]
     ];
     const formatSignedDms = (value, positiveDirection, negativeDirection) => {
       let remainingSeconds = Math.round(Math.abs(value) * 3600 * 10000) / 10000;
@@ -247,7 +248,7 @@ if (process.argv[2] === '--http-candidate') {
     const buildUtm50ReferenceRows = (coordinates, { conflictAt = -1 } = {}) => coordinates.map(([x, y], index) => {
       const reference = utmToWgs84(50, x, y, false);
       const latitude = index === conflictAt ? reference.lat + 0.01 : reference.lat;
-      return `${index + 1}\t${x}\t${y}\t${formatSignedDms(latitude, 'N', 'S')}\t${formatSignedDms(reference.lon, 'E', 'W')}`;
+      return `${index + 1} | ${x} | ${y} | ${formatSignedDms(latitude, 'N', 'S')} | ${formatSignedDms(reference.lon, 'E', 'W')}`;
     });
     const kyrgyzProviderText = baseScenario === 'generic-projected-kyrgyz-real'
       || baseScenario === 'generic-projected-kyrgyz-unbound'
@@ -322,6 +323,15 @@ if (process.argv[2] === '--http-candidate') {
           "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
           "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
           "4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+        ].join('\n')
+      : baseScenario === 'generic-cadastral-grid'
+      ? [
+          'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
+          'NC | XV | YV | Notes | num',
+          '1 | 292812.5 | 360937.5 | sector alpha | 280',
+          '2 | 292812.5 | 361562.5 | sector alpha | 281',
+          '3 | 293437.5 | 360937.5 | sector beta | 306',
+          '4 | 293437.5 | 361562.5 | sector beta | 307'
         ].join('\n')
       : baseScenario === 'observed' ? observedText : baseScenario === 'mismatch'
         ? structuredText.replace('119°30\'40.863" E', '120°30\'40.863" E') : structuredText;
@@ -480,7 +490,8 @@ async function runHttpCandidate(scenario) {
       || baseScenario === 'structured'
       || baseScenario === 'generic-dms-review'
       || baseScenario === 'generic-dms-point-az'
-      || baseScenario === 'generic-dms-review-array') {
+      || baseScenario === 'generic-dms-review-array'
+      || baseScenario === 'generic-cadastral-grid') {
       const finalized = payload.finalizedCoordinateResult;
       const mapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal,
@@ -493,8 +504,7 @@ async function runHttpCandidate(scenario) {
         || payload.mapStatus === 'CLOSED'
         || payload.kmlStatus === 'CLOSED'
         || baseScenario === 'structured'
-        || baseScenario === 'generic-dms-point-az'
-        || baseScenario === 'generic-projected-utm50-five-column-boundary';
+        || baseScenario === 'generic-dms-point-az';
       if (mapMustRemainClosed) {
         assert.equal(mapResponse.status, 422, JSON.stringify({ mapPreview, finalized }));
         assert.equal(mapPreview.mapPreviewObject?.previewEligibility?.allowed, false);
@@ -2000,30 +2010,19 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
       assert.equal(payload.finalizedCoordinateResult.geometry.coordinates.length, 4);
       assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
     } else if (scenario === 'structured') {
-      assert.equal(payload.coordinateEngineV2.coordinate_type, 'projected_xy');
-      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, 'EXPLICIT');
-      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 50);
-      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, 'S');
-      assert.equal(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
-      assert.equal(payload.geometryMode, 'boundary');
-      assert.equal(payload.boundaryBlocked, true);
+      assert.equal(payload.coordinateEngineV2.coordinate_type, 'indonesia_utm50_projected');
+      assert.equal(payload.precisionMode, 'indonesia-utm50s-projected');
+      assert.equal(payload.indonesiaUtm50.projectedDmsCrosscheck, 'PASS');
+      assert.equal(payload.indonesiaUtm50.comparedRows, 4);
+      assert.ok(payload.parserTrace.includes('INDONESIA_UTM50:dms_crosscheck_PASS'));
+      assert.doesNotMatch(payload.coordinates.split(/\r?\n/u)[0], /^1,779271/u);
       assert.equal(payload.finalizedCoordinateResult.geometry.type, 'Polygon');
-      assert.notEqual(payload.finalizedCoordinateResult.decisionState, 'AUTO_EXPORT');
+    } else {
+      assert.equal(payload.coordinateEngineV2.coordinate_type, 'indonesia_utm50_projected');
+      assert.equal(payload.precisionMode, 'indonesia-utm50s-projected');
+      assert.equal(payload.indonesiaUtm50.projectedDmsCrosscheck, 'FAIL');
       assert.equal(payload.finalizedCoordinateResult.requiresReview, true);
       assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-      assert.equal(payload.mapPreview.mapPreviewObject.geometry, null);
-      assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
-    } else {
-      assert.equal(payload.coordinateEngineV2.coordinate_type, 'projected_xy');
-      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, 'EXPLICIT');
-      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 50);
-      assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, 'S');
-      assert.equal(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
-      assert.equal(payload.projectedConfirmation.geometryMode, 'points_only');
-      assert.equal(payload.projectedConfirmation.boundaryBlocked, true);
-      assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, 'MultiPoint');
-      assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
-      assert.equal(payload.projectedMapPreview.mapPreviewObject.geometry.type, 'MultiPoint');
     }
     assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
   });
@@ -2032,25 +2031,14 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
 for (const scenario of ['null', 'exception', 'nonfinite', 'outofrange', 'incomplete', 'degenerate', 'selfintersection']) {
   test(`actual HTTP transform ${scenario} preserves owner and evidence without DMS geometry or KML`, async () => {
     const payload = await runHttpCandidate(scenario);
-    assert.equal(payload.coordinateEngineV2.coordinate_type, 'projected_xy');
-    assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, 'EXPLICIT');
-    assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 50);
-    assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, 'S');
-    assert.equal(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
+    assert.equal(payload.coordinateEngineV2.coordinate_type, 'indonesia_utm50_projected');
+    assert.equal(payload.precisionMode, 'indonesia-utm50s-projected');
+    assert.equal(payload.indonesiaUtm50.transformStatus, 'FAILED');
     assert.equal(payload.requiresReview, true);
     assert.equal(payload.coordinateEngineV2.requires_review, true);
-    assert.equal(payload.coordinateEngineV2.groups[0].points.length, 4);
+    assert.equal(payload.coordinateEngineV2.groups.length, 0);
     assert.equal(payload.finalizedCoordinateResult.geometry, null);
     assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-    if (scenario === 'degenerate') {
-      assert.equal(payload.projectedConfirmation.geometryMode, 'points_only');
-      assert.equal(payload.projectedConfirmation.boundaryBlocked, true);
-      assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, 'MultiPoint');
-      assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
-    } else {
-      assert.equal(payload.projectedConfirmationStatus, 422);
-      assert.ok(payload.projectedConfirmationFailure.code);
-    }
     assert.doesNotMatch(JSON.stringify(payload), /PRIVATE_TRANSFORM_ERROR/);
   });
 }
@@ -2381,6 +2369,23 @@ test("one-shot structured actual HTTP generic DMS recovery remains closed withou
   } }));
 });
 
+test("generic NC/XV/YV grid recovery ignores descriptive columns and uses the terminal cell number", async () => {
+  const payload = await runHttpCandidate("generic-cadastral-grid");
+  assert.equal(payload.success, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.precisionMode, "cadastral-grid-num-xv-yv");
+  assert.equal(payload.cadastralGrid.rowCount, 4);
+  assert.equal(payload.coordinates, [
+    "num | XV | YV",
+    "280 | 292812.5 | 360937.5",
+    "281 | 292812.5 | 361562.5",
+    "306 | 293437.5 | 360937.5",
+    "307 | 293437.5 | 361562.5"
+  ].join("\n"));
+  assert.ok(payload.parserTrace.includes("PROVIDER:trusted_cadastral_grid_rows_recovered"));
+  assert.doesNotMatch(JSON.stringify(payload.parserTrace), /Madagascar|Ilakaka|fixture|filename/u);
+});
+
 test("Provider DMS recovery preserves independent A-Z family identity and blocks export until confirmation", async () => {
   const payload = await runHttpCandidate("generic-dms-point-az");
   assert.equal(payload.success, true);
@@ -2671,25 +2676,19 @@ test("frontend projection detection accepts UTM zones 1 through 60 with hemisphe
   assert.doesNotMatch(indexSource, /return\s+["']utm30n["'];\s*\/\/.*default/iu);
 });
 
-test("generic five-column UTM50S table remains closed when unified review overrides source-parser safety", async () => {
+test("complete directional DMS rows take precedence over ordinal and projected columns", async () => {
   const payload = await runHttpCandidate("generic-projected-utm50-five-column-boundary");
-  assert.equal(payload.success, true);
   assert.equal(payload.providerCallCount, 1);
-  assert.equal(payload.providerProjectedReviewEvidence.status, "COMPLETE");
-  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, "EXPLICIT");
-  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 50);
-  assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, "S");
+  assert.equal(payload.precisionMode, "indonesia-utm50s-projected");
+  assert.equal(payload.indonesiaUtm50.projectedDmsCrosscheck, "PASS");
+  assert.equal(payload.indonesiaUtm50.comparedRows, 6);
   assert.equal(payload.coordinates.split(/\r?\n/u).length, 6);
   assert.equal(payload.coordinateEngineV2.groups[0].points.length, 6);
-  assert.ok(payload.parserTrace.includes("PROJECTED_BOUNDARY_AUTHORITY:safe_auto_release"));
-  assert.equal(payload.geometryMode, "boundary");
-  assert.equal(payload.boundaryBlocked, true);
+  assert.ok(payload.parserTrace.includes("INDONESIA_UTM50:dms_crosscheck_PASS"));
+  assert.doesNotMatch(payload.coordinates.split(/\r?\n/u)[0], /^1,510000/u);
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
-  assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
-  assert.equal(payload.finalizedCoordinateResult.requiresReview, true);
-  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-  assert.equal(payload.mapPreview.mapPreviewObject.geometry, null);
   assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
 });
 
 for (const scenario of [
@@ -2698,14 +2697,17 @@ for (const scenario of [
 ]) {
   test(`${scenario} remains fail-closed`, async () => {
     const payload = await runHttpCandidate(scenario);
-    assert.equal(payload.success, true);
     assert.equal(payload.providerCallCount, 1);
-    assert.equal(payload.precisionMode, "projected-x-y-review");
+    assert.equal(payload.precisionMode, "indonesia-utm50s-projected");
     assert.equal(payload.requiresReview, true);
-    assert.equal(payload.finalizedCoordinateResult.geometry, null);
     assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
     assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
-    assert.ok(!payload.parserTrace.includes("PROJECTED_BOUNDARY_AUTHORITY:safe_auto_release"));
+    if (scenario.endsWith("dms-conflict")) {
+      assert.equal(payload.indonesiaUtm50.projectedDmsCrosscheck, "FAIL");
+    } else {
+      assert.equal(payload.indonesiaUtm50.transformStatus, "FAILED");
+      assert.equal(payload.finalizedCoordinateResult.geometry, null);
+    }
   });
 }
 

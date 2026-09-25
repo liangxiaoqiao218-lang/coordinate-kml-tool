@@ -387,8 +387,12 @@ export function getIndonesiaUtm50Info(value = "", { transform } = {}) {
   }
   const parsed = [];
   for (const line of text.split("\n").map(item => item.trim()).filter(Boolean)) {
-    const parts = line.split("|").map(item => item.trim()).filter(Boolean);
+    let parts = line.split("|").map(item => item.trim()).filter(Boolean);
     const numbers = line.match(/[-+]?\d+(?:[.,]\d+)?/g) || [];
+    if (parts.length < 3 && numbers.length >= 3) {
+      const dmsParts = line.match(/\d{1,3}\s*[°º]\s*\d{1,2}\s*['′]?\s*\d{1,2}(?:[.,]\d+)?\s*["″]?\s*[NSEW]/gi) || [];
+      parts = [numbers[0], numbers[1], numbers[2], ...dmsParts];
+    }
     if (parts.length < 3 || numbers.length < 3) continue;
     const label = String(parts[0].match(/[A-Za-z0-9-]+/)?.[0] || numbers[0]);
     const xMatch = line.match(/(?:^|[|\s])X\s*[:=]?\s*([-+]?\d+(?:[.,]\d+)?)/i);

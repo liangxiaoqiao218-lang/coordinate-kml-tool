@@ -1577,7 +1577,7 @@ async function runSample(sample, options, errorLibrary) {
       : await callImageApi(sample);
     const acquisitionTerminal = classifyAcquisitionTerminal(actual, {
       p0Critical: sample.p0_release_critical === true,
-      deterministicReplay: replayValidation?.status === 'READY',
+      deterministicReplay: Boolean(options.p0ReplayManifest),
     });
     if (acquisitionTerminal) {
       runs.push({ actual, diffs: [], warnings: [], semantics: {} });

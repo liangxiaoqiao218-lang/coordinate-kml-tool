@@ -17235,8 +17235,113 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         });
         return res.json(buildCoordinateVerificationResponse(providerReviewPayload, providerReviewEngine));
       }
+      const trustedProviderIndonesiaUtm50 = getIndonesiaUtm50Info(rawText, { transform: utmToWgs84 });
+      if (trustedProviderIndonesiaUtm50.structureConfirmed
+        && trustedProviderIndonesiaUtm50.transformStatus === "FAILED") {
+        const failurePayload = {
+          model: `${selectedProviderModel}+indonesia-utm50-stable-parser`,
+          rawText,
+          coordinates: "",
+          precisionMode: "indonesia-utm50s-projected",
+          indonesiaUtm50: trustedProviderIndonesiaUtm50,
+          requiresReview: true,
+          warning: "已识别 UTM 50S 平面坐标表，但坐标转换未完成，暂时无法生成有效地图或 KML。请核对原图的投影信息和 X/Y 坐标后重试。",
+          parserTrace: ["INDONESIA_UTM50:explicit_document_evidence", "INDONESIA_UTM50_TRANSFORM_FAILED"]
+        };
+        const failedEngine = buildCoordinateEngineV2ShadowResult({ ...failurePayload, rawText: "" }, {
+          lockedCoordinateType: "indonesia_utm50_projected", forceRequiresReview: true
+        });
+        return res.json(buildCoordinateVerificationResponse(failurePayload, failedEngine));
+      }
+      if (trustedProviderIndonesiaUtm50.isIndonesiaUtm50) {
+        const consumeResult = await consumeCoordinateUsage({
+          note: "Coordinate recognition consumed after trusted Provider UTM50 stable parser"
+        });
+        if (!consumeResult.success) {
+          return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+            success: false,
+            reason: consumeResult.reason || "db_error",
+            code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+            error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const indonesiaPayload = {
+          model: `${selectedProviderModel}+indonesia-utm50-stable-parser`,
+          rawText,
+          coordinates: formatIndonesiaUtm50Rows(trustedProviderIndonesiaUtm50),
+          precisionMode: "indonesia-utm50s-projected",
+          warning: trustedProviderIndonesiaUtm50.requiresReview
+            ? "投影转换结果与 DMS 参考不一致或参考不完整；保留 X/Y 转换几何，请结合原图核对。"
+            : "识别到明确的 UTM WGS 1984 ZONA 50S 平面坐标表；已按 EPSG:32750 的 X=Easting、Y=Northing 转换，请结合原图核对。",
+          indonesiaUtm50: trustedProviderIndonesiaUtm50,
+          requiresReview: trustedProviderIndonesiaUtm50.requiresReview,
+          parserTrace: [
+            "INDONESIA_UTM50:explicit_document_evidence",
+            "INDONESIA_UTM50:projected_transform_executed",
+            `INDONESIA_UTM50:dms_crosscheck_${trustedProviderIndonesiaUtm50.projectedDmsCrosscheck}`,
+            trustedProviderIndonesiaUtm50.duplicateSequenceCollapsed
+              ? "INDONESIA_UTM50:exact_repeated_sequence_collapsed"
+              : "INDONESIA_UTM50:unique_sequence",
+            "INDONESIA_UTM50:accepted"
+          ],
+          quota: consumeResult.quota
+        };
+        return res.json(buildCoordinateVerificationResponse(
+          indonesiaPayload,
+          buildCoordinateEngineV2ShadowResult(indonesiaPayload, {
+            fileName: "",
+            forceRequiresReview: trustedProviderIndonesiaUtm50.requiresReview,
+            rawHint: rawText
+          })
+        ));
+      }
+      const trustedProviderCadastralGrid = getCadastralGridInfo(rawText);
+      if (trustedProviderCadastralGrid.isCadastralGrid) {
+        const consumeResult = await consumeCoordinateUsage({
+          note: "Coordinate recognition consumed after trusted Provider cadastral-grid recovery"
+        });
+        if (!consumeResult.success) {
+          return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+            success: false,
+            reason: consumeResult.reason || "db_error",
+            code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+            error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+            rawText: "",
+            coordinates: ""
+          });
+        }
+        const cadastralGridPayload = {
+          success: true,
+          model: `${selectedProviderModel}+trusted-provider-cadastral-grid`,
+          rawText,
+          coordinates: formatCadastralGridRows(trustedProviderCadastralGrid.rows),
+          precisionMode: "cadastral-grid-num-xv-yv",
+          warning: "已按可见的序号、X/Y 网格表头和完整行结构恢复坐标；请结合原图逐行核对。",
+          cadastralGrid: trustedProviderCadastralGrid,
+          parserTrace: [
+            "PROVIDER:trusted_cadastral_grid_rows_recovered",
+            "CADASTRAL_GRID:accepted"
+          ],
+          quota: consumeResult.quota
+        };
+        return res.json(buildCoordinateVerificationResponse(
+          cadastralGridPayload,
+          buildCoordinateEngineV2ShadowResult(cadastralGridPayload, {
+            fileName: "",
+            rawHint: rawText
+          })
+        ));
+      }
       const trustedProviderProjectedEvidence = providerProjectedDiagnostic;
-      if (trustedProviderProjectedEvidence.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE) {
+      const completeProviderDmsSupersedesProjected = providerDmsDiagnostic.status === "COMPLETE"
+        && (getIndonesiaUtm50Info(rawText, { transform: utmToWgs84 }).projectedDmsCrosscheck === "PASS"
+          || Boolean(buildExplicitProjectedBoundaryAutoReleaseEngine({
+            evidence: trustedProviderProjectedEvidence
+          })));
+      if (trustedProviderProjectedEvidence.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
+        && !completeProviderDmsSupersedesProjected) {
         const contextualUtm30BoundaryPreview = supportsLegacyUtm30BoundaryPreview({
           providerText: rawText,
           localOcrText: oneShotLocalOcrSourceText,

@@ -67,6 +67,9 @@ await check('HTTP 400 without replay is BLOCKED_NO_REPLAY', () => {
 await check('HTTP 400 for P0 replay is PRODUCT_FAIL', () => {
   assert.equal(classifyAcquisitionTerminal({ httpStatus: 400, error: 'bad request' }, { p0Critical: true, deterministicReplay: true }), 'PRODUCT_FAIL');
 });
+await check('HTTP 500 for an executed P0 text fixture is PRODUCT_FAIL', () => {
+  assert.equal(classifyAcquisitionTerminal({ httpStatus: 500, error: 'server error' }, { deterministicReplay: true }), 'PRODUCT_FAIL');
+});
 await check('invalid success envelope cannot PASS', () => {
   assert.equal(classifyAcquisitionTerminal({ httpStatus: 200, finalizerEvaluated: false, normalizedEvidenceAvailable: false }), 'BLOCKED_NO_REPLAY');
 });

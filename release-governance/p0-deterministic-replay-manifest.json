@@ -60,7 +60,7 @@
       "evidenceClass": "POSITIVE_APPROVED_REPLAY",
       "fixture": "regression-samples/production-recognition-recovery-p0/indonesia-utm50s-real-002.jpg",
       "sha256": "707e971aef6e5a6744cbd860cf701e41218fe6fb9a609b88e8bd121d03348b5a",
-      "acquisitionEvidenceSha256": "7a3489dfd802341217c8fb12072f07b0bfd820065b955661502f623207062c04",
+      "acquisitionEvidenceSha256": "1bfbadb4ec1e0e91aa27da81a7dccc98d81ae283a9850f6a4b9688518c7005d1",
       "providerInputImages": [
         {
           "role": "overview",
@@ -72,12 +72,6 @@
       "approvedAcquisitionLines": [
         "UTM WGS 1984 ZONA 50S",
         "No | X | Y",
-        "1 | 778984.492 | 9721476.737",
-        "2 | 779099.680 | 9721476.848",
-        "3 | 779099.680 | 9721110.798",
-        "4 | 778875.519 | 9721110.798",
-        "5 | 778875.519 | 9721180.576",
-        "6 | 778984.492 | 9721180.576",
         "1 | 778984.492 | 9721476.737",
         "2 | 779099.680 | 9721476.848",
         "3 | 779099.680 | 9721110.798",
