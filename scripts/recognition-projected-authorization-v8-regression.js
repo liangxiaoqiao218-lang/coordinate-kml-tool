@@ -30,7 +30,7 @@ function buildProjectedProviderText({ includeCrs = true } = {}) {
   return [
     ...(includeCrs ? ["CONTEXT | Projected coordinate system UTM Zone 31N"] : []),
     "HEADING | Projected boundary",
-    "Point | X (m) | Y (m)",
+    "Sommets | X (m) | Y (m)",
     ...projectedBoundaryOffsets.map(([xOffset, yOffset], index) => (
       `${index + 1} | ${syntheticXOrigin + xOffset} | ${syntheticYOrigin + yOffset}`
     ))
