@@ -15082,11 +15082,67 @@ async function recognizeCoordinatesHandler(req, res) {
       finalState: decision.finalState
     }));
   };
+  const getStructuredRecognitionCandidateCounts = (body = {}, evidence = null) => {
+    const evidenceCandidates = Array.isArray(evidence?.candidateCoordinates)
+      ? evidence.candidateCoordinates.length
+      : 0;
+    const bodyCandidates = Array.isArray(body?.candidateCoordinates)
+      ? body.candidateCoordinates.length
+      : 0;
+    const engineGroups = Array.isArray(body?.coordinateEngineV2?.groups)
+      ? body.coordinateEngineV2.groups
+      : [];
+    const finalizedGroups = Array.isArray(body?.finalizedCoordinateResult?.groups)
+      ? body.finalizedCoordinateResult.groups
+      : [];
+    const countGroupPoints = groups => groups.reduce((total, group) => total + Math.max(
+      Array.isArray(group?.points) ? group.points.length : 0,
+      Array.isArray(group?.rows) ? group.rows.length : 0,
+      Array.isArray(group?.coordinates) ? group.coordinates.length : 0
+    ), 0);
+    const enginePointCount = countGroupPoints(engineGroups);
+    const finalizedPointCount = countGroupPoints(finalizedGroups);
+    const pointCount = Math.max(evidenceCandidates, bodyCandidates, enginePointCount, finalizedPointCount);
+    const groupCount = Math.max(
+      Array.isArray(evidence?.candidateCoordinateGroups) ? evidence.candidateCoordinateGroups.length : 0,
+      Array.isArray(body?.candidateCoordinateGroups) ? body.candidateCoordinateGroups.length : 0,
+      engineGroups.length,
+      finalizedGroups.length
+    );
+    const hasPreservedCoordinateText = body?.success !== false && Boolean(String(body?.coordinates || "").trim());
+    return Object.freeze({
+      pointCount,
+      groupCount,
+      hasTrustedCandidates: pointCount > 0 || hasPreservedCoordinateText
+    });
+  };
+  const refreshRecognitionReviewUsageAuthority = body => {
+    if (!body || typeof body !== "object" || body.success !== true) return body;
+    const recognitionRequestId = String(body.requestId || recognitionBudget?.requestId || "").trim();
+    if (body.recognitionAcquisitionReviewAuthority) {
+      return {
+        ...body,
+        recognitionAcquisitionReviewAuthority: buildRecognitionAcquisitionReviewUsageAuthority({
+          recognitionRequestId,
+          body
+        })
+      };
+    }
+    if (body.projectedCoordinateReviewAuthority) {
+      return {
+        ...body,
+        projectedCoordinateReviewAuthority: buildProjectedCoordinateReviewUsageAuthority({
+          recognitionRequestId,
+          body
+        })
+      };
+    }
+    return body;
+  };
   const attachUnifiedRecognitionAcquisition = body => {
     const context = unifiedRecognitionAcquisitionContext;
     if (!context || !body || typeof body !== "object" || Array.isArray(body)) return body;
     const { evidence, decision } = context;
-    if (decision.acquisitionStatus !== "COMPLETED") return body;
     const finalAuthorization = evaluateUnifiedRecognitionFinalAuthorization({
       body,
       evidence,
@@ -15094,46 +15150,115 @@ async function recognizeCoordinatesHandler(req, res) {
       conformance: context.conformance
     });
     const { authorized } = finalAuthorization;
+    const providerCompletionState = decision.providerCompletionState || evidence?.providerCompletionState || "UNKNOWN";
+    const acquisitionStatus = decision.acquisitionStatus || evidence?.acquisitionStatus || "EMPTY";
+    const candidateCounts = getStructuredRecognitionCandidateCounts(body, evidence);
     const authorizationStatus = authorized ? "AUTHORIZED" : "REVIEW_REQUIRED";
     const finalizedRequiresFailClose = !authorized
       && body.finalizedCoordinateResult && typeof body.finalizedCoordinateResult === "object"
       && (body.finalizedCoordinateResult.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
         || body.finalizedCoordinateResult.kmlReady === true
         || body.finalizedCoordinateResult.mapReady !== false);
+    const failClosedFinalizedCoordinateResult = finalizedRequiresFailClose
+      ? finalizeCoordinateResult({
+        ...body.finalizedCoordinateResult,
+        currentRevision: body.finalizedCoordinateResult.resultRevision,
+        confirmedRevision: null,
+        confirmationStatus: "pending",
+        qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+        technicalKmlReady: false,
+        mapReady: false,
+        kmlAuthorityBlocked: true,
+        currentAuthorizedGeometryExportable: false,
+        requiresReview: true,
+        kmlReady: false,
+        groups: Array.isArray(body.finalizedCoordinateResult.groups)
+          ? body.finalizedCoordinateResult.groups.map(group => ({
+            ...group,
+            requiresReview: true,
+            kmlReady: false
+          }))
+          : body.finalizedCoordinateResult.groups
+      })
+      : null;
     const finalizedCoordinateResult = body.finalizedCoordinateResult && typeof body.finalizedCoordinateResult === "object"
       ? !finalizedRequiresFailClose
         ? body.finalizedCoordinateResult
-        : coordinateConfirmationRuntime.register(finalizeCoordinateResult({
-          ...body.finalizedCoordinateResult,
-          currentRevision: body.finalizedCoordinateResult.resultRevision,
-          confirmedRevision: null,
-          confirmationStatus: "pending",
-          qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
-          technicalKmlReady: false,
-          mapReady: false,
-          kmlAuthorityBlocked: true,
-          currentAuthorizedGeometryExportable: false,
-          requiresReview: true,
-          kmlReady: false,
-          groups: Array.isArray(body.finalizedCoordinateResult.groups)
-            ? body.finalizedCoordinateResult.groups.map(group => ({
-              ...group,
-              requiresReview: true,
-              kmlReady: false
-            }))
-            : body.finalizedCoordinateResult.groups
+        : coordinateConfirmationRuntime.register(Object.freeze({
+          ...failClosedFinalizedCoordinateResult,
+          decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+          gate: Object.freeze({
+            ...failClosedFinalizedCoordinateResult.gate,
+            decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED
+          })
         }))
       : body.finalizedCoordinateResult;
     const contractReasons = [...new Set([
       ...(Array.isArray(decision.contractReasons) ? decision.contractReasons : []),
-      ...(Array.isArray(body.contractReasons) ? body.contractReasons : [])
+      ...(Array.isArray(body.contractReasons) ? body.contractReasons : []),
+      ...(finalAuthorization.acquisitionIncomplete ? ["UNIFIED_RECOGNITION_ACQUISITION_INCOMPLETE"] : []),
+      ...(!finalAuthorization.hasUnifiedEvidence ? ["UNIFIED_RECOGNITION_EVIDENCE_INCOMPLETE"] : [])
     ])];
-    return {
+    const reviewReasons = [...new Set([
+      ...(Array.isArray(body.reviewReasons) ? body.reviewReasons : []),
+      ...contractReasons,
+      ...(Array.isArray(evidence?.reviewReasons) ? evidence.reviewReasons : [])
+    ])];
+    const candidateCoordinates = Array.isArray(evidence?.candidateCoordinates) && evidence.candidateCoordinates.length > 0
+      ? evidence.candidateCoordinates
+      : Array.isArray(body.candidateCoordinates) ? body.candidateCoordinates : [];
+    const candidateCoordinateLines = Array.isArray(evidence?.candidateCoordinateLines) && evidence.candidateCoordinateLines.length > 0
+      ? evidence.candidateCoordinateLines
+      : Array.isArray(body.candidateCoordinateLines) ? body.candidateCoordinateLines : [];
+    const candidateCoordinateGroups = Array.isArray(evidence?.candidateCoordinateGroups) && evidence.candidateCoordinateGroups.length > 0
+      ? evidence.candidateCoordinateGroups
+      : Array.isArray(body.candidateCoordinateGroups) ? body.candidateCoordinateGroups : [];
+    const visibleCrsEvidence = Array.isArray(evidence?.visibleCrsEvidence) && evidence.visibleCrsEvidence.length > 0
+      ? evidence.visibleCrsEvidence
+      : Array.isArray(body.visibleCrsEvidence) ? body.visibleCrsEvidence : [];
+    const imageAcquisitionEvidence = evidence?.imageEvidence && typeof evidence.imageEvidence === "object"
+      ? evidence.imageEvidence
+      : body.imageAcquisitionEvidence || null;
+
+    if (!candidateCounts.hasTrustedCandidates) {
+      res.status(422);
+      return {
+        ...body,
+        success: false,
+        reason: "recognition_failed_closed",
+        code: "COORDINATE_RECOGNITION_FAILED_CLOSED",
+        rawText: "",
+        coordinates: "",
+        providerCompletionState,
+        providerCallCount: Math.max(0, Number(recognitionBudget?.providerAttemptCount) || 0),
+        recognitionAcquisition: evidence || null,
+        acquisitionStatus,
+        authorizationStatus: "NOT_ESTABLISHED",
+        resultStatus: "failed",
+        requiresReview: false,
+        boundaryBlocked: true,
+        mapReady: false,
+        kmlReady: false,
+        mapStatus: "CLOSED",
+        kmlStatus: "CLOSED",
+        ...(finalizedCoordinateResult ? { finalizedCoordinateResult } : {}),
+        candidateCoordinates,
+        candidateCoordinateLines,
+        candidateCoordinateGroups,
+        candidatePointCount: candidateCounts.pointCount,
+        candidateGroupCount: candidateCounts.groupCount,
+        visibleCrsEvidence,
+        imageAcquisitionEvidence,
+        contractReasons,
+        reviewReasons
+      };
+    }
+    return refreshRecognitionReviewUsageAuthority({
       ...body,
-      providerCompletionState: decision.providerCompletionState || evidence.providerCompletionState,
+      providerCompletionState,
       providerCallCount: Math.max(0, Number(recognitionBudget?.providerAttemptCount) || 0),
-      recognitionAcquisition: evidence,
-      acquisitionStatus: "COMPLETED",
+      recognitionAcquisition: evidence || null,
+      acquisitionStatus,
       authorizationStatus,
       resultStatus: authorized ? "authorized" : "needs_review",
       requiresReview: !authorized,
@@ -15143,18 +15268,16 @@ async function recognizeCoordinatesHandler(req, res) {
       mapStatus: finalAuthorization.mapReady ? "ENABLED" : "CLOSED",
       kmlStatus: finalAuthorization.kmlReady ? "ENABLED" : "CLOSED",
       ...(finalizedCoordinateResult ? { finalizedCoordinateResult } : {}),
-      candidateCoordinates: evidence.candidateCoordinates,
-      candidateCoordinateLines: evidence.candidateCoordinateLines,
-      candidateCoordinateGroups: evidence.candidateCoordinateGroups,
-      visibleCrsEvidence: evidence.visibleCrsEvidence,
-      imageAcquisitionEvidence: evidence.imageEvidence,
+      candidateCoordinates,
+      candidateCoordinateLines,
+      candidateCoordinateGroups,
+      candidatePointCount: candidateCounts.pointCount,
+      candidateGroupCount: candidateCounts.groupCount,
+      visibleCrsEvidence,
+      imageAcquisitionEvidence,
       contractReasons,
-      reviewReasons: [...new Set([
-        ...(Array.isArray(body.reviewReasons) ? body.reviewReasons : []),
-        ...contractReasons,
-        ...(Array.isArray(evidence.reviewReasons) ? evidence.reviewReasons : [])
-      ])]
-    };
+      reviewReasons
+    });
   };
   const logUnifiedRecognitionAcquisitionFinalState = ({
     body,
