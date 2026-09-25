@@ -15147,7 +15147,8 @@ async function recognizeCoordinatesHandler(req, res) {
       body,
       evidence,
       decision,
-      conformance: context.conformance
+      conformance: context.conformance,
+      providerCallCount: recognitionBudget?.providerAttemptCount || 0
     });
     const { authorized } = finalAuthorization;
     const providerCompletionState = decision.providerCompletionState || evidence?.providerCompletionState || "UNKNOWN";
@@ -15196,6 +15197,8 @@ async function recognizeCoordinatesHandler(req, res) {
     const contractReasons = [...new Set([
       ...(Array.isArray(decision.contractReasons) ? decision.contractReasons : []),
       ...(Array.isArray(body.contractReasons) ? body.contractReasons : []),
+      ...(Array.isArray(finalAuthorization.finalAuthorizationReasons)
+        ? finalAuthorization.finalAuthorizationReasons : []),
       ...(finalAuthorization.acquisitionIncomplete ? ["UNIFIED_RECOGNITION_ACQUISITION_INCOMPLETE"] : []),
       ...(!finalAuthorization.hasUnifiedEvidence ? ["UNIFIED_RECOGNITION_EVIDENCE_INCOMPLETE"] : [])
     ])];
@@ -15241,6 +15244,8 @@ async function recognizeCoordinatesHandler(req, res) {
         kmlReady: false,
         mapStatus: "CLOSED",
         kmlStatus: "CLOSED",
+        previewEligibility: { allowed: false },
+        kmlEligibility: { allowed: false, kmlReady: false },
         ...(finalizedCoordinateResult ? { finalizedCoordinateResult } : {}),
         candidateCoordinates,
         candidateCoordinateLines,
@@ -15267,6 +15272,11 @@ async function recognizeCoordinatesHandler(req, res) {
       kmlReady: finalAuthorization.kmlReady,
       mapStatus: finalAuthorization.mapReady ? "ENABLED" : "CLOSED",
       kmlStatus: finalAuthorization.kmlReady ? "ENABLED" : "CLOSED",
+      previewEligibility: { allowed: finalAuthorization.mapReady },
+      kmlEligibility: {
+        allowed: finalAuthorization.kmlReady,
+        kmlReady: finalAuthorization.kmlReady
+      },
       ...(finalizedCoordinateResult ? { finalizedCoordinateResult } : {}),
       candidateCoordinates,
       candidateCoordinateLines,
