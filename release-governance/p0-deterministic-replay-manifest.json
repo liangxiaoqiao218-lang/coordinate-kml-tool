@@ -38,6 +38,14 @@
       "fixture": "regression-samples/OCR_GOLDEN/fixtures/indonesia-utm50s-real-001.jpg",
       "sha256": "2f508653305fee7c08470218f9bf94f75b56d26d7b28edcd7d8d68cd8f88eaf6",
       "acquisitionEvidenceSha256": "2d7ef95ad549eea4cf5bc9797f262c17e71bee238791b29be1f78278c54b4947",
+      "providerInputImages": [
+        {
+          "role": "overview",
+          "mimeType": "image/jpeg",
+          "byteLength": 389925,
+          "sha256": "93c89dbc171dee8378a4aaf25e288d3bf0224bb29cf7c845e1aa1b1b20a7662d"
+        }
+      ],
       "approvedAcquisitionLines": [
         "UTM WGS 1984 ZONA 50S",
         "No | X | Y | Latitude | Longitude",
@@ -53,6 +61,14 @@
       "fixture": "regression-samples/production-recognition-recovery-p0/indonesia-utm50s-real-002.jpg",
       "sha256": "707e971aef6e5a6744cbd860cf701e41218fe6fb9a609b88e8bd121d03348b5a",
       "acquisitionEvidenceSha256": "7a3489dfd802341217c8fb12072f07b0bfd820065b955661502f623207062c04",
+      "providerInputImages": [
+        {
+          "role": "overview",
+          "mimeType": "image/jpeg",
+          "byteLength": 406680,
+          "sha256": "c8b1b6ef58acbed96fb981c1ca84d77a0e478a0a6fe7ce2ffe644793e4d7fa2b"
+        }
+      ],
       "approvedAcquisitionLines": [
         "UTM WGS 1984 ZONA 50S",
         "No | X | Y",
@@ -76,6 +92,14 @@
       "fixture": "regression-samples/fixtures/马达加斯加坐标.png",
       "sha256": "ef023b37d07676437cc24804c70a8681d851974828f1bb232538aa222e36ec5e",
       "acquisitionEvidenceSha256": "4cb9684de6daae868cce9dcb6d4005105f0587cee7cf36b9fff7f2e9c93207ea",
+      "providerInputImages": [
+        {
+          "role": "overview",
+          "mimeType": "image/jpeg",
+          "byteLength": 489937,
+          "sha256": "ff2078e3ae4aec09204864077b603a0019074268656ec731134f3f17720c533d"
+        }
+      ],
       "sourceRowsApprovalReference": "COORDINATE_ENGINE_V3_MADAGASCAR_CADASTRAL_36_OF_36_APPROVED_SOURCE_ROWS",
       "approvedAcquisitionLines": [
         "Liste_Carres Madagascar cadastral",
