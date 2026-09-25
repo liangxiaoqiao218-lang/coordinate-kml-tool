@@ -245,24 +245,26 @@ test("ND-03", "distance never substitutes for exact rounding containment", () =>
     "35.4478190,83.1789910",
     "35.4478194,83.1789914"
   ]));
-  assert.equal(result.decision.decision, NEAR_DUPLICATE_DECISION.DISTINCT_POINTS);
-  assert.equal(result.authorityBlocked, true);
+  assert.equal(result.applies, false);
+  assert.equal(result.canonicalPoints.length, 2);
+  assert.equal(result.geometryIntentGate, undefined);
 });
 
-test("ND-03B", "candidate count cannot mint LineString authority", () => {
+test("ND-03B", "distinct candidate count bypasses Point-only authority without minting LineString authority", () => {
   const result = evaluateWgs84NearDuplicateConsolidation(prepare([
     "35.4478190,83.1789910",
     "35.4478290,83.1790010"
   ]));
-  assert.equal(result.decision.decision, NEAR_DUPLICATE_DECISION.DISTINCT_POINTS);
-  assert.equal(result.geometryIntentGate.decision, "BLOCKED");
-  assert.equal(result.authorityBlocked, true);
+  assert.equal(result.applies, false);
+  assert.equal(result.canonicalPoints.length, 2);
+  assert.equal(result.decision, undefined);
+  assert.equal(result.geometryIntentGate, undefined);
 });
 
-test("ND-03C", "LineString intent cannot bypass provenance or CRS identity", () => {
+test("ND-03C", "rounding-related candidates cannot bypass provenance or CRS identity", () => {
   const input = prepare([
-    "35.4478190,83.1789910",
-    "35.4478290,83.1790010"
+    low,
+    high
   ], {
     observationOverrides: [{ provenance_trust: "UNTRUSTED" }, {}]
   });

@@ -14,9 +14,46 @@ function normalizedHeaderToken(token) {
   return String(token || "").trim().toUpperCase().replace(/[._-]+/gu, "");
 }
 
+function analyzeDelimitedProjectedHeader(text) {
+  if (!/[|\t;]/u.test(text)) return null;
+  const fields = text.split(/[|\t;]/u).map(field => field.trim());
+  if (fields.length < 3 || fields.length > 12 || fields.some(field => !field || field.length > 48)) return null;
+  const tokens = fields.map(normalizedHeaderToken);
+  if (tokens.some(token => /^(?:LAT|LATITUDE|LON|LONG|LONGITUDE|PARALLELE|MERIDIEN)\d*$/iu.test(token))) return null;
+  const xIndexes = tokens.flatMap((token, index) => /^(?:X|XV|EASTING)\d*$/iu.test(token) ? [index] : []);
+  const yIndexes = tokens.flatMap((token, index) => /^(?:Y|YV|NORTHING)\d*$/iu.test(token) ? [index] : []);
+  const labelIndexes = tokens.flatMap((token, index) => /^(?:NO|N|NC|NUMBER|NUM|POINT|PT|VERTEX|SOMMET|ID|LABEL)$/iu.test(token) ? [index] : []);
+  if (xIndexes.length !== 1 || yIndexes.length !== 1 || labelIndexes.length === 0) return null;
+  const firstAxisIndex = Math.min(xIndexes[0], yIndexes[0]);
+  const leadingLabelIndexes = labelIndexes.filter(index => index < firstAxisIndex);
+  if (leadingLabelIndexes.length !== 1) return null;
+  const labelIndex = leadingLabelIndexes[0];
+  const coordinateIndexes = new Set([xIndexes[0], yIndexes[0], labelIndex]);
+  const auxiliaryValid = fields.every((field, index) => coordinateIndexes.has(index)
+    || (/\p{L}/u.test(field) && !DMS_SIGNAL_PATTERN.test(field)));
+  if (!auxiliaryValid) return null;
+  return Object.freeze({
+    family: "PROJECTED",
+    pairCount: 1,
+    geographicPairs: 0,
+    projectedPairs: 1,
+    geographicAxisOrder: null,
+    projectedAxisOrder: xIndexes[0] < yIndexes[0] ? "x_y" : "y_x",
+    columnLayout: Object.freeze({
+      fieldCount: fields.length,
+      labelIndex,
+      xIndex: xIndexes[0],
+      yIndex: yIndexes[0]
+    }),
+    text
+  });
+}
+
 function analyzeCoordinateHeader(line) {
   const text = String(line || "").trim();
   if (!text || DMS_SIGNAL_PATTERN.test(text)) return null;
+  const delimitedProjectedHeader = analyzeDelimitedProjectedHeader(text);
+  if (delimitedProjectedHeader) return delimitedProjectedHeader;
   const tokens = text
     .replace(/\(\s*(?:m|metres?|meters?)\s*\)/giu, " ")
     .replace(/[|\t,;:/#()[\]{}°º˚掳潞藲-]+/gu, " ")
@@ -217,6 +254,25 @@ function parseNumericCoordinateRow(line, lineNumber, { header = null, crsEvidenc
   }
   const delimited = /[|\t;]/u.test(text);
   const fields = (delimited ? text.split(/[|\t;]/u) : text.split(/\s+/u)).map(value => value.trim()).filter(Boolean);
+  if (header?.columnLayout) {
+    const layout = header.columnLayout;
+    if (!delimited || fields.length !== layout.fieldCount) return null;
+    const sourceLabel = sourceLabelFromField(fields[layout.labelIndex]);
+    const x = normalizeCoordinateNumber(fields[layout.xIndex]);
+    const y = normalizeCoordinateNumber(fields[layout.yIndex]);
+    if (!sourceLabel || !x || !y) return null;
+    return [Object.freeze({
+      format: "PROJECTED_XY",
+      sourceLineNumber: lineNumber,
+      sourceText: original,
+      sourceLabel,
+      sourceLabelInferred: false,
+      sourceRowCandidateIndex: 1,
+      x: x.value,
+      y: y.value,
+      axisOrder: layout.xIndex < layout.yIndex ? "x_y" : "y_x"
+    })];
+  }
   const expectedPairCount = Math.max(1, Number(header?.pairCount || 1));
   let sourceLabel = null;
   let coordinateFields = fields;

@@ -208,7 +208,7 @@ export function buildRecognitionFirstPromptPrefix(acquisition) {
     + "Acquisition is evidence collection only. Return all visible coordinate candidates and visible CRS evidence; downstream validation decides authority, Map, and KML.\n\n";
 }
 
-const CRS_EVIDENCE_PATTERN = /\b(?:EPSG\s*:?\s*\d{4,6}|WGS\s*[- ]?84|UTM(?:\s+zone)?\s*\d{1,2}\s*[NS]?|BFTM|ITRF(?:\s*\d{4})?|GAUSS[\s-]*KRUGER|MGRS|DATUM\s*:?\s*[\p{L}\d._/-]+|PROJECTION\s*:?\s*[^|\n]{1,80})\b/giu;
+const CRS_EVIDENCE_PATTERN = /\b(?:EPSG\s*:?\s*\d{4,6}|WGS\s*[- ]?(?:19)?84|UTM(?:\s+zone)?\s*\d{1,2}\s*[NS]?|UTM\b[^\r\n|]{0,80}?\b(?:ZONE|ZONA)\s*\d{1,2}\s*[NS]\b|BFTM|ITRF(?:\s*\d{4})?|GAUSS[\s-]*KRUGER|MGRS|DATUM\s*:?\s*[\p{L}\d._/-]+|PROJECTION\s*:?\s*[^|\n]{1,80})\b/giu;
 
 export function extractVisibleCrsEvidence(rawText) {
   const matches = [];
@@ -239,7 +239,7 @@ function isVerifiedCoordinateHeaderLine(line) {
     .trim()
     .split(/\s+/u)
     .filter(Boolean);
-  const allowedHeaderToken = /^(?:NO|N|NUMBER|NUM|POINT|PT|VERTEX|SOMMET|ID|X|Y|EASTING|NORTHING|LAT|LATITUDE|LON|LONG|LONGITUDE|PARALLÈLE|MÉRIDIEN)$/iu;
+  const allowedHeaderToken = /^(?:NO|N|NC|NUMBER|NUM|POINT|PT|VERTEX|SOMMET|ID|LABEL|X|XV|Y|YV|EASTING|NORTHING|LAT|LATITUDE|LON|LONG|LONGITUDE|PARALLÈLE|MÉRIDIEN)$/iu;
   return tokens.length >= 2 && tokens.every(token => allowedHeaderToken.test(token));
 }
 

@@ -322,6 +322,17 @@ export function evaluateWgs84NearDuplicateConsolidation({ coordinateEngineV2 = {
     });
   }
 
+  const rawDecimalPairs = points.map(point => extractDecimalPair(point.raw));
+  const rawRoundingRelated = rawDecimalPairs.length === 2
+    && rawDecimalPairs.every(Boolean)
+    && ((strictRoundingContains(rawDecimalPairs[0].latitude, rawDecimalPairs[1].latitude)
+      && strictRoundingContains(rawDecimalPairs[0].longitude, rawDecimalPairs[1].longitude))
+      || (strictRoundingContains(rawDecimalPairs[1].latitude, rawDecimalPairs[0].latitude)
+        && strictRoundingContains(rawDecimalPairs[1].longitude, rawDecimalPairs[0].longitude)));
+  if (rawDecimalPairs.every(Boolean) && !rawRoundingRelated) {
+    return deepFreeze({ applies: false, canonicalPoints: points });
+  }
+
   const bindings = points.map((point, index) => bindingForPoint(evidenceAcquisition, point, index));
   const observations = bindings.map(binding => observationForBinding(evidenceAcquisition, binding));
   const exact = points.map((point, index) => exactPoint(point, observations[index] || {}));
