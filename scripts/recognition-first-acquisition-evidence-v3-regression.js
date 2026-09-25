@@ -90,12 +90,14 @@ const safeFinalizedCoordinateResult = Object.freeze({
   crs: Object.freeze({ type: "name", properties: Object.freeze({ name: "canonical" }) })
 });
 const safeUnifiedEvidence = Object.freeze({
+  acquisitionStatus: "COMPLETED",
   candidateCoordinates: Object.freeze([Object.freeze({})]),
   candidateCoordinateGroups: Object.freeze([Object.freeze({})]),
   visibleCrsEvidence: Object.freeze([]),
   imageEvidence: Object.freeze({ imageCount: 1 })
 });
 const safeUnifiedDecision = Object.freeze({
+  acquisitionStatus: "COMPLETED",
   authorizationStatus: "VALIDATION_PENDING",
   resultStatus: "validation_pending"
 });
@@ -155,10 +157,10 @@ const longUnifiedDecision = evaluateUnifiedRecognitionAcquisition({
   contractStatus: "CONFORMANT",
   contractReason: "CONTRACT_CONFORMANT"
 });
-assert.equal(longUnifiedDecision.shouldReturnReview, true);
-assert.equal(longUnifiedDecision.mayProceedToGeometryValidation, false);
-assert.equal(longUnifiedDecision.authorizationStatus, "REVIEW_REQUIRED");
-assert.ok(longUnifiedDecision.contractReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"));
+assert.equal(longUnifiedDecision.shouldReturnReview, false);
+assert.equal(longUnifiedDecision.mayProceedToGeometryValidation, true);
+assert.equal(longUnifiedDecision.authorizationStatus, "VALIDATION_PENDING");
+assert.equal(longUnifiedDecision.contractReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"), false);
 
 const gkRows = Array.from({ length: 65 }, (_, index) => (
   `${index + 1}\t${13_640_000 + (index * 19)}\t${4_650_000 + (index * 23)}`
@@ -503,7 +505,7 @@ assert.doesNotMatch(serverSource, /buildRecognitionAcquisitionEvidence\(\{/u);
 assert.match(serverSource, /const wgs84UnifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore\.getOrBuild[\s\S]+const acquisitionEvidence = wgs84UnifiedAcquisitionEvidence/u);
 assert.match(serverSource, /const unifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore\.getOrBuild[\s\S]+const groupedAcquisitionEvidence = unifiedAcquisitionEvidence/u);
 assert.match(serverSource, /if \(unifiedRecognitionAcquisitionContext\?\.evidence\)[\s\S]+requestRecognitionAcquisitionEvidenceStore\.getOrBuild/u);
-assert.match(serverSource, /evaluateUnifiedRecognitionFinalAuthorization\(\{\s*body,\s*evidence,\s*decision,\s*conformance: context\.conformance\s*\}\)/u);
+assert.match(serverSource, /evaluateUnifiedRecognitionFinalAuthorization\(\{\s*body,\s*evidence,\s*decision,\s*conformance: context\.conformance,\s*providerCallCount: recognitionBudget\?\.providerAttemptCount \|\| 0\s*\}\)/u);
 assert.doesNotMatch(serverSource, /const explicitlyAuthorized =/u);
 assert.match(serverSource, /Recognition acquisition final state:/u);
 assert.match(serverSource, /recovered\.result === COORDINATE_USAGE_COMMIT_RESULT\.NOT_FOUND/);

@@ -18,6 +18,7 @@ function analyzeCoordinateHeader(line) {
   const text = String(line || "").trim();
   if (!text || DMS_SIGNAL_PATTERN.test(text)) return null;
   const tokens = text
+    .replace(/\(\s*(?:m|metres?|meters?)\s*\)/giu, " ")
     .replace(/[|\t,;:/#()[\]{}°º˚掳潞藲-]+/gu, " ")
     .trim()
     .split(/\s+/u)
@@ -99,9 +100,19 @@ function parseKeyedCoordinateRow(text, lineNumber) {
     const x = pair.find(item => /^(?:X|EASTING)$/u.test(item.axis));
     const y = pair.find(item => /^(?:Y|NORTHING)$/u.test(item.axis));
     if (latitude && longitude && pair.length === 2) {
-      candidates.push({ format: "WGS84_DECIMAL", latitude: latitude.numeric.value, longitude: longitude.numeric.value });
+      candidates.push({
+        format: "WGS84_DECIMAL",
+        latitude: latitude.numeric.value,
+        longitude: longitude.numeric.value,
+        axisOrder: pair.indexOf(latitude) < pair.indexOf(longitude) ? "latitude_longitude" : "longitude_latitude"
+      });
     } else if (x && y && pair.length === 2) {
-      candidates.push({ format: "PROJECTED_XY", x: x.numeric.value, y: y.numeric.value });
+      candidates.push({
+        format: "PROJECTED_XY",
+        x: x.numeric.value,
+        y: y.numeric.value,
+        axisOrder: pair.indexOf(x) < pair.indexOf(y) ? "x_y" : "y_x"
+      });
     } else return null;
   }
   return candidates.map((candidate, candidateIndex) => Object.freeze({

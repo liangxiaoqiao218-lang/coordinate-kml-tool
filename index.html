@@ -7575,10 +7575,23 @@ Au值 = 纯度 × 10 后取整数</div>
         || (action === "kml" && activeRecognitionAcquisitionResult.kmlReady !== true);
     }
 
+    function recognitionAuthorizationReasonMessage(action = "map") {
+      const label = action === "kml" ? "KML" : "地图";
+      const codes = [
+        ...(activeRecognitionAcquisitionResult?.reviewReasons || []),
+        ...(activeRecognitionAcquisitionResult?.contractReasons || [])
+      ].map(value => String(value || ""));
+      if (codes.some(code => /CRS|AXIS_ORDER/.test(code))) return `图片缺少明确且受支持的投影坐标系或轴顺序，${label}暂未开放。`;
+      if (codes.some(code => /UNBOUND|ROW_COUNT|NORMALIZATION/.test(code))) return `坐标表存在未完整绑定或未完整读取的行，${label}暂未开放。`;
+      if (codes.some(code => /GROUP_BOUNDARY|MULTIPLE_COORDINATE/.test(code))) return `坐标组边界不唯一，${label}暂未开放。`;
+      if (codes.some(code => /IMAGE_EVIDENCE|UNIFIED_RECOGNITION_EVIDENCE/.test(code))) return `图片采集证据不完整，${label}暂未开放。`;
+      if (codes.some(code => /PROVIDER_CALL_COUNT|FINALIZER/.test(code))) return `最终坐标安全验证未通过，${label}暂未开放。`;
+      return `当前识别结果仍需复核，${label}暂未开放。`;
+    }
+
     function stopBlockedCoordinateAction(action = "map") {
       if (!coordinateRecognitionActionBlocked(action)) return false;
-      const label = action === "kml" ? "KML" : "地图";
-      showMessage(`当前识别结果仍需复核，${label}暂未开放。`, true, 7000);
+      showMessage(recognitionAuthorizationReasonMessage(action), true, 7000);
       return true;
     }
 
@@ -7594,6 +7607,9 @@ Au值 = 纯度 × 10 后取整数</div>
         mapPreviewAction.dataset.state = state;
         mapPreviewAction.setAttribute("aria-disabled", String(mapPreviewAction.disabled));
         mapPreviewAction.textContent = "查看地图";
+        mapPreviewAction.title = acquisitionReviewMapBlocked
+          ? recognitionAuthorizationReasonMessage("map")
+          : "查看地图";
         syncKmlActionVisualState();
         return;
       }
@@ -7640,6 +7656,9 @@ Au值 = 纯度 × 10 后取整数</div>
         button.disabled = kmlGenerationInProgress || state === "blocked";
         button.setAttribute("aria-disabled", String(button.disabled));
         button.setAttribute("aria-busy", String(kmlGenerationInProgress));
+        button.title = state === "blocked"
+          ? recognitionAuthorizationReasonMessage("kml")
+          : "下载 KML";
         button.textContent = kmlGenerationInProgress
           ? "正在生成…"
           : (labels.enabled || "下载 KML");
@@ -8053,6 +8072,10 @@ Au值 = 纯度 × 10 后取整数</div>
     function getCoordinateGateUserMessage(reasonCodes, fallback) {
       const codes = Array.isArray(reasonCodes) ? reasonCodes.map(value => String(value || "")) : [];
       if (codes.some(code => /CRS|AXIS_ORDER/.test(code))) return "图片缺少完整定位信息，暂时无法显示地图。";
+      if (codes.some(code => /UNBOUND|ROW_COUNT|NORMALIZATION/.test(code))) return "坐标表存在未完整绑定或未完整读取的行，请核对识别结果。";
+      if (codes.some(code => /GROUP_BOUNDARY|MULTIPLE_COORDINATE/.test(code))) return "坐标组边界不唯一，请先核对分组和点号顺序。";
+      if (codes.some(code => /IMAGE_EVIDENCE|UNIFIED_RECOGNITION_EVIDENCE/.test(code))) return "图片采集证据不完整，当前结果只能人工复核。";
+      if (codes.some(code => /PROVIDER_CALL_COUNT|FINALIZER/.test(code))) return "最终坐标安全验证未通过，请核对后重试。";
       if (codes.some(code => /GEOMETRY|FINITE/.test(code))) return "当前坐标几何无效，请检查坐标内容后重试。";
       if (codes.some(code => /STALE|REVISION|RESULT_ID|HASH/.test(code))) return "坐标已更新，请重新核对当前结果后重试。";
       if (codes.some(code => /AUTHORITY|SOURCE/.test(code))) return "当前坐标来源尚未通过安全验证，请重新识别或核对。";
@@ -15380,7 +15403,11 @@ ${placemarks}
           projected: hasProjectedCoordinateRows(finalCoordinates)
         });
         if (acquisitionReviewOnly) {
-          showMessage("图片证据和候选坐标已完整保留；当前结果仍需核对点号、分组、坐标系或几何，地图边界与 KML 暂不开放。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showMessage(
+            recognitionAuthorizationReasonMessage("map").replace("地图暂未开放", "地图与 KML 暂未开放"),
+            true,
+            COORDINATE_RECOGNITION_MESSAGE_MS
+          );
         } else if (isCadastralGrid) {
           showMessage(`已识别矿权网格表 ${cadastralGridRows.length} 行，已提取 num / XV / YV。已识别为马达加斯加矿权格网，生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isMgrs) {

@@ -11,14 +11,20 @@ import { evaluateUnifiedRecognitionFinalAuthorization } from "../server/recognit
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const requestId = "66666666-6666-4666-8666-666666666666";
-const syntheticXOrigin = randomInt(500_000, 700_000);
-const syntheticYOrigin = randomInt(1_000_000, 2_000_000);
+const syntheticXOrigin = Number(process.env.V6_SYNTHETIC_X_ORIGIN) || randomInt(500_000, 700_000);
+const syntheticYOrigin = Number(process.env.V6_SYNTHETIC_Y_ORIGIN) || randomInt(1_000_000, 2_000_000);
+const projectedBoundaryOffsets = [
+  [0, 0], [400, 0], [800, 0], [1200, 0], [1600, 0],
+  [1600, 400], [1600, 800], [1600, 1200], [1600, 1600], [1600, 2000],
+  [1200, 2000], [800, 2000], [400, 2000], [0, 2000], [-400, 2000],
+  [-400, 1600], [-400, 1200], [-400, 800], [-400, 400], [-200, 200]
+];
 const providerText = [
   "CONTEXT | ITRF 2008 / Projection BFTM",
   "HEADING | Boundary",
   "Point X Y",
-  ...Array.from({ length: 20 }, (_, index) => (
-    `${index + 1} ${syntheticXOrigin - (index * 500)} ${syntheticYOrigin + (index * 1200)}`
+  ...projectedBoundaryOffsets.map(([xOffset, yOffset], index) => (
+    `${index + 1} ${syntheticXOrigin + xOffset} ${syntheticYOrigin + yOffset}`
   ))
 ].join("\n");
 
@@ -118,6 +124,8 @@ const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--server
     ENABLE_REGRESSION_TEST_MODE: "true",
     ALIYUN_API_KEY: "local-mock-only",
     ALIYUN_BASE_URL: "http://127.0.0.1:1/v1",
+    V6_SYNTHETIC_X_ORIGIN: String(syntheticXOrigin),
+    V6_SYNTHETIC_Y_ORIGIN: String(syntheticYOrigin),
     DOTENV_CONFIG_PATH: path.join(root, "__no_test_env__")
   }
 });
@@ -177,14 +185,16 @@ try {
   assert.equal(result.providerCompletionState, "SUCCEEDED");
   assert.equal(result.providerCallCount, 1);
   assert.equal(result.acquisitionStatus, "COMPLETED");
-  assert.equal(result.authorizationStatus, "REVIEW_REQUIRED");
-  assert.equal(result.resultStatus, "needs_review");
-  assert.equal(result.requiresReview, true);
-  assert.equal(result.boundaryBlocked, true);
-  assert.equal(result.mapReady, false);
-  assert.equal(result.kmlReady, false);
-  assert.equal(result.mapStatus, "CLOSED");
-  assert.equal(result.kmlStatus, "CLOSED");
+  assert.equal(result.authorizationStatus, "AUTHORIZED");
+  assert.equal(result.resultStatus, "authorized");
+  assert.equal(result.requiresReview, false);
+  assert.equal(result.boundaryBlocked, false);
+  assert.equal(result.mapReady, true);
+  assert.equal(result.kmlReady, true);
+  assert.equal(result.mapStatus, "ENABLED");
+  assert.equal(result.kmlStatus, "ENABLED");
+  assert.equal(result.previewEligibility?.allowed, true);
+  assert.equal(result.kmlEligibility?.allowed, true);
   assert.equal(result.usageConsumed, false);
   assert.equal(result.userUsageConsumed, false);
   assert.equal(result.recoveryRequired, false);
@@ -195,11 +205,11 @@ try {
   assert.ok(result.visibleCrsEvidence.some(item => /BFTM/iu.test(item.text)));
   assert.ok(result.imageAcquisitionEvidence.imageCount > 1);
   assert.ok(result.imageAcquisitionEvidence.detailTileCount > 0);
-  assert.ok(result.contractReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"));
-  assert.ok(result.reviewReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"));
-  assert.notEqual(result.finalizedCoordinateResult?.decisionState, "AUTO_EXPORT");
-  assert.equal(result.finalizedCoordinateResult?.requiresReview, true);
-  assert.equal(result.finalizedCoordinateResult?.kmlReady, false);
+  assert.equal(result.contractReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"), false);
+  assert.equal(result.reviewReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"), false);
+  assert.equal(result.finalizedCoordinateResult?.decisionState, "AUTO_EXPORT");
+  assert.equal(result.finalizedCoordinateResult?.requiresReview, false);
+  assert.equal(result.finalizedCoordinateResult?.kmlReady, true);
 
   const statsPromise = once(child, "message", { signal });
   child.send("stats");

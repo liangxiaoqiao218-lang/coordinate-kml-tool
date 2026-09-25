@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomInt } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
@@ -7,8 +8,16 @@ import path from "node:path";
 import sharp from "sharp";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const rows = Array.from({ length: 20 }, (_, index) => (
-  `${index + 1} ${655000 - (index * 500)} ${1_333_600 + (index * 1200)}`
+const syntheticXOrigin = Number(process.env.V4_SYNTHETIC_X_ORIGIN) || randomInt(520_000, 680_000);
+const syntheticYOrigin = Number(process.env.V4_SYNTHETIC_Y_ORIGIN) || randomInt(1_100_000, 1_700_000);
+const projectedBoundaryOffsets = [
+  [0, 0], [400, 0], [800, 0], [1200, 0], [1600, 0],
+  [1600, 400], [1600, 800], [1600, 1200], [1600, 1600], [1600, 2000],
+  [1200, 2000], [800, 2000], [400, 2000], [0, 2000], [-400, 2000],
+  [-400, 1600], [-400, 1200], [-400, 800], [-400, 400], [-200, 200]
+];
+const rows = projectedBoundaryOffsets.map(([xOffset, yOffset], index) => (
+  `${index + 1} ${syntheticXOrigin + xOffset} ${syntheticYOrigin + yOffset}`
 ));
 const providerText = [
   "CONTEXT | ITRF 2008 / Projection BFTM",
@@ -72,6 +81,8 @@ const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--server
     ENABLE_REGRESSION_TEST_MODE: "true",
     ALIYUN_API_KEY: "local-mock-only",
     ALIYUN_BASE_URL: "http://127.0.0.1:1/v1",
+    V4_SYNTHETIC_X_ORIGIN: String(syntheticXOrigin),
+    V4_SYNTHETIC_Y_ORIGIN: String(syntheticYOrigin),
     DOTENV_CONFIG_PATH: path.join(root, "__no_test_env__")
   }
 });
@@ -108,12 +119,14 @@ try {
   assert.equal(terminalResponse.status, 200, terminalDiagnostic);
   assert.equal(result.success, true);
   assert.equal(result.acquisitionStatus, "COMPLETED");
-  assert.equal(result.authorizationStatus, "REVIEW_REQUIRED");
-  assert.equal(result.resultStatus, "needs_review");
-  assert.equal(result.mapReady, false);
-  assert.equal(result.kmlReady, false);
-  assert.equal(result.mapStatus, "CLOSED");
-  assert.equal(result.kmlStatus, "CLOSED");
+  assert.equal(result.authorizationStatus, "AUTHORIZED");
+  assert.equal(result.resultStatus, "authorized");
+  assert.equal(result.mapReady, true);
+  assert.equal(result.kmlReady, true);
+  assert.equal(result.mapStatus, "ENABLED");
+  assert.equal(result.kmlStatus, "ENABLED");
+  assert.equal(result.previewEligibility?.allowed, true);
+  assert.equal(result.kmlEligibility?.allowed, true);
   assert.equal(result.rawText, providerText);
   assert.equal(result.candidateCoordinates.length, 20);
   assert.equal(result.candidateCoordinateGroups.length, 1);
@@ -126,7 +139,7 @@ try {
   assert.equal(result.recognitionAcquisition.providerCompletionState, "SUCCEEDED");
   assert.equal(result.recognitionAcquisition.diagnostics.boundRowCount, 20);
   assert.equal(result.recognitionAcquisition.diagnostics.unboundRowCount, 0);
-  assert.ok(result.reviewReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"));
+  assert.equal(result.reviewReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"), false);
 
   const statsPromise = once(child, "message", { signal });
   child.send("stats");
@@ -137,9 +150,9 @@ try {
   assert.match(stdout, /Recognition acquisition final state:/u);
   assert.equal((stdout.match(/Recognition acquisition evidence:/gu) || []).length, 1);
   assert.equal((stdout.match(/Recognition acquisition final state:/gu) || []).length, 1);
-  assert.doesNotMatch(stdout, /655000/u);
+  assert.equal(stdout.includes(String(syntheticXOrigin)), false);
   assert.doesNotMatch(stderr, /(?:Error|ERR_|Unhandled|AssertionError)/u);
-  console.log("recognition-first acquisition unified v4 integration: PASS (HTTP 200, 20 candidates, one mock Provider call, one multi-image request, review-only Map/KML fail-close)");
+  console.log("recognition-first acquisition unified v4 integration: PASS (HTTP 200, 20 candidates, one mock Provider call, one multi-image request, projected Map/KML authorization)");
 } finally {
   const ended = once(child, "exit");
   child.kill();
