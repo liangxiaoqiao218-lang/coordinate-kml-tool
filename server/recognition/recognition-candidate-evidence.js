@@ -9,9 +9,20 @@ const DIRECTION_PATTERN = /(?:N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST
 const MGRS_PATTERN = /(?:[1-9]|[1-5]\d|60)\s*[C-HJ-NP-X]\s*[A-HJ-NP-Z]{2}(?:\s*\d{2,10}){1,2}/giu;
 const HEADING_MARKER_PATTERN = /^\s*(?:GROUP|HEADING|SECTION|TITLE)\s*\|\s*(\S[\s\S]*?)\s*$/iu;
 const META_MARKER_PATTERN = /^\s*(?:CONTEXT|CRS|DATUM|PROJECTION|ZONE|AXIS|SOURCE)\s*\|/iu;
+const GENERIC_VERTEX_HEADER_ALIASES = new Map([
+  ["POINTS", "POINT"],
+  ["VERTICES", "VERTEX"],
+  ["SOMMETS", "SOMMET"]
+]);
 
 function normalizedHeaderToken(token) {
-  return String(token || "").trim().toUpperCase().replace(/[._-]+/gu, "");
+  const normalized = String(token || "")
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .trim()
+    .toUpperCase()
+    .replace(/[._-]+/gu, "");
+  return GENERIC_VERTEX_HEADER_ALIASES.get(normalized) || normalized;
 }
 
 function analyzeDelimitedProjectedHeader(text) {
@@ -55,6 +66,8 @@ function analyzeCoordinateHeader(line) {
   const delimitedProjectedHeader = analyzeDelimitedProjectedHeader(text);
   if (delimitedProjectedHeader) return delimitedProjectedHeader;
   const tokens = text
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
     .replace(/\(\s*(?:m|metres?|meters?)\s*\)/giu, " ")
     .replace(/[|\t,;:/#()[\]{}°º˚掳潞藲-]+/gu, " ")
     .trim()

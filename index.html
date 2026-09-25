@@ -2419,13 +2419,14 @@
       border: 2px solid #dbeafe;
       border-top-color: #2563eb;
       background: transparent;
-      animation: spin 0.8s linear infinite;
+      animation: none;
       flex: 0 0 auto;
     }
 
     .recognition-status.loading::before {
       border-color: #dbeafe;
       border-top-color: #2563eb;
+      animation: spin 0.8s linear infinite;
     }
 
     .recognition-status.success,
@@ -15389,7 +15390,10 @@ ${placemarks}
         input.focus();
         coordinateUploadPanel?.classList.add("is-complete");
         if (acquisitionReviewOnly) {
-          setRecognitionStatus("采集完成，等待复核", "warning");
+          setRecognitionStatus(
+            `采集完成，等待复核：${recognitionAuthorizationReasonMessage("map")}`,
+            "warning"
+          );
         }
         trackEvent("image_recognize_success", {
           rows: countCoordinateRows(finalCoordinates),
