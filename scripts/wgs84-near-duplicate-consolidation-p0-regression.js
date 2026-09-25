@@ -232,6 +232,14 @@ test("ND-02", "missing trusted provenance fails closed", () => {
   assert.equal(result.authorityBlocked, true);
 });
 
+test("ND-02B", "null observation fails closed without throwing", () => {
+  const input = prepare([low, high]);
+  input.evidenceAcquisition.observations[0] = null;
+  const result = evaluateWgs84NearDuplicateConsolidation(input);
+  assert.equal(result.decision.decision, NEAR_DUPLICATE_DECISION.PROVENANCE_INSUFFICIENT);
+  assert.equal(result.authorityBlocked, true);
+});
+
 test("ND-03", "distance never substitutes for exact rounding containment", () => {
   const result = evaluateWgs84NearDuplicateConsolidation(prepare([
     "35.4478190,83.1789910",

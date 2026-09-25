@@ -132,6 +132,7 @@ function hasDistinctMeasurementMeaning(observation = {}) {
 }
 
 function trustedObservation(observation = {}, revision = 1) {
+  if (!observation || typeof observation !== "object") return false;
   return observation.schema_version === IMAGE_OBSERVATION_SCHEMA_VERSION
     && observation[ORIGINAL_IMAGE_OBSERVATION_ATTESTATION] === true
     && validBbox(observation)
@@ -189,7 +190,8 @@ function bindingForPoint(evidence = {}, point = {}, pointIndex = 0) {
 function observationForBinding(evidence = {}, binding = null) {
   if (!binding) return null;
   const matches = (Array.isArray(evidence.observations) ? evidence.observations : [])
-    .filter(observation => observation.observation_id === binding.observation_id);
+    .filter(observation => observation && typeof observation === "object"
+      && observation.observation_id === binding.observation_id);
   return matches.length === 1 ? matches[0] : null;
 }
 
