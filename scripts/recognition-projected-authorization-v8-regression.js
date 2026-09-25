@@ -95,6 +95,61 @@ assert.equal(projectedEvidenceAuthorization.applicable, true);
 assert.equal(projectedEvidenceAuthorization.eligible, true);
 assert.deepEqual(projectedEvidenceAuthorization.reasons, []);
 
+const extendedGridEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: [
+    "HEADING | Generic projected grid",
+    "NC | XV | YV | DESCRIPTION | NUMBER",
+    "1 | 412345.25 | 7654321.5 | Alpha | 280",
+    "2 | 412845.25 | 7654321.5 | Beta | 281",
+    "3 | 412845.25 | 7654821.5 | Gamma | 282"
+  ].join("\n"),
+  acquisition: imageAcquisition,
+  providerResponseId: "offline-provider-v8-extended-grid"
+});
+assert.equal(extendedGridEvidence.candidateCoordinates.length, 3);
+assert.equal(extendedGridEvidence.candidateCoordinateGroups.length, 1);
+assert.equal(extendedGridEvidence.diagnostics.boundRowCount, 3);
+assert.equal(extendedGridEvidence.diagnostics.unboundRowCount, 0);
+assert.equal(extendedGridEvidence.diagnostics.rejectedRowCount, 0);
+assert.equal(extendedGridEvidence.projectedCoordinateEvidence.rowCount, 3);
+assert.equal(extendedGridEvidence.projectedCoordinateEvidence.status, "COMPLETE");
+assert.equal(extendedGridEvidence.candidateCoordinates.every(candidate => candidate.axisOrder === "x_y"), true);
+const extendedGridAuthorization = evaluateProjectedCoordinateAuthorizationEvidence(extendedGridEvidence);
+assert.equal(extendedGridAuthorization.eligible, false);
+assert.ok(extendedGridAuthorization.reasons.includes("PROJECTED_CRS_UNRESOLVED"));
+
+const utmZonaEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: [
+    "CONTEXT | UTM WGS 1984 ZONA 50S",
+    "No | X | Y",
+    "1 | 778000 | 9721000",
+    "2 | 778100 | 9721100",
+    "3 | 778200 | 9721200"
+  ].join("\n"),
+  acquisition: imageAcquisition,
+  providerResponseId: "offline-provider-v8-utm-zona"
+});
+assert.equal(utmZonaEvidence.visibleCrsEvidence.length, 1);
+assert.equal(utmZonaEvidence.visibleCrsEvidence[0].text, "UTM WGS 1984 ZONA 50S");
+assert.deepEqual(utmZonaEvidence.projectedCoordinateEvidence.crsEvidence, {
+  status: "EXPLICIT", projection: "utm", zone: 50, hemisphere: "S"
+});
+assert.equal(evaluateProjectedCoordinateAuthorizationEvidence(utmZonaEvidence).eligible, true);
+
+for (const unsafeGridText of [
+  "This prose mentions NC and XV and YV without a table",
+  "NC | XV | YV | DESCRIPTION | NUMBER\n1 | 412345.25 | 7654321.5 | Alpha",
+  "NC | XV | YV | DESCRIPTION | NUMBER\n1 | 412345.25 | 7654321.5 | Alpha | 280 | extra",
+  "NC | XV | YV | DESCRIPTION | NUMBER\n1 | not-a-coordinate | 7654321.5 | Alpha | 280"
+]) {
+  const unsafeGridEvidence = buildRecognitionAcquisitionEvidence({
+    rawText: unsafeGridText,
+    acquisition: imageAcquisition,
+    providerResponseId: "offline-provider-v8-unsafe-grid"
+  });
+  assert.equal(unsafeGridEvidence.candidateCoordinates.length, 0);
+}
+
 const projectedDecision = evaluateUnifiedRecognitionAcquisition({
   evidence: completeEvidence,
   contractStatus: "REVIEW_REQUIRED",

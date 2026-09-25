@@ -9696,6 +9696,33 @@ function getCoordinateEngineV2AxisEvidence(coordinateType = "", result = {}, opt
     };
   }
 
+  const declaredSourceCrs = result.source_crs && typeof result.source_crs === "object" ? result.source_crs : null;
+  const transformProvenance = result.coordinate_transform_provenance
+    && typeof result.coordinate_transform_provenance === "object"
+    ? result.coordinate_transform_provenance
+    : null;
+  const outputPoints = (Array.isArray(result.groups) ? result.groups : [])
+    .flatMap(group => Array.isArray(group?.points) ? group.points : []);
+  const sourceAxisOrder = String(declaredSourceCrs?.axisOrder || declaredSourceCrs?.axis_order || "");
+  const sourceCrsId = String(declaredSourceCrs?.id || "");
+  const transformBindingValid = transformProvenance?.status === "EXECUTED"
+    && String(transformProvenance.sourceCrsId || "") === sourceCrsId
+    && String(transformProvenance.sourceAxisOrder || "") === sourceAxisOrder
+    && String(transformProvenance.targetCrsId || "") === "EPSG:4326"
+    && String(transformProvenance.outputAxisOrder || "") === "longitude_latitude"
+    && ["easting_northing", "northing_easting"].includes(sourceAxisOrder)
+    && outputPoints.length > 0
+    && outputPoints.every(point => point?.source_crs === "EPSG:4326"
+      && Number.isFinite(Number(point?.lon))
+      && Number.isFinite(Number(point?.lat)));
+  if (transformBindingValid) {
+    return {
+      status: "locked_by_parser",
+      interpretation: "as_parsed",
+      reason: "explicit source CRS axis order bound to executed WGS84 transform provenance"
+    };
+  }
+
   const text = foldSearchText([
     options.fileName || "",
     options.rawHint || "",
@@ -10558,6 +10585,7 @@ function normalizeCoordinateEngineV2Result(result = {}, options = {}) {
     coordinate_family: coordinateFamily,
     precision_mode: precisionMode,
     source_crs: result.source_crs || null,
+    coordinate_transform_provenance: result.coordinate_transform_provenance || null,
     confidence: requiresReview ? Math.min(confidence, 0.75) : confidence,
     requires_review: normalizedRequiresReview,
     review_reason: deriveCoordinateReviewReason({
@@ -10668,6 +10696,15 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
         : precisionMode === "wgs84-platform-lonlat-coordinates"
           ? { id: "EPSG:4326", projection: "geographic", axisOrder: "longitude_latitude" }
         : null,
+    coordinate_transform_provenance: coordinateType === "madagascar_cadastral_grid"
+      ? {
+          status: "EXECUTED",
+          sourceCrsId: "EPSG:29702",
+          sourceAxisOrder: "easting_northing",
+          targetCrsId: "EPSG:4326",
+          outputAxisOrder: "longitude_latitude"
+        }
+      : null,
     confidence: groups.length > 0
       ? Number((groups.reduce((sum, group) => sum + Number(group.confidence || 0), 0) / groups.length).toFixed(2))
       : 0,

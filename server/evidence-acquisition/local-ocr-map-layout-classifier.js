@@ -960,6 +960,40 @@ function parseProviderProjectedRows(line, { labelColumnVisible = false } = {}) {
   });
 }
 
+function parseDelimitedProjectedHeaderLayout(line) {
+  const raw = text(line).replace(/[｜]/gu, "|");
+  if (!/[|\t;]/u.test(raw)) return null;
+  const fields = raw.split(/[|\t;]/u).map(field => field.trim());
+  if (fields.length < 3 || fields.length > 12 || fields.some(field => !field || field.length > 48)) return null;
+  const tokens = fields.map(field => field.toUpperCase().replace(/[._-]+/gu, ""));
+  if (tokens.some(token => /^(?:LAT|LATITUDE|LON|LONG|LONGITUDE|PARALLELE|MERIDIEN)\d*$/iu.test(token))) return null;
+  const xIndexes = tokens.flatMap((token, index) => /^(?:X|XV|EASTING)\d*$/iu.test(token) ? [index] : []);
+  const yIndexes = tokens.flatMap((token, index) => /^(?:Y|YV|NORTHING)\d*$/iu.test(token) ? [index] : []);
+  const labelIndexes = tokens.flatMap((token, index) => /^(?:NO|N|NC|NUMBER|NUM|POINT|PT|VERTEX|SOMMET|ID|LABEL)$/iu.test(token) ? [index] : []);
+  if (xIndexes.length !== 1 || yIndexes.length !== 1 || labelIndexes.length === 0) return null;
+  const leadingLabelIndexes = labelIndexes.filter(index => index < Math.min(xIndexes[0], yIndexes[0]));
+  if (leadingLabelIndexes.length !== 1) return null;
+  const structuralIndexes = new Set([leadingLabelIndexes[0], xIndexes[0], yIndexes[0]]);
+  if (!fields.every((field, index) => structuralIndexes.has(index) || /\p{L}/u.test(field))) return null;
+  return Object.freeze({
+    fieldCount: fields.length,
+    labelIndex: leadingLabelIndexes[0],
+    xIndex: xIndexes[0],
+    yIndex: yIndexes[0]
+  });
+}
+
+function parseProviderProjectedRowByLayout(line, layout) {
+  const raw = text(line).replace(/[｜]/gu, "|");
+  const fields = raw.split(/[|\t;]/u).map(field => field.trim());
+  if (!layout || fields.length !== layout.fieldCount || fields.some(field => !field)) return null;
+  const label = fields[layout.labelIndex];
+  const x = normalizeProjectedProviderNumber(fields[layout.xIndex]);
+  const y = normalizeProjectedProviderNumber(fields[layout.yIndex]);
+  if (!/^(?:[A-Z][A-Z0-9_.-]{0,15}|\d{1,6})$/iu.test(label) || !x || !y) return null;
+  return Object.freeze({ label, x, y, sourceText: raw });
+}
+
 // A generic Provider may faithfully transcribe a projected X/Y table even
 // when local OCR could not establish a private one-shot family binding. Keep
 // those rows available for review, but never infer a CRS from filenames,
@@ -976,9 +1010,13 @@ export function extractProviderProjectedCoordinateEvidence({
   const axisHeaderIndex = lines.findIndex(line => (
     /(?:\bX\b|\bEASTING\b)[^\r\n]+(?:\bY\b|\bNORTHING\b)/iu.test(line)
   ));
+  const delimitedHeaderIndex = lines.findIndex(line => Boolean(parseDelimitedProjectedHeaderLayout(line)));
   // Prefer the explicit label/X/Y header over an earlier AXIS_ORDER line so
   // labelled Provider rows retain their required point identifiers.
-  const headerIndex = labelledHeaderIndex >= 0 ? labelledHeaderIndex : axisHeaderIndex;
+  const headerIndex = delimitedHeaderIndex >= 0
+    ? delimitedHeaderIndex
+    : labelledHeaderIndex >= 0 ? labelledHeaderIndex : axisHeaderIndex;
+  const delimitedHeaderLayout = headerIndex >= 0 ? parseDelimitedProjectedHeaderLayout(lines[headerIndex]) : null;
   // Generic acquisition sometimes preserves all labelled rows and visible CRS
   // text but omits a separate X/Y header. The server-issued unclassified title
   // is then the required contract boundary; ordinary headerless number lists
@@ -999,7 +1037,10 @@ export function extractProviderProjectedCoordinateEvidence({
   let rejectedProjectedCandidateLineCount = 0;
   let multiRecordLineCount = 0;
   for (const line of rowLines) {
-    const parsedLine = parseProviderProjectedRows(line, { labelColumnVisible });
+    const layoutRow = delimitedHeaderLayout ? parseProviderProjectedRowByLayout(line, delimitedHeaderLayout) : null;
+    const parsedLine = layoutRow
+      ? Object.freeze({ rows: Object.freeze([layoutRow]), multiRecord: false })
+      : parseProviderProjectedRows(line, { labelColumnVisible });
     if (parsedLine.rows.length > 0) {
       rows.push(...parsedLine.rows);
       projectedCandidateLineCount += 1;
