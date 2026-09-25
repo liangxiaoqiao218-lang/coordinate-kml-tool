@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,11 +20,20 @@ import {
 import {
   assertP0ReplayRuntimeSafety,
   computeAcquisitionEvidenceSha256,
+  createP0ReplayProviderIndex,
+  extractP0ReplayProviderInputImages,
   loadP0ReleaseGateGovernance,
   loadP0ReplayManifest,
+  providerInputIdentityKey,
   validateP0ReplayFixture,
   validateP0ReplayManifest,
 } from './p0-deterministic-replay.js';
+import {
+  computeCanonicalGitCommitFingerprints,
+  validateReleaseEvidenceBinding,
+} from '../release-governance/evidence-binding.js';
+import { canonicalizeCoordinateImageUpload } from '../server/recognition/coordinate-image-safety.js';
+import { createRecognitionImageVariants } from '../server/recognition/recognition-first-acquisition.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const baseline = JSON.parse(await readFile(path.join(repoRoot, 'COORDINATE_RECOGNITION_GOLDEN_BASELINE.json'), 'utf8'));
@@ -65,9 +75,75 @@ await check('valid recognition envelope proceeds to comparison', () => {
 });
 
 const manifest = await loadP0ReplayManifest(repoRoot);
+const providerIndex = createP0ReplayProviderIndex(manifest);
+const providerPayloadByCase = new Map();
 await check('manifest contains only exact three approved P0 cases', () => {
   assert.deepEqual(manifest.records.map(record => record.caseId).sort(), [...P0_REQUIRED_FIXTURE_SET].sort());
   assert.equal(manifest.networkFallbackAllowed, false);
+});
+await check('manifest pins exact ordered Provider variant identities', async () => {
+  for (const record of manifest.records) {
+    const fixtureBytes = await readFile(path.join(repoRoot, record.fixture));
+    const mimeType = /\.png$/i.test(record.fixture) ? 'image/png' : 'image/jpeg';
+    const canonical = canonicalizeCoordinateImageUpload({
+      buffer: fixtureBytes,
+      size: fixtureBytes.length,
+      mimetype: mimeType,
+      originalname: path.basename(record.fixture),
+    });
+    assert.equal(canonical.valid, true, record.caseId);
+    const acquisition = await createRecognitionImageVariants({
+      buffer: canonical.file.buffer,
+      bytes: canonical.file.buffer.length,
+    });
+    const actualProviderImages = acquisition.images.map(image => {
+      const bytes = Buffer.from(image.dataUrl.split(',')[1], 'base64');
+      return {
+        role: image.role,
+        mimeType: image.mimeType,
+        byteLength: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      };
+    });
+    assert.deepEqual(actualProviderImages, record.providerInputImages, record.caseId);
+    const payload = {
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'offline replay' },
+          ...acquisition.images.map(image => ({ type: 'image_url', image_url: { url: image.dataUrl } })),
+        ],
+      }],
+    };
+    providerPayloadByCase.set(record.caseId, payload);
+    const identity = extractP0ReplayProviderInputImages(payload);
+    assert.equal(providerIndex.get(providerInputIdentityKey(identity))?.caseId, record.caseId);
+  }
+});
+await check('tampered Provider variant fails closed', () => {
+  const payload = structuredClone(providerPayloadByCase.get(P0_REQUIRED_FIXTURE_SET[0]));
+  const item = payload.messages[0].content.find(entry => entry.type === 'image_url');
+  const [prefix, encoded] = item.image_url.url.split(',');
+  item.image_url.url = `${prefix},${Buffer.concat([Buffer.from(encoded, 'base64'), Buffer.from([0])]).toString('base64')}`;
+  const identity = extractP0ReplayProviderInputImages(payload);
+  assert.equal(providerIndex.get(providerInputIdentityKey(identity)), undefined);
+});
+await check('missing Provider variant fails closed', () => {
+  const payload = structuredClone(providerPayloadByCase.get(P0_REQUIRED_FIXTURE_SET[0]));
+  payload.messages[0].content = payload.messages[0].content.filter(entry => entry.type !== 'image_url');
+  assert.equal(extractP0ReplayProviderInputImages(payload), null);
+});
+await check('extra Provider variant fails closed', () => {
+  const payload = structuredClone(providerPayloadByCase.get(P0_REQUIRED_FIXTURE_SET[0]));
+  const image = payload.messages[0].content.find(entry => entry.type === 'image_url');
+  payload.messages[0].content.push(structuredClone(image));
+  const identity = extractP0ReplayProviderInputImages(payload);
+  assert.equal(providerIndex.get(providerInputIdentityKey(identity)), undefined);
+});
+await check('missing Provider identity manifest field fails closed', () => {
+  const plain = JSON.parse(JSON.stringify(manifest));
+  delete plain.records[0].providerInputImages;
+  assert.throws(() => validateP0ReplayManifest(plain), /P0_REPLAY_PROVIDER_IMAGE_SET_INVALID/);
 });
 await check('unknown fixture fails closed without replay', async () => {
   const validation = await validateP0ReplayFixture(repoRoot, { sample_id: 'unknown-image', fixture: 'unknown.jpg' }, manifest);
@@ -105,21 +181,40 @@ await check('Madagascar replay preserves exact approved 31/1 commune distributio
   assert.equal(rows[22], '23 | 294062.5 | 361562.5 | Andriandampy | 333');
   assert.equal(computeAcquisitionEvidenceSha256(record.approvedAcquisitionLines), record.acquisitionEvidenceSha256);
 });
-await check('non-loopback replay API is rejected before request', () => {
-  assert.throws(() => assertP0ReplayRuntimeSafety({
-    apiUrl: 'https://production.example/api/recognize-coordinates',
-    qualificationMode: 'LOCAL_PATCH_CANDIDATE',
+await check('non-loopback replay API is rejected before request in every supported mode', () => {
+  for (const qualificationMode of ['LOCAL_PATCH_CANDIDATE', 'FROZEN_PRODUCTION']) {
+    assert.throws(() => assertP0ReplayRuntimeSafety({
+      apiUrl: 'https://production.example/api/recognize-coordinates',
+      qualificationMode,
+      replayEnabled: true,
+      nodeEnv: 'test',
+    }), /P0_REPLAY_LOOPBACK_API_REQUIRED/);
+  }
+});
+await check('production replay activation is rejected in every supported mode', () => {
+  for (const qualificationMode of ['LOCAL_PATCH_CANDIDATE', 'FROZEN_PRODUCTION']) {
+    assert.throws(() => assertP0ReplayRuntimeSafety({
+      apiUrl: 'http://127.0.0.1:32121/api/recognize-coordinates',
+      qualificationMode,
+      replayEnabled: true,
+      nodeEnv: 'production',
+    }), /P0_REPLAY_PRODUCTION_MODE_FORBIDDEN/);
+  }
+});
+await check('committed-head replay requires an explicitly supported strict mode', () => {
+  const safety = assertP0ReplayRuntimeSafety({
+    apiUrl: 'http://127.0.0.1:32121/api/recognize-coordinates',
+    qualificationMode: 'FROZEN_PRODUCTION',
     replayEnabled: true,
     nodeEnv: 'test',
-  }), /P0_REPLAY_LOOPBACK_API_REQUIRED/);
-});
-await check('production replay activation is rejected', () => {
+  });
+  assert.equal(safety.qualificationMode, 'FROZEN_PRODUCTION');
   assert.throws(() => assertP0ReplayRuntimeSafety({
     apiUrl: 'http://127.0.0.1:32121/api/recognize-coordinates',
-    qualificationMode: 'LOCAL_PATCH_CANDIDATE',
+    qualificationMode: 'UNBOUND_COMMITTED_HEAD',
     replayEnabled: true,
-    nodeEnv: 'production',
-  }), /P0_REPLAY_PRODUCTION_MODE_FORBIDDEN/);
+    nodeEnv: 'test',
+  }), /P0_REPLAY_STRICT_QUALIFICATION_REQUIRED/);
 });
 
 const passingResults = [
@@ -143,6 +238,40 @@ await check('exact current P0 release formula state passes', () => {
   assert.equal(gate.providerCallsMeasured, true);
   assert.equal(gate.allNoReplayExplicitlyEnumerated, true);
   assert.deepEqual(gate.directlyAffectedBlockedWithoutSubstitute, []);
+});
+await check('strict canonical committed-head binding passes the P0 identity gate', () => {
+  const gate = evaluateP0ReleaseGate(passingResults, {
+    status: 'BOUND',
+    qualificationMode: 'FROZEN_PRODUCTION',
+    releaseIdentityAuthority: true,
+    sourceIdentityAuthority: 'GIT_CANONICAL_RELEASE_TREE',
+  }, gateGovernance, measuredZero);
+  assert.equal(gate.identityBindingPass, true);
+  assert.equal(gate.status, 'PASS');
+});
+await check('unattested committed-head status cannot pass the P0 identity gate', () => {
+  const gate = evaluateP0ReleaseGate(passingResults, {
+    status: 'BOUND',
+    qualificationMode: 'FROZEN_PRODUCTION',
+    releaseIdentityAuthority: false,
+    sourceIdentityAuthority: 'WORKING_TREE_BYTES_LEGACY_DIAGNOSTIC_NON_AUTHORITY',
+  }, gateGovernance, measuredZero);
+  assert.equal(gate.identityBindingPass, false);
+  assert.equal(gate.status, 'FAIL');
+});
+await check('wrong committed-head canonical hash fails closed', async () => {
+  const canonical = await computeCanonicalGitCommitFingerprints({ repoRoot, commit: 'HEAD' });
+  await assert.rejects(validateReleaseEvidenceBinding({
+    repoRoot,
+    canonicalCommit: 'HEAD',
+    runtimeIdentity: { runtimeSourceSha256: canonical.source.hash },
+    frozenIdentity: {
+      productionSourceHash: '0'.repeat(64),
+      releaseGovernanceHash: canonical.governance.hash,
+      fixtureSetHash: canonical.fixture.hash,
+    },
+  }), error => error?.code === 'EVIDENCE_BINDING_MISMATCH'
+    && error?.mismatches?.includes('production_source_vs_frozen'));
 });
 await check('P0 gate rejects any product failure', () => {
   const gate = evaluateP0ReleaseGate([...passingResults, result('runtime-regression', 'PRODUCT_FAIL')], { status: 'LOCAL_PATCH_CANDIDATE_BOUND' }, gateGovernance, measuredZero);

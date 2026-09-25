@@ -1858,8 +1858,13 @@ export function evaluateP0ReleaseGate(results, evidenceBinding = {}, gateGoverna
   const byId = new Map(results.map(result => [result.sample.sample_id, result]));
   const requiredStatuses = Object.fromEntries(P0_REQUIRED_FIXTURE_SET.map(id => [id, byId.get(id)?.status || 'MISSING']));
   const blockedNoReplayFixtures = summary.fixtureIds.BLOCKED_NO_REPLAY;
-  const identityBindingPass = evidenceBinding.status === 'LOCAL_PATCH_CANDIDATE_BOUND'
-    || evidenceBinding.status === 'PASS';
+  const localPatchIdentityBound = evidenceBinding.status === 'LOCAL_PATCH_CANDIDATE_BOUND';
+  const committedHeadIdentityBound = evidenceBinding.status === 'BOUND'
+    && evidenceBinding.qualificationMode === 'FROZEN_PRODUCTION'
+    && evidenceBinding.releaseIdentityAuthority === true
+    && evidenceBinding.sourceIdentityAuthority === 'GIT_CANONICAL_RELEASE_TREE';
+  const legacyIdentityBound = evidenceBinding.status === 'PASS';
+  const identityBindingPass = localPatchIdentityBound || committedHeadIdentityBound || legacyIdentityBound;
   const governedBlocked = gateGovernance?.blockedNoReplayFixtures || [];
   const governedById = new Map(governedBlocked.map(entry => [entry.fixtureId, entry]));
   const actualBlockedSet = new Set(blockedNoReplayFixtures);
@@ -2082,7 +2087,7 @@ export async function establishEvidenceBinding(environment = process.env) {
     error.code = 'EVIDENCE_BINDING_MISMATCH';
     throw error;
   }
-  return validateReleaseEvidenceBinding({
+  const binding = await validateReleaseEvidenceBinding({
     repoRoot,
     canonicalCommit: environment.CANONICAL_RELEASE_COMMIT,
     runtimeIdentity: payload.runtimeIdentity,
@@ -2092,6 +2097,7 @@ export async function establishEvidenceBinding(environment = process.env) {
       fixtureSetHash: environment.FROZEN_FIXTURE_SET_HASH,
     },
   });
+  return Object.freeze({ ...binding, qualificationMode: 'FROZEN_PRODUCTION' });
 }
 
 async function main() {
