@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  PROVIDER_FAILURE_AFTER_LOCAL_OCR_CODE,
   PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE,
   planProviderTimeoutLocalOcrRecovery
 } from "../server/recognition/provider-timeout-recovery.js";
@@ -29,6 +30,12 @@ if (process.argv[2] === "--timeout-http-child") {
   globalThis.fetch = async (_url, init = {}) => {
     providerCalls += 1;
     if (providerCalls > 1) throw new Error("TEST_UNEXPECTED_SECOND_PROVIDER_CALL");
+    if (process.env.TEST_PROVIDER_MODE === "http400") {
+      return new Response(JSON.stringify({ error: { code: "InvalidParameter" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" }
+      });
+    }
     return await new Promise((resolve, reject) => {
       const abort = () => {
         const error = new Error("mock provider timed out");
@@ -50,7 +57,7 @@ if (process.argv[2] === "--timeout-http-child") {
   await new Promise(() => {});
 }
 
-async function runTimeoutHttpScenario(sourceText) {
+async function runTimeoutHttpScenario(sourceText, { providerMode = "timeout" } = {}) {
   const preload = `import { registerHooks } from 'node:module';
 registerHooks({load(url, context, nextLoad) {
   const result = nextLoad(url, context);
@@ -91,6 +98,7 @@ registerHooks({load(url, context, nextLoad) {
       P0_QUALIFICATION_ACQUISITION_ENABLED: "true",
       SPATIAL_RESULT_ENABLED: "true",
       TEST_LOCAL_OCR_SOURCE_TEXT: sourceText,
+      TEST_PROVIDER_MODE: providerMode,
       DOTENV_CONFIG_PATH: path.join(root, "__no_test_env__")
     }
   });
@@ -156,6 +164,9 @@ assert.match(timeoutRoutingSource, /timeoutLocalOcrRecovery\.allowNewLocalOcr/);
 assert.doesNotMatch(timeoutRoutingSource, /localOcrAttempted:\s*false/);
 assert.equal((timeoutRoutingSource.match(/runLocalOcrFallback\(/gu) || []).length, 2);
 assert.match(serverSource, new RegExp(PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE));
+assert.match(serverSource, new RegExp(PROVIDER_FAILURE_AFTER_LOCAL_OCR_CODE));
+assert.match(serverSource, /const selectedProviderMaxTokens = 8_000;/u);
+assert.doesNotMatch(serverSource, /const selectedProviderMaxTokens = 12000;/u);
 assert.match(serverSource, /fallback\.reusedLocalOcrEvidence\s*\?\s*keepReusedLocalOcrEvidenceAsReview/u);
 const reviewGuardStart = serverSource.indexOf("function keepReusedLocalOcrEvidenceAsReview");
 const reviewGuardEnd = serverSource.indexOf("function ", reviewGuardStart + 10);
@@ -188,6 +199,18 @@ assert.equal(insufficient.payload.retryAllowed, true);
 assert.equal(insufficient.payload.mapReady, false);
 assert.equal(insufficient.payload.kmlReady, false);
 assert.equal(insufficient.payload.localOcrCallCount, 1);
+
+const providerHttpFailure = await runTimeoutHttpScenario("", { providerMode: "http400" });
+assert.equal(providerHttpFailure.status, 503, JSON.stringify(providerHttpFailure.payload));
+assert.equal(providerHttpFailure.providerCalls, 1);
+assert.equal(providerHttpFailure.localOcrCalls, 1);
+assert.equal(providerHttpFailure.payload.code, PROVIDER_FAILURE_AFTER_LOCAL_OCR_CODE);
+assert.equal(providerHttpFailure.payload.providerCompletionState, "FAILED");
+assert.equal(providerHttpFailure.payload.usageConsumed, false);
+assert.equal(providerHttpFailure.payload.retryAllowed, true);
+assert.equal(providerHttpFailure.payload.mapReady, false);
+assert.equal(providerHttpFailure.payload.kmlReady, false);
+assert.equal(providerHttpFailure.payload.localOcrCallCount, 1);
 
 const reusedReview = await runTimeoutHttpScenario([
   "Madagascar cadastral grid",

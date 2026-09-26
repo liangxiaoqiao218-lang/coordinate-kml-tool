@@ -1,4 +1,5 @@
 export const PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE = "PROVIDER_TIMEOUT_AFTER_LOCAL_OCR";
+export const PROVIDER_FAILURE_AFTER_LOCAL_OCR_CODE = "PROVIDER_FAILURE_AFTER_LOCAL_OCR";
 
 export function planProviderTimeoutLocalOcrRecovery({
   localOcrAttempted = false,
