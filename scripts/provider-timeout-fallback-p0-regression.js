@@ -8,6 +8,10 @@ import {
   PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE,
   planProviderTimeoutLocalOcrRecovery
 } from "../server/recognition/provider-timeout-recovery.js";
+import {
+  attachRecognitionAcquisitionReviewUsageAuthority,
+  evaluateCoordinateUsageAuthority
+} from "../server/coordinate-usage-atomicity.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
@@ -37,7 +41,10 @@ if (process.argv[2] === "--timeout-http-child") {
     });
   };
   process.on("message", message => {
-    if (message === "stats") process.send?.({ providerCalls });
+    if (message === "stats") process.send?.({
+      providerCalls,
+      localOcrCalls: Number(globalThis.__providerTimeoutFallbackLocalOcrCalls || 0)
+    });
   });
   await import("../server.js");
   await new Promise(() => {});
@@ -53,6 +60,7 @@ registerHooks({load(url, context, nextLoad) {
   const callEnd = source.indexOf('    });', callStart) + 7;
   if (callStart < 0 || callEnd < 7) throw new Error('TIMEOUT_RECOVERY_INJECTION_NOT_INSTALLED');
   const injected = ${JSON.stringify(`    recognitionBudget?.assertCanStartLocalOcr({ stageName: "local_ocr", minRequiredMs: 2500, lowValue: false });
+    globalThis.__providerTimeoutFallbackLocalOcrCalls = Number(globalThis.__providerTimeoutFallbackLocalOcrCalls || 0) + 1;
     const testSourceText = String(process.env.TEST_LOCAL_OCR_SOURCE_TEXT || "");
     const layoutLines = Object.freeze(testSourceText.split(/\\r?\\n/u).filter(Boolean).map((text, index) => ({
     text, bbox: [10, 10 + (index * 30), 900, 30 + (index * 30)], local_line_index: index,
@@ -105,7 +113,12 @@ registerHooks({load(url, context, nextLoad) {
     const statsPromise = once(child, "message", { signal });
     child.send("stats");
     const [stats] = await statsPromise;
-    return { status: response.status, payload, providerCalls: stats.providerCalls };
+    return {
+      status: response.status,
+      payload,
+      providerCalls: stats.providerCalls,
+      localOcrCalls: stats.localOcrCalls
+    };
   } finally {
     child.kill();
     await once(child, "exit").catch(() => {});
@@ -168,11 +181,78 @@ for (const phase of ["request_dispatched", "response_headers_received", "respons
 const insufficient = await runTimeoutHttpScenario("");
 assert.equal(insufficient.status, 503, JSON.stringify(insufficient.payload));
 assert.equal(insufficient.providerCalls, 1);
+assert.equal(insufficient.localOcrCalls, 1);
 assert.equal(insufficient.payload.code, PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE);
 assert.equal(insufficient.payload.usageConsumed, false);
 assert.equal(insufficient.payload.retryAllowed, true);
 assert.equal(insufficient.payload.mapReady, false);
 assert.equal(insufficient.payload.kmlReady, false);
 assert.equal(insufficient.payload.localOcrCallCount, 1);
+
+const reusedReview = await runTimeoutHttpScenario([
+  "Madagascar cadastral grid",
+  "num | XV | YV",
+  "280 | 292812.5 | 360937.5",
+  "281 | 292812.5 | 361562.5",
+  "282 | 292812.5 | 362187.5"
+].join("\n"));
+assert.equal(reusedReview.status, 200, JSON.stringify(reusedReview.payload));
+assert.equal(reusedReview.providerCalls, 1);
+assert.equal(reusedReview.localOcrCalls, 1);
+assert.equal(reusedReview.payload.success, true);
+assert.equal(reusedReview.payload.authorizationStatus, "REVIEW_REQUIRED");
+assert.equal(reusedReview.payload.resultStatus, "needs_review");
+assert.equal(reusedReview.payload.requiresReview, true);
+assert.equal(reusedReview.payload.mapReady, false);
+assert.equal(reusedReview.payload.kmlReady, false);
+
+const reviewRequestId = "00000000-0000-4000-8000-000000000001";
+const reviewRawText = "NC | XV | YV\n1 | 510000 | 9700100\n2 | 510100 | 9700050\n3 | 510000 | 9699900";
+const reviewCandidateCoordinates = Object.freeze([
+  Object.freeze({ id: "1", x: 510000, y: 9700100 }),
+  Object.freeze({ id: "2", x: 510100, y: 9700050 }),
+  Object.freeze({ id: "3", x: 510000, y: 9699900 })
+]);
+const reviewBody = {
+  success: true,
+  requestId: reviewRequestId,
+  rawText: reviewRawText,
+  acquisitionStatus: "COMPLETED",
+  authorizationStatus: "REVIEW_REQUIRED",
+  resultStatus: "needs_review",
+  requiresReview: true,
+  mapReady: false,
+  kmlReady: false,
+  candidateCoordinates: reviewCandidateCoordinates,
+  candidateCoordinateGroups: Object.freeze([]),
+  visibleCrsEvidence: Object.freeze([]),
+  reviewReasons: Object.freeze(["FORMAT_CONTRACT_REVIEW_REQUIRED"]),
+  recognitionAcquisition: {
+    version: "recognition_acquisition_evidence_v1",
+    providerCompletionState: "SUCCEEDED",
+    acquisitionStatus: "COMPLETED",
+    authorizationStatus: "REVIEW_REQUIRED",
+    rawProviderText: reviewRawText,
+    candidateCoordinates: reviewCandidateCoordinates,
+    candidateCoordinateGroups: Object.freeze([]),
+    visibleCrsEvidence: Object.freeze([]),
+    imageEvidence: Object.freeze({ imageSha256: "fixture", page: 1 }),
+    diagnostics: Object.freeze({ candidatePointCount: reviewCandidateCoordinates.length })
+  }
+};
+const authorizedReviewBody = attachRecognitionAcquisitionReviewUsageAuthority({
+  recognitionRequestId: reviewRequestId,
+  body: reviewBody
+});
+assert.equal(authorizedReviewBody.authorizationStatus, "REVIEW_REQUIRED");
+assert.equal(authorizedReviewBody.mapReady, false);
+assert.equal(authorizedReviewBody.kmlReady, false);
+assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body: authorizedReviewBody }).eligible, true);
+const ineligibleReviewBody = attachRecognitionAcquisitionReviewUsageAuthority({
+  recognitionRequestId: reviewRequestId,
+  body: { ...reviewBody, recognitionAcquisition: null }
+});
+assert.equal(ineligibleReviewBody.recognitionAcquisitionReviewAuthority, undefined);
+assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body: ineligibleReviewBody }).eligible, false);
 
 console.log("provider-timeout-fallback-p0-regression: PASS");

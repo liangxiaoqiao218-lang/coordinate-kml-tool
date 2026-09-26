@@ -590,6 +590,24 @@ export function buildRecognitionAcquisitionReviewUsageAuthority({ recognitionReq
   });
 }
 
+export function attachRecognitionAcquisitionReviewUsageAuthority({ recognitionRequestId, body } = {}) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  const requestId = String(recognitionRequestId || body.requestId || "").trim().toLowerCase();
+  const candidate = { ...body, requestId };
+  try {
+    return Object.freeze({
+      ...candidate,
+      recognitionAcquisitionReviewAuthority: buildRecognitionAcquisitionReviewUsageAuthority({
+        recognitionRequestId: requestId,
+        body: candidate
+      })
+    });
+  } catch (error) {
+    if (error?.code !== COORDINATE_USAGE_ERROR_CODE.AUTHORITY_NOT_ESTABLISHED) throw error;
+    return body;
+  }
+}
+
 export function evaluateRecognitionAcquisitionReviewUsageAuthority({ httpStatus = 200, body = null } = {}) {
   const reject = reason => Object.freeze({ eligible: false, reason, identity: null });
   if (!Number.isInteger(Number(httpStatus)) || Number(httpStatus) < 200 || Number(httpStatus) >= 300 || body?.success !== true) {

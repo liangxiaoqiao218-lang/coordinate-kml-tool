@@ -27,6 +27,7 @@ import {
   COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS,
   COORDINATE_USAGE_SESSION_COOKIE,
   CoordinateUsageAtomicityService,
+  attachRecognitionAcquisitionReviewUsageAuthority,
   buildProjectedCoordinateReviewUsageAuthority,
   buildRecognitionAcquisitionReviewUsageAuthority,
   buildUnchargedCoordinateFailureResponse,
@@ -15253,15 +15254,11 @@ async function recognizeCoordinatesHandler(req, res) {
   const refreshRecognitionReviewUsageAuthority = body => {
     if (!body || typeof body !== "object" || body.success !== true) return body;
     const recognitionRequestId = String(body.requestId || recognitionBudget?.requestId || "").trim();
-    if (body.recognitionAcquisitionReviewAuthority) {
-      return {
-        ...body,
-        recognitionAcquisitionReviewAuthority: buildRecognitionAcquisitionReviewUsageAuthority({
-          recognitionRequestId,
-          body
-        })
-      };
-    }
+    const acquisitionReviewBody = attachRecognitionAcquisitionReviewUsageAuthority({
+      recognitionRequestId,
+      body
+    });
+    if (acquisitionReviewBody !== body) return acquisitionReviewBody;
     if (body.projectedCoordinateReviewAuthority) {
       return {
         ...body,
