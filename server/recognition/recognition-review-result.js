@@ -9,6 +9,7 @@ export const ACQUISITION_REVIEW_STATUS = Object.freeze({
 });
 
 const DMS_COMPONENT_PATTERN = /[-+]?\d{1,3}\s*[°º˚]\s*\d{1,2}\s*(?:['′’]\s*)?\d{1,2}(?:[.,]\d+)?\s*(?:["″”]\s*)?(?:N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST)\b/giu;
+const DMS_VALUE_PATTERN = /[-+]?\d{1,3}\s*[°º˚]\s*\d{1,2}\s*(?:['′’]\s*)?\d{1,2}(?:[.,]\d+)?\s*(?:["″”]\s*)?/giu;
 const CANDIDATE_DMS_SIGNAL = /[°º˚]|\b(?:N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST)\b/iu;
 const GROUP_MARKER = /^\s*(?:GROUP|HEADING|SECTION|TITLE)\s*\|\s*(\S[\s\S]*?)\s*$/iu;
 const META_MARKER = /^\s*(?:CONTEXT|UNCLASSIFIED\s+STRUCTURED\s+COORDINATE\s+EVIDENCE)\b/iu;
@@ -23,14 +24,15 @@ function normalizeHemisphere(value) {
   return "";
 }
 
-function parseDmsComponent(source) {
+function parseDmsComponent(source, forcedHemisphere = "") {
   const text = String(source || "").trim();
-  const match = text.match(/^([-+]?\d{1,3})\s*[°º˚]\s*(\d{1,2})\s*(?:['′’]\s*)?(\d{1,2}(?:[.,]\d+)?)\s*(?:["″”]\s*)?(N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST)$/iu);
+  const match = text.match(/^([-+]?\d{1,3})\s*[°º˚]\s*(\d{1,2})\s*(?:['′’]\s*)?(\d{1,2}(?:[.,]\d+)?)\s*(?:["″”]\s*)?(?:(N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST))?$/iu);
   if (!match) return null;
   const degrees = Number(match[1]);
   const minutes = Number(match[2]);
   const seconds = Number(match[3].replace(",", "."));
-  const hemisphere = normalizeHemisphere(match[4]);
+  const hemisphere = normalizeHemisphere(match[4] || forcedHemisphere);
+  if (!hemisphere) return null;
   const axis = ["N", "S"].includes(hemisphere) ? "latitude" : "longitude";
   const maximumDegrees = axis === "latitude" ? 90 : 180;
   if (![degrees, minutes, seconds].every(Number.isFinite)
@@ -47,6 +49,27 @@ function parseDmsComponent(source) {
   });
 }
 
+function parseDmsHeaderBinding(line) {
+  const text = String(line || "").trim();
+  if (!HEADER_AXIS_PATTERN.test(text)) return null;
+  const directions = [];
+  for (const column of text.split(/\s*[|\t;]\s*/u)) {
+    const axis = /\b(?:LAT(?:ITUDE)?|PARALL[EÈ]LE)\b/iu.test(column)
+      ? "latitude"
+      : /\b(?:LON(?:GITUDE)?|M[EÉ]RIDIEN)\b/iu.test(column)
+        ? "longitude"
+        : null;
+    if (!axis) continue;
+    const hemisphere = normalizeHemisphere(column.match(/\b(N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST)\b/iu)?.[1]);
+    if (!hemisphere) return null;
+    const hemisphereAxis = ["N", "S"].includes(hemisphere) ? "latitude" : "longitude";
+    if (hemisphereAxis !== axis) return null;
+    directions.push(Object.freeze({ axis, hemisphere }));
+  }
+  if (directions.length !== 2 || new Set(directions.map(value => value.axis)).size !== 2) return null;
+  return Object.freeze(directions);
+}
+
 function classifyRowFailure(line, tokenCount) {
   const numericCount = (String(line || "").match(/[-+]?\d+(?:[.,]\d+)?/gu) || []).length;
   if (tokenCount === 2 && numericCount > 7) return "DMS_EXTRA_CONTENT";
@@ -54,13 +77,16 @@ function classifyRowFailure(line, tokenCount) {
   return "DMS_DIRECTION_CONFLICT";
 }
 
-function parseProviderDmsRow(line, lineNumber) {
+function parseProviderDmsRow(line, lineNumber, headerBinding = null) {
   const sourceText = String(line || "").trim();
   const tokenMatches = [...sourceText.matchAll(DMS_COMPONENT_PATTERN)];
-  if (tokenMatches.length !== 2) {
+  const matches = tokenMatches.length === 0 && Array.isArray(headerBinding)
+    ? [...sourceText.matchAll(DMS_VALUE_PATTERN)]
+    : tokenMatches;
+  if (matches.length !== 2) {
     return Object.freeze({ accepted: false, reason: classifyRowFailure(sourceText, tokenMatches.length) });
   }
-  const components = tokenMatches.map(match => parseDmsComponent(match[0]));
+  const components = matches.map((match, index) => parseDmsComponent(match[0], headerBinding?.[index]?.hemisphere));
   if (components.some(component => !component)) {
     return Object.freeze({ accepted: false, reason: "DMS_DIRECTION_CONFLICT" });
   }
@@ -71,7 +97,7 @@ function parseProviderDmsRow(line, lineNumber) {
   }
 
   let remainder = sourceText;
-  for (const match of [...tokenMatches].reverse()) {
+  for (const match of [...matches].reverse()) {
     remainder = `${remainder.slice(0, match.index)} ${remainder.slice(match.index + match[0].length)}`;
   }
   remainder = remainder.replace(/^\s*(?:ROW|COORDINATE)\s*\|\s*/iu, "").trim();
@@ -164,6 +190,7 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
   let pendingHeadings = [];
   let currentGroup = null;
   let pendingBoundaryEvidence = "document_start";
+  let activeDmsHeaderBinding = null;
 
   const closeGroup = () => {
     if (currentGroup?.rows.length) provisionalGroups.push(currentGroup);
@@ -177,7 +204,7 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
     const tokenCount = [...line.matchAll(DMS_COMPONENT_PATTERN)].length;
     const candidateSignal = tokenCount > 0 || ((line.match(/[°º˚]/gu) || []).length > 0 && CANDIDATE_DMS_SIGNAL.test(line));
     if (candidateSignal) {
-      const parsed = parseProviderDmsRow(line, lineNumber);
+      const parsed = parseProviderDmsRow(line, lineNumber, activeDmsHeaderBinding);
       if (!parsed.accepted) {
         rejectedRows.push(Object.freeze({ lineNumber, text: line, reason: parsed.reason }));
         return;
@@ -200,6 +227,7 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
         closeGroup();
         pendingBoundaryEvidence = "repeated_visible_header";
       }
+      activeDmsHeaderBinding = parseDmsHeaderBinding(line);
       return;
     }
 
@@ -210,6 +238,7 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
         pendingBoundaryEvidence = markedHeading ? "visible_group_marker" : "visible_heading_transition";
       }
       const heading = markedHeading || line;
+      activeDmsHeaderBinding = null;
       if (pendingHeadings.at(-1) !== heading) pendingHeadings.push(heading);
     }
   });
