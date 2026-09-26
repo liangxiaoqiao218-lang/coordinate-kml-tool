@@ -27,6 +27,7 @@
     "agentic-controller-v1-regression": "node scripts/agentic-coordinate-controller-v1-regression.js",
     "agentic-ui-v1-regression": "node scripts/agentic-coordinate-ui-v1-regression.js",
     "agentic-user-sample-acceptance-v1": "node scripts/agentic-coordinate-user-sample-acceptance-v1-regression.js",
+    "coordinate-agent-phase01-regression": "node scripts/coordinate-agent-kernel-phase01-regression.js",
     "ocr-golden": "node scripts/ocr-golden-runner.js",
     "recognition-first-acquisition-v1-regression": "node scripts/recognition-first-acquisition-v1-regression.js",
     "recognition-first-review-result-v2-regression": "node scripts/recognition-first-review-result-v2-regression.js",
