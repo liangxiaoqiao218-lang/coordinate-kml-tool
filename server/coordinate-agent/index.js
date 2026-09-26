@@ -12,3 +12,4 @@ export * from './tools/image-tools.js';
 export * from './tools/math-tools.js';
 export * from './tools/sharp-image-operations.js';
 export * from './evaluation-runner.js';
+export * from './evaluation-scoring.js';
