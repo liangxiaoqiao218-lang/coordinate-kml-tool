@@ -198,6 +198,19 @@ assert.equal(headerBoundDirections.unboundCandidates[0].latitude > 0, true);
 assert.equal(headerBoundDirections.unboundCandidates[0].longitude < 0, true);
 assert.equal(headerBoundDirections.authorizationCandidate, false);
 
+const canonicalAxisContract = normalizeProviderDmsReviewResult([
+  "AXIS | LATITUDE=N | LONGITUDE=W",
+  "ROW | 1 | 11° 43' 16.45\" | 09° 01' 13.67\"",
+  "ROW | 2 | 11° 43' 09.20\" | 09° 00' 56.03\"",
+  "ROW | 3 | 11° 43' 03.38\" | 09° 00' 58.67\"",
+  "ROW | 4 | 11° 43' 11.30\" | 09° 01' 15.25\""
+].join("\n"));
+assert.equal(canonicalAxisContract.status, ACQUISITION_REVIEW_STATUS.REVIEW_REQUIRED);
+assert.equal(canonicalAxisContract.candidatePointCount, 4);
+assert.equal(canonicalAxisContract.unboundRowCount, 4);
+assert.equal(canonicalAxisContract.unboundCandidates[0].latitude > 0, true);
+assert.equal(canonicalAxisContract.unboundCandidates[0].longitude < 0, true);
+
 const reviewOnlyFinalized = finalizeCoordinateResult({
   sourceAuthority: "legacy",
   coordinateType: "dms",
@@ -268,6 +281,9 @@ assert.match(serverSource, /providerReviewCandidatePointCount/);
 assert.match(serverSource, /providerReviewCandidateGroupCount/);
 assert.match(serverSource, /providerReviewBoundRowCount/);
 assert.match(serverSource, /providerReviewUnboundRowCount/);
+assert.match(serverSource, /DMS 方向绑定强制合同/);
+assert.match(serverSource, /AXIS \| LATITUDE=N或S \| LONGITUDE=E或W/);
+assert.match(serverSource, /不得只输出无方向的度分秒数值/);
 assert.match(serverSource, /isCoordinateEngineV2SelfIntersecting/);
 assert.match(deadlineSource, /"ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED"/);
 assert.match(uiSource, /采集完成，等待复核/);
