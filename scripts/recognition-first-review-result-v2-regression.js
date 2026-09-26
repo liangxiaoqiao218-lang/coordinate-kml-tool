@@ -184,6 +184,20 @@ const noCrs = normalizeProviderDmsReviewResult(group("Parent", "Area", [
 assert.ok(noCrs.reviewReasons.includes("CRS_EVIDENCE_MISSING"));
 assert.equal(noCrs.authorizationCandidate, false);
 
+const headerBoundDirections = normalizeProviderDmsReviewResult([
+  "Point | Latitude nord | Longitude ouest",
+  "1 | 11° 43' 16.45\" | 09° 01' 13.67\"",
+  "2 | 11° 43' 09.20\" | 09° 00' 56.03\"",
+  "3 | 11° 43' 03.38\" | 09° 00' 58.67\"",
+  "4 | 11° 43' 11.30\" | 09° 01' 15.25\""
+].join("\n"));
+assert.equal(headerBoundDirections.status, ACQUISITION_REVIEW_STATUS.REVIEW_REQUIRED);
+assert.equal(headerBoundDirections.candidatePointCount, 4);
+assert.equal(headerBoundDirections.unboundRowCount, 4);
+assert.equal(headerBoundDirections.unboundCandidates[0].latitude > 0, true);
+assert.equal(headerBoundDirections.unboundCandidates[0].longitude < 0, true);
+assert.equal(headerBoundDirections.authorizationCandidate, false);
+
 const reviewOnlyFinalized = finalizeCoordinateResult({
   sourceAuthority: "legacy",
   coordinateType: "dms",
