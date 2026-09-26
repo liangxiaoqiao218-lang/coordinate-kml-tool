@@ -408,8 +408,23 @@ export function extractRecognitionCandidateEvidence({ rawText = "", visibleCrsEv
     }
     const header = analyzeCoordinateHeader(text);
     if (header) {
-      if (activeHeader) repeatedHeaderCount += 1;
-      activeHeader = header;
+      if (activeHeader) {
+        repeatedHeaderCount += 1;
+        const equivalentAxisOrder = activeHeader.family === "PROJECTED"
+          ? activeHeader.projectedAxisOrder === header.projectedAxisOrder
+          : activeHeader.family === "GEOGRAPHIC"
+            ? activeHeader.geographicAxisOrder === header.geographicAxisOrder
+            : activeHeader.geographicAxisOrder === header.geographicAxisOrder
+              && activeHeader.projectedAxisOrder === header.projectedAxisOrder;
+        const equivalentHeader = activeHeader.family === header.family
+          && activeHeader.pairCount === header.pairCount
+          && equivalentAxisOrder;
+        activeHeader = equivalentHeader && !activeHeader.columnLayout
+          ? activeHeader
+          : header;
+      } else {
+        activeHeader = header;
+      }
       return;
     }
     const candidates = parseCoordinateCandidates(text, lineNumber, {

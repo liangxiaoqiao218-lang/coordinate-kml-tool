@@ -1013,9 +1013,9 @@ export function extractProviderProjectedCoordinateEvidence({
   const delimitedHeaderIndex = lines.findIndex(line => Boolean(parseDelimitedProjectedHeaderLayout(line)));
   // Prefer the explicit label/X/Y header over an earlier AXIS_ORDER line so
   // labelled Provider rows retain their required point identifiers.
-  const headerIndex = delimitedHeaderIndex >= 0
-    ? delimitedHeaderIndex
-    : labelledHeaderIndex >= 0 ? labelledHeaderIndex : axisHeaderIndex;
+  const headerIndex = labelledHeaderIndex >= 0
+    ? labelledHeaderIndex
+    : delimitedHeaderIndex >= 0 ? delimitedHeaderIndex : axisHeaderIndex;
   const delimitedHeaderLayout = headerIndex >= 0 ? parseDelimitedProjectedHeaderLayout(lines[headerIndex]) : null;
   // Generic acquisition sometimes preserves all labelled rows and visible CRS
   // text but omits a separate X/Y header. The server-issued unclassified title
