@@ -37,6 +37,7 @@
     "recognition-final-fail-close-v7-regression": "node scripts/recognition-final-fail-close-v7-regression.js",
     "recognition-projected-authorization-v8-regression": "node scripts/recognition-projected-authorization-v8-regression.js",
     "recognition-projected-header-terminal-v9-regression": "node scripts/recognition-projected-header-terminal-v9-regression.js",
+    "provider-timeout-fallback-p0-regression": "node scripts/provider-timeout-fallback-p0-regression.js",
     "sr08c-manual-regression": "node scripts/sr08c-manual-finalizer-regression.js",
     "sr08c-evidence": "node scripts/sr08c-build-release-evidence.js",
     "start": "node server.js"
