@@ -12,6 +12,7 @@ import { applyMiningJudgeabilityGate } from "./server/mining-judgeability.js";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
 import { assessRecognitionCompleteness } from "./server/recognition/recognition-completeness.js";
 import {
+  PROVIDER_FAILURE_AFTER_LOCAL_OCR_CODE,
   PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE,
   planProviderTimeoutLocalOcrRecovery
 } from "./server/recognition/provider-timeout-recovery.js";
@@ -16371,7 +16372,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     // Coordinate acquisition is a bounded transcription task. Hybrid Qwen
     // models otherwise enable thinking by default, which can consume the
     // request deadline before a long coordinate table returns any text.
-    const selectedProviderMaxTokens = 12000;
+    // qwen-vl-plus accepts at most 8,096 output tokens. Keep a small margin so
+    // production aliases and snapshots share one valid request contract.
+    const selectedProviderMaxTokens = 8_000;
 
     // Legacy country/file-name selectors remain available to older parsers but
     // no longer control the first (and only) Provider call. The primary route
@@ -20085,14 +20088,21 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         timeoutRoutingOcrAttempted = true;
         timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, "provider_timeout");
       }
-      if (!timeoutRoutingOcrFallback && isAliyunTimeout) {
+      if (!timeoutRoutingOcrFallback) {
+        const providerFailureCode = isAliyunTimeout
+          ? PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE
+          : PROVIDER_FAILURE_AFTER_LOCAL_OCR_CODE;
         return res.status(503).json({
           success: false,
-          reason: "provider_timeout_after_local_ocr",
-          code: PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE,
-          error: "主识别超时，首次本地识别证据不足。本次未扣除使用次数，可以直接重试。",
+          reason: isAliyunTimeout
+            ? "provider_timeout_after_local_ocr"
+            : "provider_failure_after_local_ocr",
+          code: providerFailureCode,
+          error: isAliyunTimeout
+            ? "主识别超时，首次本地识别证据不足。本次未扣除使用次数，可以直接重试。"
+            : "主识别请求失败，首次本地识别证据不足。本次未扣除使用次数，可以直接重试。",
           requestId: recognitionBudget?.requestId || null,
-          providerCompletionState: recognitionBudget?.providerCompletionState || "TIMED_OUT",
+          providerCompletionState: recognitionBudget?.providerCompletionState || (isAliyunTimeout ? "TIMED_OUT" : "FAILED"),
           providerCallCount: recognitionBudget?.providerAttemptCount || 0,
           localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0,
           usageConsumed: false,
