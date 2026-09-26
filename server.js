@@ -12,6 +12,10 @@ import { applyMiningJudgeabilityGate } from "./server/mining-judgeability.js";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
 import { assessRecognitionCompleteness } from "./server/recognition/recognition-completeness.js";
 import {
+  PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE,
+  planProviderTimeoutLocalOcrRecovery
+} from "./server/recognition/provider-timeout-recovery.js";
+import {
   canonicalizeCoordinateImageUpload,
   createCoordinateImageIdentity,
   hasValidJpegStructure as hasValidCanonicalJpegStructure
@@ -23,6 +27,7 @@ import {
   COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS,
   COORDINATE_USAGE_SESSION_COOKIE,
   CoordinateUsageAtomicityService,
+  attachRecognitionAcquisitionReviewUsageAuthority,
   buildProjectedCoordinateReviewUsageAuthority,
   buildRecognitionAcquisitionReviewUsageAuthority,
   buildUnchargedCoordinateFailureResponse,
@@ -8157,6 +8162,11 @@ async function callAliyunVision({
 
   try {
     budget?.markProviderAttempted();
+    console.log("[Aliyun] Provider phase", {
+      phase: "request_dispatched",
+      stageName,
+      elapsedMs: 0
+    });
     response = await fetch(getAliyunChatCompletionsUrl(), {
       method: "POST",
       headers: {
@@ -8166,7 +8176,24 @@ async function callAliyunVision({
       body: JSON.stringify(requestBody),
       signal: combinedAbort.signal
     });
-    data = await response.json().catch(() => ({}));
+    console.log("[Aliyun] Provider phase", {
+      phase: "response_headers_received",
+      stageName,
+      elapsedMs: Date.now() - startedAt,
+      httpStatusClass: `${Math.floor(Number(response.status) / 100)}xx`
+    });
+    let bodyReadResult = "complete";
+    data = await response.json().catch(() => {
+      bodyReadResult = "invalid_json";
+      return {};
+    });
+    console.log("[Aliyun] Provider phase", {
+      phase: "response_body_complete",
+      stageName,
+      elapsedMs: Date.now() - startedAt,
+      httpStatusClass: `${Math.floor(Number(response.status) / 100)}xx`,
+      result: bodyReadResult
+    });
     providerUsageObserved = Boolean(data?.usage && typeof data.usage === "object");
     providerCompletionState = response.ok ? "SUCCEEDED" : "FAILED";
     if (!response.ok) stageResult = "failed";
@@ -14484,6 +14511,77 @@ function keepRecognizedCoordinatesAsPointReview(response = {}, warning = "", { b
   };
 }
 
+function keepReusedLocalOcrEvidenceAsReview(response = {}, warning = "") {
+  const prior = response?.finalizedCoordinateResult;
+  const reviewResult = prior?.resultId && Number.isSafeInteger(prior?.resultRevision)
+    ? coordinateConfirmationRuntime.register(finalizeCoordinateResult({
+        ...prior,
+        currentRevision: prior.resultRevision,
+        confirmedRevision: null,
+        confirmationStatus: "pending",
+        qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+        technicalKmlReady: false,
+        mapReady: false,
+        currentAuthorizedGeometryExportable: false,
+        requiresReview: true,
+        kmlReady: false,
+        kmlAuthorityBlocked: true,
+        decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+        gate: Object.freeze({
+          ...(prior.gate || {}),
+          decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED
+        }),
+        groups: Array.isArray(prior.groups)
+          ? prior.groups.map(group => ({ ...group, requiresReview: true, kmlReady: false }))
+          : prior.groups,
+        warnings: [
+          warning || "主视觉识别超时；当前结果只来自本次请求首次本地 OCR 证据，必须人工复核。",
+          ...(Array.isArray(prior.warnings) ? prior.warnings : [])
+        ]
+      }))
+    : prior;
+  const coordinateEngineV2 = response?.coordinateEngineV2 && typeof response.coordinateEngineV2 === "object"
+    ? {
+        ...response.coordinateEngineV2,
+        requires_review: true,
+        kml_ready: false,
+        groups: Array.isArray(response.coordinateEngineV2.groups)
+          ? response.coordinateEngineV2.groups.map(group => ({ ...group, requires_review: true, kml_ready: false }))
+          : response.coordinateEngineV2.groups
+      }
+    : response.coordinateEngineV2;
+  const mapPreview = response?.mapPreview && typeof response.mapPreview === "object"
+    ? {
+        ...response.mapPreview,
+        previewEligibility: { allowed: false },
+        mapPreviewObject: response.mapPreview.mapPreviewObject && typeof response.mapPreview.mapPreviewObject === "object"
+          ? {
+              ...response.mapPreview.mapPreviewObject,
+              previewEligibility: { allowed: false },
+              kmlEligibility: { allowed: false, kmlReady: false }
+            }
+          : response.mapPreview.mapPreviewObject
+      }
+    : response.mapPreview;
+  return {
+    ...response,
+    success: true,
+    authorizationStatus: "REVIEW_REQUIRED",
+    resultStatus: "needs_review",
+    requiresReview: true,
+    boundaryBlocked: true,
+    mapReady: false,
+    kmlReady: false,
+    mapStatus: "CLOSED",
+    kmlStatus: "CLOSED",
+    previewEligibility: { allowed: false },
+    kmlEligibility: { allowed: false, kmlReady: false },
+    coordinateEngineV2,
+    mapPreview,
+    finalizedCoordinateResult: reviewResult
+  };
+}
+
 function shouldUseProjectedTableOcrAcquisition(value = "") {
   const lines = normalizeText(String(value || ""))
     .split(/\r?\n/u)
@@ -15156,15 +15254,11 @@ async function recognizeCoordinatesHandler(req, res) {
   const refreshRecognitionReviewUsageAuthority = body => {
     if (!body || typeof body !== "object" || body.success !== true) return body;
     const recognitionRequestId = String(body.requestId || recognitionBudget?.requestId || "").trim();
-    if (body.recognitionAcquisitionReviewAuthority) {
-      return {
-        ...body,
-        recognitionAcquisitionReviewAuthority: buildRecognitionAcquisitionReviewUsageAuthority({
-          recognitionRequestId,
-          body
-        })
-      };
-    }
+    const acquisitionReviewBody = attachRecognitionAcquisitionReviewUsageAuthority({
+      recognitionRequestId,
+      body
+    });
+    if (acquisitionReviewBody !== body) return acquisitionReviewBody;
     if (body.projectedCoordinateReviewAuthority) {
       return {
         ...body,
@@ -19579,12 +19673,33 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       let wgs84TimeoutRetryAttempted = false;
       let handwrittenTimeoutRoutingEvidence = null;
       const isAliyunTimeout = error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT";
+      const timeoutLocalOcrRecovery = planProviderTimeoutLocalOcrRecovery({
+        localOcrAttempted: oneShotLocalOcrAttempted || (recognitionBudget?.localOcrAttemptCount || 0) > 0,
+        sourceText: oneShotLocalOcrSourceText,
+        layoutLines: oneShotLocalOcrLayoutLines,
+        axisOrderEvidence: oneShotLocalOcrAxisOrderEvidence,
+        projectedTableOcrAcquisition
+      });
+      if (timeoutLocalOcrRecovery.hasReusableEvidence) {
+        timeoutRoutingOcrAttempted = true;
+        timeoutRoutingOcrFallback = {
+          model: "local-tesseract-pre-route-reuse",
+          rawText: timeoutLocalOcrRecovery.evidence.sourceText,
+          coordinates: extractCoordinateLines(timeoutLocalOcrRecovery.evidence.sourceText),
+          precisionMode: "local-ocr-evidence-review",
+          warning: "主视觉识别超时；已复用本次请求首次本地 OCR 证据，结果必须人工复核。",
+          axisOrderEvidence: timeoutLocalOcrRecovery.evidence.axisOrderEvidence,
+          projectedTableOcrAcquisition: timeoutLocalOcrRecovery.evidence.projectedTableOcrAcquisition,
+          layoutLines: timeoutLocalOcrRecovery.evidence.layoutLines,
+          reusedLocalOcrEvidence: true
+        };
+      }
       const providerTerminalCompleteness = assessRecognitionCompleteness({
         rawText: "",
         coordinates: "",
         coordinateRowCount: 0,
         providerStatus: isAliyunTimeout ? "TIMEOUT" : "FAILED",
-        localOcrAttempted: false
+        localOcrAttempted: timeoutLocalOcrRecovery.localOcrAttempted
       });
       const timeoutRoutingHint = req.body?.rawHint || req.body?.hint || "";
       const timeoutMozambiqueTypeLock = getMozambiqueTypeLockEvidence(req.file, timeoutRoutingHint, {
@@ -19616,7 +19731,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       if (isAliyunTimeout && aliyunApiKey && req.file) {
         handwrittenTimeoutRoutingEvidence = getHandwrittenDmsTimeoutRoutingEvidence(req.file, timeoutRoutingHint);
 
-        if (!handwrittenTimeoutRoutingEvidence.shouldRetry) {
+        if (!handwrittenTimeoutRoutingEvidence.shouldRetry && timeoutLocalOcrRecovery.allowNewLocalOcr) {
           try {
             timeoutRoutingOcrAttempted = true;
             timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, "provider_timeout");
@@ -19966,9 +20081,31 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }));
       }
 
-      if (!timeoutRoutingOcrFallback) {
+      if (!timeoutRoutingOcrFallback && timeoutLocalOcrRecovery.allowNewLocalOcr) {
         timeoutRoutingOcrAttempted = true;
         timeoutRoutingOcrFallback = await runLocalOcrFallback(req.file.buffer, "provider_timeout");
+      }
+      if (!timeoutRoutingOcrFallback && isAliyunTimeout) {
+        return res.status(503).json({
+          success: false,
+          reason: "provider_timeout_after_local_ocr",
+          code: PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE,
+          error: "主识别超时，首次本地识别证据不足。本次未扣除使用次数，可以直接重试。",
+          requestId: recognitionBudget?.requestId || null,
+          providerCompletionState: recognitionBudget?.providerCompletionState || "TIMED_OUT",
+          providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+          localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0,
+          usageConsumed: false,
+          userUsageConsumed: false,
+          retryAllowed: true,
+          requiresReview: false,
+          mapReady: false,
+          kmlReady: false,
+          mapStatus: "CLOSED",
+          kmlStatus: "CLOSED",
+          rawText: "",
+          coordinates: ""
+        });
       }
       const fallback = timeoutRoutingOcrFallback;
       const fallbackCadastralGrid = getCadastralGridInfo(fallback.rawText);
@@ -20156,6 +20293,29 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         || countDmsCoordinateRows(fallback.rawText) > 0
         || countDmsCoordinateRows(fallback.coordinates) > 0;
 
+      if (isAliyunTimeout && !fallbackHasStableCoordinateResult) {
+        return res.status(503).json({
+          success: false,
+          reason: "provider_timeout_after_local_ocr",
+          code: PROVIDER_TIMEOUT_AFTER_LOCAL_OCR_CODE,
+          error: "主识别超时，首次本地识别证据不足。本次未扣除使用次数，可以直接重试。",
+          requestId: recognitionBudget?.requestId || null,
+          providerCompletionState: recognitionBudget?.providerCompletionState || "TIMED_OUT",
+          providerCallCount: recognitionBudget?.providerAttemptCount || 0,
+          localOcrCallCount: recognitionBudget?.localOcrAttemptCount || 0,
+          usageConsumed: false,
+          userUsageConsumed: false,
+          retryAllowed: true,
+          requiresReview: false,
+          mapReady: false,
+          kmlReady: false,
+          mapStatus: "CLOSED",
+          kmlStatus: "CLOSED",
+          rawText: "",
+          coordinates: ""
+        });
+      }
+
       if (
         providerTerminalCompleteness.allowFamilyProviderRetry
         && (error?.reason === "timeout" || error?.code === "ALIYUN_TIMEOUT")
@@ -20273,7 +20433,10 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
       fallback.quota = consumeResult.quota;
       fallback.coordinateEngineV2 = buildCoordinateEngineV2ShadowResult(fallback, { fileName: getUploadedFileDisplayName(req.file), rawHint: String(req.body?.rawHint || req.body?.hint || "") });
 
-      res.json(buildCoordinateVerificationResponse(fallback, fallback.coordinateEngineV2));
+      const fallbackResponse = buildCoordinateVerificationResponse(fallback, fallback.coordinateEngineV2);
+      res.json(fallback.reusedLocalOcrEvidence
+        ? keepReusedLocalOcrEvidenceAsReview(fallbackResponse, fallback.warning)
+        : fallbackResponse);
     } catch (fallbackError) {
       if (getRecognitionDeadlineSignal()?.aborted || res.headersSent || fallbackError?.code === RECOGNITION_DEADLINE_CODE) {
         return;
