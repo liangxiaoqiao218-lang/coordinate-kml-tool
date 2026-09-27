@@ -7516,6 +7516,16 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
   }
   const sourceLabels = uniqueEntries.map(entry => entry.label);
   const coordinateLines = uniqueEntries.map(entry => entry.coordinate);
+  const parsedCandidateRowCount = sourceRows.length;
+  const rejectedCandidateRowCount = Math.max(0, candidateRows.length - parsedCandidateRowCount);
+  const parsedStructuredLabels = new Set(sourceRows
+    .map(entry => entry.label)
+    .filter(label => /^(?:[A-Z]|\d{1,3})$/u.test(label)));
+  const blockingRejectedRowCount = rowEntries.filter(entry => (
+    !entry.coordinate
+      && /^(?:[A-Z]|\d{1,3})$/u.test(entry.label)
+      && !parsedStructuredLabels.has(entry.label)
+  )).length;
   const explicitHeaderDirection = Boolean(explicitAxes) && !axisConflict;
   const everyRowHasDirections = sourceRows.length > 0
     && sourceRows.every(entry => entry.directionBound === true);
@@ -7524,6 +7534,9 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     && rowEntries.every(entry => Boolean(entry.coordinate))
     && !axisConflict
     && (explicitHeaderDirection || everyRowHasDirections);
+  // Overview/detail tiles can repeat an already parsed coordinate row. Keep
+  // the unique source rows usable, but do not tolerate an unparsed candidate
+  // row or conflicting axis evidence.
   const provisional = !complete
     && coordinateLines.length >= 3
     && sourceRows.length === candidateRows.length
@@ -7541,7 +7554,12 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     coordinateRowCount: coordinateLines.length,
     sourceRowCount: uniqueEntries.length,
     candidateRowCount: candidateRows.length,
-    axisDirectionBound: explicitHeaderDirection || everyRowHasDirections,
+    axisDirectionBound: !axisConflict && (explicitHeaderDirection || everyRowHasDirections),
+    axisConflict,
+    parsedCandidateRowCount,
+    rejectedCandidateRowCount,
+    blockingRejectedRowCount,
+    coverageStatus: rejectedCandidateRowCount === 0 ? "COMPLETE" : "PARTIAL_REVIEW",
     duplicateRowCount: Math.max(0, sourceRows.length - uniqueEntries.length),
     coordinateFamily,
     sourceDisplayText: uniqueEntries.map(entry => entry.sourceText).join("\n"),
@@ -17443,6 +17461,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerDmsSourceRowCount: providerDmsDiagnostic.sourceRowCount,
       providerDmsCoordinateRowCount: providerDmsDiagnostic.coordinateRowCount,
       providerDmsAxisDirectionBound: providerDmsDiagnostic.axisDirectionBound,
+      providerDmsAxisConflict: providerDmsDiagnostic.axisConflict,
+      providerDmsParsedCandidateRowCount: providerDmsDiagnostic.parsedCandidateRowCount,
+      providerDmsRejectedCandidateRowCount: providerDmsDiagnostic.rejectedCandidateRowCount,
+      providerDmsBlockingRejectedRowCount: providerDmsDiagnostic.blockingRejectedRowCount,
+      providerDmsCoverageStatus: providerDmsDiagnostic.coverageStatus,
       providerReviewStatus: providerGroupedDmsDiagnostic.status,
       providerReviewReasons: providerGroupedDmsDiagnostic.reviewReasons,
       providerReviewCandidatePointCount: providerGroupedDmsDiagnostic.candidatePointCount,
@@ -17457,6 +17480,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerProjectedRejectedCandidateLineCount: providerProjectedDiagnostic.diagnostics?.rejectedProjectedCandidateLineCount || 0
     });
     // SANITIZED_ONE_SHOT_ACQUISITION_LOG_END
+    const providerDmsRecoveryEligible = ["COMPLETE", "PROVISIONAL"].includes(providerDmsDiagnostic.status)
+      && providerDmsDiagnostic.coordinateRowCount >= 3
+      && providerDmsDiagnostic.axisConflict !== true;
     const unifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
       rawText,
       acquisition: recognitionImageAcquisition,
@@ -17477,7 +17503,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       decision: unifiedAcquisitionDecision,
       conformance: oneShotAcquisitionConformance
     });
-    if (unifiedFormatRequiresReview || conformantWouldBypassReview) {
+    if (!providerDmsRecoveryEligible && (unifiedFormatRequiresReview || conformantWouldBypassReview)) {
       const unifiedTerminalResponse = await returnUnifiedRecognitionAcquisitionTerminal({
         rawText,
         evidence: unifiedAcquisitionEvidence,
@@ -17487,7 +17513,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       });
       if (unifiedTerminalResponse) return unifiedTerminalResponse;
     }
-    if (unifiedAcquisitionDecision.shouldReturnFailure
+    if (!providerDmsRecoveryEligible && unifiedAcquisitionDecision.shouldReturnFailure
       && oneShotAcquisitionConformance.status === ONE_SHOT_ACQUISITION_CONFORMANCE_STATUS.CONFORMANT) {
       return returnUnifiedRecognitionAcquisitionTerminal({
         rawText,
@@ -17713,6 +17739,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             evidence: trustedProviderProjectedEvidence
           })));
       if (trustedProviderProjectedEvidence.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
+        && !providerDmsRecoveryEligible
         && !completeProviderDmsSupersedesProjected) {
         const contextualUtm30BoundaryPreview = supportsLegacyUtm30BoundaryPreview({
           providerText: rawText,
@@ -18049,12 +18076,16 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           warning: provisionalDirection
             ? "已提取坐标，但方向尚未确认。请在地图核对位置和形状，必要时交换或修改坐标。"
             : pointAzFamilyRecovered
-            ? "已完整提取具有明确方向证据的 A–Z DMS 坐标行；按照家族安全策略，确认前仅供复核，不生成 KML。"
+            ? "已完整提取具有明确方向证据的 A–Z DMS 坐标行。请在地图核对位置和形状；确认前仍可下载未确认 KML。"
             : "已完整提取具有明确方向证据的 DMS 坐标行，并按原图点号顺序形成矿区边界。",
           providerDmsReviewEvidence: {
             status: trustedProviderDmsEvidence.status,
             coordinateRowCount: trustedProviderDmsEvidence.coordinateRowCount,
             sourceRowCount: trustedProviderDmsEvidence.sourceRowCount,
+            parsedCandidateRowCount: trustedProviderDmsEvidence.parsedCandidateRowCount,
+            rejectedCandidateRowCount: trustedProviderDmsEvidence.rejectedCandidateRowCount,
+            blockingRejectedRowCount: trustedProviderDmsEvidence.blockingRejectedRowCount,
+            coverageStatus: trustedProviderDmsEvidence.coverageStatus,
             axisDirectionBound: trustedProviderDmsEvidence.axisDirectionBound,
             coordinateFamily: trustedProviderDmsEvidence.coordinateFamily
           },

@@ -1503,8 +1503,10 @@ test("R25", "post-Provider conformance gate runs before parsing and geometry inf
 test("R26", "contract diagnostics expose bounded enums and counts only", async () => {
   const source = await readFile(new URL("../server.js", import.meta.url), "utf8");
   const start = source.indexOf('console.log("One-shot acquisition conformance:"');
-  const diagnostic = source.slice(start, source.indexOf("if (oneShotAcquisitionConformance.status", start));
+  const end = source.indexOf("// SANITIZED_ONE_SHOT_ACQUISITION_LOG_END", start);
+  const diagnostic = source.slice(start, end);
   assert.ok(start >= 0);
+  assert.ok(end > start);
   assert.match(diagnostic, /family|status|reason|counts|providerCallCount|localOcrCallCount|terminalState/);
   assert.doesNotMatch(diagnostic, /rawText|providerRawText|imageDataUrl|authorization|cookie|apiKey|secret|headers/iu);
 });

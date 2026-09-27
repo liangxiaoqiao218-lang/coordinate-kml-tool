@@ -173,6 +173,7 @@ if (process.argv[2] === '--http-candidate') {
       };
       const prompt = requestBody.messages.map(message => JSON.stringify(message.content)).join(' ');
       if (baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
+        || baseScenario === 'generic-dms-overlap-review'
         || baseScenario === 'generic-dms-provisional'
         || baseScenario === 'generic-dms-point-az'
         || baseScenario === 'generic-projected-review' || baseScenario === 'generic-projected-explicit'
@@ -317,6 +318,7 @@ if (process.argv[2] === '--http-candidate') {
           ...pointAzRows
         ].join('\n')
       : baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
+        || baseScenario === 'generic-dms-overlap-review'
         || baseScenario === 'generic-dms-provisional'
       ? [
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
@@ -325,6 +327,13 @@ if (process.argv[2] === '--http-candidate') {
           "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
           "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
           "4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+          ,...(baseScenario === 'generic-dms-overlap-review'
+            ? [
+                "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+                "CONTEXT | The attached images are one source page: image 1 is the whole-page overview and the next 3 images are overlapping high-resolution detail tiles in source reading order.",
+                "CONTEXT | Use the overview for page and table context. Use detail tiles to transcribe every visible coordinate row."
+              ]
+            : [])
         ].join('\n')
       : baseScenario === 'generic-cadastral-grid'
       ? [
@@ -2313,6 +2322,30 @@ test("one-shot structured Provider DMS review accepts exact whitespace-delimited
   assert.equal(runtime.extractProviderDmsReviewEvidence(sourceText.replace("43' 16.45", "43'")).status, "REVIEW_REQUIRED");
 });
 
+test("Provider DMS evidence deduplicates a complete overview/detail overlap without losing authority", () => {
+  const sourceText = [
+    "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+    "Point | Latitude nord | Longitude ouest",
+    "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
+    "4 | 11° 43' 11.30'' | 09° 01' 15.25''",
+    "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "CONTEXT | The attached images are one source page: image 1 is the whole-page overview and the next 3 images are overlapping high-resolution detail tiles in source reading order.",
+    "CONTEXT | Use the overview for page and table context. Use detail tiles to transcribe every visible coordinate row."
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(sourceText);
+  assert.equal(evidence.status, "COMPLETE");
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(evidence.parsedCandidateRowCount, 5);
+  assert.equal(evidence.rejectedCandidateRowCount, 0);
+  assert.equal(evidence.blockingRejectedRowCount, 0);
+  assert.equal(evidence.coverageStatus, "COMPLETE");
+  assert.equal(evidence.axisDirectionBound, true);
+  assert.equal(evidence.coordinates.split("\n").length, 4);
+  assert.doesNotMatch(evidence.sourceDisplayText, /^CONTEXT\b/mu);
+});
+
 test("Provider DMS evidence safely combines split axis fields and removes exact overlap duplicates", () => {
   const sourceText = [
     "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
@@ -2462,6 +2495,22 @@ test("directionless Provider DMS rows return one provisional review result inste
   assert.notEqual(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
   assert.match(payload.warning, /方向尚未确认/u);
   assert.ok(payload.parserTrace.includes("DMS_AUTHORITY:provisional_direction_review"));
+});
+
+test("complete overlapping Provider DMS evidence returns four review points instead of a zero-point 422", async () => {
+  const payload = await runHttpCandidate("generic-dms-overlap-review");
+  assert.equal(payload.success, true);
+  assert.equal(payload.requiresReview, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.providerDmsReviewEvidence.status, "COMPLETE");
+  assert.equal(payload.providerDmsReviewEvidence.coordinateRowCount, 4);
+  assert.equal(payload.providerDmsReviewEvidence.parsedCandidateRowCount, 5);
+  assert.equal(payload.providerDmsReviewEvidence.rejectedCandidateRowCount, 0);
+  assert.equal(payload.providerDmsReviewEvidence.coverageStatus, "COMPLETE");
+  assert.equal(payload.coordinates.split("\n").length, 4);
+  assert.equal(payload.coordinateEngineV2.groups[0].points.length, 4);
+  assert.match(payload.warning, /完整提取/u);
+  assert.match(payload.sourceCoordinateRepresentation.displayText, /11° 43' 16\.45/u);
 });
 
 test("generic NC/XV/YV grid recovery ignores descriptive columns and uses the terminal cell number", async () => {
