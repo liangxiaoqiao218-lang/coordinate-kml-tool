@@ -1,5 +1,6 @@
 import { normalizeAgenticCoordinateResult } from '../agentic-coordinate-recognition/contract.js';
 import { AGENT_STATE, COORDINATE_AGENT_SCHEMA_VERSION, TERMINAL_STATES } from './constants.js';
+import { assertJsonSchema } from './strict-schema-validator.js';
 
 const BBOX_SCHEMA = { type: ['array', 'null'], minItems: 4, maxItems: 4, items: { type: 'number', minimum: 0, maximum: 1 } };
 const REGION_SCHEMA = {
@@ -94,6 +95,7 @@ function assertArray(value, path) {
 }
 
 export function assertStrictAgenticCandidate(candidate) {
+  assertJsonSchema(CANDIDATE_SCHEMA, candidate, 'candidate');
   assertExactKeys(candidate, ['contractVersion', 'success', 'resultStatus', 'displayText', 'coordinateSystem', 'geometryType', 'groups', 'warnings', 'summary'], 'candidate');
   assertExactKeys(candidate.coordinateSystem, ['kind', 'name', 'epsg', 'status'], 'candidate.coordinateSystem');
   assertArray(candidate.groups, 'candidate.groups');
@@ -116,6 +118,7 @@ export function assertStrictAgenticCandidate(candidate) {
 }
 
 export function assertStrictCoordinateAgentTurn(turn) {
+  assertJsonSchema(COORDINATE_AGENT_TURN_SCHEMA, turn, 'turn');
   assertExactKeys(turn, ['observation', 'plan', 'candidate', 'uncertainties', 'reviewItems'], 'turn');
   assertExactKeys(turn.observation, ['summary', 'orientationDegrees', 'regions'], 'turn.observation');
   assertArray(turn.observation.regions, 'turn.observation.regions');
@@ -144,6 +147,7 @@ export function assertStrictCoordinateAgentTurn(turn) {
 }
 
 export function assertStrictCoordinateAgentResult(value) {
+  assertJsonSchema(COORDINATE_AGENT_RESULT_SCHEMA, value, 'result');
   assertExactKeys(value, ['schemaVersion', 'terminalState', 'coordinateResult', 'evidence', 'authorization', 'execution'], 'result');
   if (value.schemaVersion !== COORDINATE_AGENT_SCHEMA_VERSION) throw new Error('schemaVersion is invalid');
   if (!TERMINAL_STATES.has(value.terminalState)) throw new Error('terminalState is invalid');

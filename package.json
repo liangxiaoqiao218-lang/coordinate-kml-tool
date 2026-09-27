@@ -32,6 +32,7 @@
     "coordinate-agent-real-image-evaluation": "node scripts/coordinate-agent-real-image-evaluation.js",
     "coordinate-agent-phase03-regression": "node scripts/coordinate-agent-phase03-regression.js",
     "coordinate-agent-phase03-evaluation": "node scripts/coordinate-agent-phase03-offline-evaluation.js",
+    "coordinate-agent-phase04a-regression": "node scripts/coordinate-agent-phase04a-regression.js",
     "ocr-golden": "node scripts/ocr-golden-runner.js",
     "recognition-first-acquisition-v1-regression": "node scripts/recognition-first-acquisition-v1-regression.js",
     "recognition-first-review-result-v2-regression": "node scripts/recognition-first-review-result-v2-regression.js",
