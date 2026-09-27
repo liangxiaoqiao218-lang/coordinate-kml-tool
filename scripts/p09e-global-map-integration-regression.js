@@ -216,6 +216,8 @@ test("P09E-23", "production package pins MapLibre GL and exposes the real public
   assert.match(adapter, /maplibre-gl\.mjs/);
   assert.match(adapter, /new maplibregl\.Map/);
   assert.match(adapter, /provider: "OPENFREEMAP"/);
+  assert.match(adapter, /await waitForVisibleTiles\(this\.map, this\.timeoutMs\)/,
+    "map must not report ready before the fitted-area basemap tiles are visible");
   assert.equal(pkg.scripts.start, "node server.js");
   assert.equal(Object.hasOwn(pkg.scripts, "p09e-regression"), false);
 });

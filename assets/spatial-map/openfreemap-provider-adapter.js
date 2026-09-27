@@ -49,10 +49,40 @@ function waitForMapLoad(map, timeoutMs = 8000) {
   });
 }
 
+function waitForVisibleTiles(map, timeoutMs = 8000) {
+  if (map.loaded() && map.areTilesLoaded?.()) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(Object.assign(new Error("OPENFREEMAP_TILES_TIMEOUT"), { code: "OPENFREEMAP_TILES_TIMEOUT" }));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      map.off("idle", onIdle);
+      map.off("error", onError);
+    };
+    const onIdle = () => {
+      if (typeof map.areTilesLoaded === "function" && !map.areTilesLoaded()) return;
+      cleanup();
+      resolve();
+    };
+    const onError = event => {
+      cleanup();
+      reject(Object.assign(new Error("OPENFREEMAP_TILES_FAILED"), {
+        code: "OPENFREEMAP_TILES_FAILED",
+        cause: event?.error
+      }));
+    };
+    map.on("idle", onIdle);
+    map.once("error", onError);
+  });
+}
+
 export class OpenFreeMapProviderAdapter {
   constructor() {
     this.map = null;
     this.lastGeometry = null;
+    this.timeoutMs = 8000;
     this.providerStatus = status(PROVIDER_STATE.IDLE);
   }
 
@@ -74,6 +104,7 @@ export class OpenFreeMapProviderAdapter {
     if (this.map && this.providerStatus.state === PROVIDER_STATE.READY) return this.providerStatus;
     this.destroy();
     this.providerStatus = status(PROVIDER_STATE.LOADING);
+    this.timeoutMs = Number(publicConfig.providerTimeoutMs) || 8000;
     try {
       this.map = new maplibregl.Map({
         container,
@@ -164,10 +195,12 @@ export class OpenFreeMapProviderAdapter {
     if (points.length === 0) throw Object.assign(new Error("GEOMETRY_EMPTY"), { code: "GEOMETRY_EMPTY" });
     if (points.length === 1) {
       this.map.flyTo({ center: points[0], zoom: 15, essential: false });
+      await waitForVisibleTiles(this.map, this.timeoutMs);
       return true;
     }
     const bounds = points.reduce((value, point) => value.extend(point), new maplibregl.LngLatBounds(points[0], points[0]));
     this.map.fitBounds(bounds, { padding: 72, maxZoom: 17, duration: 0 });
+    await waitForVisibleTiles(this.map, this.timeoutMs);
     return true;
   }
 
