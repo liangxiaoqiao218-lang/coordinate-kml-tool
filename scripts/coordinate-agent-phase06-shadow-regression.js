@@ -30,7 +30,15 @@ assert.deepEqual(COORDINATE_AGENT_SHADOW_BOUNDARY, {
   affectsKml: false,
 });
 
-const app = createCoordinateAgentShadowApp({ enabled: true, evaluateCase: evaluator.evaluateCase });
+const runtimeIdentity = Object.freeze({
+  commit: '3405614b227c2268691b3ac121eb6d4e96867201',
+  branch: 'codex/coordinate-agent-phase8-shadow-deploy',
+});
+const app = createCoordinateAgentShadowApp({
+  enabled: true,
+  evaluateCase: evaluator.evaluateCase,
+  runtimeIdentity,
+});
 const server = http.createServer(app);
 await new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -45,6 +53,7 @@ try {
   const health = await healthResponse.json();
   assert.equal(health.status, 'READY');
   assert.deepEqual(health.boundary, COORDINATE_AGENT_SHADOW_BOUNDARY);
+  assert.deepEqual(health.runtimeIdentity, runtimeIdentity);
 
   for (const caseId of evaluator.caseIds) {
     const response = await fetch(`${baseUrl}/evaluate`, {

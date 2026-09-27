@@ -50,7 +50,11 @@ export function createCoordinateAgentNonProductionRouter({ enabled = false, eval
   return router;
 }
 
-export function createCoordinateAgentShadowApp({ enabled = false, evaluateCase } = {}) {
+export function createCoordinateAgentShadowApp({
+  enabled = false,
+  evaluateCase,
+  runtimeIdentity = Object.freeze({ commit: null, branch: null }),
+} = {}) {
   if (enabled !== true) throw new Error('Coordinate Agent shadow app is disabled');
   const app = express();
   app.disable('x-powered-by');
@@ -59,6 +63,7 @@ export function createCoordinateAgentShadowApp({ enabled = false, evaluateCase }
       schemaVersion: 'coordinate-agent-shadow-health/v1',
       status: 'READY',
       boundary: COORDINATE_AGENT_SHADOW_BOUNDARY,
+      runtimeIdentity,
     });
   });
   app.use(
