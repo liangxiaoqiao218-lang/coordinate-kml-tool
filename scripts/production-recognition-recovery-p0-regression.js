@@ -173,6 +173,7 @@ if (process.argv[2] === '--http-candidate') {
       };
       const prompt = requestBody.messages.map(message => JSON.stringify(message.content)).join(' ');
       if (baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
+        || baseScenario === 'generic-dms-provisional'
         || baseScenario === 'generic-dms-point-az'
         || baseScenario === 'generic-projected-review' || baseScenario === 'generic-projected-explicit'
         || baseScenario === 'generic-projected-contextual-utm30'
@@ -316,9 +317,10 @@ if (process.argv[2] === '--http-candidate') {
           ...pointAzRows
         ].join('\n')
       : baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
+        || baseScenario === 'generic-dms-provisional'
       ? [
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
-          'Point | Latitude nord | Longitude ouest',
+          ...(baseScenario === 'generic-dms-provisional' ? [] : ['Point | Latitude nord | Longitude ouest']),
           "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
           "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
           "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
@@ -2236,7 +2238,7 @@ test("Provider message text normalization accepts string and text-block envelope
   assert.equal(runtime.extractProviderMessageText({ choices: [{ message: { content: { image_url: "forbidden" } } }] }), "");
 });
 
-test("one-shot structured complete Provider DMS evidence is recoverable only with explicit directions", () => {
+test("one-shot structured Provider DMS evidence distinguishes complete direction proof from provisional rows", () => {
   const sourceText = [
     "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
     "Point | Latitude nord | Longitude ouest",
@@ -2257,7 +2259,10 @@ test("one-shot structured complete Provider DMS evidence is recoverable only wit
     "Point | Latitude nord | Longitude ouest",
     "Point | First coordinate | Second coordinate"
   );
-  assert.equal(runtime.extractProviderDmsReviewEvidence(ambiguousHeader).status, "REVIEW_REQUIRED");
+  const provisional = runtime.extractProviderDmsReviewEvidence(ambiguousHeader);
+  assert.equal(provisional.status, "PROVISIONAL");
+  assert.equal(provisional.axisDirectionBound, false);
+  assert.equal(provisional.coordinateRowCount, 4);
 
   const missingComponent = sourceText.replace("09° 00' 58.67''", "09° 00'");
   const incomplete = runtime.extractProviderDmsReviewEvidence(missingComponent);
@@ -2328,6 +2333,23 @@ test("Provider DMS evidence safely combines split axis fields and removes exact 
   assert.equal(evidence.coordinateRowCount, 4);
   assert.equal(evidence.duplicateRowCount, 1);
   assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
+});
+
+test("Provider DMS evidence keeps complete directionless rows available as provisional review geometry", () => {
+  const sourceText = [
+    "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+    "ROW | 1 | 11° 43′ 16.45″ | 09° 01′ 13.67″",
+    "ROW | 2 | 11° 43′ 09.20″ | 09° 00′ 56.03″",
+    "ROW | 3 | 11° 43′ 03.38″ | 09° 00′ 58.67″",
+    "ROW | 4 | 11° 43′ 11.30″ | 09° 01′ 15.25″"
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(sourceText);
+  assert.equal(evidence.status, "PROVISIONAL");
+  assert.equal(evidence.axisDirectionBound, false);
+  assert.equal(evidence.candidateRowCount, 4);
+  assert.equal(evidence.sourceRowCount, 4);
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(evidence.coordinates.split("\n")[0], "9.020463888888889,11.72123611111111");
 });
 
 test("Provider DMS evidence keeps conflicting split axis fields fail closed", () => {
@@ -2401,6 +2423,20 @@ test("one-shot structured actual HTTP generic DMS recovery remains closed withou
     confirmationStatus: payload.finalizedCoordinateResult.confirmationStatus,
     qualityGateStatus: payload.finalizedCoordinateResult.qualityGateStatus
   } }));
+});
+
+test("directionless Provider DMS rows return one provisional review result instead of recognition failure", async () => {
+  const payload = await runHttpCandidate("generic-dms-provisional");
+  assert.equal(payload.success, true);
+  assert.equal(payload.requiresReview, true);
+  assert.equal(payload.providerDmsReviewEvidence.status, "PROVISIONAL");
+  assert.equal(payload.providerDmsReviewEvidence.axisDirectionBound, false);
+  assert.equal(payload.providerDmsReviewEvidence.coordinateRowCount, 4);
+  assert.equal(payload.coordinates.split("\n").length, 4);
+  assert.equal(payload.coordinateEngineV2.groups[0].points.length, 4);
+  assert.doesNotMatch(payload.coordinates, /(?:^|\n)0,0(?:\n|$)/u);
+  assert.match(payload.warning, /方向尚未确认/u);
+  assert.ok(payload.parserTrace.includes("DMS_AUTHORITY:provisional_direction_review"));
 });
 
 test("generic NC/XV/YV grid recovery ignores descriptive columns and uses the terminal cell number", async () => {
@@ -2891,6 +2927,8 @@ test("one-shot structured server gates conformance before parsing and returns sa
   assert.match(reviewBlock, /forceRequiresReview:\s*true/);
   assert.match(reviewBlock, /extractProviderDmsReviewEvidence/);
   assert.match(reviewBlock, /DMS_AUTHORITY:safe_boundary_auto_release/);
+  assert.match(reviewBlock, /DMS_AUTHORITY:provisional_direction_review/);
+  assert.match(reviewBlock, /\["COMPLETE", "PROVISIONAL"\]/);
   assert.match(reviewBlock, /rawText:\s*wgs84PrimaryRawText|rawText,/);
   assert.match(reviewBlock, /requestRecognitionAcquisitionEvidenceStore\.getOrBuild/);
   assert.match(reviewBlock, /candidateCoordinateLines/);

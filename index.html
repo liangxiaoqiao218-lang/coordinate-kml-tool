@@ -9150,10 +9150,14 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function appendDebug(text) {
+      const entry = String(text || "").trim();
+      if (!entry) return;
+      const currentLines = String(debugText.textContent || "").split(/\r?\n/);
+      if (currentLines[currentLines.length - 1] === entry) return;
       debugPanel.hidden = false;
       debugPanel.style.display = "block";
       if ("open" in debugPanel) debugPanel.open = true;
-      debugText.textContent = debugText.textContent ? `${debugText.textContent}\n${text}` : text;
+      debugText.textContent = debugText.textContent ? `${debugText.textContent}\n${entry}` : entry;
       debugText.scrollTop = debugText.scrollHeight;
     }
 

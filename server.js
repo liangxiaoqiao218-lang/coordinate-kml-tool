@@ -3679,6 +3679,9 @@ function decimalFromDms(degrees, minutes, seconds, direction) {
   if (!Number.isFinite(deg) || !Number.isFinite(min) || !Number.isFinite(sec)) {
     return null;
   }
+  if (min < 0 || min >= 60 || sec < 0 || sec >= 60) {
+    return null;
+  }
 
   let value = Math.abs(deg) + min / 60 + sec / 3600;
   const dir = String(direction || "").toUpperCase();
@@ -7372,23 +7375,39 @@ function extractDmsCoordinateLines(text) {
   return coordinateLines;
 }
 
-function hasCompleteProviderDmsPair(line) {
-  const tokens = getDmsTokensFromLine(line);
-  if (tokens.length !== 2) return false;
-  return tokens.every(token => {
-    const normalized = normalizeText(token)
-      .trim()
-      .replace(/[NSEWO]\s*$/iu, "")
-      .replace(/["']+\s*$/u, "")
-      .trim();
-    const match = normalized.match(/^[-+]?\d{1,3}\s*°\s*(\d{1,2})(?:\s*'\s*|\s+)(\d{1,2}(?:\.\d+)?)$/u);
-    if (!match) return false;
-    const minutes = Number(match[1]);
-    const seconds = Number(match[2]);
-    return Number.isFinite(minutes) && Number.isFinite(seconds)
-      && minutes >= 0 && minutes < 60
-      && seconds >= 0 && seconds < 60;
+function parseProviderDmsPair(line, { latitudeDirection = "", longitudeDirection = "" } = {}) {
+  const normalized = normalizeText(line);
+  const degreeStarts = [...normalized.matchAll(/[-+]?\d{1,3}\s*°/gu)];
+  if (degreeStarts.length !== 2) return null;
+  const segments = [
+    normalized.slice(degreeStarts[0].index, degreeStarts[1].index),
+    normalized.slice(degreeStarts[1].index)
+  ];
+  const parsed = segments.map((segment, index) => parseLooseDmsPart(
+    segment,
+    index === 0 ? latitudeDirection : longitudeDirection
+  ));
+  if (parsed.some(part => !part || part.value === null)) return null;
+
+  const explicitLatitude = parsed.find(part => ["N", "S"].includes(part.direction));
+  const explicitLongitude = parsed.find(part => ["E", "W", "O"].includes(part.direction));
+  const latitude = explicitLatitude || parsed[0];
+  const longitude = explicitLongitude || parsed[1];
+  if (latitude === longitude) return null;
+  const latNumber = Number(latitude.value);
+  const lonNumber = Number(longitude.value);
+  if (!Number.isFinite(latNumber) || !Number.isFinite(lonNumber)) return null;
+  if (Math.abs(latNumber) > 90 || Math.abs(lonNumber) > 180) return null;
+  const directionBound = ["N", "S"].includes(latitude.direction)
+    && ["E", "W", "O"].includes(longitude.direction);
+  return Object.freeze({
+    coordinate: `${longitude.value},${latitude.value}`,
+    directionBound
   });
+}
+
+function hasCompleteProviderDmsPair(line) {
+  return Boolean(parseProviderDmsPair(line));
 }
 
 function extractProviderDmsReviewEvidence(text) {
@@ -7400,12 +7419,26 @@ function extractProviderDmsReviewEvidence(text) {
   const candidateRows = lines.filter(line => (
     (line.match(/[°º˚]/gu) || []).length === 2
   ));
-  const sourceRows = candidateRows.filter(line => hasCompleteProviderDmsPair(line));
+
+  const splitAxisFields = line => {
+    const normalizedLine = line.replace(/[｜]/gu, "|");
+    const pipeFields = normalizedLine.split("|").map(field => field.trim()).filter(Boolean);
+    if (pipeFields.length > 1) return pipeFields;
+    const latitudeIndex = normalizedLine.search(/(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu);
+    const longitudeIndex = normalizedLine.search(/(?:\blon(?:gitude)?\b|经度|东经|西经)/iu);
+    if (latitudeIndex < 0 || longitudeIndex < 0 || latitudeIndex === longitudeIndex) return pipeFields;
+    const firstIndex = Math.min(latitudeIndex, longitudeIndex);
+    const secondIndex = Math.max(latitudeIndex, longitudeIndex);
+    return [
+      normalizedLine.slice(firstIndex, secondIndex).trim(),
+      normalizedLine.slice(secondIndex).trim()
+    ].filter(Boolean);
+  };
 
   const collectAxisDirections = (axisPattern, positivePattern, negativePattern, positive, negative) => {
     const directions = new Set();
     for (const line of lines) {
-      const fields = line.replace(/[｜]/gu, "|").split("|").map(field => field.trim()).filter(Boolean);
+      const fields = splitAxisFields(line);
       for (const field of fields) {
         if (!axisPattern.test(field)) continue;
         const hasPositive = positivePattern.test(field);
@@ -7436,42 +7469,34 @@ function extractProviderDmsReviewEvidence(text) {
         longitude: [...longitudeDirections][0]
       }
     : null;
-  const axisConflict = latitudeDirections.size > 1 || longitudeDirections.size > 1;
+  const axisSemanticConflict = lines.some(line => splitAxisFields(line).some(field => (
+    (/(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu.test(field)
+      && /(?:\beast\b|\best\b|\bleste\b|\bwest\b|\bouest\b|\boeste\b|东经|西经|(?:^|[=:\s])[EWO](?:$|\s))/iu.test(field))
+    || (/(?:\blon(?:gitude)?\b|经度|东经|西经)/iu.test(field)
+      && /(?:\bnorth\b|\bnord\b|\bnorte\b|\bsouth\b|\bsud\b|\bsul\b|\bsur\b|北纬|南纬|(?:^|[=:\s])[NS](?:$|\s))/iu.test(field))
+  )));
+  const axisConflict = latitudeDirections.size > 1 || longitudeDirections.size > 1 || axisSemanticConflict;
 
-  const parseProviderRow = line => {
-    const tokens = getDmsTokensFromLine(line);
-    if (tokens.length !== 2) return null;
-    const parsed = tokens.map((token, index) => {
-      const inlineDirection = normalizeText(token).match(/([NSEWO])\s*$/iu)?.[1]?.toUpperCase() || "";
-      const fallbackDirection = index === 0 ? explicitAxes?.latitude : explicitAxes?.longitude;
-      return parseCompactDmsToken(token, inlineDirection || fallbackDirection || "");
-    }).filter(Boolean).filter(item => item.value !== null);
-    if (parsed.length !== 2) return null;
-    const latitude = parsed.find(item => ["N", "S"].includes(item.direction));
-    const longitude = parsed.find(item => ["E", "W", "O"].includes(item.direction));
-    if (!latitude || !longitude) return null;
-    const lonNumber = Number(longitude.value);
-    const latNumber = Number(latitude.value);
-    if (!Number.isFinite(lonNumber) || !Number.isFinite(latNumber)) return null;
-    if (Math.abs(lonNumber) > 180 || Math.abs(latNumber) > 90) return null;
-    return `${longitude.value},${latitude.value}`;
-  };
-
-  const rowEntries = sourceRows.map(line => {
+  const rowEntries = candidateRows.map(line => {
     const pipeFields = line.replace(/[｜]/gu, "|").split("|").map(field => field.trim()).filter(Boolean);
     const pipeLabel = pipeFields.length >= 3
       ? (/^POINT$/iu.test(pipeFields[0]) ? pipeFields[1] : pipeFields[0])
       : "";
     const whitespaceLabel = line.match(/^\s*(?:POINT\s+)?([A-Z]|\d{1,3})(?=\s|[|:;,])/iu)?.[1] || "";
+    const parsedPair = parseProviderDmsPair(line, {
+      latitudeDirection: explicitAxes?.latitude || "",
+      longitudeDirection: explicitAxes?.longitude || ""
+    });
     return {
       label: String(pipeLabel || whitespaceLabel).trim().toUpperCase(),
-      coordinate: parseProviderRow(line)
+      coordinate: parsedPair?.coordinate || null,
+      directionBound: parsedPair?.directionBound === true
     };
   });
+  const sourceRows = rowEntries.filter(entry => Boolean(entry.coordinate));
   const uniqueEntries = [];
   const seenEntries = new Set();
-  for (const entry of rowEntries) {
-    if (!entry.coordinate) continue;
+  for (const entry of sourceRows) {
     const identity = `${entry.label || "UNLABELED"}|${entry.coordinate}`;
     if (seenEntries.has(identity)) continue;
     seenEntries.add(identity);
@@ -7480,15 +7505,18 @@ function extractProviderDmsReviewEvidence(text) {
   const sourceLabels = uniqueEntries.map(entry => entry.label);
   const coordinateLines = uniqueEntries.map(entry => entry.coordinate);
   const explicitHeaderDirection = Boolean(explicitAxes) && !axisConflict;
-  const everyRowHasDirections = sourceRows.length > 0 && sourceRows.every(line => (
-    /(?:\b[NS]\b|[NS]\s*$)/iu.test(line)
-      && /(?:\b[EWO]\b|[EWO]\s*$)/iu.test(line)
-  ));
+  const everyRowHasDirections = sourceRows.length > 0
+    && sourceRows.every(entry => entry.directionBound === true);
   const complete = coordinateLines.length >= 3
     && sourceRows.length === candidateRows.length
     && rowEntries.every(entry => Boolean(entry.coordinate))
     && !axisConflict
     && (explicitHeaderDirection || everyRowHasDirections);
+  const provisional = !complete
+    && coordinateLines.length >= 3
+    && sourceRows.length === candidateRows.length
+    && rowEntries.every(entry => Boolean(entry.coordinate))
+    && !axisConflict;
   const pointAzLabels = Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index));
   const coordinateFamily = complete
     && sourceLabels.length === pointAzLabels.length
@@ -7497,15 +7525,74 @@ function extractProviderDmsReviewEvidence(text) {
     : "";
 
   return Object.freeze({
-    status: complete ? "COMPLETE" : "REVIEW_REQUIRED",
+    status: complete ? "COMPLETE" : provisional ? "PROVISIONAL" : "REVIEW_REQUIRED",
     coordinateRowCount: coordinateLines.length,
     sourceRowCount: uniqueEntries.length,
     candidateRowCount: candidateRows.length,
     axisDirectionBound: explicitHeaderDirection || everyRowHasDirections,
     duplicateRowCount: Math.max(0, sourceRows.length - uniqueEntries.length),
     coordinateFamily,
-    coordinates: complete ? coordinateLines.join("\n") : ""
+    coordinates: complete || provisional ? coordinateLines.join("\n") : ""
   });
+}
+
+function buildTrustedProviderDmsEngine(evidence, { forceRequiresReview = false, model = "" } = {}) {
+  const points = String(evidence?.coordinates || "")
+    .split(/\r?\n/u)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const [longitude, latitude] = line.split(",").map(Number);
+      return {
+        label: String(index + 1),
+        raw: line,
+        lat: latitude,
+        lon: longitude,
+        x: null,
+        y: null,
+        projection: null,
+        source_crs: "EPSG:4326",
+        confidence: forceRequiresReview ? 0.7 : 0.9,
+        requires_review: forceRequiresReview,
+        warnings: []
+      };
+    })
+    .filter(point => Number.isFinite(point.lon) && Math.abs(point.lon) <= 180
+      && Number.isFinite(point.lat) && Math.abs(point.lat) <= 90);
+  return normalizeCoordinateEngineV2Result({
+    schema_version: "coordinate_engine_v2",
+    coordinate_type: "standard_dms_table",
+    coordinate_family: evidence?.coordinateFamily || "provider-dms-table",
+    precision_mode: "preserve-original-decimals-and-parse-dms",
+    source_crs: "EPSG:4326",
+    confidence: forceRequiresReview ? 0.7 : 0.9,
+    requires_review: forceRequiresReview,
+    source: {
+      image_count: 1,
+      ocr_engine: model,
+      fallback_used: false
+    },
+    groups: [{
+      group_id: "group_1",
+      group_name: "坐标组1",
+      geometry: "polygon",
+      confidence: forceRequiresReview ? 0.7 : 0.9,
+      requires_review: forceRequiresReview,
+      kml_ready: !forceRequiresReview,
+      warnings: forceRequiresReview
+        ? ["坐标方向尚未确认，请在地图核对位置和形状。"]
+        : [],
+      points
+    }],
+    warnings: forceRequiresReview
+      ? ["坐标方向尚未确认，请在地图核对位置和形状。"]
+      : [],
+    debug: {
+      matched_detectors: ["trusted_provider_dms_result"],
+      blocked_fallbacks: [],
+      supplemental_fallbacks: []
+    }
+  }, { forceRequiresReview });
 }
 
 function buildProviderGroupedDmsEngine(reviewResult, { forceRequiresReview = true, model = "" } = {}) {
@@ -17855,8 +17942,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ));
       }
       const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText);
-      if (trustedProviderDmsEvidence.status === "COMPLETE") {
+      if (["COMPLETE", "PROVISIONAL"].includes(trustedProviderDmsEvidence.status)) {
         const pointAzFamilyRecovered = trustedProviderDmsEvidence.coordinateFamily === "point-az-dms-table";
+        const provisionalDirection = trustedProviderDmsEvidence.status === "PROVISIONAL";
         const consumeResult = await consumeCoordinateUsage({
           note: "Coordinate recognition consumed after trusted Provider DMS review recovery"
         });
@@ -17877,8 +17965,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           coordinates: trustedProviderDmsEvidence.coordinates,
           precisionMode: "preserve-original-decimals-and-parse-dms",
           coordinateFamily: trustedProviderDmsEvidence.coordinateFamily,
-          requiresReview: pointAzFamilyRecovered,
-          warning: pointAzFamilyRecovered
+          requiresReview: pointAzFamilyRecovered || provisionalDirection,
+          warning: provisionalDirection
+            ? "已提取坐标，但方向尚未确认。请在地图核对位置和形状，必要时交换或修改坐标。"
+            : pointAzFamilyRecovered
             ? "已完整提取具有明确方向证据的 A–Z DMS 坐标行；按照家族安全策略，确认前仅供复核，不生成 KML。"
             : "已完整提取具有明确方向证据的 DMS 坐标行，并按原图点号顺序形成矿区边界。",
           providerDmsReviewEvidence: {
@@ -17892,19 +17982,21 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           parserTrace: [
             "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
             "PROVIDER:trusted_dms_rows_recovered",
-            "DMS_AUTHORITY:safe_boundary_auto_release"
+            provisionalDirection
+              ? "DMS_AUTHORITY:provisional_direction_review"
+              : "DMS_AUTHORITY:safe_boundary_auto_release"
           ],
           quota: consumeResult.quota
         };
-        const providerDmsReviewEngine = buildCoordinateEngineV2ShadowResult(providerDmsReviewPayload, {
-          forceRequiresReview: pointAzFamilyRecovered,
-          rawHint: ""
+        const providerDmsReviewEngine = buildTrustedProviderDmsEngine(trustedProviderDmsEvidence, {
+          forceRequiresReview: true,
+          model: providerDmsReviewPayload.model
         });
         const providerDmsReviewResponse = buildCoordinateVerificationResponse(
           providerDmsReviewPayload,
           providerDmsReviewEngine
         );
-        return res.json(pointAzFamilyRecovered
+        return res.json(pointAzFamilyRecovered || provisionalDirection
           ? providerDmsReviewResponse
           : promoteRecognizedCoordinatesToSafeBoundary(providerDmsReviewResponse, ""));
       }

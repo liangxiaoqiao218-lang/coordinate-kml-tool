@@ -70,5 +70,6 @@ assert.match(source, /人工协助/u);
 assert.doesNotMatch(source, /appendDebug\(`异步任务状态：\$\{status\}\\n任务编号/u);
 assert.doesNotMatch(source, /appendDebug\(`识别原文：/u);
 assert.doesNotMatch(source, /appendDebug\(`后端坐标提取结果：/u);
+assert.match(source, /currentLines\[currentLines\.length - 1\] === entry/u);
 
 console.log("production coordinate closure p0 regression: PASS");
