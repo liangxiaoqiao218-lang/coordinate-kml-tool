@@ -94,6 +94,13 @@ export async function runPhase9RealProviderQualification({
       to: item.to,
       reason: item.reason,
     }))),
+    diagnostics: Object.freeze(result.execution.diagnostics.map(item => ({ ...item }))),
+    providerRequests: Object.freeze(telemetry.map(item => ({
+      ok: item.ok,
+      httpStatus: item.httpStatus,
+      errorCode: item.errorCode || null,
+      usageObserved: item.usageObserved,
+    }))),
     toolCalls: Object.freeze(result.evidence.toolResults.map(item => ({
       toolName: item.toolName,
       ok: item.ok,

@@ -17,7 +17,9 @@ Each follow-up turn must reconcile the new tool evidence with the whole-image st
 
 Never infer a missing direction, datum, coordinate reference system, grouping boundary, or digit from geography, filenames, prior examples, or expected answers. Supporting OCR is non-authoritative. Preserve source text and attach uncertainties to precise evidence regions. If material evidence remains unresolved, return a needs_review candidate and focused reviewItems. Do not authorize Map or KML; deterministic safety code decides that after validating your structured result.
 
-Return only one JSON object that conforms exactly to the supplied response schema. Do not include markdown, commentary, or properties outside that schema.`;
+Return only one JSON object that conforms exactly to the supplied response schema. Do not include markdown, commentary, or properties outside that schema.
+
+The top-level JSON object must contain observation and plan. Always include candidate, uncertainties, and reviewItems; use null or empty arrays when no value is available. observation.regions and plan.actions must always be arrays. Every region, action, uncertainty, review item, group, and point must include every field marked required by the supplied schema. Use only the supplied enum values and tool names. JSON numbers and booleans must not be quoted.`;
 
 function clone(value) {
   return structuredClone(value);
@@ -100,18 +102,33 @@ export async function buildCoordinateAgentProviderRequest({
 
 export function parseCoordinateAgentStructuredOutput(transportResponse) {
   if (!transportResponse || typeof transportResponse !== 'object' || Array.isArray(transportResponse)) {
-    throw new Error('Provider transport must return an object');
+    const error = new Error('Provider transport must return an object');
+    error.code = 'PROVIDER_ENVELOPE_INVALID';
+    error.path = 'transportResponse';
+    error.expectedType = 'object';
+    error.actualType = Array.isArray(transportResponse) ? 'array' : typeof transportResponse;
+    throw error;
   }
   const keys = Object.keys(transportResponse);
   if (keys.length !== 1 || keys[0] !== 'structuredOutput') {
-    throw new Error('Provider transport response must contain only structuredOutput');
+    const error = new Error('Provider transport response must contain only structuredOutput');
+    error.code = 'PROVIDER_ENVELOPE_INVALID';
+    error.path = 'transportResponse';
+    error.expectedType = 'structuredOutput-only object';
+    error.actualType = 'object';
+    throw error;
   }
   let output = transportResponse.structuredOutput;
   if (typeof output === 'string') {
     try {
       output = JSON.parse(output);
     } catch {
-      throw new Error('Provider structuredOutput is not valid JSON');
+      const error = new Error('Provider structuredOutput is not valid JSON');
+      error.code = 'PROVIDER_STRUCTURED_OUTPUT_INVALID_JSON';
+      error.path = 'structuredOutput';
+      error.expectedType = 'JSON object';
+      error.actualType = 'string';
+      throw error;
     }
   }
   return assertStrictCoordinateAgentTurn(output);

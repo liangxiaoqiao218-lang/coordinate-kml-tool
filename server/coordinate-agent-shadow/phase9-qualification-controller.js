@@ -14,6 +14,8 @@ function publicFailure(error) {
     kmlAllowed: false,
     stateHistory: Object.freeze([]),
     toolCalls: Object.freeze([]),
+    diagnostics: Object.freeze([]),
+    providerRequests: Object.freeze([]),
     validationFailureCodes: Object.freeze(['PHASE9_QUALIFICATION_FAILED']),
     sourceUnchanged: true,
   });
@@ -44,6 +46,8 @@ export function createPhase9QualificationController({ runQualification } = {}) {
     kmlAllowed: false,
     stateHistory: Object.freeze([]),
     toolCalls: Object.freeze([]),
+    diagnostics: Object.freeze([]),
+    providerRequests: Object.freeze([]),
     validationFailureCodes: Object.freeze([]),
     sourceUnchanged: true,
   });

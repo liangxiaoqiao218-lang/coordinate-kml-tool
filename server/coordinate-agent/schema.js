@@ -27,6 +27,19 @@ const ACTION_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['id', 'toolName', 'objective', 'args'],
   properties: { id: { type: 'string' }, toolName: { type: 'string' }, objective: { type: 'string' }, args: { type: 'object' } },
 };
+const EXECUTION_DIAGNOSTIC_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['category', 'code', 'path', 'field', 'expectedType', 'actualType', 'httpStatus'],
+  properties: {
+    category: { enum: ['transport', 'structured_output', 'schema', 'adapter'] },
+    code: { type: 'string' },
+    path: { type: ['string', 'null'] },
+    field: { type: ['string', 'null'] },
+    expectedType: { type: ['string', 'null'] },
+    actualType: { type: ['string', 'null'] },
+    httpStatus: { type: ['integer', 'null'] },
+  },
+};
 const POINT_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['sourceText'],
   properties: { label: { type: ['string', 'null'] }, sourceText: { type: 'string' }, x: { type: ['number', 'null'] }, y: { type: ['number', 'null'] }, latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 }, longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 }, needsReview: { type: 'boolean' } },
@@ -67,12 +80,13 @@ export const COORDINATE_AGENT_RESULT_SCHEMA = Object.freeze({
     execution: {
       type: 'object',
       additionalProperties: false,
-      required: ['iterations', 'providerCallCount', 'toolCallCount', 'stateHistory'],
+      required: ['iterations', 'providerCallCount', 'toolCallCount', 'stateHistory', 'diagnostics'],
       properties: {
         iterations: { type: 'integer', minimum: 0 },
         providerCallCount: { type: 'integer', minimum: 0 },
         toolCallCount: { type: 'integer', minimum: 0 },
         stateHistory: { type: 'array' },
+        diagnostics: { type: 'array', items: EXECUTION_DIAGNOSTIC_SCHEMA },
       },
     },
   }),
@@ -180,13 +194,14 @@ export function assertStrictCoordinateAgentResult(value) {
   for (const key of ['regions', 'uncertainties', 'reviewItems', 'toolResults']) {
     if (!Array.isArray(value.evidence[key])) throw new Error(`evidence.${key} must be an array`);
   }
-  assertExactKeys(value.execution, ['iterations', 'providerCallCount', 'toolCallCount', 'stateHistory'], 'execution');
+  assertExactKeys(value.execution, ['iterations', 'providerCallCount', 'toolCallCount', 'stateHistory', 'diagnostics'], 'execution');
   for (const key of ['iterations', 'providerCallCount', 'toolCallCount']) {
     if (!Number.isInteger(value.execution[key]) || value.execution[key] < 0) {
       throw new Error(`execution.${key} must be a non-negative integer`);
     }
   }
   if (!Array.isArray(value.execution.stateHistory)) throw new Error('execution.stateHistory must be an array');
+  if (!Array.isArray(value.execution.diagnostics)) throw new Error('execution.diagnostics must be an array');
   return Object.freeze({
     ...value,
     coordinateResult,

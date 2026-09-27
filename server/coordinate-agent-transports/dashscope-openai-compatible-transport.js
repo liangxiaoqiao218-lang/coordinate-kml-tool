@@ -143,6 +143,16 @@ export class DashScopeOpenAICompatibleTransport {
         ? 'DashScope transport timed out'
         : 'DashScope transport network failure');
       normalized.code = error?.name === 'AbortError' ? 'DASHSCOPE_TIMEOUT' : 'DASHSCOPE_NETWORK_ERROR';
+      this.#telemetry.push(Object.freeze({
+        transport: TRANSPORT_NAME,
+        model: this.#model,
+        ok: false,
+        httpStatus: null,
+        durationMs: Date.now() - startedAt,
+        usageObserved: false,
+        usage: null,
+        errorCode: normalized.code,
+      }));
       throw normalized;
     } finally {
       clearTimeout(timer);
@@ -157,6 +167,7 @@ export class DashScopeOpenAICompatibleTransport {
       durationMs: Date.now() - startedAt,
       usageObserved: usage !== null,
       usage,
+      errorCode: response.ok ? null : 'DASHSCOPE_HTTP_ERROR',
     }));
     if (!response.ok) {
       const error = new Error('DashScope transport HTTP failure');

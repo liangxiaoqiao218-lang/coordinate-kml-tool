@@ -21,6 +21,25 @@ function chooseTerminalState(candidate, board) {
     : AGENT_STATE.FAILED_CLOSED;
 }
 
+function safeFailureDiagnostic(error) {
+  const code = String(error?.code || 'AGENT_ADAPTER_ERROR').slice(0, 120);
+  const transport = code.startsWith('DASHSCOPE_');
+  const structuredOutput = code.startsWith('PROVIDER_STRUCTURED_OUTPUT_');
+  const schema = code === 'COORDINATE_AGENT_SCHEMA_VALIDATION_FAILED';
+  const path = typeof error?.path === 'string' ? error.path.slice(0, 240) : null;
+  return Object.freeze({
+    category: transport ? 'transport' : structuredOutput ? 'structured_output' : schema ? 'schema' : 'adapter',
+    code,
+    path,
+    field: typeof error?.field === 'string'
+      ? error.field.slice(0, 120)
+      : path?.split('.').at(-1)?.replace(/\[\d+\]$/u, '') || null,
+    expectedType: typeof error?.expectedType === 'string' ? error.expectedType.slice(0, 160) : null,
+    actualType: typeof error?.actualType === 'string' ? error.actualType.slice(0, 80) : null,
+    httpStatus: Number.isInteger(error?.status) ? error.status : null,
+  });
+}
+
 function candidatePoints(candidate) {
   return (candidate?.groups || []).flatMap(group => group.points || []);
 }
@@ -142,6 +161,7 @@ export class CoordinateIntelligenceAgentKernel {
     let iterations = 0;
     let candidate = null;
     let pendingToolResults = [];
+    const diagnostics = [];
 
     state.transition(AGENT_STATE.OBSERVING, 'begin_whole_image_observation');
     while (!state.terminal && iterations < this.maxIterations) {
@@ -168,12 +188,21 @@ export class CoordinateIntelligenceAgentKernel {
         providerCallCount += 1;
       } catch (error) {
         providerCallCount += 1;
+        const diagnostic = safeFailureDiagnostic(error);
+        diagnostics.push(diagnostic);
         evidence.addUncertainty({
-          code: 'AGENT_TURN_INVALID',
-          message: String(error?.message || 'The agent turn failed strict validation'),
+          code: diagnostic.category === 'transport' ? 'PROVIDER_TRANSPORT_FAILED' : 'AGENT_TURN_INVALID',
+          message: diagnostic.category === 'transport'
+            ? `Provider transport failed (${diagnostic.code}${diagnostic.httpStatus ? ` HTTP ${diagnostic.httpStatus}` : ''})`
+            : diagnostic.category === 'schema' || diagnostic.category === 'structured_output'
+              ? String(error?.message || `Agent turn failed strict validation at ${diagnostic.path || 'unknown path'}`)
+              : `Agent adapter failed at ${diagnostic.path || 'unknown path'}`,
           blocking: true,
         });
-        state.transition(AGENT_STATE.FAILED_CLOSED, 'provider_or_turn_validation_failed');
+        state.transition(
+          AGENT_STATE.FAILED_CLOSED,
+          diagnostic.category === 'transport' ? 'provider_transport_failed' : 'agent_turn_validation_failed',
+        );
         break;
       }
       try {
@@ -261,6 +290,7 @@ export class CoordinateIntelligenceAgentKernel {
         providerCallCount,
         toolCallCount,
         stateHistory: snapshot.history,
+        diagnostics: Object.freeze(diagnostics),
       }),
     });
   }

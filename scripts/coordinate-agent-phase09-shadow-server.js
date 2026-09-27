@@ -19,8 +19,11 @@ if (!args.has('--enable-shadow') || !args.has('--execute-real-provider-once')) {
 const valueArg = name => process.argv.find(value => value.startsWith(`${name}=`))?.split('=').slice(1).join('=');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const caseId = valueArg('--case-id') || 'eval-001';
-const maxProviderCalls = Number(valueArg('--provider-call-limit') || 2);
-if (![1, 2].includes(maxProviderCalls)) throw new Error('Provider call limit must be 1 or 2');
+const requestedProviderCallLimit = Number(valueArg('--provider-call-limit') || 1);
+if (![1, 2].includes(requestedProviderCallLimit)) throw new Error('Provider call limit must be 1 or 2');
+// Phase 9A narrows the deployed one-shot qualification budget to one request,
+// including services that still carry the earlier Phase 9 "=2" start flag.
+const maxProviderCalls = Math.min(requestedProviderCallLimit, 1);
 const scenarioPaths = [
   path.join(root, 'regression-samples', 'coordinate-agent-phase03', 'mock-scenarios.v1.json'),
   path.join(root, 'regression-samples', 'coordinate-agent-phase05', 'mock-scenarios.v1.json'),
