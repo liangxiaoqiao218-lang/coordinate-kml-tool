@@ -7519,8 +7519,12 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
 
   const rowEntries = candidateRows.map(line => {
     const pipeFields = line.replace(/[｜]/gu, "|").split("|").map(field => field.trim()).filter(Boolean);
+    const pointPrefixedStructuredLabel = /^POINT$/iu.test(pipeFields[0] || "")
+      && /^(?:[A-Z]|\d{1,3})$/iu.test(pipeFields[1] || "")
+      ? pipeFields[1]
+      : "";
     const pipeLabel = pipeFields.length >= 3
-      ? (/^POINT$/iu.test(pipeFields[0]) ? pipeFields[1] : pipeFields[0])
+      ? (pointPrefixedStructuredLabel || pipeFields[0])
       : "";
     const whitespaceLabel = line.match(/^\s*(?:POINT\s+)?([A-Z]|\d{1,3})(?=\s|[|:;,])/iu)?.[1] || "";
     const parsedPair = parseProviderDmsPair(line, {
@@ -7545,7 +7549,22 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     seenEntries.add(identity);
     uniqueEntries.push(entry);
   }
-  const sourceLabels = uniqueEntries.map(entry => entry.label);
+  // A Provider can occasionally copy the table header token "Point" into the
+  // first data-row label while preserving the remaining continuous numeric
+  // labels. Repair only that closed, generic continuity pattern; coordinates
+  // and every DMS field remain unchanged.
+  const restoresNumericFirstLabel = uniqueEntries.length >= 3
+    && uniqueEntries[0]?.label === "POINT"
+    && uniqueEntries.slice(1).every((entry, index) => entry.label === String(index + 2));
+  const normalizedEntries = uniqueEntries.map((entry, index) => {
+    if (!restoresNumericFirstLabel || index !== 0) return entry;
+    return {
+      ...entry,
+      label: "1",
+      sourceText: String(entry.sourceText || "").replace(/^\s*POINT(?=\s*[|:;,])/iu, "1")
+    };
+  });
+  const sourceLabels = normalizedEntries.map(entry => entry.label);
   const coordinateLines = uniqueEntries.map(entry => entry.coordinate);
   const parsedCandidateRowCount = sourceRows.length;
   const rejectedCandidateRowCount = Math.max(0, candidateRows.length - parsedCandidateRowCount);
@@ -7597,8 +7616,8 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     coverageStatus: rejectedCandidateRowCount === 0 ? "COMPLETE" : "PARTIAL_REVIEW",
     duplicateRowCount: Math.max(0, sourceRows.length - uniqueEntries.length),
     coordinateFamily,
-    sourceDisplayText: uniqueEntries.map(entry => entry.sourceText).join("\n"),
-    sourceRows: uniqueEntries.map(entry => entry.sourceText),
+    sourceDisplayText: normalizedEntries.map(entry => entry.sourceText).join("\n"),
+    sourceRows: normalizedEntries.map(entry => entry.sourceText),
     sourceLabels,
     axisDirections: explicitAxes ? { ...explicitAxes } : null,
     coordinates: complete || provisional ? coordinateLines.join("\n") : ""

@@ -2464,6 +2464,21 @@ test("Provider DMS evidence preserves complete rows when local OCR is internally
   assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
 });
 
+test("Provider DMS evidence repairs a header token copied into the first continuous numeric row label", () => {
+  const sourceText = [
+    "Point | Latitude nord | Longitude ouest",
+    "Point | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
+    "4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(sourceText);
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(JSON.stringify(evidence.sourceLabels), JSON.stringify(["1", "2", "3", "4"]));
+  assert.match(evidence.sourceRows[0], /^1\s*\|/u);
+  assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
+});
+
 test("one-shot structured Provider DMS review accepts complete triples without seconds marks", () => {
   const sourceText = [
     "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",

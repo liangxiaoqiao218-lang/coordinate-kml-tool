@@ -13228,6 +13228,29 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       internalKmlSourceDirty = false;
     }
 
+    function setInternalCanonicalLonLatSourceFromText(text) {
+      const groups = [];
+      let currentGroup = [];
+      for (const line of String(text || "").split(/\r?\n/u)) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          if (currentGroup.length > 0) groups.push(currentGroup);
+          currentGroup = [];
+          continue;
+        }
+        const match = trimmed.match(/^([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)$/u);
+        if (!match) continue;
+        const longitude = Number(match[1]);
+        const latitude = Number(match[2]);
+        if (!Number.isFinite(longitude) || !Number.isFinite(latitude)
+          || Math.abs(longitude) > 180 || Math.abs(latitude) > 90) continue;
+        currentGroup.push(normalizeKmlPair({ longitude, latitude }));
+      }
+      if (currentGroup.length > 0) groups.push(currentGroup);
+      internalNormalizedCoordinateGroups = groups.length > 0 ? groups : null;
+      internalKmlSourceDirty = false;
+    }
+
     function setInternalKmlSourceFromGroups(groups) {
       const normalizedGroups = groups
         .map(group => group.map(normalizeKmlPair))
@@ -15627,7 +15650,7 @@ ${placemarks}
         setCoordinateOrderReviewVisible(hasOrderReview);
         updateCadastralGridPanel();
         if (isTrustedProviderDmsReview) {
-          setInternalKmlSourceFromText(data.coordinates);
+          setInternalCanonicalLonLatSourceFromText(data.coordinates);
         } else if (isDmsGrouped) {
           setInternalKmlSourceFromGroups(getDelimitedCoordinateGroupsFromText(finalCoordinates));
         } else if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isFrenchPerimeterDms || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk) {

@@ -32,6 +32,29 @@ const ordinaryReviewPredicate = Function(`
   return isOrdinaryReviewOnlyFinalizedResult;
 `)();
 
+const parseCanonicalLonLat = Function(`
+  let internalNormalizedCoordinateGroups = null;
+  let internalKmlSourceDirty = true;
+  function trimNumber(value) { return String(Number(value)); }
+  ${extractFunctionSource(html, "normalizeKmlPair")}
+  ${extractFunctionSource(html, "setInternalCanonicalLonLatSourceFromText")}
+  return text => {
+    setInternalCanonicalLonLatSourceFromText(text);
+    return internalNormalizedCoordinateGroups;
+  };
+`)();
+
+const canonicalDmsGroups = parseCanonicalLonLat([
+  "-9.020463888888889,11.72123611111111",
+  "-9.015563888888888,11.719222222222223",
+  "-9.016297222222223,11.717605555555556",
+  "-9.02090277777778,11.719805555555556"
+].join("\n"));
+assert.equal(canonicalDmsGroups.length, 1);
+assert.equal(canonicalDmsGroups[0].length, 4);
+assert.equal(canonicalDmsGroups[0][0].longitude, "-9.020463888888889");
+assert.equal(canonicalDmsGroups[0][0].latitude, "11.72123611111111");
+
 const sourceDms = [
   `P01 11°28'31.26"N,08°40'42.13"W`,
   `P02 11°28'31.60"N,08°40'32.90"W`,
@@ -179,8 +202,10 @@ assert.match(html, /const isTrustedProviderDmsReview = \["COMPLETE", "PROVISIONA
   "trusted Provider DMS results have an explicit frontend route");
 assert.match(html, /const finalCoordinates = isTrustedProviderDmsReview\s*\? String\(data\.coordinates/u,
   "trusted Provider DMS canonical coordinates drive internal geometry");
-assert.match(html, /if \(isTrustedProviderDmsReview\) \{\s*setInternalKmlSourceFromText\(data\.coordinates\);/u,
-  "map and KML consume canonical Provider DMS coordinates instead of reparsing display text");
+assert.match(html, /function setInternalCanonicalLonLatSourceFromText\(text\)/u,
+  "canonical Provider coordinates have an order-independent internal parser");
+assert.match(html, /if \(isTrustedProviderDmsReview\) \{\s*setInternalCanonicalLonLatSourceFromText\(data\.coordinates\);/u,
+  "map and KML consume canonical lon-lat Provider DMS coordinates without applying the display order");
 assert.match(html, /appendDebug\(`第 \$\{index \+ 1\} 行已识别：\$\{visibleRows\[index\]\}`\)/u,
   "recognition details retain safe per-row evidence for review and support");
 assert.match(html, /await appendRecognizedCoordinateDetails\(detailRows, trustedProviderDmsCoordinateCount\)/u,
@@ -191,7 +216,7 @@ for (const forbidden of ["geometry", "resultId", "resultRevision", "geometryHash
 
 console.log(JSON.stringify({
   suite: "source-coordinate-review-display-regression",
-  passed: 21,
+  passed: 22,
   cases: [
     "HANDWRITTEN_SOURCE_DMS_PRESERVED",
     "CANONICAL_WGS84_RETAINED_INTERNAL",
@@ -211,6 +236,7 @@ console.log(JSON.stringify({
     "HARD_BLOCKERS_DO_NOT_BECOME_ORDINARY_REVIEW",
     "TRUSTED_PROVIDER_DMS_FRONTEND_ROUTE",
     "CANONICAL_DMS_INTERNAL_GEOMETRY",
+    "CANONICAL_LON_LAT_IGNORES_DISPLAY_ORDER",
     "DISPLAY_TEXT_NOT_REPARSED_FOR_MAP_KML",
     "SAFE_PER_ROW_RECOGNITION_DETAILS",
     "LIVE_PROGRESSIVE_ROW_DETAILS"
