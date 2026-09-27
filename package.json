@@ -49,6 +49,7 @@
     "coordinate-agent-phase09e-projection-regression": "node scripts/coordinate-agent-phase09e-projection-regression.js",
     "coordinate-agent-phase09f-crs-identity-regression": "node scripts/coordinate-agent-phase09f-crs-identity-regression.js",
     "coordinate-agent-phase09g-crs-dual-identity-regression": "node scripts/coordinate-agent-phase09g-crs-dual-identity-regression.js",
+    "coordinate-agent-phase09h-projected-promotion-regression": "node scripts/coordinate-agent-phase09h-projected-promotion-regression.js",
     "ocr-golden": "node scripts/ocr-golden-runner.js",
     "recognition-first-acquisition-v1-regression": "node scripts/recognition-first-acquisition-v1-regression.js",
     "recognition-first-review-result-v2-regression": "node scripts/recognition-first-review-result-v2-regression.js",

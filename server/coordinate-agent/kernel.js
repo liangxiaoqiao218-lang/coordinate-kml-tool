@@ -82,6 +82,41 @@ function promoteProjectedCandidate(candidate, transformedPoints) {
   });
 }
 
+function buildProjectedPromotionGate({ candidate, points, providerEvidence, output }) {
+  const pointCount = points.length;
+  const transformedPointCount = Number(output?.transformedPointCount || 0);
+  const roundTripVerifiedPointCount = Number(output?.roundTripVerifiedPointCount || 0);
+  const blockingUncertaintyCount = providerEvidence.uncertainties
+    .filter(item => item.blocking === true).length;
+  const reviewItemCount = providerEvidence.reviewItems.length;
+  const transformationComplete = output?.valid === true
+    && pointCount > 0
+    && transformedPointCount === pointCount;
+  const roundTripComplete = pointCount > 0
+    && roundTripVerifiedPointCount === pointCount
+    && output?.inverseStatus === 'passed';
+  const spatialVerified = output?.spatialStatus === 'passed';
+  const geometryStatus = candidate.geometryType === 'Unknown' ? 'unknown' : 'identified';
+  const eligible = transformationComplete
+    && roundTripComplete
+    && spatialVerified
+    && blockingUncertaintyCount === 0
+    && reviewItemCount === 0
+    && geometryStatus === 'identified';
+  return Object.freeze({
+    geometryStatus,
+    blockingUncertaintyCount,
+    reviewItemCount,
+    pointCount,
+    transformedPointCount,
+    roundTripVerifiedPointCount,
+    transformationComplete,
+    roundTripComplete,
+    spatialVerified,
+    eligible,
+  });
+}
+
 async function prepareProjectedCandidate({ candidate, board, toolRegistry, imageRef, requestId }) {
   if (candidate?.coordinateSystem?.kind !== 'projected'
     || candidate.coordinateSystem.status !== 'identified') {
@@ -105,7 +140,6 @@ async function prepareProjectedCandidate({ candidate, board, toolRegistry, image
   let output;
   try {
     output = await toolRegistry.execute(action, { imageRef, requestId, safetyVerification: true });
-    board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: true, output });
   } catch (error) {
     board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: false, error: error?.message });
     board.addUncertainty({
@@ -116,12 +150,10 @@ async function prepareProjectedCandidate({ candidate, board, toolRegistry, image
     return Object.freeze({ candidate: downgradeCandidateForReview(candidate), toolCallCount: 1, projectionVerified: false });
   }
 
-  const canPromote = output?.valid === true
-    && output.transformedPointCount === points.length
-    && output.roundTripVerifiedPointCount === points.length
-    && providerEvidence.uncertainties.every(item => item.blocking === false)
-    && providerEvidence.reviewItems.length === 0
-    && candidate.geometryType !== 'Unknown';
+  const promotionGate = buildProjectedPromotionGate({ candidate, points, providerEvidence, output });
+  output = Object.freeze({ ...output, promotionGate });
+  board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: true, output });
+  const canPromote = promotionGate.eligible;
   if (!canPromote) {
     board.addUncertainty({
       code: String(output?.failureCode || 'PROJECTED_DETERMINISTIC_VERIFICATION_FAILED'),

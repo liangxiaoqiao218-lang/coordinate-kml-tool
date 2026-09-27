@@ -35,6 +35,7 @@ function summarizeProjectionVerification(toolResults) {
   ));
   const output = result?.ok === true ? result.output : null;
   const diagnostic = output?.identityDiagnostic || null;
+  const promotionGate = output?.promotionGate || null;
   return Object.freeze({
     attempted: Boolean(result),
     crsStatus: String(output?.crsStatus || 'not_attempted'),
@@ -64,6 +65,18 @@ function summarizeProjectionVerification(toolResults) {
       normalizedCrsId: typeof diagnostic.normalizedCrsId === 'string' ? diagnostic.normalizedCrsId : null,
       normalizationStatus: String(diagnostic.normalizationStatus || 'unavailable'),
       identityConsistency: String(diagnostic.identityConsistency || 'unavailable'),
+    }) : null,
+    promotionGate: promotionGate ? Object.freeze({
+      geometryStatus: String(promotionGate.geometryStatus || 'unavailable'),
+      blockingUncertaintyCount: Number(promotionGate.blockingUncertaintyCount || 0),
+      reviewItemCount: Number(promotionGate.reviewItemCount || 0),
+      pointCount: Number(promotionGate.pointCount || 0),
+      transformedPointCount: Number(promotionGate.transformedPointCount || 0),
+      roundTripVerifiedPointCount: Number(promotionGate.roundTripVerifiedPointCount || 0),
+      transformationComplete: promotionGate.transformationComplete === true,
+      roundTripComplete: promotionGate.roundTripComplete === true,
+      spatialVerified: promotionGate.spatialVerified === true,
+      eligible: promotionGate.eligible === true,
     }) : null,
   });
 }
