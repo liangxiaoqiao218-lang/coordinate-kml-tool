@@ -57,9 +57,13 @@ function summarizeProjectionVerification(toolResults) {
       nameSyntax: String(diagnostic.nameSyntax || 'unavailable'),
       epsgSyntax: String(diagnostic.epsgSyntax || 'unavailable'),
       nameCrsId: typeof diagnostic.nameCrsId === 'string' ? diagnostic.nameCrsId : null,
+      nameQualifiedEpsgId: typeof diagnostic.nameQualifiedEpsgId === 'string'
+        ? diagnostic.nameQualifiedEpsgId
+        : null,
       epsgCrsId: typeof diagnostic.epsgCrsId === 'string' ? diagnostic.epsgCrsId : null,
       normalizedCrsId: typeof diagnostic.normalizedCrsId === 'string' ? diagnostic.normalizedCrsId : null,
       normalizationStatus: String(diagnostic.normalizationStatus || 'unavailable'),
+      identityConsistency: String(diagnostic.identityConsistency || 'unavailable'),
     }) : null,
   });
 }

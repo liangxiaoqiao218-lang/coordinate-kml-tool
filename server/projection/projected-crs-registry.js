@@ -15,7 +15,8 @@ function normalizeIdentity(value) {
     .replace(/[_-]+/gu, ' ')
     .replace(/[^A-Z0-9: ]+/gu, ' ')
     .replace(/\s+/gu, ' ')
-    .replace(/\bITRF\s+(\d{4})\b/gu, 'ITRF$1');
+    .replace(/\bITRF\s+(\d{4})\b/gu, 'ITRF$1')
+    .trim();
 }
 
 function normalizeEpsg(value) {
@@ -62,8 +63,7 @@ const BFTM_DEFINITION = Object.freeze({
   scaleFactor: 0.9996,
 });
 
-function utmDefinitionFromExplicitName(value) {
-  const normalized = normalizeIdentity(value);
+function utmDefinitionFromNormalizedName(normalized) {
   const match = normalized.match(/^WGS ?84 UTM(?: ZONE)? (\d{1,2})\s*([NS])$/u);
   if (!match) return null;
   const zone = Number(match[1]);
@@ -75,32 +75,74 @@ function utmDefinitionFromExplicitName(value) {
 function definitionForExplicitIdentity(value) {
   const epsg = normalizeEpsg(value);
   if (epsg) return utmDefinitionFromEpsg(epsg);
-  if (BFTM_ALIASES.has(normalizeIdentity(value))) return BFTM_DEFINITION;
-  return utmDefinitionFromExplicitName(value);
-}
-
-function classifyNameIdentity(value, definition) {
-  if (value === null || String(value).trim() === '') return 'absent';
-  if (definition?.id === BFTM_DEFINITION.id) return 'standard_bftm_name';
-  if (definition?.projection === 'utm') return 'standard_wgs84_utm_name';
   const normalized = normalizeIdentity(value);
-  if (/\b(?:BFTM|UTM|EPSG|ITRF|WGS)\b/u.test(normalized)) {
-    return 'supported_token_with_unapproved_suffix';
-  }
-  return 'unrecognized';
+  if (BFTM_ALIASES.has(normalized)) return BFTM_DEFINITION;
+  return utmDefinitionFromNormalizedName(normalized);
 }
 
-function buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }) {
-  const nameSyntax = classifyNameIdentity(name, byName);
+function parseNameIdentity(value) {
+  if (value === null || String(value).trim() === '') {
+    return Object.freeze({
+      syntax: 'absent',
+      definition: null,
+      qualifiedEpsg: null,
+      qualifiedDefinition: null,
+    });
+  }
+  const normalized = normalizeIdentity(value);
+  const qualifierMatch = normalized.match(/^(.*?)\s+EPSG\s*:{0,2}\s*(\d{4,6})$/u);
+  const baseName = qualifierMatch ? qualifierMatch[1].trim() : normalized;
+  const qualifiedEpsg = qualifierMatch ? `EPSG:${qualifierMatch[2]}` : null;
+  const qualifiedDefinition = qualifiedEpsg ? utmDefinitionFromEpsg(qualifiedEpsg) : null;
+  const definition = BFTM_ALIASES.has(baseName)
+    ? BFTM_DEFINITION
+    : utmDefinitionFromNormalizedName(baseName);
+  if (definition && qualifiedEpsg) {
+    return Object.freeze({
+      syntax: 'formal_name_with_standard_epsg_qualifier',
+      definition,
+      qualifiedEpsg,
+      qualifiedDefinition,
+    });
+  }
+  if (definition?.id === BFTM_DEFINITION.id) {
+    return Object.freeze({ syntax: 'standard_bftm_name', definition, qualifiedEpsg: null, qualifiedDefinition: null });
+  }
+  if (definition?.projection === 'utm') {
+    return Object.freeze({ syntax: 'standard_wgs84_utm_name', definition, qualifiedEpsg: null, qualifiedDefinition: null });
+  }
+  if (/\b(?:BFTM|UTM|EPSG|ITRF|WGS)\b/u.test(normalized)) {
+    return Object.freeze({
+      syntax: 'supported_token_with_unapproved_suffix',
+      definition: null,
+      qualifiedEpsg,
+      qualifiedDefinition,
+    });
+  }
+  return Object.freeze({ syntax: 'unrecognized', definition: null, qualifiedEpsg: null, qualifiedDefinition: null });
+}
+
+function determineIdentityConsistency({ nameIdentity, epsg, explicitEpsg, status }) {
+  const namePresent = nameIdentity.syntax !== 'absent';
+  const epsgPresent = epsg !== null && String(epsg).trim() !== '';
+  if (status === 'conflict') return 'conflict';
+  if (!namePresent || !epsgPresent) return 'single_source';
+  if (status !== 'identified') return 'unverified';
+  if (nameIdentity.qualifiedEpsg && nameIdentity.qualifiedEpsg !== explicitEpsg) return 'conflict';
+  return 'consistent';
+}
+
+function buildIdentityDiagnostic({ nameIdentity, epsg, byEpsg, explicitEpsg, status }) {
+  const nameSyntax = nameIdentity.syntax;
   const epsgSyntax = epsg === null || String(epsg).trim() === ''
     ? 'absent'
     : explicitEpsg
       ? 'standard_epsg_syntax'
       : 'invalid_epsg_syntax';
-  const nameCrsId = byName?.id || null;
+  const nameCrsId = nameIdentity.definition?.id || null;
   const epsgCrsId = explicitEpsg || null;
   const normalizedCrsId = status === 'identified'
-    ? (byEpsg || byName)?.id || null
+    ? (byEpsg || nameIdentity.definition)?.id || null
     : null;
   return Object.freeze({
     namePresent: nameSyntax !== 'absent',
@@ -108,24 +150,49 @@ function buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, sta
     nameSyntax,
     epsgSyntax,
     nameCrsId,
+    nameQualifiedEpsgId: nameIdentity.qualifiedEpsg,
     epsgCrsId,
     normalizedCrsId,
     normalizationStatus: status,
+    identityConsistency: determineIdentityConsistency({ nameIdentity, epsg, explicitEpsg, status }),
   });
 }
 
 export function resolveProjectedCrs({ name = null, epsg = null } = {}) {
   const byEpsg = epsg === null ? null : definitionForExplicitIdentity(epsg);
-  const byName = name === null ? null : definitionForExplicitIdentity(name);
+  const nameIdentity = parseNameIdentity(name);
+  const byName = nameIdentity.definition;
   const explicitEpsg = epsg === null ? null : normalizeEpsg(epsg);
+  const diagnostic = status => buildIdentityDiagnostic({ nameIdentity, epsg, byEpsg, explicitEpsg, status });
   if (epsg !== null && !explicitEpsg) {
     const status = 'unsupported';
     return Object.freeze({
       status,
       definition: null,
       reason: 'CRS_IDENTIFIER_UNSUPPORTED',
-      identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+      identityDiagnostic: diagnostic(status),
     });
+  }
+  if (nameIdentity.syntax !== 'absent' && !byName) {
+    const status = 'unsupported';
+    return Object.freeze({
+      status,
+      definition: null,
+      reason: 'CRS_IDENTIFIER_UNSUPPORTED',
+      identityDiagnostic: diagnostic(status),
+    });
+  }
+  if (nameIdentity.qualifiedEpsg) {
+    const qualifierConflictsWithExternal = explicitEpsg && nameIdentity.qualifiedEpsg !== explicitEpsg;
+    if (qualifierConflictsWithExternal) {
+      const status = 'conflict';
+      return Object.freeze({
+        status,
+        definition: null,
+        reason: 'CRS_IDENTIFIER_CONFLICT',
+        identityDiagnostic: diagnostic(status),
+      });
+    }
   }
   if (epsg !== null && !byEpsg) {
     const status = 'unsupported';
@@ -133,8 +200,30 @@ export function resolveProjectedCrs({ name = null, epsg = null } = {}) {
       status,
       definition: null,
       reason: 'CRS_IDENTIFIER_UNSUPPORTED',
-      identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+      identityDiagnostic: diagnostic(status),
     });
+  }
+  if (nameIdentity.qualifiedEpsg) {
+    const qualifierConflictsWithName = !nameIdentity.qualifiedDefinition
+      || nameIdentity.qualifiedDefinition.id !== byName?.id;
+    if (nameIdentity.qualifiedDefinition && qualifierConflictsWithName) {
+      const status = 'conflict';
+      return Object.freeze({
+        status,
+        definition: null,
+        reason: 'CRS_IDENTIFIER_CONFLICT',
+        identityDiagnostic: diagnostic(status),
+      });
+    }
+    if (qualifierConflictsWithName) {
+      const status = 'unsupported';
+      return Object.freeze({
+        status,
+        definition: null,
+        reason: 'CRS_IDENTIFIER_UNSUPPORTED',
+        identityDiagnostic: diagnostic(status),
+      });
+    }
   }
   if (byEpsg && byName && byEpsg.id !== byName.id) {
     const status = 'conflict';
@@ -142,7 +231,7 @@ export function resolveProjectedCrs({ name = null, epsg = null } = {}) {
       status,
       definition: null,
       reason: 'CRS_IDENTIFIER_CONFLICT',
-      identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+      identityDiagnostic: diagnostic(status),
     });
   }
   const definition = byEpsg || byName;
@@ -152,7 +241,7 @@ export function resolveProjectedCrs({ name = null, epsg = null } = {}) {
       status,
       definition: null,
       reason: 'CRS_IDENTIFIER_UNSUPPORTED',
-      identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+      identityDiagnostic: diagnostic(status),
     });
   }
   const status = 'identified';
@@ -160,7 +249,7 @@ export function resolveProjectedCrs({ name = null, epsg = null } = {}) {
     status,
     definition,
     reason: null,
-    identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+    identityDiagnostic: diagnostic(status),
   });
 }
 

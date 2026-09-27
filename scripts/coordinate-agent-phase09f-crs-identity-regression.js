@@ -14,9 +14,11 @@ assert.deepEqual(punctuatedBftm.identityDiagnostic, {
   nameSyntax: 'standard_bftm_name',
   epsgSyntax: 'absent',
   nameCrsId: 'BFTM:ITRF2008',
+  nameQualifiedEpsgId: null,
   epsgCrsId: null,
   normalizedCrsId: 'BFTM:ITRF2008',
   normalizationStatus: 'identified',
+  identityConsistency: 'single_source',
 });
 
 for (const identifier of [
