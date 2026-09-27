@@ -1,9 +1,11 @@
 import { GENERIC_TOOL_NAMES } from '../constants.js';
 
 function checkCoordinatePair(args) {
-  const latitude = Number(args.latitude);
-  const longitude = Number(args.longitude);
-  const valid = Number.isFinite(latitude)
+  const latitude = args?.latitude;
+  const longitude = args?.longitude;
+  const valid = typeof latitude === 'number'
+    && Number.isFinite(latitude)
+    && typeof longitude === 'number'
     && Number.isFinite(longitude)
     && latitude >= -90
     && latitude <= 90

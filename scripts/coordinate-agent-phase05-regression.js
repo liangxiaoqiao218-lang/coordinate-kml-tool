@@ -45,7 +45,9 @@ for (const scenario of scenarios) {
 const rotated = scenarios.find(item => item.id === 'generic-rotated-math-verified');
 assert.deepEqual(rotated.trace.tools.map(item => item.toolName), [
   'rotate_image', 'crop_region', 'coordinate_math_check', 'spatial_consistency_check',
+  'coordinate_math_check', 'coordinate_math_check', 'spatial_consistency_check',
 ]);
+assert.ok(rotated.trace.tools.slice(-3).every(item => item.ok), 'deterministic safety verification must pass');
 assert.deepEqual(rotated.trace.states.map(item => item.state), [
   'INITIALIZED', 'OBSERVING', 'PLANNING', 'ACTING', 'RECONCILING', 'OBSERVING',
   'PLANNING', 'ACTING', 'RECONCILING', 'OBSERVING', 'PLANNING', 'VERIFYING', 'CONFIRMED',

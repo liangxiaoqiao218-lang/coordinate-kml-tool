@@ -50,7 +50,8 @@ function toolRegistry() {
   assert.equal(result.terminalState, AGENT_STATE.CONFIRMED);
   assert.deepEqual(result.authorization, { mapAllowed: true, kmlAllowed: true });
   assert.equal(result.execution.providerCallCount, 1);
-  assert.equal(result.execution.toolCallCount, 0);
+  assert.equal(result.execution.toolCallCount, 1);
+  assert.deepEqual(result.evidence.toolResults.map(item => item.toolName), ['coordinate_math_check']);
   const artifacts = buildExistingSafetyArtifacts({
     agentResult: result,
     documentRevision: 1,
@@ -92,7 +93,7 @@ function toolRegistry() {
   assert.equal(result.terminalState, AGENT_STATE.REVIEW_REQUIRED);
   assert.deepEqual(result.authorization, { mapAllowed: false, kmlAllowed: false });
   assert.equal(result.execution.providerCallCount, 2);
-  assert.equal(result.execution.toolCallCount, 1);
+  assert.equal(result.execution.toolCallCount, 2);
   assert.equal(result.evidence.reviewItems[0].fieldPath, 'coordinateGroups[0].points[0].longitude');
   assert.throws(() => buildExistingSafetyArtifacts({
     agentResult: result,

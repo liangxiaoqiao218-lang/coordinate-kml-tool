@@ -39,6 +39,7 @@
     "coordinate-agent-phase05-regression": "node scripts/coordinate-agent-phase05-regression.js",
     "coordinate-agent-phase06-shadow-regression": "node scripts/coordinate-agent-phase06-shadow-regression.js",
     "coordinate-agent-phase06-shadow": "node scripts/coordinate-agent-phase06-shadow-server.js --enable-shadow",
+    "coordinate-agent-phase07a-verification-regression": "node scripts/coordinate-agent-phase07a-verification-regression.js",
     "ocr-golden": "node scripts/ocr-golden-runner.js",
     "recognition-first-acquisition-v1-regression": "node scripts/recognition-first-acquisition-v1-regression.js",
     "recognition-first-review-result-v2-regression": "node scripts/recognition-first-review-result-v2-regression.js",

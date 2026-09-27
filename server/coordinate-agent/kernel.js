@@ -1,4 +1,4 @@
-import { AGENT_STATE, COORDINATE_AGENT_SCHEMA_VERSION } from './constants.js';
+import { AGENT_STATE, COORDINATE_AGENT_SCHEMA_VERSION, GENERIC_TOOL_NAMES } from './constants.js';
 import { CoordinateEvidenceBoard } from './evidence-board.js';
 import { CoordinateAgentPlanner } from './planner.js';
 import { assertStrictCoordinateAgentResult, assertStrictCoordinateAgentTurn } from './schema.js';
@@ -19,6 +19,107 @@ function chooseTerminalState(candidate, board) {
   return candidate.resultStatus === 'usable'
     ? AGENT_STATE.CONFIRMED
     : AGENT_STATE.FAILED_CLOSED;
+}
+
+function candidatePoints(candidate) {
+  return (candidate?.groups || []).flatMap(group => group.points || []);
+}
+
+function downgradeCandidateForReview(candidate) {
+  if (!candidate || candidate.resultStatus !== 'usable') return candidate;
+  return validateCoordinateCandidate({
+    ...candidate,
+    resultStatus: 'needs_review',
+    geometryType: 'Unknown',
+    groups: candidate.groups.map(group => ({
+      ...group,
+      points: group.points.map(point => ({ ...point, needsReview: true })),
+    })),
+    warnings: [...new Set([
+      ...(candidate.warnings || []),
+      'Deterministic coordinate verification requires review',
+    ])],
+  });
+}
+
+async function runDeterministicCandidateVerification({ candidate, board, toolRegistry, imageRef, requestId }) {
+  if (!candidate?.success) return Object.freeze({ candidate, toolCallCount: 0 });
+  const points = candidatePoints(candidate);
+  let toolCallCount = 0;
+  let verified = points.length > 0;
+
+  if (points.length === 0) {
+    board.addUncertainty({
+      code: 'DETERMINISTIC_COORDINATE_VERIFICATION_MISSING',
+      message: 'No candidate coordinate is available for deterministic verification',
+      blocking: true,
+    });
+  }
+
+  for (const [index, point] of points.entries()) {
+    const latitude = point?.latitude;
+    const longitude = point?.longitude;
+    if (typeof latitude !== 'number' || !Number.isFinite(latitude)
+      || typeof longitude !== 'number' || !Number.isFinite(longitude)) {
+      verified = false;
+      board.addUncertainty({
+        code: 'DETERMINISTIC_GEOGRAPHIC_PAIR_UNAVAILABLE',
+        message: `Candidate point ${index + 1} cannot be authorized without an explicit geographic pair`,
+        blocking: true,
+      });
+      continue;
+    }
+    const action = {
+      id: `safety-math-${index + 1}`,
+      toolName: GENERIC_TOOL_NAMES.COORDINATE_MATH_CHECK,
+      args: { latitude, longitude },
+    };
+    try {
+      const output = await toolRegistry.execute(action, { imageRef, requestId, safetyVerification: true });
+      board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: true, output });
+      if (output?.valid !== true) verified = false;
+    } catch (error) {
+      verified = false;
+      board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: false, error: error?.message });
+    }
+    toolCallCount += 1;
+  }
+
+  if (points.length > 1) {
+    const action = {
+      id: 'safety-spatial-set',
+      toolName: GENERIC_TOOL_NAMES.SPATIAL_CONSISTENCY_CHECK,
+      args: { points: points.map(point => ({ latitude: point.latitude, longitude: point.longitude })) },
+    };
+    try {
+      const output = await toolRegistry.execute(action, { imageRef, requestId, safetyVerification: true });
+      board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: true, output });
+      if (output?.valid !== true || output?.pointCount !== points.length) verified = false;
+    } catch (error) {
+      verified = false;
+      board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: false, error: error?.message });
+    }
+    toolCallCount += 1;
+  }
+
+  if (!verified) {
+    board.addUncertainty({
+      code: 'DETERMINISTIC_COORDINATE_VERIFICATION_FAILED',
+      message: 'Candidate coordinates did not complete deterministic mathematical and spatial verification',
+      blocking: true,
+    });
+    board.addReviewItem({
+      fieldPath: 'coordinateGroups',
+      question: 'Review the candidate coordinates that could not complete deterministic verification',
+      evidenceRegionIds: [],
+      candidates: [],
+    });
+  }
+
+  return Object.freeze({
+    candidate: verified ? candidate : downgradeCandidateForReview(candidate),
+    toolCallCount,
+  });
 }
 
 export class CoordinateIntelligenceAgentKernel {
@@ -128,6 +229,15 @@ export class CoordinateIntelligenceAgentKernel {
       }
 
       state.transition(AGENT_STATE.VERIFYING, 'no_more_tool_actions');
+      const deterministicVerification = await runDeterministicCandidateVerification({
+        candidate,
+        board: evidence,
+        toolRegistry: this.toolRegistry,
+        imageRef,
+        requestId,
+      });
+      candidate = deterministicVerification.candidate;
+      toolCallCount += deterministicVerification.toolCallCount;
       const terminalState = chooseTerminalState(candidate, evidence);
       state.transition(terminalState, 'deterministic_safety_verification');
     }

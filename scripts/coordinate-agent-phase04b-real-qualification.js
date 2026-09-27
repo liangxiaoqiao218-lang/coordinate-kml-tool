@@ -17,6 +17,7 @@ import { DashScopeOpenAICompatibleTransport } from '../server/coordinate-agent-t
 if (!process.argv.includes('--execute-real-provider')) {
   throw new Error('Real Provider execution requires --execute-real-provider');
 }
+const maxProviderCalls = process.argv.includes('--single-provider-call') ? 1 : 2;
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifestPath = path.join(root, 'regression-samples', 'coordinate-agent-evaluation-manifest.v1.json');
@@ -56,7 +57,7 @@ registerCoordinateMathTools(registry);
 const result = await new CoordinateIntelligenceAgentKernel({
   providerAdapter: adapter,
   toolRegistry: registry,
-  maxProviderCalls: 2,
+  maxProviderCalls,
   maxIterations: 3,
 }).run({ imageRef, requestId: 'qualification:phase04b:eval-001' });
 
@@ -75,6 +76,7 @@ console.log(JSON.stringify({
   schemaVersion: 'coordinate-agent-provider-qualification/v1',
   caseId,
   model,
+  providerCallLimit: maxProviderCalls,
   realProviderCallCount: telemetry.length,
   automaticRetryCount: 0,
   providerRequests: telemetry.map(item => ({
