@@ -8,6 +8,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { inflateSync } from "node:zlib";
 import Tesseract from "tesseract.js";
+import sharp from "sharp";
 import { applyMiningJudgeabilityGate } from "./server/mining-judgeability.js";
 import { LOCAL_OCR_FAILURE_CODE, runCancellableOcrJob } from "./server/recognition/cancellable-ocr.js";
 import { assessRecognitionCompleteness } from "./server/recognition/recognition-completeness.js";
@@ -7410,13 +7411,21 @@ function hasCompleteProviderDmsPair(line) {
   return Boolean(parseProviderDmsPair(line));
 }
 
-function extractProviderDmsReviewEvidence(text) {
+function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) {
   const sourceText = String(text || "");
-  const lines = normalizeText(sourceText)
+  const sourceLines = sourceText
     .split(/\r?\n/u)
     .map(line => line.trim())
     .filter(Boolean);
-  const candidateRows = lines.filter(line => (
+  const lines = sourceLines.map(line => normalizeText(line));
+  const axisEvidenceLines = [
+    ...lines,
+    ...String(axisEvidenceText || "")
+      .split(/\r?\n/u)
+      .map(line => normalizeText(line).trim())
+      .filter(Boolean)
+  ];
+  const candidateRows = sourceLines.filter(line => (
     (line.match(/[°º˚]/gu) || []).length === 2
   ));
 
@@ -7437,7 +7446,7 @@ function extractProviderDmsReviewEvidence(text) {
 
   const collectAxisDirections = (axisPattern, positivePattern, negativePattern, positive, negative) => {
     const directions = new Set();
-    for (const line of lines) {
+    for (const line of axisEvidenceLines) {
       const fields = splitAxisFields(line);
       for (const field of fields) {
         if (!axisPattern.test(field)) continue;
@@ -7459,7 +7468,7 @@ function extractProviderDmsReviewEvidence(text) {
   const longitudeDirections = collectAxisDirections(
     /(?:\blon(?:gitude)?\b|经度|东经|西经)/iu,
     /(?:\beast\b|\best\b|\bleste\b|东经|(?:^|[=:\s])E(?:$|\s))/iu,
-    /(?:\bwest\b|\bouest\b|\boeste\b|西经|(?:^|[=:\s])[WO](?:$|\s))/iu,
+    /(?:\bwest\b|\bouest\b|\boeste\b|\bovest\b|西经|(?:^|[=:\s])[WO](?:$|\s))/iu,
     "E",
     "W"
   );
@@ -7469,9 +7478,9 @@ function extractProviderDmsReviewEvidence(text) {
         longitude: [...longitudeDirections][0]
       }
     : null;
-  const axisSemanticConflict = lines.some(line => splitAxisFields(line).some(field => (
+  const axisSemanticConflict = axisEvidenceLines.some(line => splitAxisFields(line).some(field => (
     (/(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu.test(field)
-      && /(?:\beast\b|\best\b|\bleste\b|\bwest\b|\bouest\b|\boeste\b|东经|西经|(?:^|[=:\s])[EWO](?:$|\s))/iu.test(field))
+      && /(?:\beast\b|\best\b|\bleste\b|\bwest\b|\bouest\b|\boeste\b|\bovest\b|东经|西经|(?:^|[=:\s])[EWO](?:$|\s))/iu.test(field))
     || (/(?:\blon(?:gitude)?\b|经度|东经|西经)/iu.test(field)
       && /(?:\bnorth\b|\bnord\b|\bnorte\b|\bsouth\b|\bsud\b|\bsul\b|\bsur\b|北纬|南纬|(?:^|[=:\s])[NS](?:$|\s))/iu.test(field))
   )));
@@ -7489,6 +7498,7 @@ function extractProviderDmsReviewEvidence(text) {
     });
     return {
       label: String(pipeLabel || whitespaceLabel).trim().toUpperCase(),
+      sourceText: line,
       coordinate: parsedPair?.coordinate || null,
       directionBound: parsedPair?.directionBound === true
     };
@@ -7497,7 +7507,9 @@ function extractProviderDmsReviewEvidence(text) {
   const uniqueEntries = [];
   const seenEntries = new Set();
   for (const entry of sourceRows) {
-    const identity = `${entry.label || "UNLABELED"}|${entry.coordinate}`;
+    // Overview/detail tiles can repeat the same visible row with slightly
+    // different labels. Coordinate identity is the stable overlap key.
+    const identity = entry.coordinate;
     if (seenEntries.has(identity)) continue;
     seenEntries.add(identity);
     uniqueEntries.push(entry);
@@ -7532,8 +7544,39 @@ function extractProviderDmsReviewEvidence(text) {
     axisDirectionBound: explicitHeaderDirection || everyRowHasDirections,
     duplicateRowCount: Math.max(0, sourceRows.length - uniqueEntries.length),
     coordinateFamily,
+    sourceDisplayText: uniqueEntries.map(entry => entry.sourceText).join("\n"),
+    sourceRows: uniqueEntries.map(entry => entry.sourceText),
+    sourceLabels,
+    axisDirections: explicitAxes ? { ...explicitAxes } : null,
     coordinates: complete || provisional ? coordinateLines.join("\n") : ""
   });
+}
+
+function attachTrustedProviderDmsSourceRepresentation(response = {}, evidence = {}) {
+  const displayText = String(evidence?.sourceDisplayText || "").trim();
+  const rows = Array.isArray(evidence?.sourceRows) ? evidence.sourceRows.filter(Boolean) : [];
+  if (!displayText || rows.length === 0) return response;
+  const prior = response.sourceCoordinateRepresentation || {};
+  if (String(prior.displayText || "").trim() === displayText) return response;
+  const hemispheres = [evidence?.axisDirections?.latitude, evidence?.axisDirections?.longitude]
+    .filter(Boolean)
+    .map(value => value === "O" ? "W" : value);
+  return {
+    ...response,
+    sourceCoordinateRepresentation: {
+      ...prior,
+      rows: [...rows],
+      groups: [[...rows]],
+      pointLabels: Array.isArray(evidence?.sourceLabels) ? [...evidence.sourceLabels] : [],
+      axisOrder: "latitude_longitude",
+      hemisphere: [...new Set(hemispheres)],
+      sourceEquivalence: evidence.axisDirectionBound
+        ? "provider_dms_source_rows_with_verified_axis_evidence"
+        : "provider_dms_source_rows_pending_axis_review",
+      displayText,
+      editable: true
+    }
+  };
 }
 
 function buildTrustedProviderDmsEngine(evidence, { forceRequiresReview = false, model = "" } = {}) {
@@ -8640,6 +8683,7 @@ async function runLocalOcrFamilyClassification({
       route,
       contract: createOneShotAcquisitionContract({ route }),
       layoutLines: Object.freeze([]),
+      axisEvidenceText: "",
       axisOrderEvidence: null,
       projectedTableOcrAcquisition: false
     };
@@ -8668,12 +8712,32 @@ async function runLocalOcrFamilyClassification({
   });
   let stageResult = "success";
   try {
+    let localOcrImage = imageBuffer;
+    try {
+      const metadata = await sharp(imageBuffer).metadata();
+      const width = Number(metadata.width) || 0;
+      const height = Number(metadata.height) || 0;
+      const wideShortTable = width >= 480 && height >= 80 && width / height >= 2.5;
+      if (wideShortTable) {
+        const headerHeight = Math.max(1, Math.min(height, Math.round(height * 0.35)));
+        localOcrImage = await sharp(imageBuffer)
+          .extract({ left: 0, top: 0, width, height: headerHeight })
+          .resize({ width: Math.min(4000, Math.max(width * 6, 1800)), kernel: "lanczos3" })
+          .grayscale()
+          .normalize()
+          .sharpen()
+          .png()
+          .toBuffer();
+      }
+    } catch {
+      localOcrImage = imageBuffer;
+    }
     const result = await runCancellableOcrJob({
       createWorker: () => Tesseract.createWorker("eng", 1, {
         logger: () => {},
         errorHandler: () => {}
       }),
-      image: imageBuffer,
+      image: localOcrImage,
       recognizeOutput: { text: true, blocks: true },
       signal: getRecognitionDeadlineSignal(),
       timeoutMs: effectiveTimeoutMs,
@@ -8681,6 +8745,15 @@ async function runLocalOcrFamilyClassification({
       timeoutCode: RECOGNITION_BUDGET_CODE
     });
     const rawLocalOcrText = String(result?.data?.text || "");
+    const axisEvidenceText = rawLocalOcrText
+      .split(/\r?\n/u)
+      .map(line => normalizeText(line).trim())
+      .filter(line => /(?:\blat(?:itude)?\b|\blon(?:gitude)?\b|纬度|经度|北纬|南纬|东经|西经)/iu.test(line))
+      .map(line => line.replace(/[+-]?\d+(?:[.,]\d+)?/gu, " ").replace(/\s+/gu, " ").trim())
+      .filter(Boolean)
+      .slice(0, 8)
+      .join("\n")
+      .slice(0, 1000);
     const extractedLayoutLines = extractLocalOcrLayoutLines(result, imageIdentity);
     const normalizedLocalEvidence = normalizeLocalOcrStructuredEvidence({
       sourceText: rawLocalOcrText,
@@ -8709,6 +8782,7 @@ async function runLocalOcrFamilyClassification({
       attempted: true,
       route,
       sourceText,
+      axisEvidenceText,
       axisOrderEvidence: selectedLocalEvidence.axisOrderEvidence || null,
       projectedTableOcrAcquisition: shouldUseProjectedTableOcrAcquisition(rawLocalOcrText),
       contract: createOneShotAcquisitionContract({
@@ -15268,6 +15342,7 @@ async function recognizeCoordinatesHandler(req, res) {
   let oneShotLocalOcrAttempted = false;
   let oneShotLocalOcrLayoutLines = Object.freeze([]);
   let oneShotLocalOcrSourceText = "";
+  let oneShotLocalOcrAxisEvidenceText = "";
   let oneShotLocalOcrAxisOrderEvidence = null;
   let projectedTableOcrAcquisition = false;
   let oneShotStructuredFamilyRoute = classifyOneShotStructuredFamily();
@@ -16097,6 +16172,7 @@ async function recognizeCoordinatesHandler(req, res) {
     oneShotLocalOcrAttempted = oneShotFamilyClassification.attempted === true;
     oneShotLocalOcrLayoutLines = oneShotFamilyClassification.layoutLines;
     oneShotLocalOcrSourceText = String(oneShotFamilyClassification.sourceText || "");
+    oneShotLocalOcrAxisEvidenceText = String(oneShotFamilyClassification.axisEvidenceText || "");
     oneShotLocalOcrAxisOrderEvidence = oneShotFamilyClassification.axisOrderEvidence || null;
     projectedTableOcrAcquisition = oneShotFamilyClassification.projectedTableOcrAcquisition === true;
     oneShotStructuredFamilyRoute = oneShotFamilyClassification.route;
@@ -17333,7 +17409,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerText: rawText
     });
     const providerMessageDiagnostic = buildProviderMessageDiagnostic(response, rawText);
-    const providerDmsDiagnostic = extractProviderDmsReviewEvidence(rawText);
+    const providerDmsDiagnostic = extractProviderDmsReviewEvidence(rawText, {
+      axisEvidenceText: oneShotLocalOcrAxisEvidenceText || oneShotLocalOcrSourceText
+    });
     const providerGroupedDmsDiagnostic = normalizeProviderDmsReviewResult(rawText);
     const providerProjectedDiagnostic = extractProviderProjectedCoordinateEvidence({ sourceText: rawText });
     console.log("One-shot acquisition conformance:", {
@@ -17941,7 +18019,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             { blockMap: true }
           ));
       }
-      const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText);
+      const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText, {
+        axisEvidenceText: oneShotLocalOcrAxisEvidenceText || oneShotLocalOcrSourceText
+      });
       if (["COMPLETE", "PROVISIONAL"].includes(trustedProviderDmsEvidence.status)) {
         const pointAzFamilyRecovered = trustedProviderDmsEvidence.coordinateFamily === "point-az-dms-table";
         const provisionalDirection = trustedProviderDmsEvidence.status === "PROVISIONAL";
@@ -17992,10 +18072,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           forceRequiresReview: true,
           model: providerDmsReviewPayload.model
         });
-        const providerDmsReviewResponse = buildCoordinateVerificationResponse(
+        const providerDmsReviewResponse = attachTrustedProviderDmsSourceRepresentation(buildCoordinateVerificationResponse(
           providerDmsReviewPayload,
           providerDmsReviewEngine
-        );
+        ), trustedProviderDmsEvidence);
         return res.json(pointAzFamilyRecovered || provisionalDirection
           ? providerDmsReviewResponse
           : promoteRecognizedCoordinatesToSafeBoundary(providerDmsReviewResponse, ""));

@@ -2350,6 +2350,29 @@ test("Provider DMS evidence keeps complete directionless rows available as provi
   assert.equal(evidence.sourceRowCount, 4);
   assert.equal(evidence.coordinateRowCount, 4);
   assert.equal(evidence.coordinates.split("\n")[0], "9.020463888888889,11.72123611111111");
+  assert.equal(evidence.sourceDisplayText, sourceText.split("\n").slice(1).join("\n"));
+});
+
+test("Provider DMS evidence binds directionless rows to independent visible axis evidence and deduplicates overlap", () => {
+  const providerRows = [
+    "ROW | 1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "ROW | 2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "ROW | 3 | 11° 43' 03.38'' | 09° 00' 58.67''",
+    "ROW | 4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(providerRows, {
+    axisEvidenceText: "Point | Latitude nord | Longitude ovest"
+  });
+  assert.equal(evidence.status, "COMPLETE");
+  assert.equal(evidence.axisDirectionBound, true);
+  assert.equal(evidence.candidateRowCount, 5);
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(evidence.duplicateRowCount, 1);
+  assert.equal(JSON.stringify(evidence.axisDirections), JSON.stringify({ latitude: "N", longitude: "W" }));
+  assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
+  assert.equal(evidence.sourceRows.length, 4);
+  assert.equal(evidence.sourceRows[0], "ROW | 1 | 11° 43' 16.45'' | 09° 01' 13.67''");
 });
 
 test("Provider DMS evidence keeps conflicting split axis fields fail closed", () => {
@@ -2435,6 +2458,8 @@ test("directionless Provider DMS rows return one provisional review result inste
   assert.equal(payload.coordinates.split("\n").length, 4);
   assert.equal(payload.coordinateEngineV2.groups[0].points.length, 4);
   assert.doesNotMatch(payload.coordinates, /(?:^|\n)0,0(?:\n|$)/u);
+  assert.match(payload.sourceCoordinateRepresentation.displayText, /11° 43['′] 16\.45/u);
+  assert.notEqual(payload.sourceCoordinateRepresentation.displayText, payload.coordinates);
   assert.match(payload.warning, /方向尚未确认/u);
   assert.ok(payload.parserTrace.includes("DMS_AUTHORITY:provisional_direction_review"));
 });

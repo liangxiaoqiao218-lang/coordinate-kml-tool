@@ -7867,18 +7867,21 @@ Au值 = 纯度 × 10 后取整数</div>
         return `${length} · ${pointCount}点`;
       }
       if (preview?.geometryType === "Polygon" || preview?.geometryType === "MultiPolygon") {
+        const polygonRings = preview?.geometryType === "Polygon"
+          ? [preview?.geometry?.coordinates?.[0]]
+          : (preview?.geometry?.coordinates || []).map(polygon => polygon?.[0]);
+        const boundaryPointCount = polygonRings.reduce((total, ring) => {
+          if (!Array.isArray(ring)) return total;
+          const openRing = ring.length > 1 && JSON.stringify(ring[0]) === JSON.stringify(ring[ring.length - 1])
+            ? ring.slice(0, -1)
+            : ring;
+          return total + new Set(openRing.map(position => JSON.stringify(position))).size;
+        }, 0);
         if (spatialHasBoundaryReviewWarning(preview)) {
-          const ring = preview?.geometryType === "Polygon"
-            ? preview?.geometry?.coordinates?.[0]
-            : preview?.geometry?.coordinates?.[0]?.[0];
-          const boundaryPointCount = Array.isArray(ring) && ring.length > 1
-            && JSON.stringify(ring[0]) === JSON.stringify(ring[ring.length - 1])
-            ? ring.length - 1
-            : pointCount;
           return `矿区轮廓待核对 · ${boundaryPointCount}点`;
         }
         const area = formatSpatialCollapsedArea(facts?.areaMeters2) || "区域";
-        return `${area} · ${pointCount}点`;
+        return `${area} · ${boundaryPointCount || pointCount}点`;
       }
       return `${preview?.geometryType || "Geometry"} · ${pointCount}点`;
     }
@@ -15502,7 +15505,7 @@ ${placemarks}
               dmsCoordinates
             ]);
 
-        const safeCandidatePointCount = Array.isArray(data.candidateCoordinates)
+        const safeCandidatePointCount = Array.isArray(data.candidateCoordinates) && data.candidateCoordinates.length > 0
           ? data.candidateCoordinates.length
           : countCoordinateRows(finalCoordinates);
         const safeCandidateGroupCount = Array.isArray(data.candidateCoordinateGroups)
