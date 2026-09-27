@@ -5538,7 +5538,7 @@ Au值 = 纯度 × 10 后取整数</div>
           false,
           COORDINATE_RECOGNITION_MESSAGE_MS
         );
-        setDebug(`智能识别完成\n状态：${result.resultStatus}\n坐标点：${result.summary?.pointCount || 0}\n分组：${result.summary?.groupCount || 0}\n几何：${result.geometryType}\nProvider 调用：${payload.execution?.providerCallCount || 0}`);
+        setDebug(`智能识别完成\n状态：${result.resultStatus}\n坐标点：${result.summary?.pointCount || 0}\n分组：${result.summary?.groupCount || 0}\n几何：${result.geometryType}`);
       } catch (error) {
         setRecognitionStatus("识别失败", "error");
         showUploadSupportMessage(error?.message || "未能可靠识别坐标，请重新上传更清晰的坐标区域截图。");
@@ -15063,7 +15063,7 @@ ${placemarks}
         }
         if (!response.ok) {
           clearPendingCoordinateRecognitionJob();
-          const error = new Error(snapshot?.error?.message || snapshot?.reason || "异步识别任务无法读取。");
+          const error = new Error(snapshot?.error?.message || snapshot?.reason || "识别进度暂时无法读取。");
           error.code = snapshot?.reason || "RECOGNITION_ASYNC_JOB_POLL_FAILED";
           throw error;
         }
@@ -15158,8 +15158,8 @@ ${placemarks}
 
       if (!currentVisitorId || !recognitionRequestId) {
         imageInput.value = "";
-        showMessage("安全请求编号初始化失败，请刷新页面后重试。", true);
-        setRecognitionStatus("安全请求编号初始化失败，请刷新页面后重试。", "error");
+        showMessage("识别准备失败，请刷新页面后重试。", true);
+        setRecognitionStatus("识别准备失败，请刷新页面后重试。", "error");
         return;
       }
 
@@ -15195,7 +15195,7 @@ ${placemarks}
       setCoordinateOrderReviewVisible(false);
       refreshMapPreviewAction();
       showRecognitionProgress(jobRecoveryOnly
-        ? "正在恢复异步识别任务..."
+        ? "正在继续上次识别…"
         : usageRecoveryOnly
           ? "正在恢复识别结果..."
           : "正在上传图片...", "loading");
@@ -15208,7 +15208,7 @@ ${placemarks}
         showMessage("正在上传图片……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
       } else if (jobRecoveryOnly) {
         setDebug("正在恢复识别任务…");
-        showMessage("正在恢复上次异步识别任务……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
+        showMessage("正在继续上次识别……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
       } else {
         setDebug("正在恢复识别结果…");
         showMessage("正在恢复上次识别结果……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
@@ -15264,10 +15264,10 @@ ${placemarks}
               createdAt: data?.createdAt
             };
             if (!rememberPendingCoordinateRecognitionJob(job)) {
-              throw new Error("异步识别任务凭证保存失败，已停止轮询以避免重复提交。");
+              throw new Error("识别进度保存失败，请重新识别。");
             }
             appendDebug("识别任务已开始");
-            showRecognitionProgress("异步任务已创建，正在识别坐标...", "loading");
+            showRecognitionProgress("正在识别坐标…", "loading");
             const polled = await pollCoordinateRecognitionJob(job);
             response = polled.response;
             data = polled.data;
@@ -15318,9 +15318,8 @@ ${placemarks}
           appendDebug("识别未完成，可以重新尝试或使用人工协助");
           const terminalNoCharge = data?.usageConsumed === false;
           const terminalMessage = terminalNoCharge
-            ? "本次异步识别未完成，未扣除使用次数。"
-            : "本次异步识别任务失败，结果未开放。";
-          setRecognitionStatus(terminalMessage, "warning");
+            ? "本次识别未完成，未扣除使用次数。请重新识别或使用人工协助。"
+            : "本次识别未完成，请重新识别或使用人工协助。";
           showMessage(terminalMessage, false, COORDINATE_RECOGNITION_MESSAGE_MS);
           showUploadSupportMessage(terminalMessage);
           trackEvent("image_recognize_fail", {

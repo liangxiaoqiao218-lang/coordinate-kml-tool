@@ -737,7 +737,7 @@ test("production source orders Provider admission before attempt and defers usag
   assert.match(serverSource, /if \(responseCommitPromise\) await responseCommitPromise/);
   assert.match(deadlineSource, /DEFAULT_RECOGNITION_HARD_DEADLINE_MS = 55_000/);
   assert.match(deadlineSource, /MAX_RECOGNITION_HARD_DEADLINE_MS = 59_000/);
-  const fixedMessage = "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。";
+  const fixedMessage = "本次识别未完成，未扣除使用次数。请重新识别或使用人工协助。";
   assert.ok(serverSource.includes(fixedMessage));
   assert.ok(indexSource.includes(fixedMessage));
   assert.match(indexSource, /RECOGNITION_BUDGET_EXHAUSTED/);
@@ -2308,6 +2308,40 @@ test("one-shot structured Provider DMS review accepts exact whitespace-delimited
   assert.equal(runtime.extractProviderDmsReviewEvidence(sourceText.replace("43' 16.45", "43'")).status, "REVIEW_REQUIRED");
 });
 
+test("Provider DMS evidence safely combines split axis fields and removes exact overlap duplicates", () => {
+  const sourceText = [
+    "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+    "AXIS",
+    "LATITUDE=N",
+    "LONGITUDE=W",
+    "ROW | 1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "ROW | 2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "ROW | 2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "ROW | 3 | 11° 43' 03.38'' | 09° 00' 58.67''",
+    "ROW | 4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(sourceText);
+  assert.equal(evidence.status, "COMPLETE");
+  assert.equal(evidence.axisDirectionBound, true);
+  assert.equal(evidence.candidateRowCount, 5);
+  assert.equal(evidence.sourceRowCount, 4);
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(evidence.duplicateRowCount, 1);
+  assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
+});
+
+test("Provider DMS evidence keeps conflicting split axis fields fail closed", () => {
+  const sourceText = [
+    "LATITUDE=N",
+    "LATITUDE=S",
+    "LONGITUDE=W",
+    "ROW | 1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "ROW | 2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "ROW | 3 | 11° 43' 03.38'' | 09° 00' 58.67''"
+  ].join("\n");
+  assert.equal(runtime.extractProviderDmsReviewEvidence(sourceText).status, "REVIEW_REQUIRED");
+});
+
 test("one-shot structured Provider DMS review accepts complete triples without seconds marks", () => {
   const sourceText = [
     "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
@@ -2455,7 +2489,7 @@ test("projected table OCR acquisition hint is generic, structure-bound, and revi
   assert.match(prompt, /Never infer a zone, hemisphere, CRS, missing digit, missing row/u);
   assert.doesNotMatch(prompt, /727250|1219700|Burkina|布基纳/u);
   assert.match(serverSource, /const selectedProviderModel = aliyunVisionModel;/u);
-  assert.match(serverSource, /const selectedProviderMaxTokens = 12000;/u);
+  assert.match(serverSource, /const selectedProviderMaxTokens = 8_000;/u);
   assert.match(serverSource, /enableThinking: false/u);
   assert.doesNotMatch(serverSource, /projectedTableOcrAcquisition\s*\?\s*aliyunOcrModel\s*:\s*aliyunVisionModel/u);
 });
@@ -2725,7 +2759,7 @@ test("contextual UTM30 site vertices auto-locate while crossed source order rema
   ].join("\n");
   assert.equal(payload.success, true);
   assert.equal(payload.providerRequestControl?.enableThinking, false);
-  assert.equal(payload.providerRequestControl?.maxTokens, 12000);
+  assert.equal(payload.providerRequestControl?.maxTokens, 8000);
   assert.equal(payload.precisionMode, "utm30n-projected-x-y");
   assert.equal(payload.coordinates, expectedCoordinates);
   assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedCoordinates);

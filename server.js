@@ -7401,29 +7401,93 @@ function extractProviderDmsReviewEvidence(text) {
     (line.match(/[°º˚]/gu) || []).length === 2
   ));
   const sourceRows = candidateRows.filter(line => hasCompleteProviderDmsPair(line));
-  const sourceLabels = sourceRows.map(line => {
+
+  const collectAxisDirections = (axisPattern, positivePattern, negativePattern, positive, negative) => {
+    const directions = new Set();
+    for (const line of lines) {
+      const fields = line.replace(/[｜]/gu, "|").split("|").map(field => field.trim()).filter(Boolean);
+      for (const field of fields) {
+        if (!axisPattern.test(field)) continue;
+        const hasPositive = positivePattern.test(field);
+        const hasNegative = negativePattern.test(field);
+        if (hasPositive) directions.add(positive);
+        if (hasNegative) directions.add(negative);
+      }
+    }
+    return directions;
+  };
+  const latitudeDirections = collectAxisDirections(
+    /(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu,
+    /(?:\bnorth\b|\bnord\b|\bnorte\b|北纬|(?:^|[=:\s])N(?:$|\s))/iu,
+    /(?:\bsouth\b|\bsud\b|\bsul\b|\bsur\b|南纬|(?:^|[=:\s])S(?:$|\s))/iu,
+    "N",
+    "S"
+  );
+  const longitudeDirections = collectAxisDirections(
+    /(?:\blon(?:gitude)?\b|经度|东经|西经)/iu,
+    /(?:\beast\b|\best\b|\bleste\b|东经|(?:^|[=:\s])E(?:$|\s))/iu,
+    /(?:\bwest\b|\bouest\b|\boeste\b|西经|(?:^|[=:\s])[WO](?:$|\s))/iu,
+    "E",
+    "W"
+  );
+  const explicitAxes = latitudeDirections.size === 1 && longitudeDirections.size === 1
+    ? {
+        latitude: [...latitudeDirections][0],
+        longitude: [...longitudeDirections][0]
+      }
+    : null;
+  const axisConflict = latitudeDirections.size > 1 || longitudeDirections.size > 1;
+
+  const parseProviderRow = line => {
+    const tokens = getDmsTokensFromLine(line);
+    if (tokens.length !== 2) return null;
+    const parsed = tokens.map((token, index) => {
+      const inlineDirection = normalizeText(token).match(/([NSEWO])\s*$/iu)?.[1]?.toUpperCase() || "";
+      const fallbackDirection = index === 0 ? explicitAxes?.latitude : explicitAxes?.longitude;
+      return parseCompactDmsToken(token, inlineDirection || fallbackDirection || "");
+    }).filter(Boolean).filter(item => item.value !== null);
+    if (parsed.length !== 2) return null;
+    const latitude = parsed.find(item => ["N", "S"].includes(item.direction));
+    const longitude = parsed.find(item => ["E", "W", "O"].includes(item.direction));
+    if (!latitude || !longitude) return null;
+    const lonNumber = Number(longitude.value);
+    const latNumber = Number(latitude.value);
+    if (!Number.isFinite(lonNumber) || !Number.isFinite(latNumber)) return null;
+    if (Math.abs(lonNumber) > 180 || Math.abs(latNumber) > 90) return null;
+    return `${longitude.value},${latitude.value}`;
+  };
+
+  const rowEntries = sourceRows.map(line => {
     const pipeFields = line.replace(/[｜]/gu, "|").split("|").map(field => field.trim()).filter(Boolean);
     const pipeLabel = pipeFields.length >= 3
       ? (/^POINT$/iu.test(pipeFields[0]) ? pipeFields[1] : pipeFields[0])
       : "";
     const whitespaceLabel = line.match(/^\s*(?:POINT\s+)?([A-Z]|\d{1,3})(?=\s|[|:;,])/iu)?.[1] || "";
-    return String(pipeLabel || whitespaceLabel).trim().toUpperCase();
+    return {
+      label: String(pipeLabel || whitespaceLabel).trim().toUpperCase(),
+      coordinate: parseProviderRow(line)
+    };
   });
-  const coordinateLines = extractDmsCoordinateLines(sourceText);
-  const explicitHeaderDirection = lines.some(line => {
-    const hasLatitude = /(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu.test(line);
-    const hasLongitude = /(?:\blon(?:gitude)?\b|经度|东经|西经)/iu.test(line);
-    const hasLatitudeDirection = /(?:\bnorth\b|\bsouth\b|\bnord\b|\bsud\b|\bnorte\b|\bsul\b|北纬|南纬|\b[NS]\b)/iu.test(line);
-    const hasLongitudeDirection = /(?:\beast\b|\bwest\b|\best\b|\bouest\b|\boeste\b|\bleste\b|东经|西经|\b[EWO]\b)/iu.test(line);
-    return hasLatitude && hasLongitude && hasLatitudeDirection && hasLongitudeDirection;
-  });
+  const uniqueEntries = [];
+  const seenEntries = new Set();
+  for (const entry of rowEntries) {
+    if (!entry.coordinate) continue;
+    const identity = `${entry.label || "UNLABELED"}|${entry.coordinate}`;
+    if (seenEntries.has(identity)) continue;
+    seenEntries.add(identity);
+    uniqueEntries.push(entry);
+  }
+  const sourceLabels = uniqueEntries.map(entry => entry.label);
+  const coordinateLines = uniqueEntries.map(entry => entry.coordinate);
+  const explicitHeaderDirection = Boolean(explicitAxes) && !axisConflict;
   const everyRowHasDirections = sourceRows.length > 0 && sourceRows.every(line => (
     /(?:\b[NS]\b|[NS]\s*$)/iu.test(line)
       && /(?:\b[EWO]\b|[EWO]\s*$)/iu.test(line)
   ));
-  const complete = sourceRows.length >= 3
+  const complete = coordinateLines.length >= 3
     && sourceRows.length === candidateRows.length
-    && coordinateLines.length === sourceRows.length
+    && rowEntries.every(entry => Boolean(entry.coordinate))
+    && !axisConflict
     && (explicitHeaderDirection || everyRowHasDirections);
   const pointAzLabels = Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index));
   const coordinateFamily = complete
@@ -7435,9 +7499,10 @@ function extractProviderDmsReviewEvidence(text) {
   return Object.freeze({
     status: complete ? "COMPLETE" : "REVIEW_REQUIRED",
     coordinateRowCount: coordinateLines.length,
-    sourceRowCount: sourceRows.length,
+    sourceRowCount: uniqueEntries.length,
     candidateRowCount: candidateRows.length,
     axisDirectionBound: explicitHeaderDirection || everyRowHasDirections,
+    duplicateRowCount: Math.max(0, sourceRows.length - uniqueEntries.length),
     coordinateFamily,
     coordinates: complete ? coordinateLines.join("\n") : ""
   });
@@ -15560,7 +15625,7 @@ async function recognizeCoordinatesHandler(req, res) {
             success: false,
             reason: error.reason || "budget_exhausted",
             code: RECOGNITION_BUDGET_CODE,
-            error: "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。",
+            error: "本次识别未完成，未扣除使用次数。请重新识别或使用人工协助。",
             requestId: recognitionBudget?.requestId || null,
             usageConsumed: false,
             userUsageConsumed: false,
@@ -19631,7 +19696,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         success: false,
         reason: error.reason || "budget_exhausted",
         code: RECOGNITION_BUDGET_CODE,
-        error: "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。",
+        error: "本次识别未完成，未扣除使用次数。请重新识别或使用人工协助。",
         requestId: recognitionBudget?.requestId || null,
         usageConsumed: false,
         retryAllowed: true,
@@ -20464,7 +20529,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
           success: false,
           reason: fallbackError.reason || "budget_exhausted",
           code: RECOGNITION_BUDGET_CODE,
-          error: "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。",
+          error: "本次识别未完成，未扣除使用次数。请重新识别或使用人工协助。",
           requestId: recognitionBudget?.requestId || null,
           providerCompletionState: recognitionBudget?.providerCompletionState || "FAILED",
           providerCallCount: recognitionBudget?.providerAttemptCount || 0,
