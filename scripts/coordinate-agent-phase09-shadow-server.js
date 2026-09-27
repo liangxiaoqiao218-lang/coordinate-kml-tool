@@ -9,9 +9,11 @@ import {
   createCoordinateAgentShadowApp,
 } from '../server/coordinate-agent/index.js';
 import { createPhase9QualificationController } from '../server/coordinate-agent-shadow/phase9-qualification-controller.js';
-import { runPhase9RealProviderQualification } from '../server/coordinate-agent-shadow/phase9-real-provider-qualification.js';
 import {
-  DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
+  PHASE9_QUALIFICATION_TIMEOUT_MS,
+  runPhase9RealProviderQualification,
+} from '../server/coordinate-agent-shadow/phase9-real-provider-qualification.js';
+import {
   normalizeCoordinateAgentProviderTimeoutMs,
 } from '../server/coordinate-agent-transports/dashscope-openai-compatible-transport.js';
 import { createCoordinateAgentReplayShadowEvaluator } from './lib/coordinate-agent-shadow-evaluator.js';
@@ -29,7 +31,7 @@ if (![1, 2].includes(requestedProviderCallLimit)) throw new Error('Provider call
 // including services that still carry the earlier Phase 9 "=2" start flag.
 const maxProviderCalls = Math.min(requestedProviderCallLimit, 1);
 const providerRequestTimeoutMs = normalizeCoordinateAgentProviderTimeoutMs(
-  process.env.COORDINATE_AGENT_PROVIDER_TIMEOUT_MS || DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
+  process.env.COORDINATE_AGENT_PROVIDER_TIMEOUT_MS || PHASE9_QUALIFICATION_TIMEOUT_MS,
 );
 const scenarioPaths = [
   path.join(root, 'regression-samples', 'coordinate-agent-phase03', 'mock-scenarios.v1.json'),

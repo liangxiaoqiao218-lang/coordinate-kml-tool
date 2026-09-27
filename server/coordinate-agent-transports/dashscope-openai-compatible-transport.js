@@ -22,6 +22,13 @@ function jsonText(value) {
   return JSON.stringify(value, null, 2);
 }
 
+function decodedBase64Bytes(value) {
+  const text = String(value || '');
+  if (!text) return 0;
+  const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((text.length * 3) / 4) - padding);
+}
+
 function userInstruction(request) {
   return [
     `Agent iteration: ${request.iteration}`,
@@ -129,11 +136,18 @@ export class DashScopeOpenAICompatibleTransport {
   async complete(request) {
     const accessToken = String(await this.#getAccessToken() || '').trim();
     if (!accessToken) throw new Error('DashScope access token is unavailable');
+    const buildStartedAt = Date.now();
     const requestBody = mapCoordinateAgentRequestToDashScope(request, {
       model: this.#model,
       maxTokens: this.#maxTokens,
       highResolutionImages: this.#highResolutionImages,
     });
+    const requestBodyJson = JSON.stringify(requestBody);
+    const requestBuildDurationMs = Date.now() - buildStartedAt;
+    const requestBodyBytes = Buffer.byteLength(requestBodyJson);
+    const imageBytes = (request.assets || [])
+      .reduce((total, asset) => total + decodedBase64Bytes(asset.bytesBase64), 0);
+    const schemaBytes = Buffer.byteLength(JSON.stringify(request.responseSchema || {}));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
     const startedAt = Date.now();
@@ -146,7 +160,7 @@ export class DashScopeOpenAICompatibleTransport {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: requestBodyJson,
         signal: controller.signal,
       });
       payload = await response.json().catch(() => ({}));
@@ -162,6 +176,10 @@ export class DashScopeOpenAICompatibleTransport {
         httpStatus: null,
         durationMs: Date.now() - startedAt,
         timeoutMs: this.#timeoutMs,
+        requestBuildDurationMs,
+        requestBodyBytes,
+        imageBytes,
+        schemaBytes,
         usageObserved: false,
         usage: null,
         errorCode: normalized.code,
@@ -179,6 +197,10 @@ export class DashScopeOpenAICompatibleTransport {
       httpStatus: Number(response.status),
       durationMs: Date.now() - startedAt,
       timeoutMs: this.#timeoutMs,
+      requestBuildDurationMs,
+      requestBodyBytes,
+      imageBytes,
+      schemaBytes,
       usageObserved: usage !== null,
       usage,
       errorCode: response.ok ? null : 'DASHSCOPE_HTTP_ERROR',

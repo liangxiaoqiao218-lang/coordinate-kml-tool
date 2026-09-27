@@ -117,6 +117,7 @@ const publicQualificationReport = await runPhase9RealProviderQualification({
     DASHSCOPE_API_KEY: 'offline-placeholder',
     DASHSCOPE_VISION_MODEL: 'offline-vision-model',
     DASHSCOPE_BASE_URL: 'https://offline.invalid/compatible-mode/v1',
+    COORDINATE_AGENT_PROVIDER_TIMEOUT_MS: '90000',
   },
   fetchImpl: async () => ({
     ok: false,

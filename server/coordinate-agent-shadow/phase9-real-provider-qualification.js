@@ -12,10 +12,12 @@ import {
   registerGenericImageTools,
 } from '../coordinate-agent/index.js';
 import {
-  DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
   DashScopeOpenAICompatibleTransport,
   normalizeCoordinateAgentProviderTimeoutMs,
 } from '../coordinate-agent-transports/dashscope-openai-compatible-transport.js';
+import { createCoordinateAgentProviderImageResolver } from '../coordinate-agent-transports/provider-image-budget.js';
+
+export const PHASE9_QUALIFICATION_TIMEOUT_MS = 150_000;
 
 function sumUsage(telemetry) {
   return telemetry.reduce((totals, item) => ({
@@ -46,10 +48,13 @@ export async function runPhase9RealProviderQualification({
   const source = await fs.readFile(imagePath);
   const sourceHash = createHash('sha256').update(source).digest('hex');
   const requestTimeoutMs = normalizeCoordinateAgentProviderTimeoutMs(
-    env.COORDINATE_AGENT_PROVIDER_TIMEOUT_MS || DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
+    env.COORDINATE_AGENT_PROVIDER_TIMEOUT_MS || PHASE9_QUALIFICATION_TIMEOUT_MS,
   );
   const workspace = new LocalImageWorkspace();
   const imageRef = workspace.registerBuffer(source, { label: 'phase9-registered-evaluation' });
+  const providerImageResolver = createCoordinateAgentProviderImageResolver({
+    resolveImage: ref => workspace.resolve(ref),
+  });
   const rawTransport = new DashScopeOpenAICompatibleTransport({
     fetchImpl,
     getAccessToken: () => env.ALIYUN_API_KEY || env.DASHSCOPE_API_KEY || '',
@@ -68,7 +73,7 @@ export async function runPhase9RealProviderQualification({
   });
   const adapter = new CoordinateAgentMultimodalProviderAdapter({
     transport,
-    resolveImage: ref => workspace.resolve(ref),
+    resolveImage: providerImageResolver.resolve,
   });
   const registry = new CoordinateAgentToolRegistry();
   registerGenericImageTools(registry, createSharpImageOperations({ workspace }));
@@ -81,6 +86,7 @@ export async function runPhase9RealProviderQualification({
   }).run({ imageRef, requestId: `shadow:phase9:${caseId}` });
   const afterHash = createHash('sha256').update(await fs.readFile(imagePath)).digest('hex');
   const telemetry = rawTransport.telemetry();
+  const imageMetrics = providerImageResolver.metrics();
   const pointCount = (result.coordinateResult?.groups || [])
     .reduce((sum, group) => sum + group.points.length, 0);
   return Object.freeze({
@@ -91,6 +97,7 @@ export async function runPhase9RealProviderQualification({
     realProviderCallCount: providerAttempts,
     automaticRetryCount: 0,
     requestTimeoutMs,
+    imageMetrics: Object.freeze(imageMetrics.map(item => ({ ...item }))),
     usage: Object.freeze(sumUsage(telemetry)),
     billingStatus: telemetry.some(item => item.usageObserved)
       ? 'USAGE_REPORTED_EXACT_BILLING_NOT_VERIFIED'
@@ -110,6 +117,10 @@ export async function runPhase9RealProviderQualification({
       usageObserved: item.usageObserved,
       durationMs: item.durationMs,
       timeoutMs: item.timeoutMs,
+      requestBuildDurationMs: item.requestBuildDurationMs,
+      requestBodyBytes: item.requestBodyBytes,
+      imageBytes: item.imageBytes,
+      schemaBytes: item.schemaBytes,
     }))),
     toolCalls: Object.freeze(result.evidence.toolResults.map(item => ({
       toolName: item.toolName,
