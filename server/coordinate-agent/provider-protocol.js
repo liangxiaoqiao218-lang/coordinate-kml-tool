@@ -19,7 +19,9 @@ Never infer a missing direction, datum, coordinate reference system, grouping bo
 
 Return only one JSON object that conforms exactly to the supplied response schema. Do not include markdown, commentary, or properties outside that schema.
 
-The top-level JSON object must contain observation and plan. Always include candidate, uncertainties, and reviewItems; use null or empty arrays when no value is available. observation.regions and plan.actions must always be arrays. Every region, action, uncertainty, review item, group, and point must include every field marked required by the supplied schema. Use only the supplied enum values and tool names. JSON numbers and booleans must not be quoted.`;
+The top-level JSON object must contain observation and plan. Always include candidate, uncertainties, and reviewItems; use null or empty arrays when no value is available. observation.regions and plan.actions must always be arrays. Every region, action, uncertainty, review item, group, and point must include every field marked required by the supplied schema. Use only the supplied enum values and tool names. JSON numbers and booleans must not be quoted.
+
+For every candidate point, use latitude/longitude only for normalized signed geographic coordinates supported by explicit visible evidence. Use x/y only for projected coordinates. A geographic-only point must set x and y to null; a projected-only point must set latitude and longitude to null. Do not place geographic values in x/y, do not copy projected values into latitude/longitude, and do not invent a conversion. If the CRS family, axis meaning, direction, datum, or conversion is unresolved, preserve the visible pair in its proper fields, set needsReview true, and return needs_review.`;
 
 function clone(value) {
   return structuredClone(value);

@@ -45,6 +45,7 @@
     "coordinate-agent-phase09a-contract-diagnostic-regression": "node scripts/coordinate-agent-phase09a-contract-diagnostic-regression.js",
     "coordinate-agent-phase09b-timeout-regression": "node scripts/coordinate-agent-phase09b-timeout-regression.js",
     "coordinate-agent-phase09c-payload-regression": "node scripts/coordinate-agent-phase09c-payload-regression.js",
+    "coordinate-agent-phase09d-candidate-contract-regression": "node scripts/coordinate-agent-phase09d-candidate-contract-regression.js",
     "ocr-golden": "node scripts/ocr-golden-runner.js",
     "recognition-first-acquisition-v1-regression": "node scripts/recognition-first-acquisition-v1-regression.js",
     "recognition-first-review-result-v2-regression": "node scripts/recognition-first-review-result-v2-regression.js",

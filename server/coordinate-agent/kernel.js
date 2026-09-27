@@ -67,6 +67,16 @@ async function runDeterministicCandidateVerification({ candidate, board, toolReg
   let toolCallCount = 0;
   let verified = points.length > 0;
 
+  if (candidate.coordinateSystem?.kind !== 'geographic'
+    || candidate.coordinateSystem?.status !== 'identified') {
+    verified = false;
+    board.addUncertainty({
+      code: 'DETERMINISTIC_GEOGRAPHIC_CRS_UNAVAILABLE',
+      message: 'Candidate authorization requires an explicitly identified geographic coordinate system',
+      blocking: true,
+    });
+  }
+
   if (points.length === 0) {
     board.addUncertainty({
       code: 'DETERMINISTIC_COORDINATE_VERIFICATION_MISSING',

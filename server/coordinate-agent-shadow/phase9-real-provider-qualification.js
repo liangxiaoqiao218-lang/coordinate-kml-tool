@@ -16,6 +16,7 @@ import {
   normalizeCoordinateAgentProviderTimeoutMs,
 } from '../coordinate-agent-transports/dashscope-openai-compatible-transport.js';
 import { createCoordinateAgentProviderImageResolver } from '../coordinate-agent-transports/provider-image-budget.js';
+import { summarizeCandidateRepresentation } from '../coordinate-agent/candidate-representation-summary.js';
 
 export const PHASE9_QUALIFICATION_TIMEOUT_MS = 150_000;
 
@@ -94,6 +95,13 @@ export async function runPhase9RealProviderQualification({
     status: 'COMPLETED',
     terminalState: result.terminalState,
     candidatePointCount: pointCount,
+    verifiedPointCount: result.evidence.toolResults.filter(item => (
+      String(item.actionId || '').startsWith('safety-math-')
+      && item.toolName === 'coordinate_math_check'
+      && item.ok === true
+      && item.output?.valid === true
+    )).length,
+    candidateRepresentation: summarizeCandidateRepresentation(result.coordinateResult),
     realProviderCallCount: providerAttempts,
     automaticRetryCount: 0,
     requestTimeoutMs,

@@ -41,15 +41,35 @@ const EXECUTION_DIAGNOSTIC_SCHEMA = {
   },
 };
 const POINT_SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['sourceText'],
-  properties: { label: { type: ['string', 'null'] }, sourceText: { type: 'string' }, x: { type: ['number', 'null'] }, y: { type: ['number', 'null'] }, latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 }, longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 }, needsReview: { type: 'boolean' } },
+  type: 'object',
+  additionalProperties: false,
+  required: ['label', 'sourceText', 'x', 'y', 'latitude', 'longitude', 'needsReview'],
+  properties: {
+    label: { type: ['string', 'null'] },
+    sourceText: { type: 'string', description: 'Source-faithful visible row text; never replace it with normalized values.' },
+    x: { type: ['number', 'null'], description: 'Projected X/easting only. Use null for a geographic-only point.' },
+    y: { type: ['number', 'null'], description: 'Projected Y/northing only. Use null for a geographic-only point.' },
+    latitude: { type: ['number', 'null'], minimum: -90, maximum: 90, description: 'Normalized signed latitude for explicit geographic evidence. Use null for projected-only or unresolved evidence.' },
+    longitude: { type: ['number', 'null'], minimum: -180, maximum: 180, description: 'Normalized signed longitude for explicit geographic evidence. Use null for projected-only or unresolved evidence.' },
+    needsReview: { type: 'boolean' },
+  },
 };
 const CANDIDATE_SCHEMA = {
   type: 'object', additionalProperties: false,
   required: ['success', 'resultStatus', 'displayText', 'coordinateSystem', 'geometryType', 'groups', 'warnings'],
   properties: {
     contractVersion: { type: 'string' }, success: { type: 'boolean' }, resultStatus: { enum: ['usable', 'needs_review', 'failed'] }, displayText: { type: 'string' }, geometryType: { enum: Object.values(AGENTIC_GEOMETRY_TYPE) },
-    coordinateSystem: { type: 'object', additionalProperties: false, required: ['kind', 'status'], properties: { kind: { enum: ['geographic', 'projected', 'unknown'] }, name: { type: ['string', 'null'] }, epsg: { type: ['string', 'null'] }, status: { enum: ['identified', 'needs_confirmation', 'unknown'] } } },
+    coordinateSystem: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['kind', 'name', 'epsg', 'status'],
+      properties: {
+        kind: { enum: ['geographic', 'projected', 'unknown'], description: 'Coordinate family supported by visible evidence.' },
+        name: { type: ['string', 'null'] },
+        epsg: { type: ['string', 'null'] },
+        status: { enum: ['identified', 'needs_confirmation', 'unknown'] },
+      },
+    },
     groups: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['points'], properties: { name: { type: ['string', 'null'] }, points: { type: 'array', minItems: 1, items: POINT_SCHEMA } } } },
     warnings: { type: 'array', items: { type: 'string' } },
     summary: { type: 'object', additionalProperties: false, required: ['groupCount', 'pointCount'], properties: { groupCount: { type: 'integer', minimum: 0 }, pointCount: { type: 'integer', minimum: 0 } } },
