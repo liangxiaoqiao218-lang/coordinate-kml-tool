@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -86,6 +87,123 @@ assert.equal(simulatedQualification.automaticRetryCount, 0);
 assert.equal(simulatedQualification.terminalState, 'CONFIRMED');
 assert.equal(simulatedQualification.sourceUnchanged, true);
 
+const offlineEnv = {
+  DASHSCOPE_API_KEY: 'offline-placeholder',
+  DASHSCOPE_BASE_URL: 'https://offline.invalid/compatible-mode/v1',
+  DASHSCOPE_VISION_MODEL: 'offline-vision-model',
+};
+let preCallFailure;
+try {
+  await runPhase9RealProviderQualification({
+    root: path.join(root, 'missing-phase9-evaluation-root'),
+    caseId: 'eval-001',
+    maxProviderCalls: 1,
+    env: offlineEnv,
+    fetchImpl: async () => {
+      throw new Error('offline fetch must not run before qualification setup');
+    },
+  });
+  assert.fail('Pre-call setup failure must fail closed');
+} catch (error) {
+  preCallFailure = error;
+}
+assert.equal(preCallFailure.realProviderCallCount, 0);
+assert.equal(preCallFailure.automaticRetryCount, 0);
+
+let preCallRunCount = 0;
+const preCallFailureController = createPhase9QualificationController({
+  runQualification: async () => {
+    preCallRunCount += 1;
+    throw preCallFailure;
+  },
+});
+const preCallFirst = preCallFailureController.runOnce();
+const preCallSecond = preCallFailureController.runOnce();
+assert.equal(preCallFirst, preCallSecond);
+const preCallReport = await preCallFirst;
+assert.equal(preCallRunCount, 1);
+assert.equal(preCallReport.realProviderCallCount, 0);
+assert.equal(preCallReport.terminalState, 'FAILED_CLOSED');
+
+const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'coordinate-agent-phase09-failure-'));
+let postCallFailure;
+let postCallFetchCount = 0;
+try {
+  const temporaryManifestPath = path.join(
+    temporaryRoot,
+    'regression-samples',
+    'coordinate-agent-evaluation-manifest.v1.json',
+  );
+  const temporaryImagePath = path.join(temporaryRoot, 'regression-samples', 'fixtures', 'registered-evaluation.png');
+  const registeredManifestPath = path.join(
+    root,
+    'regression-samples',
+    'coordinate-agent-evaluation-manifest.v1.json',
+  );
+  const registeredManifest = JSON.parse(await fs.readFile(registeredManifestPath, 'utf8'));
+  const registeredCase = registeredManifest.cases.find(item => item.id === 'eval-001');
+  const registeredImagePath = path.resolve(path.dirname(registeredManifestPath), registeredCase.image);
+  await fs.mkdir(path.dirname(temporaryImagePath), { recursive: true });
+  await fs.copyFile(registeredImagePath, temporaryImagePath);
+  await fs.writeFile(temporaryManifestPath, JSON.stringify({
+    schemaVersion: 'coordinate-agent-evaluation-manifest/v1',
+    cases: [{ id: 'eval-001', image: 'fixtures/registered-evaluation.png' }],
+  }));
+  const postCallFetch = async (_url, init) => {
+    postCallFetchCount += 1;
+    const body = JSON.parse(init.body);
+    const imageLabel = body.messages[1].content.find(item => item.type === 'text' && /^Image asset /.test(item.text));
+    const imageRef = imageLabel.text.match(/^Image asset (\S+) /)?.[1];
+    const turn = injectImageRef(replayTurns[0], imageRef);
+    await fs.rm(temporaryImagePath);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(turn) } }] }),
+    };
+  };
+  try {
+    await runPhase9RealProviderQualification({
+      root: temporaryRoot,
+      caseId: 'eval-001',
+      maxProviderCalls: 1,
+      env: offlineEnv,
+      fetchImpl: postCallFetch,
+    });
+    assert.fail('Post-call cleanup failure must fail closed');
+  } catch (error) {
+    postCallFailure = error;
+  }
+  assert.equal(postCallFetchCount, 1);
+  assert.equal(postCallFailure.realProviderCallCount, 1);
+  assert.equal(postCallFailure.automaticRetryCount, 0);
+  assert.equal(postCallFailure.providerRequests.length, 1);
+
+  postCallFailure.authorization = 'sensitive-marker';
+  postCallFailure.rawResponse = 'sensitive-marker';
+  let postCallRunCount = 0;
+  const postCallFailureController = createPhase9QualificationController({
+    runQualification: async () => {
+      postCallRunCount += 1;
+      throw postCallFailure;
+    },
+  });
+  const postCallFirst = postCallFailureController.runOnce();
+  const postCallSecond = postCallFailureController.runOnce();
+  assert.equal(postCallFirst, postCallSecond);
+  const postCallReport = await postCallFirst;
+  assert.equal(postCallRunCount, 1);
+  assert.equal(postCallReport.realProviderCallCount, 1);
+  assert.equal(postCallReport.automaticRetryCount, 0);
+  assert.equal(postCallReport.providerRequests.length, 1);
+  assert.equal(JSON.stringify(postCallReport).includes('sensitive-marker'), false);
+} finally {
+  const resolvedTemporaryRoot = path.resolve(temporaryRoot);
+  assert.equal(resolvedTemporaryRoot.startsWith(path.resolve(os.tmpdir())), true);
+  await fs.rm(resolvedTemporaryRoot, { recursive: true, force: true });
+}
+await assert.rejects(fs.access(temporaryRoot));
+
 const app = createCoordinateAgentShadowApp({
   enabled: true,
   evaluateCase: async () => ({ terminalState: 'REVIEW_REQUIRED' }),
@@ -119,6 +237,10 @@ console.log(JSON.stringify({
   realProviderCallCount: 0,
   automaticRetryCount: 0,
   simulatedTransportCalls,
+  preCallFailureCount: preCallReport.realProviderCallCount,
+  postCallFailureCount: postCallFailure.realProviderCallCount,
+  repeatedStatusReadsTriggeredCalls: false,
+  exceptionCleanup: 'PASS',
   networkProviderCalls: 0,
   productionRouteMounted: false,
   mapAllowed: report.mapAllowed,

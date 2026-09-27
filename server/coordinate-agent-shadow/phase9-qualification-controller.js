@@ -1,6 +1,47 @@
 const PUBLIC_STATES = new Set(['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']);
 
+function finiteOrNull(value) {
+  return Number.isFinite(value) ? Number(value) : null;
+}
+
+function safeTokenOrNull(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,80}$/.test(value) ? value : null;
+}
+
+function safeProviderRequests(value) {
+  if (!Array.isArray(value)) return Object.freeze([]);
+  return Object.freeze(value.map(item => Object.freeze({
+    ok: item?.ok === true,
+    httpStatus: finiteOrNull(item?.httpStatus),
+    errorCode: safeTokenOrNull(item?.errorCode),
+    usageObserved: item?.usageObserved === true,
+    durationMs: finiteOrNull(item?.durationMs),
+    timeoutMs: finiteOrNull(item?.timeoutMs),
+    requestBuildDurationMs: finiteOrNull(item?.requestBuildDurationMs),
+    requestBodyBytes: finiteOrNull(item?.requestBodyBytes),
+    imageBytes: finiteOrNull(item?.imageBytes),
+    schemaBytes: finiteOrNull(item?.schemaBytes),
+  })));
+}
+
+function safeImageMetrics(value) {
+  if (!Array.isArray(value)) return Object.freeze([]);
+  return Object.freeze(value.map(item => Object.freeze({
+    originalBytes: finiteOrNull(item?.originalBytes),
+    optimizedBytes: finiteOrNull(item?.optimizedBytes),
+    width: finiteOrNull(item?.width),
+    height: finiteOrNull(item?.height),
+    quality: finiteOrNull(item?.quality),
+    format: safeTokenOrNull(item?.format),
+    optimizationDurationMs: finiteOrNull(item?.optimizationDurationMs),
+  })));
+}
+
 function publicFailure(error) {
+  const realProviderCallCount = Number.isInteger(error?.realProviderCallCount)
+    && error.realProviderCallCount >= 0
+    ? error.realProviderCallCount
+    : 0;
   return Object.freeze({
     schemaVersion: 'coordinate-agent-phase9-qualification/v1',
     status: 'FAILED',
@@ -9,10 +50,10 @@ function publicFailure(error) {
     verifiedPointCount: 0,
     candidateRepresentation: null,
     projectionVerification: null,
-    realProviderCallCount: Number(error?.realProviderCallCount || 0),
+    realProviderCallCount,
     automaticRetryCount: 0,
-    requestTimeoutMs: null,
-    imageMetrics: Object.freeze([]),
+    requestTimeoutMs: finiteOrNull(error?.requestTimeoutMs),
+    imageMetrics: safeImageMetrics(error?.imageMetrics),
     usage: Object.freeze({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
     billingStatus: 'UNKNOWN',
     mapAllowed: false,
@@ -20,7 +61,7 @@ function publicFailure(error) {
     stateHistory: Object.freeze([]),
     toolCalls: Object.freeze([]),
     diagnostics: Object.freeze([]),
-    providerRequests: Object.freeze([]),
+    providerRequests: safeProviderRequests(error?.providerRequests),
     validationFailureCodes: Object.freeze(['PHASE9_QUALIFICATION_FAILED']),
     sourceUnchanged: true,
   });

@@ -28,6 +28,41 @@ function sumUsage(telemetry) {
   }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
 }
 
+function summarizeImageMetrics(metrics) {
+  return Object.freeze(metrics.map(item => ({ ...item })));
+}
+
+function summarizeProviderRequests(telemetry) {
+  return Object.freeze(telemetry.map(item => ({
+    ok: item.ok,
+    httpStatus: item.httpStatus,
+    errorCode: item.errorCode || null,
+    usageObserved: item.usageObserved,
+    durationMs: item.durationMs,
+    timeoutMs: item.timeoutMs,
+    requestBuildDurationMs: item.requestBuildDurationMs,
+    requestBodyBytes: item.requestBodyBytes,
+    imageBytes: item.imageBytes,
+    schemaBytes: item.schemaBytes,
+  })));
+}
+
+function createQualificationFailure({
+  providerAttempts,
+  requestTimeoutMs,
+  rawTransport,
+  providerImageResolver,
+}) {
+  const failure = new Error('Phase 9 qualification failed closed');
+  failure.code = 'PHASE9_QUALIFICATION_FAILED';
+  failure.realProviderCallCount = providerAttempts;
+  failure.automaticRetryCount = 0;
+  failure.requestTimeoutMs = Number.isFinite(requestTimeoutMs) ? requestTimeoutMs : null;
+  failure.providerRequests = summarizeProviderRequests(rawTransport?.telemetry?.() || []);
+  failure.imageMetrics = summarizeImageMetrics(providerImageResolver?.metrics?.() || []);
+  return failure;
+}
+
 function summarizeProjectionVerification(toolResults) {
   const result = toolResults.find(item => (
     item.actionId === 'safety-projection-transform'
@@ -88,6 +123,20 @@ export async function runPhase9RealProviderQualification({
   env = process.env,
   fetchImpl = fetch,
 } = {}) {
+  const failureState = {
+    providerAttempts: 0,
+    requestTimeoutMs: null,
+    rawTransport: null,
+    providerImageResolver: null,
+  };
+  try {
+    return await runQualification({ root, caseId, maxProviderCalls, env, fetchImpl }, failureState);
+  } catch {
+    throw createQualificationFailure(failureState);
+  }
+}
+
+async function runQualification({ root, caseId, maxProviderCalls, env, fetchImpl }, failureState) {
   if (![1, 2].includes(Number(maxProviderCalls))) throw new Error('Phase 9 Provider call limit must be 1 or 2');
   const manifestPath = path.join(root, 'regression-samples', 'coordinate-agent-evaluation-manifest.v1.json');
   const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
@@ -104,11 +153,13 @@ export async function runPhase9RealProviderQualification({
   const requestTimeoutMs = normalizeCoordinateAgentProviderTimeoutMs(
     env.COORDINATE_AGENT_PROVIDER_TIMEOUT_MS || PHASE9_QUALIFICATION_TIMEOUT_MS,
   );
+  failureState.requestTimeoutMs = requestTimeoutMs;
   const workspace = new LocalImageWorkspace();
   const imageRef = workspace.registerBuffer(source, { label: 'phase9-registered-evaluation' });
   const providerImageResolver = createCoordinateAgentProviderImageResolver({
     resolveImage: ref => workspace.resolve(ref),
   });
+  failureState.providerImageResolver = providerImageResolver;
   const rawTransport = new DashScopeOpenAICompatibleTransport({
     fetchImpl,
     getAccessToken: () => env.ALIYUN_API_KEY || env.DASHSCOPE_API_KEY || '',
@@ -117,11 +168,13 @@ export async function runPhase9RealProviderQualification({
     timeoutMs: requestTimeoutMs,
     maxTokens: 8_000,
   });
-  let providerAttempts = 0;
+  failureState.rawTransport = rawTransport;
   const transport = Object.freeze({
     async complete(request) {
-      if (providerAttempts >= Number(maxProviderCalls)) throw new Error('Phase 9 Provider call budget exhausted');
-      providerAttempts += 1;
+      if (failureState.providerAttempts >= Number(maxProviderCalls)) {
+        throw new Error('Phase 9 Provider call budget exhausted');
+      }
+      failureState.providerAttempts += 1;
       return rawTransport.complete(request);
     },
   });
@@ -156,10 +209,10 @@ export async function runPhase9RealProviderQualification({
     )).length,
     candidateRepresentation: summarizeCandidateRepresentation(result.coordinateResult),
     projectionVerification: summarizeProjectionVerification(result.evidence.toolResults),
-    realProviderCallCount: providerAttempts,
+    realProviderCallCount: failureState.providerAttempts,
     automaticRetryCount: 0,
     requestTimeoutMs,
-    imageMetrics: Object.freeze(imageMetrics.map(item => ({ ...item }))),
+    imageMetrics: summarizeImageMetrics(imageMetrics),
     usage: Object.freeze(sumUsage(telemetry)),
     billingStatus: telemetry.some(item => item.usageObserved)
       ? 'USAGE_REPORTED_EXACT_BILLING_NOT_VERIFIED'
@@ -172,18 +225,7 @@ export async function runPhase9RealProviderQualification({
       reason: item.reason,
     }))),
     diagnostics: Object.freeze(result.execution.diagnostics.map(item => ({ ...item }))),
-    providerRequests: Object.freeze(telemetry.map(item => ({
-      ok: item.ok,
-      httpStatus: item.httpStatus,
-      errorCode: item.errorCode || null,
-      usageObserved: item.usageObserved,
-      durationMs: item.durationMs,
-      timeoutMs: item.timeoutMs,
-      requestBuildDurationMs: item.requestBuildDurationMs,
-      requestBodyBytes: item.requestBodyBytes,
-      imageBytes: item.imageBytes,
-      schemaBytes: item.schemaBytes,
-    }))),
+    providerRequests: summarizeProviderRequests(telemetry),
     toolCalls: Object.freeze(result.evidence.toolResults.map(item => ({
       toolName: item.toolName,
       ok: item.ok,
