@@ -5371,6 +5371,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let recognitionProgressHideTimer = null;
     let internalNormalizedCoordinateGroups = null;
     let internalKmlSourceDirty = false;
+    let activeSourceCoordinateRepresentation = null;
     let activeCoordinatePrecisionMode = "";
     let activeProjectedReviewEvidence = null;
     let activeProjectedAutoCrs = "";
@@ -6720,7 +6721,7 @@ Au值 = 纯度 × 10 后取整数</div>
         return { text: "已生成 KML 文件，可直接下载", type: "success", hideDelay: 4200 };
       }
       if (/已生成/.test(value) && /KML/i.test(value)) {
-        return { text: "请结合原图核对", type: "warning", hideDelay: 6000 };
+        return { text: "请结合原图核对", type: "warning", hideDelay: 0 };
       }
       if (/已识别|识别完成|已自动识别/.test(value) && !/风险|核对|校对|人工|建议|需确认|异常|缺失/.test(value)) {
         return { text: "识别完成", type: "success", hideDelay: 3800 };
@@ -6732,7 +6733,7 @@ Au值 = 纯度 × 10 后取整数</div>
         return { text: getLegacyToastTitle(value, "error") || "识别失败", type: "error", hideDelay: 6500 };
       }
       if (/风险|核对|校对|人工|建议|可能|需确认|请先确认/.test(value) && /坐标|KML|识别|经纬度|投影|网格|MGRS|BFTM|GK|DMS/i.test(value)) {
-        return { text: "请结合原图核对", type: "warning", hideDelay: 6000 };
+        return { text: "请结合原图核对", type: "warning", hideDelay: 0 };
       }
 
       return null;
@@ -9162,6 +9163,17 @@ Au值 = 纯度 × 10 后取整数</div>
       if ("open" in debugPanel) debugPanel.open = true;
       debugText.textContent = debugText.textContent ? `${debugText.textContent}\n${entry}` : entry;
       debugText.scrollTop = debugText.scrollHeight;
+    }
+
+    async function appendRecognizedCoordinateDetails(rows, expectedCount) {
+      const safeRows = Array.isArray(rows)
+        ? rows.map(row => String(row || "").trim()).filter(Boolean)
+        : [];
+      const visibleRows = safeRows.slice(0, Math.max(0, Number(expectedCount) || safeRows.length));
+      for (let index = 0; index < visibleRows.length; index += 1) {
+        appendDebug(`第 ${index + 1} 行已识别：${visibleRows[index]}`);
+        await new Promise(resolve => requestAnimationFrame(() => resolve()));
+      }
     }
 
     function setDebugRunning(running) {
@@ -13784,6 +13796,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       resetProjectedCoordinateUiState();
       activeCoordinateEngineV2 = null;
       activeFinalizedCoordinateResult = null;
+      activeSourceCoordinateRepresentation = null;
       activeRecognitionAcquisitionResult = null;
       finalizedCoordinateTextSnapshot = "";
       finalizedCoordinateDirty = false;
@@ -15366,6 +15379,11 @@ ${placemarks}
         }
 
         activeCoordinatePrecisionMode = data.precisionMode || "";
+        const trustedProviderDmsEvidence = data.providerDmsReviewEvidence || null;
+        const trustedProviderDmsCoordinateCount = Number(trustedProviderDmsEvidence?.coordinateRowCount) || 0;
+        const isTrustedProviderDmsReview = ["COMPLETE", "PROVISIONAL"].includes(
+          String(trustedProviderDmsEvidence?.status || "").toUpperCase()
+        ) && trustedProviderDmsCoordinateCount > 0 && Boolean(String(data.coordinates || "").trim());
         activeProjectedReviewEvidence = data.providerProjectedReviewEvidence
           || data.projectedCoordinateReviewEvidence
           || null;
@@ -15403,7 +15421,7 @@ ${placemarks}
         );
         const isDmsGrouped = data.precisionMode === "dms-grouped-coordinates";
         const isFrenchPerimeterDms = data.precisionMode === "french-perimeter-dms-prose";
-        const chatRows = !isDmsGrouped && Array.isArray(data.chatCoordinates?.points) && data.chatCoordinates.points.length > 0
+        const chatRows = !isTrustedProviderDmsReview && !isDmsGrouped && Array.isArray(data.chatCoordinates?.points) && data.chatCoordinates.points.length > 0
           ? data.chatCoordinates.points.map((point, index) => {
             const lat = Number(point.lat);
             const lon = Number(point.lon);
@@ -15417,13 +15435,13 @@ ${placemarks}
               kmlCoordinate: point.kmlCoordinate || `${lon},${lat},0`
             };
           }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
-          : (isDmsGrouped ? [] : extractChatCoordinateRows(data.rawText || data.coordinates));
+          : (isTrustedProviderDmsReview || isDmsGrouped ? [] : extractChatCoordinateRows(data.rawText || data.coordinates));
         const chatText = formatChatCoordinateRows(chatRows);
         const frenchPerimeterFormattedSource = isFrenchPerimeterDms
           ? (data.coordinates || "")
           : "";
         const wgs84TableFallbackSource = frenchPerimeterFormattedSource || data.rawText || data.coordinates;
-        const wgs84TableRows = Array.isArray(data.wgs84TableCoordinates?.points) && data.wgs84TableCoordinates.points.length > 0
+        const wgs84TableRows = !isTrustedProviderDmsReview && Array.isArray(data.wgs84TableCoordinates?.points) && data.wgs84TableCoordinates.points.length > 0
           ? data.wgs84TableCoordinates.points.map((point, index) => {
             const lat = Number(point.lat);
             const lon = Number(point.lon);
@@ -15437,9 +15455,9 @@ ${placemarks}
               kmlCoordinate: point.kmlCoordinate || `${lon},${lat},0`
             };
           }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon))
-          : extractWgs84TableCoordinateRows(wgs84TableFallbackSource, {
+          : (isTrustedProviderDmsReview ? [] : extractWgs84TableCoordinateRows(wgs84TableFallbackSource, {
             preserveDuplicatePoints: true
-          });
+          }));
         const wgs84TableText = formatChatCoordinateRows(wgs84TableRows);
         const isWgs84TableCoordinates = !isFrenchPerimeterDms && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && Boolean(data.precisionMode === "wgs84-table-coordinates" || data.wgs84TableCoordinates?.isWgs84TableCoordinates || wgs84TableRows.length > 0);
         const isChatCoordinates = !isFrenchPerimeterDms && !isDmsGrouped && !isCadastralGrid && !isMgrs && !isMozambiqueGeographicTable && !isWgs84TableCoordinates && Boolean(data.chatCoordinates?.isChatCoordinates || chatRows.length > 0);
@@ -15477,7 +15495,9 @@ ${placemarks}
         // 8. Kyrgyzstan Gauss-Kruger: display point | X | Y sorted by point; KML converts EPSG:28413 to WGS84.
         // 9. Plain decimal lon/lat: use the ordinary polygon path only.
         // Do not add a new display layer that overwrites recognizedLines, cadastralGridText, mgrsText, mozambiqueText, wgs84TableText, chatText, or kyrgyzGkText.
-        const finalCoordinates = isDmsGrouped
+        const finalCoordinates = isTrustedProviderDmsReview
+          ? String(data.coordinates || "").trim()
+          : isDmsGrouped
           ? (data.coordinates || dmsCoordinates || "")
           : isFrenchPerimeterDms
             ? (wgs84TableText || data.coordinates || "")
@@ -15505,7 +15525,9 @@ ${placemarks}
               dmsCoordinates
             ]);
 
-        const safeCandidatePointCount = Array.isArray(data.candidateCoordinates) && data.candidateCoordinates.length > 0
+        const safeCandidatePointCount = isTrustedProviderDmsReview
+          ? trustedProviderDmsCoordinateCount
+          : Array.isArray(data.candidateCoordinates) && data.candidateCoordinates.length > 0
           ? data.candidateCoordinates.length
           : countCoordinateRows(finalCoordinates);
         const safeCandidateGroupCount = Array.isArray(data.candidateCoordinateGroups)
@@ -15560,6 +15582,20 @@ ${placemarks}
           && sourceCoordinateRepresentation.editable === true
           ? String(sourceCoordinateRepresentation.displayText || "")
           : "";
+        activeSourceCoordinateRepresentation = sourceDisplayText
+          ? structuredClone(sourceCoordinateRepresentation)
+          : null;
+        if (isTrustedProviderDmsReview) {
+          const detailRows = Array.isArray(sourceCoordinateRepresentation.rows)
+            ? sourceCoordinateRepresentation.rows.map(row => String(row || "").trim()).filter(Boolean)
+            : sourceDisplayText.split(/\r?\n/).map(row => row.trim()).filter(Boolean);
+          appendDebug(`发现坐标表，共 ${trustedProviderDmsCoordinateCount} 行`);
+          await appendRecognizedCoordinateDetails(detailRows, trustedProviderDmsCoordinateCount);
+          if (trustedProviderDmsEvidence.axisConflict === true) {
+            appendDebug("方向信息需要结合原图核对，坐标已保留供地图查看");
+          }
+          appendDebug("地图和未确认 KML 已准备，可继续核对");
+        }
         const existingFamilySourceText = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
         const displayCoordinates = acquisitionCandidateDisplayText
           || sourceDisplayText
@@ -15590,7 +15626,9 @@ ${placemarks}
         rememberLastValidIdentityBoundSnapshot(activeFinalizedCoordinateResult, input.value);
         setCoordinateOrderReviewVisible(hasOrderReview);
         updateCadastralGridPanel();
-        if (isDmsGrouped) {
+        if (isTrustedProviderDmsReview) {
+          setInternalKmlSourceFromText(data.coordinates);
+        } else if (isDmsGrouped) {
           setInternalKmlSourceFromGroups(getDelimitedCoordinateGroupsFromText(finalCoordinates));
         } else if (isCadastralGrid || isMgrs || isMozambiqueGeographicTable || isFrenchPerimeterDms || isWgs84TableCoordinates || isChatCoordinates || isKyrgyzGk) {
           clearInternalKmlSource();
@@ -15664,7 +15702,9 @@ ${placemarks}
         } else {
           showMessage("识别完成，请核对坐标。若结果不准确，也可以使用人工协助识别。", false, COORDINATE_RECOGNITION_MESSAGE_MS);
         }
-        const summaryPointCount = isCadastralGrid
+        const summaryPointCount = isTrustedProviderDmsReview
+          ? trustedProviderDmsCoordinateCount
+          : isCadastralGrid
           ? cadastralGridRows.length
           : isMgrs
             ? mgrsRows.length

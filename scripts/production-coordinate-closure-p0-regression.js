@@ -71,5 +71,9 @@ assert.doesNotMatch(source, /appendDebug\(`异步任务状态：\$\{status\}\\n�
 assert.doesNotMatch(source, /appendDebug\(`识别原文：/u);
 assert.doesNotMatch(source, /appendDebug\(`后端坐标提取结果：/u);
 assert.match(source, /currentLines\[currentLines\.length - 1\] === entry/u);
+assert.match(source, /return \{ text: "请结合原图核对", type: "warning", hideDelay: 0 \}/u,
+  "review warning remains visible instead of disappearing on a timer");
+assert.match(source, /发现坐标表，共 \$\{trustedProviderDmsCoordinateCount\} 行/u);
+assert.match(source, /地图和未确认 KML 已准备，可继续核对/u);
 
 console.log("production coordinate closure p0 regression: PASS");

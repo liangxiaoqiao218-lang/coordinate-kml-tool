@@ -175,13 +175,23 @@ assert.match(html, /建议对照原图核对坐标，部分字符可能存在识
 assert.match(html, /发现 \$\{activeCoordinateFieldConflictCount\} 处坐标可能存在识别差异/, "field conflict count is user-visible");
 assert.match(html, /fetch\("\/api\/coordinate-confirmation"/, "authority-changing confirmation endpoint remains available");
 assert.match(html, /getAuthorizedFinalizedGeometryKmlSource/, "KML still consumes finalized canonical geometry");
+assert.match(html, /const isTrustedProviderDmsReview = \["COMPLETE", "PROVISIONAL"\]\.includes/u,
+  "trusted Provider DMS results have an explicit frontend route");
+assert.match(html, /const finalCoordinates = isTrustedProviderDmsReview\s*\? String\(data\.coordinates/u,
+  "trusted Provider DMS canonical coordinates drive internal geometry");
+assert.match(html, /if \(isTrustedProviderDmsReview\) \{\s*setInternalKmlSourceFromText\(data\.coordinates\);/u,
+  "map and KML consume canonical Provider DMS coordinates instead of reparsing display text");
+assert.match(html, /appendDebug\(`第 \$\{index \+ 1\} 行已识别：\$\{visibleRows\[index\]\}`\)/u,
+  "recognition details retain safe per-row evidence for review and support");
+assert.match(html, /await appendRecognizedCoordinateDetails\(detailRows, trustedProviderDmsCoordinateCount\)/u,
+  "recognized rows are rendered progressively in the live detail panel");
 for (const forbidden of ["geometry", "resultId", "resultRevision", "geometryHash", "kmlReady"]) {
   assert.equal(Object.hasOwn(source, forbidden), false, `source display contract cannot become ${forbidden} authority`);
 }
 
 console.log(JSON.stringify({
   suite: "source-coordinate-review-display-regression",
-  passed: 16,
+  passed: 21,
   cases: [
     "HANDWRITTEN_SOURCE_DMS_PRESERVED",
     "CANONICAL_WGS84_RETAINED_INTERNAL",
@@ -198,6 +208,11 @@ console.log(JSON.stringify({
     "AUTHORITY_CONFIRMATION_PRESERVED",
     "FRONTEND_NOT_PROMOTED_TO_AUTHORITY",
     "SERIALIZED_RESPONSE_SHAPE_ONLY",
-    "HARD_BLOCKERS_DO_NOT_BECOME_ORDINARY_REVIEW"
+    "HARD_BLOCKERS_DO_NOT_BECOME_ORDINARY_REVIEW",
+    "TRUSTED_PROVIDER_DMS_FRONTEND_ROUTE",
+    "CANONICAL_DMS_INTERNAL_GEOMETRY",
+    "DISPLAY_TEXT_NOT_REPARSED_FOR_MAP_KML",
+    "SAFE_PER_ROW_RECOGNITION_DETAILS",
+    "LIVE_PROGRESSIVE_ROW_DETAILS"
   ]
 }, null, 2));
