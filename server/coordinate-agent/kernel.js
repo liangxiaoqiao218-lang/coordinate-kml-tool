@@ -75,8 +75,18 @@ export class CoordinateIntelligenceAgentKernel {
         state.transition(AGENT_STATE.FAILED_CLOSED, 'provider_or_turn_validation_failed');
         break;
       }
-      addTurnEvidence(evidence, turn);
-      if (turn?.candidate) candidate = validateCoordinateCandidate(turn.candidate);
+      try {
+        addTurnEvidence(evidence, turn);
+        if (turn?.candidate) candidate = validateCoordinateCandidate(turn.candidate);
+      } catch (error) {
+        evidence.addUncertainty({
+          code: 'AGENT_EVIDENCE_OR_CANDIDATE_INVALID',
+          message: String(error?.message || 'Agent evidence or candidate validation failed'),
+          blocking: true,
+        });
+        state.transition(AGENT_STATE.FAILED_CLOSED, 'evidence_or_candidate_validation_failed');
+        break;
+      }
 
       state.transition(AGENT_STATE.PLANNING, 'observation_received');
       let plan;

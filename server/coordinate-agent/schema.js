@@ -1,11 +1,19 @@
-import { normalizeAgenticCoordinateResult } from '../agentic-coordinate-recognition/contract.js';
-import { AGENT_STATE, COORDINATE_AGENT_SCHEMA_VERSION, TERMINAL_STATES } from './constants.js';
+import {
+  AGENTIC_GEOMETRY_TYPE,
+  normalizeAgenticCoordinateResult,
+} from '../agentic-coordinate-recognition/contract.js';
+import {
+  AGENT_STATE,
+  COORDINATE_AGENT_SCHEMA_VERSION,
+  EVIDENCE_KIND,
+  TERMINAL_STATES,
+} from './constants.js';
 import { assertJsonSchema } from './strict-schema-validator.js';
 
 const BBOX_SCHEMA = { type: ['array', 'null'], minItems: 4, maxItems: 4, items: { type: 'number', minimum: 0, maximum: 1 } };
 const REGION_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['id', 'kind', 'confidence'],
-  properties: { id: { type: 'string' }, kind: { type: 'string' }, bbox: BBOX_SCHEMA, sourceText: { type: 'string' }, semanticRole: { type: 'string' }, confidence: { type: 'number', minimum: 0, maximum: 1 }, provenance: { type: 'string' } },
+  properties: { id: { type: 'string' }, kind: { enum: Object.values(EVIDENCE_KIND) }, bbox: BBOX_SCHEMA, sourceText: { type: 'string' }, semanticRole: { type: 'string' }, confidence: { type: 'number', minimum: 0, maximum: 1 }, provenance: { type: 'string' } },
 };
 const UNCERTAINTY_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['code', 'message', 'evidenceRegionIds', 'blocking'],
@@ -21,15 +29,15 @@ const ACTION_SCHEMA = {
 };
 const POINT_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['sourceText'],
-  properties: { label: { type: ['string', 'null'] }, sourceText: { type: 'string' }, x: { type: ['number', 'null'] }, y: { type: ['number', 'null'] }, latitude: { type: ['number', 'null'] }, longitude: { type: ['number', 'null'] }, needsReview: { type: 'boolean' } },
+  properties: { label: { type: ['string', 'null'] }, sourceText: { type: 'string' }, x: { type: ['number', 'null'] }, y: { type: ['number', 'null'] }, latitude: { type: ['number', 'null'], minimum: -90, maximum: 90 }, longitude: { type: ['number', 'null'], minimum: -180, maximum: 180 }, needsReview: { type: 'boolean' } },
 };
 const CANDIDATE_SCHEMA = {
   type: 'object', additionalProperties: false,
   required: ['success', 'resultStatus', 'displayText', 'coordinateSystem', 'geometryType', 'groups', 'warnings'],
   properties: {
-    contractVersion: { type: 'string' }, success: { type: 'boolean' }, resultStatus: { enum: ['usable', 'needs_review', 'failed'] }, displayText: { type: 'string' }, geometryType: { type: 'string' },
+    contractVersion: { type: 'string' }, success: { type: 'boolean' }, resultStatus: { enum: ['usable', 'needs_review', 'failed'] }, displayText: { type: 'string' }, geometryType: { enum: Object.values(AGENTIC_GEOMETRY_TYPE) },
     coordinateSystem: { type: 'object', additionalProperties: false, required: ['kind', 'status'], properties: { kind: { enum: ['geographic', 'projected', 'unknown'] }, name: { type: ['string', 'null'] }, epsg: { type: ['string', 'null'] }, status: { enum: ['identified', 'needs_confirmation', 'unknown'] } } },
-    groups: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['points'], properties: { name: { type: ['string', 'null'] }, points: { type: 'array', items: POINT_SCHEMA } } } },
+    groups: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['points'], properties: { name: { type: ['string', 'null'] }, points: { type: 'array', minItems: 1, items: POINT_SCHEMA } } } },
     warnings: { type: 'array', items: { type: 'string' } },
     summary: { type: 'object', additionalProperties: false, required: ['groupCount', 'pointCount'], properties: { groupCount: { type: 'integer', minimum: 0 }, pointCount: { type: 'integer', minimum: 0 } } },
   },
@@ -78,7 +86,7 @@ export const COORDINATE_AGENT_TURN_SCHEMA = Object.freeze({
   properties: {
     observation: { type: 'object', additionalProperties: false, required: ['regions'], properties: { summary: { type: 'string' }, orientationDegrees: { type: ['number', 'null'] }, regions: { type: 'array', items: REGION_SCHEMA } } },
     plan: { type: 'object', additionalProperties: false, required: ['actions'], properties: { rationale: { type: 'string' }, actions: { type: 'array', items: ACTION_SCHEMA } } },
-    candidate: CANDIDATE_SCHEMA,
+    candidate: { anyOf: [CANDIDATE_SCHEMA, { type: 'null' }] },
     uncertainties: { type: 'array', items: UNCERTAINTY_SCHEMA },
     reviewItems: { type: 'array', items: REVIEW_ITEM_SCHEMA },
   },
@@ -142,7 +150,7 @@ export function assertStrictCoordinateAgentTurn(turn) {
       assertExactKeys(item, ['fieldPath', 'question', 'evidenceRegionIds', 'candidates'], `turn.reviewItems[${index}]`);
     });
   }
-  if (turn.candidate !== undefined) assertStrictAgenticCandidate(turn.candidate);
+  if (turn.candidate !== undefined && turn.candidate !== null) assertStrictAgenticCandidate(turn.candidate);
   return Object.freeze({ ...turn });
 }
 
