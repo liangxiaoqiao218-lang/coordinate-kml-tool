@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "coordinate-agent-evaluation-manifest/v1",
+  "purpose": "Generic multimodal evaluation only. Paths and images must never select production code paths or provide embedded coordinate answers.",
+  "cases": [
+    { "id": "eval-001", "image": "fixtures/长坐标.png" },
+    { "id": "eval-002", "image": "fixtures/模糊坐标.jpg" },
+    { "id": "eval-003", "image": "fixtures/斜拍坐标.jpg" },
+    { "id": "eval-004", "image": "fixtures/手写坐标.jpg" },
+    { "id": "eval-005", "image": "fixtures/两块矿地.jpg" },
+    { "id": "eval-006", "image": "fixtures/刚果，两个坐标在同一张图.jpg" },
+    { "id": "eval-007", "image": "fixtures/马达加斯加坐标.png" },
+    { "id": "eval-008", "image": "fixtures/莫桑比克矿地.jpg" },
+    { "id": "eval-009", "image": "fixtures/缅甸坐标.jpg" },
+    { "id": "eval-010", "image": "fixtures/科特迪瓦4个矿区坐标.jpg" },
+    { "id": "eval-011", "image": "fixtures/布基纳法索02.jpg" },
+    { "id": "eval-012", "image": "fixtures/吉尔吉斯斯坦矿地坐标.png" },
+    { "id": "eval-013", "image": "OCR_GOLDEN/fixtures/indonesia-utm50s-real-001.jpg" },
+    { "id": "eval-014", "image": "production-recognition-recovery-p0/indonesia-utm50s-real-002.jpg" }
+  ]
+}
