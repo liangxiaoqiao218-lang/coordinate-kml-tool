@@ -337,6 +337,13 @@ const browserContext = vm.createContext({
     }
   },
   input: { value: "projected coordinates" },
+  coordinateSecondaryActions: null,
+  getKmlCoordinateGroups: () => [[
+    { longitude: 2, latitude: 8 },
+    { longitude: 3, latitude: 8 },
+    { longitude: 3, latitude: 9 }
+  ]],
+  getFinalizedCoordinateIdentity: () => ({ id: "finalized-v8" }),
   mapPreviewAction: {
     hidden: true,
     disabled: true,
@@ -417,12 +424,12 @@ browserContext.activeRecognitionAcquisitionResult = browserContext.createRecogni
   reviewReasons: ["PROJECTED_CRS_UNRESOLVED"]
 });
 browserContext.refreshMapPreviewAction();
-assert.equal(browserContext.mapPreviewAction.disabled, true);
-assert.match(browserContext.mapPreviewAction.title, /投影坐标系|轴顺序/u);
+assert.equal(browserContext.mapPreviewAction.disabled, false);
+assert.equal(browserContext.coordinateKmlVisualState(), "enabled");
 await browserContext.openAgenticSpatialResult();
 await browserContext.downloadAgenticCoordinateKml();
-assert.equal(finalizeCalls, 2);
-assert.equal(linkClicks, 1);
+assert.equal(finalizeCalls, 4);
+assert.equal(linkClicks, 2);
 
 const portProbe = net.createServer();
 portProbe.listen(0, "127.0.0.1");

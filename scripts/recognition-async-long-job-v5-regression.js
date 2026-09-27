@@ -165,7 +165,8 @@ assert.equal(polledFailure.data.usageConsumed, false);
 assert.deepEqual(clientHelpers.getPendingCoordinateRecognitionJob(), storedJob);
 assert.equal(clientHelpers.markPendingCoordinateRecognitionJobTerminalApplied(storedJob, polledFailure.data, { applied: true }), true);
 assert.equal(clientHelpers.getPendingCoordinateRecognitionJob(), null);
-assert.ok(debugEvents.some(message => message.includes(storedJob.jobId) && message.includes(requestId)));
+assert.ok(debugEvents.some(message => message.includes("识别")));
+assert.equal(debugEvents.some(message => message.includes(storedJob.jobId) || message.includes(requestId)), false);
 
 clientHelpers.rememberPendingCoordinateRecognitionJob(storedJob);
 pollSnapshot = {

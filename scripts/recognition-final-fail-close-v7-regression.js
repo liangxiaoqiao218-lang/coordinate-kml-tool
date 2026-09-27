@@ -119,6 +119,9 @@ const browserContext = vm.createContext({
     }
   },
   input: { value: "review candidate" },
+  coordinateSecondaryActions: null,
+  getKmlCoordinateGroups: () => [],
+  getFinalizedCoordinateIdentity: () => null,
   mapPreviewAction: {
     hidden: true,
     disabled: false,

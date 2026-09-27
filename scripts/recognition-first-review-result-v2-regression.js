@@ -286,8 +286,8 @@ assert.match(serverSource, /AXIS \| LATITUDE=N或S \| LONGITUDE=E或W/);
 assert.match(serverSource, /不得只输出无方向的度分秒数值/);
 assert.match(serverSource, /isCoordinateEngineV2SelfIntersecting/);
 assert.match(deadlineSource, /"ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED"/);
-assert.match(uiSource, /采集完成，等待复核/);
-assert.match(uiSource, /候选点数/);
-assert.match(uiSource, /候选组数/);
+assert.match(uiSource, /识别完成，建议通过地图核对位置和形状/);
+assert.match(uiSource, /已识别 \$\{safeCandidatePointCount\} 个坐标点/);
+assert.match(uiSource, /发现 \$\{safeCandidateGroupCount\} 个坐标区域/);
 
 console.log("recognition-first review-result v2 regression: PASS (strict coordinate evidence, unique grouping, ambiguity fail-close, response/log/UI contracts)");

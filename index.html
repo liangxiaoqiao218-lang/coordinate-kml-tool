@@ -2453,6 +2453,34 @@
       background: #f59e0b;
     }
 
+    .recognition-status.warning {
+      border-color: #fde68a;
+      background: #fffbeb;
+      color: #92400e;
+    }
+
+    .recognition-status.warning::before {
+      border: 0;
+      background: #f59e0b;
+      animation: none;
+    }
+
+    .recognition-wait-actions {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      width: 100%;
+      padding-left: 24px;
+    }
+
+    .recognition-wait-actions button {
+      min-height: 34px;
+      padding: 0 12px;
+      border-radius: 8px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
     .recognition-status.error {
       border-color: #fecaca;
       background: #fff7f7;
@@ -5257,6 +5285,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const goldCalculatorPanel = document.getElementById("goldCalculatorPanel");
     const goldUnavailableNotice = document.getElementById("goldUnavailableNotice");
     const mapPreviewAction = document.getElementById("mapPreviewAction");
+    const coordinateSecondaryActions = document.getElementById("coordinateSecondaryActions");
     const coordinateKmlAction = document.getElementById("coordinateKmlAction");
     const coordinateCopyAction = document.getElementById("coordinateCopyAction");
     const spatialShareCardAction = document.getElementById("spatialShareCardAction");
@@ -6750,7 +6779,7 @@ Au值 = 纯度 × 10 后取整数</div>
         message: `原因：${diagnostic.reason} 建议：${diagnostic.suggestion}`,
         duration: 10000
       });
-      appendDebug(`KML失败：${diagnostic.code}\n原因：${diagnostic.reason}\n建议：${diagnostic.suggestion}`);
+      appendDebug(`KML 暂未生成\n${diagnostic.reason}\n${diagnostic.suggestion}`);
       return diagnostic;
     }
 
@@ -7562,18 +7591,46 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
-    function coordinateRecognitionActionBlocked(action = "map") {
-      if (!activeRecognitionAcquisitionResult) return agenticCoordinateController?.enabled === true;
-      const status = action === "kml"
-        ? activeRecognitionAcquisitionResult.kmlStatus
-        : activeRecognitionAcquisitionResult.mapStatus;
-      return activeRecognitionAcquisitionResult.evidenceComplete !== true
-        || activeRecognitionAcquisitionResult.requiresReview === true
-        || activeRecognitionAcquisitionResult.boundaryBlocked === true
-        || activeRecognitionAcquisitionResult.authorizationStatus !== "AUTHORIZED"
-        || activeRecognitionAcquisitionResult.resultStatus !== "authorized"
-        || status !== "ENABLED"
-        || (action === "kml" && activeRecognitionAcquisitionResult.kmlReady !== true);
+    function getConvertibleCoordinateGroups() {
+      return getKmlCoordinateGroups()
+        .map(group => {
+          const valid = group.length > 0 && group.every(pair => {
+          const longitude = Number(pair?.longitude);
+          const latitude = Number(pair?.latitude);
+          return Number.isFinite(longitude)
+            && Number.isFinite(latitude)
+            && longitude >= -180 && longitude <= 180
+            && latitude >= -90 && latitude <= 90;
+          });
+          return valid ? group : [];
+        })
+        .filter(group => group.length > 0);
+    }
+
+    function hasConvertibleCoordinateResult() {
+      return getConvertibleCoordinateGroups().some(group => group.length > 0);
+    }
+
+    function coordinateResultNeedsReview() {
+      return Boolean(activeRecognitionAcquisitionResult)
+        && (activeRecognitionAcquisitionResult.requiresReview === true
+          || activeRecognitionAcquisitionResult.authorizationStatus !== "AUTHORIZED"
+          || activeRecognitionAcquisitionResult.resultStatus !== "authorized"
+          || activeRecognitionAcquisitionResult.mapStatus !== "ENABLED"
+          || activeRecognitionAcquisitionResult.kmlStatus !== "ENABLED"
+          || activeRecognitionAcquisitionResult.kmlReady !== true);
+    }
+
+    function shouldUseProvisionalCoordinateResult() {
+      return hasConvertibleCoordinateResult()
+        && (coordinateResultNeedsReview()
+          || activeFinalizedCoordinateResult?.mapReady === false
+          || activeFinalizedCoordinateResult?.kmlReady === false
+          || !getFinalizedCoordinateIdentity());
+    }
+
+    function coordinateRecognitionActionBlocked() {
+      return !hasConvertibleCoordinateResult();
     }
 
     function recognitionAuthorizationReasonMessage(action = "map") {
@@ -7587,7 +7644,7 @@ Au值 = 纯度 × 10 后取整数</div>
       if (codes.some(code => /GROUP_BOUNDARY|MULTIPLE_COORDINATE/.test(code))) return `坐标组边界不唯一，${label}暂未开放。`;
       if (codes.some(code => /IMAGE_EVIDENCE|UNIFIED_RECOGNITION_EVIDENCE/.test(code))) return `图片采集证据不完整，${label}暂未开放。`;
       if (codes.some(code => /PROVIDER_CALL_COUNT|FINALIZER/.test(code))) return `最终坐标安全验证未通过，${label}暂未开放。`;
-      return `当前识别结果仍需复核，${label}暂未开放。`;
+      return `当前结果还不能形成有效经纬度，暂时无法使用${label}。`;
     }
 
     function stopBlockedCoordinateAction(action = "map") {
@@ -7599,8 +7656,11 @@ Au值 = 纯度 × 10 后取整数</div>
     function refreshMapPreviewAction() {
       if (!mapPreviewAction) return;
       const hasText = Boolean(String(input?.value || "").trim());
-      const acquisitionReviewMapBlocked = coordinateRecognitionActionBlocked("map")
-        || activeFinalizedCoordinateResult?.mapReady === false;
+      const acquisitionReviewMapBlocked = coordinateRecognitionActionBlocked("map");
+      if (coordinateSecondaryActions) {
+        coordinateSecondaryActions.hidden = !hasText;
+        coordinateSecondaryActions.setAttribute("aria-hidden", String(!hasText));
+      }
       if (agenticCoordinateController?.enabled) {
         const state = hasText && !acquisitionReviewMapBlocked ? "enabled" : "blocked";
         mapPreviewAction.hidden = false;
@@ -7639,8 +7699,8 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function coordinateKmlVisualState() {
       if (!String(input?.value || "").trim()) return "blocked";
-      if (coordinateRecognitionActionBlocked("kml")
-        || activeFinalizedCoordinateResult?.kmlReady === false) return "blocked";
+      if (coordinateRecognitionActionBlocked("kml")) return "blocked";
+      if (shouldUseProvisionalCoordinateResult()) return "enabled";
       if (agenticCoordinateController?.enabled) return "enabled";
       if (projectedCrsSelectionNeedsConfirmation()) return "blocked";
       if (!activeFinalizedCoordinateResult) return "enabled";
@@ -7863,17 +7923,17 @@ Au值 = 纯度 × 10 后取整数</div>
         : [];
       if (payload?.mapPreviewObject?.geometryType === "MultiPoint") {
         return warnings.some(value => /(?:self[-_ ]?intersection|自交|交叉)/i.test(String(value)))
-          ? "这些点按原图顺序连接会交叉，当前地图只用于核对点位，不代表矿区边界或面积，KML 保持关闭。"
-          : "当前地图只用于核对已识别点位，不代表矿区边界或面积，KML 保持关闭。";
+          ? "这些点按原图顺序连接会交叉，当前地图只用于核对点位；仍可下载未确认 KML 继续检查。"
+          : "当前地图只用于核对已识别点位；仍可下载未确认 KML 继续检查。";
       }
       if (spatialHasBoundaryReviewWarning(payload?.mapPreviewObject)) {
-        return "地图已按原图点号顺序连接为待核对轮廓；边界含义确认前，KML 保持关闭。";
+        return "地图已按原图点号顺序连接为待核对轮廓；可下载未确认 KML 继续检查。";
       }
       if (!spatialReviewRequired(payload)) return "";
       if (warnings.some(value => /self[-_ ]?intersection|自交/i.test(String(value)))) {
-        return "当前边界可能存在自相交，请返回坐标核对；地图仅用于预览，KML 仍保持阻止。";
+        return "当前边界可能存在自相交，请结合地图核对；仍可下载未确认 KML 继续检查。";
       }
-      return "当前结果存在不确定信息，请核对后再下载 KML。";
+      return "当前结果尚未确认，请结合地图位置和形状核对。";
     }
 
     function renderSpatialResult(payload) {
@@ -7948,6 +8008,84 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
+    function buildProvisionalCoordinateGeometry(groups = getConvertibleCoordinateGroups()) {
+      const positions = groups.map(group => group.map(pair => [Number(pair.longitude), Number(pair.latitude)]));
+      const pointCount = positions.reduce((total, group) => total + group.length, 0);
+      if (pointCount === 1) return { type: "Point", coordinates: positions.flat()[0] };
+      if (positions.length === 1 && pointCount === 2) return { type: "LineString", coordinates: positions[0] };
+      if (positions.length === 1 && pointCount >= 3) {
+        const ring = [...positions[0]];
+        const first = ring[0];
+        const last = ring.at(-1);
+        if (first[0] !== last[0] || first[1] !== last[1]) ring.push([...first]);
+        return { type: "Polygon", coordinates: [ring] };
+      }
+      if (positions.every(group => group.length >= 3)) {
+        return {
+          type: "MultiPolygon",
+          coordinates: positions.map(group => {
+            const ring = [...group];
+            const first = ring[0];
+            const last = ring.at(-1);
+            if (first[0] !== last[0] || first[1] !== last[1]) ring.push([...first]);
+            return [ring];
+          })
+        };
+      }
+      return { type: "MultiPoint", coordinates: positions.flat() };
+    }
+
+    function createProvisionalSpatialPayload() {
+      const geometry = buildProvisionalCoordinateGeometry();
+      const pointCount = countCoordinatePairsInGroups(getConvertibleCoordinateGroups());
+      return {
+        mapPreviewObject: {
+          schemaVersion: "map_preview_object_v1",
+          sourceResultId: "local-unverified-coordinate-result",
+          sourceRevision: Date.now(),
+          sourceGeometryHash: `unverified-${geometry.type}-${pointCount}`,
+          crs: { id: "EPSG:4326" },
+          axisOrder: "longitude_latitude",
+          geometryType: geometry.type,
+          geometry,
+          previewWarnings: ["当前为未确认预览，请根据地图核对位置和形状。"],
+          previewEligibility: { allowed: true }
+        },
+        kmlEligibility: {
+          allowed: true,
+          kmlReady: true,
+          technicalKmlReady: true,
+          confirmationStatus: "REVIEW_REQUIRED",
+          qualityGateStatus: "REVIEW",
+          decisionState: "NEEDS_REVIEW",
+          kmlHash: `unverified-${geometry.type}-${pointCount}`
+        },
+        spatialFactsStatus: "unavailable",
+        spatialFacts: null,
+        regionalViewCount: 0
+      };
+    }
+
+    async function openProvisionalSpatialResult() {
+      mapPreviewAction.disabled = true;
+      try {
+        const payload = createProvisionalSpatialPayload();
+        activeMapPreviewResponse = payload;
+        activeMapPreviewCacheKey = `provisional:${payload.mapPreviewObject.sourceGeometryHash}`;
+        pages.spatialResult.dataset.spatialCacheKey = activeMapPreviewCacheKey;
+        showPage("spatialResult");
+        renderSpatialResult(payload);
+        setSpatialSheetExpanded(!window.matchMedia("(max-width: 640px)").matches);
+        await waitForSpatialLayout();
+        await globalThis.GeoKitSatelliteMap?.open(payload);
+        await syncSpatialMapViewport();
+      } catch (error) {
+        showMessage(error?.message || "当前坐标还不能形成地图，请核对坐标内容。", true, 6000);
+      } finally {
+        refreshMapPreviewAction();
+      }
+    }
+
     async function openAgenticSpatialResult() {
       if (stopBlockedCoordinateAction("map")) return null;
       mapPreviewAction.disabled = true;
@@ -7972,6 +8110,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     async function openSpatialResult() {
       if (stopBlockedCoordinateAction("map")) return null;
+      if (shouldUseProvisionalCoordinateResult()) return openProvisionalSpatialResult();
       if (agenticCoordinateController?.enabled) return openAgenticSpatialResult();
       if (!spatialResultEnabled) return;
       if (projectedCrsSelectionNeedsConfirmation()) {
@@ -8194,7 +8333,7 @@ Au值 = 纯度 × 10 后取整数</div>
         activeFinalizedCoordinateResult = payload.finalizedCoordinateResult;
         invalidateSpatialPreview();
         if (activeFinalizedCoordinateResult.decisionState !== "AUTO_EXPORT") {
-          appendDebug(`坐标确认 Gate codes：${(activeFinalizedCoordinateResult.reasonCodes || []).join(", ") || "无"}`);
+          appendDebug("当前结果需要继续核对");
           throw new Error(getCoordinateGateUserMessage(activeFinalizedCoordinateResult.reasonCodes, "当前结果仍需核对。"));
         }
         handwrittenDmsReviewState = createHandwrittenDmsReviewState({
@@ -8513,6 +8652,29 @@ Au值 = 纯度 × 10 后取整数</div>
           setRecognitionStatus("", "");
         }, hideDelay);
       }
+    }
+
+    function requestRecognitionLongWaitChoice() {
+      setRecognitionStatus("识别时间较长。您可以继续等待、停止识别，或寻求人工协助。", "warning");
+      const actions = document.createElement("span");
+      actions.className = "recognition-wait-actions";
+      const makeButton = (label, choice, primary = false) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = primary ? "primary" : "secondary";
+        button.textContent = label;
+        button.addEventListener("click", () => resolveChoice(choice), { once: true });
+        return button;
+      };
+      let resolveChoice;
+      const choicePromise = new Promise(resolve => { resolveChoice = resolve; });
+      actions.append(
+        makeButton("继续等待", "continue", true),
+        makeButton("停止识别", "stop"),
+        makeButton("人工协助", "support")
+      );
+      recognitionProgress.appendChild(actions);
+      return choicePromise;
     }
 
     function clearKmlGenerationProgress() {
@@ -14026,6 +14188,44 @@ ${placemarks}
       return outcome;
     }
 
+    function downloadProvisionalCoordinateKml() {
+      const groups = getConvertibleCoordinateGroups();
+      const pairs = groups.flat();
+      const geometry = buildProvisionalCoordinateGeometry(groups);
+      let placemarks = "";
+      if (geometry.type === "Point" || geometry.type === "MultiPoint") {
+        placemarks = buildPointKml(pairs);
+      } else if (geometry.type === "LineString") {
+        placemarks = buildLineStringKml(groups[0], 1);
+      } else {
+        placemarks = groups.map((group, index) => buildPolygonKml(group, index + 1)).join("\n");
+      }
+      const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>GeoKit Lab Unverified Coordinate Result</name>
+    <description>UNVERIFIED: This file is provided for visual checking. Confirm the location and shape before relying on it.</description>
+${placemarks}
+  </Document>
+</kml>`;
+      const blob = new Blob([kml], { type: "application/vnd.google-earth.kml+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "coordinates-unverified.kml";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      trackEvent("kml_download_click", {
+        exportType: `Unverified-${geometry.type}`,
+        count: pairs.length,
+        source: "convertible_coordinate_preview"
+      });
+      showKmlCompletion(`已生成未确认 KML（${pairs.length} 个点），请结合地图核对位置和形状。`, { warning: true });
+      return { geometry, groups, unverified: true };
+    }
+
     async function downloadKml() {
       setKmlGenerationInProgress(true);
       try {
@@ -14054,6 +14254,18 @@ ${placemarks}
       if (!canUse("kmlExportEnabled", "当前用户暂未开通 KML 导出。")) {
         showKmlPermissionFailure("当前账户暂未开通 KML 导出权限。");
         return;
+      }
+
+      if (shouldUseProvisionalCoordinateResult()) {
+        if (!agenticCoordinateController?.hasCommittedRecognitionUsage?.()) {
+          const usageAllowed = await consumeUsage("convert");
+          if (!usageAllowed) {
+            showKmlPermissionFailure();
+            return;
+          }
+        }
+        showRecognitionProgress("正在生成未确认 KML…", "loading");
+        return downloadProvisionalCoordinateKml();
       }
 
       if (agenticCoordinateController?.enabled) {
@@ -14103,7 +14315,7 @@ ${placemarks}
 
       if (shouldBlockFinalizedCoordinateKml()) {
         const reasonCodes = activeFinalizedCoordinateResult?.reasonCodes || [];
-        appendDebug(`KML Gate codes：${reasonCodes.join("、") || "无"}`);
+        appendDebug("当前结果需要继续核对后再生成正式 KML");
         showKmlFailure({
           code: "KML_FINALIZED_GATE_BLOCKED",
           title: "坐标尚未通过安全确认",
@@ -14794,7 +15006,27 @@ ${placemarks}
     async function pollCoordinateRecognitionJob(job) {
       const startedAt = Date.now();
       let lastStatus = "";
+      let longerWaitNoticeShown = false;
+      let longWaitDecisionHandled = false;
       while ((Date.now() - startedAt) < COORDINATE_ASYNC_JOB_CLIENT_WAIT_MS) {
+        const elapsedMs = Date.now() - startedAt;
+        if (elapsedMs >= 60_000 && !longerWaitNoticeShown) {
+          longerWaitNoticeShown = true;
+          showRecognitionProgress("图片内容较多，还需要一点时间。", "loading");
+          appendDebug("图片内容较多，正在继续识别…");
+        }
+        if (elapsedMs >= 120_000 && !longWaitDecisionHandled) {
+          longWaitDecisionHandled = true;
+          const choice = await requestRecognitionLongWaitChoice();
+          if (choice === "support") await openManualSupport();
+          if (choice !== "continue") {
+            const stopped = new Error("已停止识别。");
+            stopped.code = "RECOGNITION_STOPPED_BY_USER";
+            throw stopped;
+          }
+          showRecognitionProgress("继续识别中…", "loading");
+          appendDebug("继续识别中…");
+        }
         const response = await fetch(`/api/recognize-coordinates/jobs/${encodeURIComponent(job.jobId)}`, {
           method: "GET",
           headers: getSourceHeaders({
@@ -14811,7 +15043,7 @@ ${placemarks}
         const status = String(snapshot?.status || "").toUpperCase();
         if (status && status !== lastStatus) {
           lastStatus = status;
-          appendDebug(`异步任务状态：${status}\n任务编号：${job.jobId}\n请求编号：${job.requestId}`);
+          appendDebug(status === "SUCCEEDED" ? "识别任务已完成" : "正在识别…");
         }
         if (status === "SUCCEEDED" || status === "FAILED") {
           const result = snapshot?.result && typeof snapshot.result === "object" ? snapshot.result : {};
@@ -14837,7 +15069,7 @@ ${placemarks}
         }
         await waitForCoordinateRecognitionPoll(COORDINATE_ASYNC_JOB_POLL_INTERVAL_MS);
       }
-      const error = new Error(`异步识别仍在后台运行，页面已停止等待。任务编号：${job.jobId}；请求编号：${job.requestId}`);
+      const error = new Error("识别仍在进行，页面已停止等待。");
       error.code = "RECOGNITION_ASYNC_JOB_CLIENT_WAIT_EXCEEDED";
       error.jobId = job.jobId;
       error.requestId = job.requestId;
@@ -14959,6 +15191,7 @@ ${placemarks}
       clearRecognitionSummary();
       setDebug("");
       setDebugRunning(true);
+      let preserveSelectedImageAfterStop = false;
       setCoordinateOrderReviewVisible(false);
       refreshMapPreviewAction();
       showRecognitionProgress(jobRecoveryOnly
@@ -14971,13 +15204,13 @@ ${placemarks}
           fileSize: file.size,
           fileType: file.type
         });
-        setDebug(`正在上传图片\n文件名：${file.name}\n大小：${Math.round(file.size / 1024)} KB`);
+        setDebug(`正在上传图片\n图片读取完成（${Math.round(file.size / 1024)} KB）`);
         showMessage("正在上传图片……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
       } else if (jobRecoveryOnly) {
-        setDebug(`正在恢复异步识别任务\n任务编号：${pendingCoordinateRecognitionJob.jobId}\n请求编号：${recognitionRequestId}`);
+        setDebug("正在恢复识别任务…");
         showMessage("正在恢复上次异步识别任务……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
       } else {
-        setDebug(`正在恢复识别结果\n请求编号：${recognitionRequestId}`);
+        setDebug("正在恢复识别结果…");
         showMessage("正在恢复上次识别结果……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
       }
 
@@ -15004,8 +15237,7 @@ ${placemarks}
           formData.append("image", file);
           formData.append("visitorId", currentVisitorId);
           formData.append("userCode", userCode);
-          appendDebug(`已使用原图识别\n原图大小：${Math.round(file.size / 1024)} KB`);
-          appendDebug("正在调用识别接口");
+          appendDebug("正在查找坐标区域…");
           showMessage("正在调用识别接口……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
           showRecognitionProgress("正在识别坐标...", "loading");
           await prepareCoordinateUsageSession(currentVisitorId);
@@ -15034,7 +15266,7 @@ ${placemarks}
             if (!rememberPendingCoordinateRecognitionJob(job)) {
               throw new Error("异步识别任务凭证保存失败，已停止轮询以避免重复提交。");
             }
-            appendDebug(`已创建异步识别任务\n任务编号：${job.jobId}\n请求编号：${job.requestId}`);
+            appendDebug("识别任务已开始");
             showRecognitionProgress("异步任务已创建，正在识别坐标...", "loading");
             const polled = await pollCoordinateRecognitionJob(job);
             response = polled.response;
@@ -15056,10 +15288,10 @@ ${placemarks}
             responseWasRecovery = true;
           }
           if (data.code === "USAGE_COMMIT_OUTCOME_UNKNOWN") {
-            const pendingMessage = "本次识别已完成，扣次状态仍在确认中。请稍后使用本次请求编号恢复结果，不要重新上传图片。";
+            const pendingMessage = "本次识别已完成，结果正在恢复中，请稍后再试。";
             showRecognitionProgress(pendingMessage, "warning");
-            showMessage(pendingMessage, true, COORDINATE_RECOGNITION_MESSAGE_MS);
-            showUploadSupportMessage(`${pendingMessage} 请求编号：${recognitionRequestId}`);
+            showMessage(pendingMessage, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+            showUploadSupportMessage(pendingMessage);
             return;
           }
         }
@@ -15083,14 +15315,14 @@ ${placemarks}
           || recoveryFailureMustStop
         );
         if (asyncTerminalMustStop) {
-          appendDebug(`异步任务终态：${terminalRecognitionJobSnapshot.jobStatus}\nHTTP状态：${data.httpStatus || terminalRecognitionJobSnapshot.httpStatus || response.status}\nProvider状态：${data.providerCompletionState || terminalRecognitionJobSnapshot.providerCompletionState || "FAILED"}\nProvider调用次数：${Number(data.providerCallCount) || terminalRecognitionJobSnapshot.providerCallCount || 0}\n是否扣次：${data.usageConsumed === true ? "是" : "否"}\n是否需要恢复：${data.recoveryRequired === true ? "是" : "否"}`);
+          appendDebug("识别未完成，可以重新尝试或使用人工协助");
           const terminalNoCharge = data?.usageConsumed === false;
           const terminalMessage = terminalNoCharge
             ? "本次异步识别未完成，未扣除使用次数。"
             : "本次异步识别任务失败，结果未开放。";
-          setRecognitionStatus(terminalMessage, "error");
-          showMessage(terminalMessage, true, COORDINATE_RECOGNITION_MESSAGE_MS);
-          showUploadSupportMessage(`${terminalMessage} 任务编号：${terminalRecognitionJobSnapshot.jobId}；请求编号：${terminalRecognitionJobSnapshot.requestId}`);
+          setRecognitionStatus(terminalMessage, "warning");
+          showMessage(terminalMessage, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showUploadSupportMessage(terminalMessage);
           trackEvent("image_recognize_fail", {
             code: data.code || data.reason || "RECOGNITION_ASYNC_JOB_FAILED",
             httpStatus: data.httpStatus || response.status,
@@ -15115,16 +15347,11 @@ ${placemarks}
           return;
         }
 
-        const recognitionBudgetFailureMessage = "本次识别未完成，未扣除使用次数。你可以直接重新识别；如仍失败，请向支持人员提供本次请求编号。";
-        const responseRecognitionRequestId = String(
-          data.requestId || response.headers.get("x-recognition-request-id") || ""
-        ).trim();
+        const recognitionBudgetFailureMessage = "本次识别暂未完成，未扣除使用次数。您可以重新识别或寻求人工协助。";
         if (!response.ok && ["RECOGNITION_BUDGET_EXHAUSTED", "RECOGNITION_DEADLINE_EXCEEDED"].includes(data.code)) {
-          setRecognitionStatus(recognitionBudgetFailureMessage, "error");
-          showMessage(recognitionBudgetFailureMessage, true, COORDINATE_RECOGNITION_MESSAGE_MS);
-          showUploadSupportMessage(responseRecognitionRequestId
-            ? `${recognitionBudgetFailureMessage} 请求编号：${responseRecognitionRequestId}`
-            : recognitionBudgetFailureMessage);
+          setRecognitionStatus(recognitionBudgetFailureMessage, "warning");
+          showMessage(recognitionBudgetFailureMessage, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showUploadSupportMessage(recognitionBudgetFailureMessage);
           trackEvent("image_recognize_fail", {
             code: data.code,
             retryAllowed: data.retryAllowed === true
@@ -15272,31 +15499,18 @@ ${placemarks}
               dmsCoordinates
             ]);
 
-        appendDebug(`识别原文：\n${data.rawText || "无"}`);
-        appendDebug(`平面坐标系判断：${detectedProjection || projectionType.value || "自动"}`);
-        appendDebug(`矿权网格识别：${isCadastralGrid ? `已识别 ${cadastralGridRows.length} 行 num / XV / YV` : "无"}`);
-        appendDebug(`MGRS识别：${isMgrs ? `已识别 ${mgrsRows.length} 行 MGRS / UTM Grid Reference` : "无"}`);
-        appendDebug(`Mozambique Geographic Table识别：${isMozambiqueGeographicTable ? `已识别 ${mozambiqueRows.length} 行 Latitude / Longitude` : "无"}`);
-        appendDebug(`WGS84表格坐标识别：${isWgs84TableCoordinates ? `已识别 ${wgs84TableRows.length} 行 lon / lat` : "无"}`);
-        appendDebug(`WGS84聊天坐标识别：${isChatCoordinates ? `已识别 ${chatRows.length} 行 lat / lon` : "无"}`);
-        appendDebug(`Kyrgyzstan GK识别：${isKyrgyzGk ? `已识别 ${kyrgyzGkRows.length} 行 point / X / Y` : "无"}`);
-        appendDebug(`原样坐标行：\n${recognizedLines || "无"}`);
-        appendDebug(`X/Y平面坐标提取结果：\n${projectedLines || "无"}`);
-        appendDebug(`后端坐标提取结果：\n${data.coordinates || "无"}`);
-        appendDebug(`前端保精度提取结果：\n${preservedCoordinates || "无"}`);
-        appendDebug(`前端DMS兜底提取结果：\n${isDmsGrouped ? "已使用后端分组结果，跳过本地兜底" : (dmsCoordinates || "无")}`);
-        appendDebug(`精度模式：${data.precisionMode || "未知"}`);
-        appendDebug(`识别提示：${data.warning || "无"}`);
-        if (data.acquisitionStatus === "COMPLETED") {
-          appendDebug(`采集状态：已完成`);
-          appendDebug(`坐标授权状态：${data.authorizationStatus || "等待复核"}`);
-          appendDebug(`候选点数：${Array.isArray(data.candidateCoordinates) ? data.candidateCoordinates.length : 0}`);
-          appendDebug(`候选组数：${Array.isArray(data.candidateCoordinateGroups) ? data.candidateCoordinateGroups.length : 0}`);
-          appendDebug(`复核原因：${Array.isArray(data.reviewReasons) && data.reviewReasons.length > 0 ? data.reviewReasons.join("、") : "无"}`);
-        }
+        const safeCandidatePointCount = Array.isArray(data.candidateCoordinates)
+          ? data.candidateCoordinates.length
+          : countCoordinateRows(finalCoordinates);
+        const safeCandidateGroupCount = Array.isArray(data.candidateCoordinateGroups)
+          ? data.candidateCoordinateGroups.length
+          : 0;
+        if (safeCandidateGroupCount > 0) appendDebug(`发现 ${safeCandidateGroupCount} 个坐标区域`);
+        appendDebug(`已识别 ${safeCandidatePointCount} 个坐标点`);
+        appendDebug("正在检查点号和顺序…");
+        appendDebug("正在整理识别结果…");
         if (data.bftmLongTable?.isBftmLongTable) {
-          appendDebug(`BFTM长表识别：已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行`);
-          appendDebug(`BFTM缺失行号：${(data.bftmLongTable.missingRows || []).join("、") || "无"}`);
+          appendDebug(`已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行`);
         }
 
         if (!response.ok) {
@@ -15391,7 +15605,7 @@ ${placemarks}
         coordinateUploadPanel?.classList.add("is-complete");
         if (acquisitionReviewOnly) {
           setRecognitionStatus(
-            `采集完成，等待复核：${recognitionAuthorizationReasonMessage("map")}`,
+            "识别完成，建议通过地图核对位置和形状。",
             "warning"
           );
         }
@@ -15408,8 +15622,8 @@ ${placemarks}
         });
         if (acquisitionReviewOnly) {
           showMessage(
-            recognitionAuthorizationReasonMessage("map").replace("地图暂未开放", "地图与 KML 暂未开放"),
-            true,
+            "坐标已识别。您可以查看地图或下载未确认 KML，核对位置和形状。",
+            false,
             COORDINATE_RECOGNITION_MESSAGE_MS
           );
         } else if (isCadastralGrid) {
@@ -15470,6 +15684,7 @@ ${placemarks}
           ),
           engine: summaryEngine
         });
+        appendDebug("识别完成");
         if (clearPendingCommitAfterResultApplied) clearPendingCoordinateCommitRequestId();
         markPendingCoordinateRecognitionJobTerminalApplied(
           terminalRecognitionJobSnapshot,
@@ -15482,10 +15697,16 @@ ${placemarks}
         trackEvent("image_recognize_fail", {
           message: error.message
         });
-        if (error?.code === "RECOGNITION_ASYNC_JOB_CLIENT_WAIT_EXCEEDED") {
-          setRecognitionStatus("异步任务仍在后台运行，页面已停止等待", "warning");
-          showMessage("页面已停止等待，不会自动重试或重复扣次；刷新页面可凭任务令牌继续查询。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
-          showUploadSupportMessage(publicErrorMessage);
+        if (error?.code === "RECOGNITION_STOPPED_BY_USER") {
+          preserveSelectedImageAfterStop = true;
+          setRecognitionStatus("已停止识别。", "warning");
+          showMessage("已停止识别。您可以重新识别、重新上传、手动输入或寻求人工协助。", false, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showUploadSupportMessage("已保留当前图片，您可以重新识别或寻求人工协助。");
+        } else if (error?.code === "RECOGNITION_ASYNC_JOB_CLIENT_WAIT_EXCEEDED") {
+          preserveSelectedImageAfterStop = true;
+          setRecognitionStatus("暂时未能完成识别。", "warning");
+          showMessage("暂时未能完成识别。请重新上传、手动输入或寻求人工协助。", false, COORDINATE_RECOGNITION_MESSAGE_MS);
+          showUploadSupportMessage("当前图片已保留，您可以重新上传、手动输入或寻求人工协助。");
         } else {
           setRecognitionStatus("", "");
           showMessage("识别失败，请检查图片或稍后重试。", true, COORDINATE_RECOGNITION_MESSAGE_MS);
@@ -15495,7 +15716,7 @@ ${placemarks}
       } finally {
         setDebugRunning(false);
         imageInput.disabled = false;
-        imageInput.value = "";
+        if (!preserveSelectedImageAfterStop) imageInput.value = "";
       }
     }
   </script>

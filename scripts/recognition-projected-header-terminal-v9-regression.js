@@ -137,7 +137,7 @@ const loadingStatusRule = indexSource.match(/\.recognition-status\.loading::befo
 assert.match(baseStatusRule, /animation:\s*none/u);
 assert.doesNotMatch(baseStatusRule, /infinite/u);
 assert.match(loadingStatusRule, /animation:\s*spin\s+0\.8s\s+linear\s+infinite/u);
-assert.match(indexSource, /setRecognitionStatus\(\s*`采集完成，等待复核：\$\{recognitionAuthorizationReasonMessage\("map"\)\}`\s*,\s*"warning"\s*\)/u);
-assert.match(indexSource, /setRecognitionStatus\("异步任务仍在后台运行，页面已停止等待",\s*"warning"\)/u);
+assert.match(indexSource, /setRecognitionStatus\(\s*"识别完成，建议通过地图核对位置和形状。"\s*,\s*"warning"\s*\)/u);
+assert.match(indexSource, /setRecognitionStatus\("暂时未能完成识别。",\s*"warning"\)/u);
 
 console.log("recognition projected header terminal v9: PASS");
