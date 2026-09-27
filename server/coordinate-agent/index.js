@@ -11,6 +11,7 @@ export * from './tool-registry.js';
 export * from './adapters/mock-provider-adapter.js';
 export * from './adapters/multimodal-provider-adapter.js';
 export * from './provider-protocol.js';
+export * from './nonproduction-test-route.js';
 export * from './tools/image-tools.js';
 export * from './tools/math-tools.js';
 export * from './tools/sharp-image-operations.js';

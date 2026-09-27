@@ -35,7 +35,7 @@ function safeImagePath(root, relativePath) {
   return candidate;
 }
 
-export async function runCoordinateAgentOfflineScenarios({ scenarioPath } = {}) {
+export async function runCoordinateAgentOfflineScenarios({ scenarioPath, scenarioIds = null } = {}) {
   const absoluteScenarioPath = path.resolve(String(scenarioPath || ''));
   const regressionRoot = path.resolve(path.dirname(absoluteScenarioPath), '..');
   const payload = JSON.parse(await fs.readFile(absoluteScenarioPath, 'utf8'));
@@ -43,8 +43,16 @@ export async function runCoordinateAgentOfflineScenarios({ scenarioPath } = {}) 
     throw new Error('Offline scenario file is invalid');
   }
 
+  const requestedIds = scenarioIds === null ? null : new Set(scenarioIds.map(String));
+  const selectedScenarios = requestedIds === null
+    ? payload.scenarios
+    : payload.scenarios.filter(scenario => requestedIds.has(String(scenario.id)));
+  if (requestedIds !== null && selectedScenarios.length !== requestedIds.size) {
+    throw new Error('One or more requested offline scenarios are not registered');
+  }
+
   const scenarioResults = [];
-  for (const scenario of payload.scenarios) {
+  for (const scenario of selectedScenarios) {
     const imagePath = safeImagePath(regressionRoot, scenario.image);
     const before = await fs.readFile(imagePath);
     const beforeHash = sha256(before);
@@ -58,8 +66,8 @@ export async function runCoordinateAgentOfflineScenarios({ scenarioPath } = {}) 
     const kernel = new CoordinateIntelligenceAgentKernel({
       providerAdapter: adapter,
       toolRegistry: registry,
-      maxProviderCalls: 2,
-      maxIterations: 3,
+      maxProviderCalls: Number(scenario.maxProviderCalls || 2),
+      maxIterations: Number(scenario.maxIterations || 3),
     });
     const result = await kernel.run({ imageRef, requestId: `offline:${scenario.id}` });
     const score = scoreCoordinateAgentEvaluation({ actual: result, expected: scenario.expected });

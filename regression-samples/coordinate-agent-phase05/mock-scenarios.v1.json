@@ -1,0 +1,162 @@
+{
+  "schemaVersion": "coordinate-agent-offline-scenarios/v1",
+  "purpose": "Generic multi-turn replay data for Agent Kernel evaluation only. Expected answers must never enter production prompts, parsers, or routing.",
+  "scenarios": [
+    {
+      "id": "generic-rotated-math-verified",
+      "image": "fixtures/斜拍坐标.jpg",
+      "maxProviderCalls": 3,
+      "maxIterations": 4,
+      "turns": [
+        {
+          "observation": {
+            "summary": "The whole image shows a rotated coordinate table whose header-to-row relationships require normalization.",
+            "orientationDegrees": 90,
+            "regions": [
+              { "id": "whole-rotated", "kind": "document", "bbox": [0, 0, 1, 1], "sourceText": "", "semanticRole": "whole document structure", "confidence": 0.9, "provenance": "mock_visual_observation" }
+            ]
+          },
+          "plan": {
+            "rationale": "Normalize orientation, then inspect the table while preserving whole-image context.",
+            "actions": [
+              { "id": "rotate-overview", "toolName": "rotate_image", "objective": "Normalize the visible table orientation", "args": { "imageRef": "$IMAGE_REF", "degrees": -90 } },
+              { "id": "inspect-table", "toolName": "crop_region", "objective": "Inspect header and row relationships", "args": { "imageRef": "$IMAGE_REF", "bbox": [0.08, 0.08, 0.92, 0.92] } }
+            ]
+          }
+        },
+        {
+          "observation": {
+            "summary": "The normalized view resolves two rows and explicit latitude and longitude directions; mathematical validation remains.",
+            "orientationDegrees": 0,
+            "regions": [
+              { "id": "normalized-header", "kind": "header", "bbox": [0.1, 0.1, 0.9, 0.25], "sourceText": "Latitude N | Longitude E", "semanticRole": "axis and direction evidence", "confidence": 0.98, "provenance": "mock_visual_follow_up" },
+              { "id": "normalized-rows", "kind": "table", "bbox": [0.1, 0.25, 0.9, 0.85], "sourceText": "two coordinate rows", "semanticRole": "coordinate row grouping", "confidence": 0.97, "provenance": "mock_visual_follow_up" }
+            ]
+          },
+          "plan": {
+            "rationale": "Validate the explicit pairs without changing or inferring their values.",
+            "actions": [
+              { "id": "pair-one-check", "toolName": "coordinate_math_check", "objective": "Validate the first explicit pair", "args": { "latitude": 8.25, "longitude": 31.5 } },
+              { "id": "pair-set-check", "toolName": "spatial_consistency_check", "objective": "Validate the explicit pair set", "args": { "points": [{ "latitude": 8.25, "longitude": 31.5 }, { "latitude": 8.5, "longitude": 31.75 }] } }
+            ]
+          }
+        },
+        {
+          "observation": {
+            "summary": "The focused visual evidence and deterministic checks agree.",
+            "orientationDegrees": 0,
+            "regions": [
+              { "id": "verified-rows", "kind": "coordinate", "bbox": [0.1, 0.25, 0.9, 0.85], "sourceText": "A 8.25 N 31.5 E; B 8.5 N 31.75 E", "semanticRole": "verified coordinate evidence", "confidence": 0.98, "provenance": "mock_visual_reconciliation" }
+            ]
+          },
+          "plan": { "rationale": "Evidence is sufficient for deterministic verification.", "actions": [] },
+          "candidate": {
+            "success": true,
+            "resultStatus": "usable",
+            "displayText": "A | 8.25 N | 31.5 E\nB | 8.5 N | 31.75 E",
+            "coordinateSystem": { "kind": "geographic", "name": "WGS 84", "epsg": "4326", "status": "identified" },
+            "geometryType": "MultiPoint",
+            "groups": [
+              { "name": "Observed table", "points": [
+                { "label": "A", "sourceText": "A | 8.25 N | 31.5 E", "x": null, "y": null, "latitude": 8.25, "longitude": 31.5, "needsReview": false },
+                { "label": "B", "sourceText": "B | 8.5 N | 31.75 E", "x": null, "y": null, "latitude": 8.5, "longitude": 31.75, "needsReview": false }
+              ] }
+            ],
+            "warnings": []
+          },
+          "uncertainties": [],
+          "reviewItems": []
+        }
+      ],
+      "expected": {
+        "terminalState": "CONFIRMED",
+        "reviewFieldPaths": [],
+        "groups": [
+          { "points": [
+            { "latitude": 8.25, "longitude": 31.5, "directionTokens": ["N", "E"] },
+            { "latitude": 8.5, "longitude": 31.75, "directionTokens": ["N", "E"] }
+          ] }
+        ]
+      }
+    },
+    {
+      "id": "generic-layout-conflict-review",
+      "image": "fixtures/两块矿地.jpg",
+      "maxProviderCalls": 3,
+      "maxIterations": 4,
+      "turns": [
+        {
+          "observation": {
+            "summary": "The whole image appears to contain multiple coordinate sections with a potentially shared header.",
+            "orientationDegrees": 0,
+            "regions": [
+              { "id": "whole-multisection", "kind": "document", "bbox": [0, 0, 1, 1], "sourceText": "", "semanticRole": "whole document and section boundaries", "confidence": 0.82, "provenance": "mock_visual_observation" }
+            ]
+          },
+          "plan": {
+            "rationale": "Prepare the table structure and separately enlarge the shared header evidence.",
+            "actions": [
+              { "id": "prepare-structure", "toolName": "detect_table_structure", "objective": "Prepare visible row, column, and section evidence", "args": { "imageRef": "$IMAGE_REF", "bbox": [0.02, 0.02, 0.98, 0.98] } },
+              { "id": "zoom-shared-header", "toolName": "zoom_region", "objective": "Inspect whether the header applies to both sections", "args": { "imageRef": "$IMAGE_REF", "bbox": [0.08, 0.05, 0.92, 0.3], "scale": 2.5 } }
+            ]
+          }
+        },
+        {
+          "observation": {
+            "summary": "The header is visible, but its association with the lower section remains conflicting.",
+            "orientationDegrees": 0,
+            "regions": [
+              { "id": "shared-header", "kind": "header", "bbox": [0.08, 0.05, 0.92, 0.3], "sourceText": "Latitude / Longitude", "semanticRole": "possible shared column header", "confidence": 0.88, "provenance": "mock_visual_follow_up" },
+              { "id": "lower-section", "kind": "table", "bbox": [0.08, 0.52, 0.92, 0.95], "sourceText": "one coordinate row with unclear direction binding", "semanticRole": "lower coordinate section", "confidence": 0.65, "provenance": "mock_visual_follow_up" }
+            ]
+          },
+          "plan": {
+            "rationale": "Reinspect only the boundary between the shared header and lower section.",
+            "actions": [
+              { "id": "reinspect-boundary", "toolName": "crop_region", "objective": "Resolve the header-to-section relationship", "args": { "imageRef": "$IMAGE_REF", "bbox": [0.05, 0.2, 0.95, 0.68] } }
+            ]
+          }
+        },
+        {
+          "observation": {
+            "summary": "Focused review cannot prove that the visible direction header binds to the lower coordinate section.",
+            "orientationDegrees": 0,
+            "regions": [
+              { "id": "binding-conflict", "kind": "direction", "bbox": [0.05, 0.2, 0.95, 0.68], "sourceText": "header-to-section binding unresolved", "semanticRole": "direction binding evidence", "confidence": 0.42, "provenance": "mock_visual_reconciliation" }
+            ]
+          },
+          "plan": { "rationale": "Stop automatic processing and request the precise unresolved relationship.", "actions": [] },
+          "candidate": {
+            "success": true,
+            "resultStatus": "needs_review",
+            "displayText": "Lower section point | 4.25 ? | 14.5 ?",
+            "coordinateSystem": { "kind": "geographic", "name": null, "epsg": null, "status": "needs_confirmation" },
+            "geometryType": "Unknown",
+            "groups": [
+              { "name": "Lower observed section", "points": [
+                { "label": "Lower section point", "sourceText": "Lower section point | 4.25 ? | 14.5 ?", "x": null, "y": null, "latitude": 4.25, "longitude": 14.5, "needsReview": true }
+              ] }
+            ],
+            "warnings": ["Header direction binding requires confirmation"]
+          },
+          "uncertainties": [
+            { "code": "HEADER_BINDING_UNRESOLVED", "message": "The visible header cannot be safely bound to the lower section", "evidenceRegionIds": ["shared-header", "lower-section", "binding-conflict"], "blocking": true }
+          ],
+          "reviewItems": [
+            { "fieldPath": "coordinateGroups[0].headerDirectionBinding", "question": "Confirm whether the visible direction header applies to the lower section", "evidenceRegionIds": ["shared-header", "lower-section", "binding-conflict"], "candidates": ["applies", "does_not_apply"] }
+          ]
+        }
+      ],
+      "expected": {
+        "terminalState": "REVIEW_REQUIRED",
+        "reviewFieldPaths": ["coordinateGroups[0].headerDirectionBinding"],
+        "unresolvedDirectionFieldPaths": ["coordinateGroups[0].headerDirectionBinding"],
+        "groups": [
+          { "points": [
+            { "latitude": 4.25, "longitude": 14.5, "directionTokens": [] }
+          ] }
+        ]
+      }
+    }
+  ]
+}
