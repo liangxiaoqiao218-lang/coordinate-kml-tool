@@ -135,12 +135,20 @@ assert.deepEqual(publicQualificationReport.diagnostics, [{
   actualType: null,
   httpStatus: 400,
 }]);
-assert.deepEqual(publicQualificationReport.providerRequests, [{
+assert.deepEqual(publicQualificationReport.providerRequests.map(item => ({
+  ok: item.ok,
+  httpStatus: item.httpStatus,
+  errorCode: item.errorCode,
+  usageObserved: item.usageObserved,
+  timeoutMs: item.timeoutMs,
+})), [{
   ok: false,
   httpStatus: 400,
   errorCode: 'DASHSCOPE_HTTP_ERROR',
   usageObserved: false,
+  timeoutMs: 90_000,
 }]);
+assert.ok(publicQualificationReport.providerRequests[0].durationMs >= 0);
 assert.equal(publicQualificationReport.mapAllowed, false);
 assert.equal(publicQualificationReport.kmlAllowed, false);
 

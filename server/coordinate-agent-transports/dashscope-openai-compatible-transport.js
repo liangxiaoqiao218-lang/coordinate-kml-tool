@@ -1,4 +1,16 @@
 const TRANSPORT_NAME = 'dashscope-openai-compatible/v1';
+export const DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS = 90_000;
+export const MIN_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS = 1_000;
+export const MAX_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS = 180_000;
+
+export function normalizeCoordinateAgentProviderTimeoutMs(value) {
+  const numeric = Number(value);
+  const requested = Number.isFinite(numeric) ? Math.trunc(numeric) : DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS;
+  return Math.min(
+    MAX_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
+    Math.max(MIN_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS, requested),
+  );
+}
 
 function chatCompletionsUrl(endpoint) {
   const base = String(endpoint || '').trim().replace(/\/+$/, '');
@@ -98,7 +110,7 @@ export class DashScopeOpenAICompatibleTransport {
     getAccessToken,
     endpoint,
     model,
-    timeoutMs = 55_000,
+    timeoutMs = DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
     maxTokens = 8_000,
     highResolutionImages = false,
   } = {}) {
@@ -109,7 +121,7 @@ export class DashScopeOpenAICompatibleTransport {
     this.#endpoint = chatCompletionsUrl(endpoint);
     this.#model = String(model || '').trim();
     if (!this.#model) throw new Error('DashScope model is required');
-    this.#timeoutMs = Math.min(55_000, Math.max(1_000, Number(timeoutMs) || 55_000));
+    this.#timeoutMs = normalizeCoordinateAgentProviderTimeoutMs(timeoutMs);
     this.#maxTokens = maxTokens;
     this.#highResolutionImages = highResolutionImages === true;
   }
@@ -149,6 +161,7 @@ export class DashScopeOpenAICompatibleTransport {
         ok: false,
         httpStatus: null,
         durationMs: Date.now() - startedAt,
+        timeoutMs: this.#timeoutMs,
         usageObserved: false,
         usage: null,
         errorCode: normalized.code,
@@ -165,6 +178,7 @@ export class DashScopeOpenAICompatibleTransport {
       ok: response.ok,
       httpStatus: Number(response.status),
       durationMs: Date.now() - startedAt,
+      timeoutMs: this.#timeoutMs,
       usageObserved: usage !== null,
       usage,
       errorCode: response.ok ? null : 'DASHSCOPE_HTTP_ERROR',

@@ -10,6 +10,10 @@ import {
 } from '../server/coordinate-agent/index.js';
 import { createPhase9QualificationController } from '../server/coordinate-agent-shadow/phase9-qualification-controller.js';
 import { runPhase9RealProviderQualification } from '../server/coordinate-agent-shadow/phase9-real-provider-qualification.js';
+import {
+  DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
+  normalizeCoordinateAgentProviderTimeoutMs,
+} from '../server/coordinate-agent-transports/dashscope-openai-compatible-transport.js';
 import { createCoordinateAgentReplayShadowEvaluator } from './lib/coordinate-agent-shadow-evaluator.js';
 
 const args = new Set(process.argv.slice(2));
@@ -24,6 +28,9 @@ if (![1, 2].includes(requestedProviderCallLimit)) throw new Error('Provider call
 // Phase 9A narrows the deployed one-shot qualification budget to one request,
 // including services that still carry the earlier Phase 9 "=2" start flag.
 const maxProviderCalls = Math.min(requestedProviderCallLimit, 1);
+const providerRequestTimeoutMs = normalizeCoordinateAgentProviderTimeoutMs(
+  process.env.COORDINATE_AGENT_PROVIDER_TIMEOUT_MS || DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
+);
 const scenarioPaths = [
   path.join(root, 'regression-samples', 'coordinate-agent-phase03', 'mock-scenarios.v1.json'),
   path.join(root, 'regression-samples', 'coordinate-agent-phase05', 'mock-scenarios.v1.json'),
@@ -66,6 +73,7 @@ server.listen(requestedPort, bindAddress, () => {
     port: address.port,
     routePrefix: COORDINATE_AGENT_NONPRODUCTION_ROUTE_PREFIX,
     providerCallLimit: maxProviderCalls,
+    providerRequestTimeoutMs,
     automaticRetryCount: 0,
     runtimeIdentity,
   }));

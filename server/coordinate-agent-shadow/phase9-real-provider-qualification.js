@@ -11,7 +11,11 @@ import {
   registerCoordinateMathTools,
   registerGenericImageTools,
 } from '../coordinate-agent/index.js';
-import { DashScopeOpenAICompatibleTransport } from '../coordinate-agent-transports/dashscope-openai-compatible-transport.js';
+import {
+  DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
+  DashScopeOpenAICompatibleTransport,
+  normalizeCoordinateAgentProviderTimeoutMs,
+} from '../coordinate-agent-transports/dashscope-openai-compatible-transport.js';
 
 function sumUsage(telemetry) {
   return telemetry.reduce((totals, item) => ({
@@ -41,6 +45,9 @@ export async function runPhase9RealProviderQualification({
   }
   const source = await fs.readFile(imagePath);
   const sourceHash = createHash('sha256').update(source).digest('hex');
+  const requestTimeoutMs = normalizeCoordinateAgentProviderTimeoutMs(
+    env.COORDINATE_AGENT_PROVIDER_TIMEOUT_MS || DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
+  );
   const workspace = new LocalImageWorkspace();
   const imageRef = workspace.registerBuffer(source, { label: 'phase9-registered-evaluation' });
   const rawTransport = new DashScopeOpenAICompatibleTransport({
@@ -48,7 +55,7 @@ export async function runPhase9RealProviderQualification({
     getAccessToken: () => env.ALIYUN_API_KEY || env.DASHSCOPE_API_KEY || '',
     endpoint: env.ALIYUN_BASE_URL || env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     model: env.ALIYUN_VISION_MODEL || env.DASHSCOPE_VISION_MODEL || 'qwen3.8-flash',
-    timeoutMs: 55_000,
+    timeoutMs: requestTimeoutMs,
     maxTokens: 8_000,
   });
   let providerAttempts = 0;
@@ -83,6 +90,7 @@ export async function runPhase9RealProviderQualification({
     candidatePointCount: pointCount,
     realProviderCallCount: providerAttempts,
     automaticRetryCount: 0,
+    requestTimeoutMs,
     usage: Object.freeze(sumUsage(telemetry)),
     billingStatus: telemetry.some(item => item.usageObserved)
       ? 'USAGE_REPORTED_EXACT_BILLING_NOT_VERIFIED'
@@ -100,6 +108,8 @@ export async function runPhase9RealProviderQualification({
       httpStatus: item.httpStatus,
       errorCode: item.errorCode || null,
       usageObserved: item.usageObserved,
+      durationMs: item.durationMs,
+      timeoutMs: item.timeoutMs,
     }))),
     toolCalls: Object.freeze(result.evidence.toolResults.map(item => ({
       toolName: item.toolName,
