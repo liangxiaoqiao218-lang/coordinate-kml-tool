@@ -7418,13 +7418,10 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     .map(line => line.trim())
     .filter(Boolean);
   const lines = sourceLines.map(line => normalizeText(line));
-  const axisEvidenceLines = [
-    ...lines,
-    ...String(axisEvidenceText || "")
-      .split(/\r?\n/u)
-      .map(line => normalizeText(line).trim())
-      .filter(Boolean)
-  ];
+  const localAxisEvidenceLines = String(axisEvidenceText || "")
+    .split(/\r?\n/u)
+    .map(line => normalizeText(line).trim())
+    .filter(Boolean);
   const candidateRows = sourceLines.filter(line => (
     (line.match(/[°º˚]/gu) || []).length === 2
   ));
@@ -7444,9 +7441,9 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     ].filter(Boolean);
   };
 
-  const collectAxisDirections = (axisPattern, positivePattern, negativePattern, positive, negative) => {
+  const collectAxisDirections = (evidenceLines, axisPattern, positivePattern, negativePattern, positive, negative) => {
     const directions = new Set();
-    for (const line of axisEvidenceLines) {
+    for (const line of evidenceLines) {
       const fields = splitAxisFields(line);
       for (const field of fields) {
         if (!axisPattern.test(field)) continue;
@@ -7458,33 +7455,67 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     }
     return directions;
   };
-  const latitudeDirections = collectAxisDirections(
-    /(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu,
-    /(?:\bnorth\b|\bnord\b|\bnorte\b|北纬|(?:^|[=:\s])N(?:$|\s))/iu,
-    /(?:\bsouth\b|\bsud\b|\bsul\b|\bsur\b|南纬|(?:^|[=:\s])S(?:$|\s))/iu,
+  const latitudeAxisPattern = /(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu;
+  const longitudeAxisPattern = /(?:\blon(?:gitude)?\b|经度|东经|西经)/iu;
+  const latitudePositivePattern = /(?:\bnorth\b|\bnord\b|\bnorte\b|北纬|(?:^|[=:\s])N(?:$|\s))/iu;
+  const latitudeNegativePattern = /(?:\bsouth\b|\bsud\b|\bsul\b|\bsur\b|南纬|(?:^|[=:\s])S(?:$|\s))/iu;
+  const longitudePositivePattern = /(?:\beast\b|\best\b|\bleste\b|东经|(?:^|[=:\s])E(?:$|\s))/iu;
+  const longitudeNegativePattern = /(?:\bwest\b|\bouest\b|\boeste\b|\bovest\b|西经|(?:^|[=:\s])[WO](?:$|\s))/iu;
+  const collectLatitudeDirections = evidenceLines => collectAxisDirections(
+    evidenceLines,
+    latitudeAxisPattern,
+    latitudePositivePattern,
+    latitudeNegativePattern,
     "N",
     "S"
   );
-  const longitudeDirections = collectAxisDirections(
-    /(?:\blon(?:gitude)?\b|经度|东经|西经)/iu,
-    /(?:\beast\b|\best\b|\bleste\b|东经|(?:^|[=:\s])E(?:$|\s))/iu,
-    /(?:\bwest\b|\bouest\b|\boeste\b|\bovest\b|西经|(?:^|[=:\s])[WO](?:$|\s))/iu,
+  const collectLongitudeDirections = evidenceLines => collectAxisDirections(
+    evidenceLines,
+    longitudeAxisPattern,
+    longitudePositivePattern,
+    longitudeNegativePattern,
     "E",
     "W"
   );
-  const explicitAxes = latitudeDirections.size === 1 && longitudeDirections.size === 1
-    ? {
-        latitude: [...latitudeDirections][0],
-        longitude: [...longitudeDirections][0]
-      }
-    : null;
-  const axisSemanticConflict = axisEvidenceLines.some(line => splitAxisFields(line).some(field => (
-    (/(?:\blat(?:itude)?\b|纬度|北纬|南纬)/iu.test(field)
-      && /(?:\beast\b|\best\b|\bleste\b|\bwest\b|\bouest\b|\boeste\b|\bovest\b|东经|西经|(?:^|[=:\s])[EWO](?:$|\s))/iu.test(field))
-    || (/(?:\blon(?:gitude)?\b|经度|东经|西经)/iu.test(field)
-      && /(?:\bnorth\b|\bnord\b|\bnorte\b|\bsouth\b|\bsud\b|\bsul\b|\bsur\b|北纬|南纬|(?:^|[=:\s])[NS](?:$|\s))/iu.test(field))
+  const collectExplicitAxes = (latitudeDirections, longitudeDirections) => (
+    latitudeDirections.size === 1 && longitudeDirections.size === 1
+      ? {
+          latitude: [...latitudeDirections][0],
+          longitude: [...longitudeDirections][0]
+        }
+      : null
+  );
+  const hasAxisSemanticConflict = evidenceLines => evidenceLines.some(line => splitAxisFields(line).some(field => (
+    (latitudeAxisPattern.test(field)
+      && (longitudePositivePattern.test(field) || longitudeNegativePattern.test(field)))
+    || (longitudeAxisPattern.test(field)
+      && (latitudePositivePattern.test(field) || latitudeNegativePattern.test(field)))
   )));
-  const axisConflict = latitudeDirections.size > 1 || longitudeDirections.size > 1 || axisSemanticConflict;
+  const providerLatitudeDirections = collectLatitudeDirections(lines);
+  const providerLongitudeDirections = collectLongitudeDirections(lines);
+  const localLatitudeDirections = collectLatitudeDirections(localAxisEvidenceLines);
+  const localLongitudeDirections = collectLongitudeDirections(localAxisEvidenceLines);
+  const explicitProviderAxes = collectExplicitAxes(providerLatitudeDirections, providerLongitudeDirections);
+  const explicitLocalAxes = collectExplicitAxes(localLatitudeDirections, localLongitudeDirections);
+  const providerAxisConflict = providerLatitudeDirections.size > 1
+    || providerLongitudeDirections.size > 1
+    || hasAxisSemanticConflict(lines);
+  const localAxisConflict = localLatitudeDirections.size > 1
+    || localLongitudeDirections.size > 1
+    || hasAxisSemanticConflict(localAxisEvidenceLines);
+  const crossSourceAxisConflict = Boolean(explicitProviderAxes && explicitLocalAxes)
+    && (explicitProviderAxes.latitude !== explicitLocalAxes.latitude
+      || explicitProviderAxes.longitude !== explicitLocalAxes.longitude);
+  const axisConflict = providerAxisConflict || localAxisConflict || crossSourceAxisConflict;
+  // Provider output and local OCR are independent observations. A clear
+  // Provider header binds the Provider rows even if noisy local OCR disagrees;
+  // that disagreement downgrades the result to review instead of deleting it.
+  const explicitAxes = !providerAxisConflict && explicitProviderAxes
+    ? explicitProviderAxes
+    : (!providerAxisConflict && !localAxisConflict ? explicitLocalAxes : null);
+  const selectedAxisSource = explicitProviderAxes && !providerAxisConflict
+    ? "provider"
+    : explicitAxes ? "local_ocr" : "none";
 
   const rowEntries = candidateRows.map(line => {
     const pipeFields = line.replace(/[｜]/gu, "|").split("|").map(field => field.trim()).filter(Boolean);
@@ -7526,7 +7557,7 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
       && /^(?:[A-Z]|\d{1,3})$/u.test(entry.label)
       && !parsedStructuredLabels.has(entry.label)
   )).length;
-  const explicitHeaderDirection = Boolean(explicitAxes) && !axisConflict;
+  const explicitHeaderDirection = Boolean(explicitAxes) && !providerAxisConflict;
   const everyRowHasDirections = sourceRows.length > 0
     && sourceRows.every(entry => entry.directionBound === true);
   const complete = coordinateLines.length >= 3
@@ -7541,7 +7572,7 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     && coordinateLines.length >= 3
     && sourceRows.length === candidateRows.length
     && rowEntries.every(entry => Boolean(entry.coordinate))
-    && !axisConflict;
+    && !providerAxisConflict;
   const pointAzLabels = Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index));
   const coordinateFamily = complete
     && sourceLabels.length === pointAzLabels.length
@@ -7554,8 +7585,12 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     coordinateRowCount: coordinateLines.length,
     sourceRowCount: uniqueEntries.length,
     candidateRowCount: candidateRows.length,
-    axisDirectionBound: !axisConflict && (explicitHeaderDirection || everyRowHasDirections),
+    axisDirectionBound: explicitHeaderDirection || everyRowHasDirections,
     axisConflict,
+    providerAxisConflict,
+    localAxisConflict,
+    crossSourceAxisConflict,
+    selectedAxisSource,
     parsedCandidateRowCount,
     rejectedCandidateRowCount,
     blockingRejectedRowCount,
@@ -17462,6 +17497,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerDmsCoordinateRowCount: providerDmsDiagnostic.coordinateRowCount,
       providerDmsAxisDirectionBound: providerDmsDiagnostic.axisDirectionBound,
       providerDmsAxisConflict: providerDmsDiagnostic.axisConflict,
+      providerDmsProviderAxisConflict: providerDmsDiagnostic.providerAxisConflict,
+      providerDmsLocalAxisConflict: providerDmsDiagnostic.localAxisConflict,
+      providerDmsCrossSourceAxisConflict: providerDmsDiagnostic.crossSourceAxisConflict,
+      providerDmsSelectedAxisSource: providerDmsDiagnostic.selectedAxisSource,
       providerDmsParsedCandidateRowCount: providerDmsDiagnostic.parsedCandidateRowCount,
       providerDmsRejectedCandidateRowCount: providerDmsDiagnostic.rejectedCandidateRowCount,
       providerDmsBlockingRejectedRowCount: providerDmsDiagnostic.blockingRejectedRowCount,
@@ -17481,8 +17520,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     });
     // SANITIZED_ONE_SHOT_ACQUISITION_LOG_END
     const providerDmsRecoveryEligible = ["COMPLETE", "PROVISIONAL"].includes(providerDmsDiagnostic.status)
-      && providerDmsDiagnostic.coordinateRowCount >= 3
-      && providerDmsDiagnostic.axisConflict !== true;
+      && providerDmsDiagnostic.coordinateRowCount >= 3;
     const unifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
       rawText,
       acquisition: recognitionImageAcquisition,
@@ -18087,6 +18125,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             blockingRejectedRowCount: trustedProviderDmsEvidence.blockingRejectedRowCount,
             coverageStatus: trustedProviderDmsEvidence.coverageStatus,
             axisDirectionBound: trustedProviderDmsEvidence.axisDirectionBound,
+            axisConflict: trustedProviderDmsEvidence.axisConflict,
+            providerAxisConflict: trustedProviderDmsEvidence.providerAxisConflict,
+            localAxisConflict: trustedProviderDmsEvidence.localAxisConflict,
+            crossSourceAxisConflict: trustedProviderDmsEvidence.crossSourceAxisConflict,
+            selectedAxisSource: trustedProviderDmsEvidence.selectedAxisSource,
             coordinateFamily: trustedProviderDmsEvidence.coordinateFamily
           },
           acquisitionContractConformance: oneShotAcquisitionConformance,

@@ -2420,6 +2420,50 @@ test("Provider DMS evidence keeps conflicting split axis fields fail closed", ()
   assert.equal(runtime.extractProviderDmsReviewEvidence(sourceText).status, "REVIEW_REQUIRED");
 });
 
+test("Provider DMS evidence preserves complete rows when independent local OCR disagrees with a clear Provider header", () => {
+  const sourceText = [
+    "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
+    "Point | Latitude nord | Longitude ouest",
+    "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
+    "4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(sourceText, {
+    axisEvidenceText: "Point | Latitude sud | Longitude est"
+  });
+  assert.equal(evidence.status, "PROVISIONAL");
+  assert.equal(evidence.providerAxisConflict, false);
+  assert.equal(evidence.localAxisConflict, false);
+  assert.equal(evidence.crossSourceAxisConflict, true);
+  assert.equal(evidence.axisConflict, true);
+  assert.equal(evidence.selectedAxisSource, "provider");
+  assert.equal(evidence.axisDirectionBound, true);
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
+});
+
+test("Provider DMS evidence preserves complete rows when local OCR is internally noisy but Provider axes are clear", () => {
+  const sourceText = [
+    "Point | Latitude nord | Longitude ouest",
+    "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
+    "2 | 11° 43' 09.20'' | 09° 00' 56.03''",
+    "3 | 11° 43' 03.38'' | 09° 00' 58.67''",
+    "4 | 11° 43' 11.30'' | 09° 01' 15.25''"
+  ].join("\n");
+  const evidence = runtime.extractProviderDmsReviewEvidence(sourceText, {
+    axisEvidenceText: ["LATITUDE=N", "LATITUDE=S", "LONGITUDE=W"].join("\n")
+  });
+  assert.equal(evidence.status, "PROVISIONAL");
+  assert.equal(evidence.providerAxisConflict, false);
+  assert.equal(evidence.localAxisConflict, true);
+  assert.equal(evidence.crossSourceAxisConflict, false);
+  assert.equal(evidence.selectedAxisSource, "provider");
+  assert.equal(evidence.axisDirectionBound, true);
+  assert.equal(evidence.coordinateRowCount, 4);
+  assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
+});
+
 test("one-shot structured Provider DMS review accepts complete triples without seconds marks", () => {
   const sourceText = [
     "UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE",
