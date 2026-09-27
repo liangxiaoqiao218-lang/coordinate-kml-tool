@@ -14,12 +14,22 @@ function normalizeIdentity(value) {
     .toUpperCase()
     .replace(/[_-]+/gu, ' ')
     .replace(/[^A-Z0-9: ]+/gu, ' ')
-    .replace(/\s+/gu, ' ');
+    .replace(/\s+/gu, ' ')
+    .replace(/\bITRF\s+(\d{4})\b/gu, 'ITRF$1');
 }
 
 function normalizeEpsg(value) {
-  const match = String(value || '').trim().toUpperCase().match(/^(?:EPSG\s*:\s*)?(\d{4,6})$/u);
-  return match ? `EPSG:${match[1]}` : null;
+  const source = String(value || '').trim();
+  const patterns = [
+    /^(?:EPSG\s*:{1,2}\s*)?(\d{4,6})$/iu,
+    /^URN:OGC:DEF:CRS:EPSG:{1,2}(\d{4,6})$/iu,
+    /^HTTPS?:\/\/(?:WWW\.)?OPENGIS\.NET\/DEF\/CRS\/EPSG\/0\/(\d{4,6})\/?$/iu,
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match) return `EPSG:${match[1]}`;
+  }
+  return null;
 }
 
 function utmDefinitionFromEpsg(epsg) {
@@ -54,7 +64,7 @@ const BFTM_DEFINITION = Object.freeze({
 
 function utmDefinitionFromExplicitName(value) {
   const normalized = normalizeIdentity(value);
-  const match = normalized.match(/^WGS ?84 UTM(?: ZONE)? (\d{1,2})([NS])$/u);
+  const match = normalized.match(/^WGS ?84 UTM(?: ZONE)? (\d{1,2})\s*([NS])$/u);
   if (!match) return null;
   const zone = Number(match[1]);
   if (!Number.isInteger(zone) || zone < 1 || zone > 60) return null;
@@ -69,24 +79,89 @@ function definitionForExplicitIdentity(value) {
   return utmDefinitionFromExplicitName(value);
 }
 
+function classifyNameIdentity(value, definition) {
+  if (value === null || String(value).trim() === '') return 'absent';
+  if (definition?.id === BFTM_DEFINITION.id) return 'standard_bftm_name';
+  if (definition?.projection === 'utm') return 'standard_wgs84_utm_name';
+  const normalized = normalizeIdentity(value);
+  if (/\b(?:BFTM|UTM|EPSG|ITRF|WGS)\b/u.test(normalized)) {
+    return 'supported_token_with_unapproved_suffix';
+  }
+  return 'unrecognized';
+}
+
+function buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }) {
+  const nameSyntax = classifyNameIdentity(name, byName);
+  const epsgSyntax = epsg === null || String(epsg).trim() === ''
+    ? 'absent'
+    : explicitEpsg
+      ? 'standard_epsg_syntax'
+      : 'invalid_epsg_syntax';
+  const nameCrsId = byName?.id || null;
+  const epsgCrsId = explicitEpsg || null;
+  const normalizedCrsId = status === 'identified'
+    ? (byEpsg || byName)?.id || null
+    : null;
+  return Object.freeze({
+    namePresent: nameSyntax !== 'absent',
+    epsgPresent: epsgSyntax !== 'absent',
+    nameSyntax,
+    epsgSyntax,
+    nameCrsId,
+    epsgCrsId,
+    normalizedCrsId,
+    normalizationStatus: status,
+  });
+}
+
 export function resolveProjectedCrs({ name = null, epsg = null } = {}) {
   const byEpsg = epsg === null ? null : definitionForExplicitIdentity(epsg);
   const byName = name === null ? null : definitionForExplicitIdentity(name);
   const explicitEpsg = epsg === null ? null : normalizeEpsg(epsg);
   if (epsg !== null && !explicitEpsg) {
-    return Object.freeze({ status: 'unsupported', definition: null, reason: 'CRS_IDENTIFIER_UNSUPPORTED' });
+    const status = 'unsupported';
+    return Object.freeze({
+      status,
+      definition: null,
+      reason: 'CRS_IDENTIFIER_UNSUPPORTED',
+      identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+    });
   }
   if (epsg !== null && !byEpsg) {
-    return Object.freeze({ status: 'unsupported', definition: null, reason: 'CRS_IDENTIFIER_UNSUPPORTED' });
+    const status = 'unsupported';
+    return Object.freeze({
+      status,
+      definition: null,
+      reason: 'CRS_IDENTIFIER_UNSUPPORTED',
+      identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+    });
   }
   if (byEpsg && byName && byEpsg.id !== byName.id) {
-    return Object.freeze({ status: 'conflict', definition: null, reason: 'CRS_IDENTIFIER_CONFLICT' });
+    const status = 'conflict';
+    return Object.freeze({
+      status,
+      definition: null,
+      reason: 'CRS_IDENTIFIER_CONFLICT',
+      identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+    });
   }
   const definition = byEpsg || byName;
   if (!definition) {
-    return Object.freeze({ status: 'unsupported', definition: null, reason: 'CRS_IDENTIFIER_UNSUPPORTED' });
+    const status = 'unsupported';
+    return Object.freeze({
+      status,
+      definition: null,
+      reason: 'CRS_IDENTIFIER_UNSUPPORTED',
+      identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+    });
   }
-  return Object.freeze({ status: 'identified', definition, reason: null });
+  const status = 'identified';
+  return Object.freeze({
+    status,
+    definition,
+    reason: null,
+    identityDiagnostic: buildIdentityDiagnostic({ name, epsg, byName, byEpsg, explicitEpsg, status }),
+  });
 }
 
 function meridionalArc(latitudeRadians) {
@@ -159,6 +234,7 @@ export function transformAndVerifyProjectedPoints({ coordinateSystem, axisOrder,
       spatialStatus: 'not_completed',
       toleranceMeters: boundedTolerance,
       maximumRoundTripErrorMeters: null,
+      identityDiagnostic: resolution.identityDiagnostic,
       transformedPoints: Object.freeze([]),
       failureCode: resolution.reason || 'PROJECTED_AXIS_SEMANTICS_UNAVAILABLE',
     });
@@ -202,6 +278,7 @@ export function transformAndVerifyProjectedPoints({ coordinateSystem, axisOrder,
     spatialStatus: roundTripComplete ? 'passed' : 'failed',
     toleranceMeters: boundedTolerance,
     maximumRoundTripErrorMeters: complete ? maximumRoundTripErrorMeters : null,
+    identityDiagnostic: resolution.identityDiagnostic,
     transformedPoints: Object.freeze(transformedPoints),
     failureCode: roundTripComplete ? null : 'PROJECTED_ROUND_TRIP_VERIFICATION_FAILED',
   });

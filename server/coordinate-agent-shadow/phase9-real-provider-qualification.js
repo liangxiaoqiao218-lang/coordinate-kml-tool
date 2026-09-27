@@ -34,6 +34,7 @@ function summarizeProjectionVerification(toolResults) {
     && item.toolName === 'projected_coordinate_transform_check'
   ));
   const output = result?.ok === true ? result.output : null;
+  const diagnostic = output?.identityDiagnostic || null;
   return Object.freeze({
     attempted: Boolean(result),
     crsStatus: String(output?.crsStatus || 'not_attempted'),
@@ -50,6 +51,16 @@ function summarizeProjectionVerification(toolResults) {
     maximumRoundTripErrorMeters: Number.isFinite(output?.maximumRoundTripErrorMeters)
       ? output.maximumRoundTripErrorMeters
       : null,
+    identityDiagnostic: diagnostic ? Object.freeze({
+      namePresent: diagnostic.namePresent === true,
+      epsgPresent: diagnostic.epsgPresent === true,
+      nameSyntax: String(diagnostic.nameSyntax || 'unavailable'),
+      epsgSyntax: String(diagnostic.epsgSyntax || 'unavailable'),
+      nameCrsId: typeof diagnostic.nameCrsId === 'string' ? diagnostic.nameCrsId : null,
+      epsgCrsId: typeof diagnostic.epsgCrsId === 'string' ? diagnostic.epsgCrsId : null,
+      normalizedCrsId: typeof diagnostic.normalizedCrsId === 'string' ? diagnostic.normalizedCrsId : null,
+      normalizationStatus: String(diagnostic.normalizationStatus || 'unavailable'),
+    }) : null,
   });
 }
 
