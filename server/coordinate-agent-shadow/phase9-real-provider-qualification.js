@@ -28,6 +28,31 @@ function sumUsage(telemetry) {
   }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
 }
 
+function summarizeProjectionVerification(toolResults) {
+  const result = toolResults.find(item => (
+    item.actionId === 'safety-projection-transform'
+    && item.toolName === 'projected_coordinate_transform_check'
+  ));
+  const output = result?.ok === true ? result.output : null;
+  return Object.freeze({
+    attempted: Boolean(result),
+    crsStatus: String(output?.crsStatus || 'not_attempted'),
+    crsId: typeof output?.crsId === 'string' ? output.crsId : null,
+    registryMatched: output?.registryMatched === true,
+    axisStatus: String(output?.axisStatus || 'not_attempted'),
+    pointCount: Number(output?.pointCount || 0),
+    transformedPointCount: Number(output?.transformedPointCount || 0),
+    roundTripVerifiedPointCount: Number(output?.roundTripVerifiedPointCount || 0),
+    forwardStatus: String(output?.forwardStatus || 'not_attempted'),
+    inverseStatus: String(output?.inverseStatus || 'not_attempted'),
+    spatialStatus: String(output?.spatialStatus || 'not_attempted'),
+    toleranceMeters: Number.isFinite(output?.toleranceMeters) ? output.toleranceMeters : null,
+    maximumRoundTripErrorMeters: Number.isFinite(output?.maximumRoundTripErrorMeters)
+      ? output.maximumRoundTripErrorMeters
+      : null,
+  });
+}
+
 export async function runPhase9RealProviderQualification({
   root,
   caseId = 'eval-001',
@@ -102,6 +127,7 @@ export async function runPhase9RealProviderQualification({
       && item.output?.valid === true
     )).length,
     candidateRepresentation: summarizeCandidateRepresentation(result.coordinateResult),
+    projectionVerification: summarizeProjectionVerification(result.evidence.toolResults),
     realProviderCallCount: providerAttempts,
     automaticRetryCount: 0,
     requestTimeoutMs,

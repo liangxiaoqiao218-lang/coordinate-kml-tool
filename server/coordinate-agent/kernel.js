@@ -61,18 +61,105 @@ function downgradeCandidateForReview(candidate) {
   });
 }
 
+function promoteProjectedCandidate(candidate, transformedPoints) {
+  let index = 0;
+  return validateCoordinateCandidate({
+    ...candidate,
+    resultStatus: 'usable',
+    groups: candidate.groups.map(group => ({
+      ...group,
+      points: group.points.map(point => {
+        const transformed = transformedPoints[index];
+        index += 1;
+        return {
+          ...point,
+          latitude: transformed.latitude,
+          longitude: transformed.longitude,
+          needsReview: false,
+        };
+      }),
+    })),
+  });
+}
+
+async function prepareProjectedCandidate({ candidate, board, toolRegistry, imageRef, requestId }) {
+  if (candidate?.coordinateSystem?.kind !== 'projected'
+    || candidate.coordinateSystem.status !== 'identified') {
+    return Object.freeze({ candidate, toolCallCount: 0, projectionVerified: false });
+  }
+  const points = candidatePoints(candidate);
+  const providerEvidence = board.snapshot();
+  const action = {
+    id: 'safety-projection-transform',
+    toolName: GENERIC_TOOL_NAMES.PROJECTED_COORDINATE_TRANSFORM_CHECK,
+    args: {
+      coordinateSystem: {
+        name: candidate.coordinateSystem.name,
+        epsg: candidate.coordinateSystem.epsg,
+      },
+      // The provider-neutral candidate contract defines x as easting and y as northing.
+      axisOrder: 'easting_northing',
+      points: points.map(point => ({ x: point.x, y: point.y })),
+    },
+  };
+  let output;
+  try {
+    output = await toolRegistry.execute(action, { imageRef, requestId, safetyVerification: true });
+    board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: true, output });
+  } catch (error) {
+    board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: false, error: error?.message });
+    board.addUncertainty({
+      code: 'PROJECTED_TRANSFORM_EXECUTION_FAILED',
+      message: 'The explicit projected coordinate candidate could not complete deterministic transformation',
+      blocking: true,
+    });
+    return Object.freeze({ candidate: downgradeCandidateForReview(candidate), toolCallCount: 1, projectionVerified: false });
+  }
+
+  const canPromote = output?.valid === true
+    && output.transformedPointCount === points.length
+    && output.roundTripVerifiedPointCount === points.length
+    && providerEvidence.uncertainties.every(item => item.blocking === false)
+    && providerEvidence.reviewItems.length === 0
+    && candidate.geometryType !== 'Unknown';
+  if (!canPromote) {
+    board.addUncertainty({
+      code: String(output?.failureCode || 'PROJECTED_DETERMINISTIC_VERIFICATION_FAILED'),
+      message: 'The projected coordinate candidate did not satisfy every deterministic CRS, axis, transformation, and round-trip gate',
+      blocking: true,
+    });
+    return Object.freeze({ candidate: downgradeCandidateForReview(candidate), toolCallCount: 1, projectionVerified: false });
+  }
+  return Object.freeze({
+    candidate: promoteProjectedCandidate(candidate, output.transformedPoints),
+    toolCallCount: 1,
+    projectionVerified: true,
+  });
+}
+
 async function runDeterministicCandidateVerification({ candidate, board, toolRegistry, imageRef, requestId }) {
   if (!candidate?.success) return Object.freeze({ candidate, toolCallCount: 0 });
+  const projectedPreparation = await prepareProjectedCandidate({
+    candidate,
+    board,
+    toolRegistry,
+    imageRef,
+    requestId,
+  });
+  candidate = projectedPreparation.candidate;
   const points = candidatePoints(candidate);
-  let toolCallCount = 0;
+  let toolCallCount = projectedPreparation.toolCallCount;
   let verified = points.length > 0;
 
-  if (candidate.coordinateSystem?.kind !== 'geographic'
-    || candidate.coordinateSystem?.status !== 'identified') {
+  const coordinateIdentityVerified = (
+    candidate.coordinateSystem?.kind === 'geographic'
+    && candidate.coordinateSystem?.status === 'identified'
+  ) || projectedPreparation.projectionVerified;
+  if (!coordinateIdentityVerified) {
     verified = false;
     board.addUncertainty({
       code: 'DETERMINISTIC_GEOGRAPHIC_CRS_UNAVAILABLE',
-      message: 'Candidate authorization requires an explicitly identified geographic coordinate system',
+      message: 'Candidate authorization requires an explicitly identified geographic CRS or a fully verified projected-to-geographic conversion',
       blocking: true,
     });
   }
