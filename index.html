@@ -7564,6 +7564,13 @@ Au值 = 纯度 × 10 后取整数</div>
         && finalized.mapReady !== false
         && finalized.geometry
         && finalized.crs?.id === "EPSG:4326";
+      const provisionalKmlEnabled = provisionalMapEnabled
+        && payload.kmlReady === true
+        && String(payload.kmlStatus || "").toUpperCase() === "ENABLED"
+        && finalized.decisionState === "REVIEW_REQUIRED"
+        && finalized.technicalKmlReady === true
+        && finalized.kmlReady === true
+        && finalized.kmlAuthorityBlocked !== true;
       const explicitlyAuthorized = evidenceComplete
         && String(payload.authorizationStatus || "").toUpperCase() === "AUTHORIZED"
         && String(payload.resultStatus || "").toLowerCase() === "authorized"
@@ -7585,8 +7592,8 @@ Au值 = 纯度 × 10 后取整数</div>
         requiresReview: !explicitlyAuthorized,
         boundaryBlocked: !explicitlyAuthorized,
         mapStatus: explicitlyAuthorized || provisionalMapEnabled ? "ENABLED" : "CLOSED",
-        kmlStatus: explicitlyAuthorized ? "ENABLED" : "CLOSED",
-        kmlReady: explicitlyAuthorized,
+        kmlStatus: explicitlyAuthorized || provisionalKmlEnabled ? "ENABLED" : "CLOSED",
+        kmlReady: explicitlyAuthorized || provisionalKmlEnabled,
         evidenceComplete,
         reviewReasons: Array.isArray(payload.reviewReasons) ? payload.reviewReasons : [],
         contractReasons: Array.isArray(payload.contractReasons) ? payload.contractReasons : [],
@@ -15594,15 +15601,13 @@ ${placemarks}
         const acquisitionCandidateDisplayText = acquisitionReviewOnly
           && Array.isArray(data.candidateCoordinateGroups)
           ? data.candidateCoordinateGroups.map(group => {
-            const titlePath = Array.isArray(group?.titlePath) ? group.titlePath.filter(Boolean) : [];
-            const heading = titlePath.length > 0 ? `[${titlePath.join(" > ")}]\n` : "";
             const rows = Array.isArray(group?.rows) ? group.rows.map(row => {
               const label = row?.sourceLabel ? `${row.sourceLabel} | ` : "";
               const latitude = row?.latitudeSource || row?.latitude || "";
               const longitude = row?.longitudeSource || row?.longitude || "";
               return `${label}${latitude} | ${longitude}`;
             }).filter(Boolean) : [];
-            return `${heading}${rows.join("\n")}`.trim();
+            return rows.join("\n").trim();
           }).filter(Boolean).join("\n\n")
           : "";
         const sourceCoordinateRepresentation = data.sourceCoordinateRepresentation || {};
@@ -15622,11 +15627,17 @@ ${placemarks}
           if (trustedProviderDmsEvidence.axisConflict === true) {
             appendDebug("方向信息需要结合原图核对，坐标已保留供地图查看");
           }
-          appendDebug("地图和未确认 KML 已准备，可继续核对");
+          const provisionalMapReady = data.mapReady === true && String(data.mapStatus || "").toUpperCase() === "ENABLED";
+          const provisionalKmlReady = data.kmlReady === true && String(data.kmlStatus || "").toUpperCase() === "ENABLED";
+          if (provisionalMapReady && provisionalKmlReady) {
+            appendDebug("地图和未确认 KML 已准备，可继续核对");
+          } else if (provisionalMapReady) {
+            appendDebug("待核对地图已准备，KML 暂不可用");
+          }
         }
         const existingFamilySourceText = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
-        const displayCoordinates = acquisitionCandidateDisplayText
-          || sourceDisplayText
+        const displayCoordinates = sourceDisplayText
+          || acquisitionCandidateDisplayText
           || existingFamilySourceText
           || finalCoordinates
           || getCanonicalCoordinateDisplayText(data.finalizedCoordinateResult);

@@ -51,6 +51,7 @@
     "recognition-final-fail-close-v7-regression": "node scripts/recognition-final-fail-close-v7-regression.js",
     "recognition-projected-authorization-v8-regression": "node scripts/recognition-projected-authorization-v8-regression.js",
     "recognition-projected-header-terminal-v9-regression": "node scripts/recognition-projected-header-terminal-v9-regression.js",
+    "review-output-contract-regression": "node scripts/review-output-contract-regression.js",
     "coordinate-authority-matrix-regression": "node scripts/coordinate-authority-matrix-regression.js",
     "provider-timeout-fallback-p0-regression": "node scripts/provider-timeout-fallback-p0-regression.js",
     "production-coordinate-closure-p0-regression": "node scripts/production-coordinate-closure-p0-regression.js",
