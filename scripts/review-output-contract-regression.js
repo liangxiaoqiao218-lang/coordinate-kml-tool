@@ -88,27 +88,42 @@ assert.equal(reviewAuthorization.mapReady, true, "review output keeps its diagno
 assert.equal(reviewAuthorization.provisionalKmlReady, true, "review output exposes only provisional KML");
 assert.equal(reviewAuthorization.kmlReady, true, "response keeps provisional KML availability");
 
-for (const [name, result] of [
+const hardBlockedResults = [
   ["invalid geometry", finalized({ geometry: { type: "Point", coordinates: [181, 5] } })],
   ["invalid CRS", finalized({ crs: { id: "EPSG:0", axisOrder: "longitude_latitude" } })],
   ["invalid source", finalized({ sourceAuthority: "unknown" })],
   ["stale revision", finalized({ currentRevision: 2 })],
   ["rejected confirmation", finalized({ confirmationStatus: COORDINATE_CONFIRMATION_STATUS.REJECTED })],
+  ["invalid confirmation binding", Object.freeze({
+    ...review,
+    decisionState: COORDINATE_DECISION_STATE.BLOCKED,
+    explicitAuthorityRejected: true,
+    technicalKmlReady: false,
+    kmlReady: false,
+    kmlAuthorityBlocked: true
+  })],
   ["explicit KML authority block", finalized({ kmlAuthorityBlocked: true })]
-]) {
+];
+for (const [name, result] of hardBlockedResults) {
   const authorization = authorizationFor(result);
   assert.equal(authorization.authorized, false, `${name} must not authorize export`);
+  assert.equal(authorization.mapReady, false, `${name} must not expose provisional map`);
   assert.equal(authorization.provisionalKmlReady, false, `${name} must not expose provisional KML`);
   assert.equal(authorization.kmlReady, false, `${name} keeps KML closed`);
 }
 
 const indexSource = await readFile(path.join(root, "index.html"), "utf8");
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
+const geometryContractStart = indexSource.indexOf("function hasFiniteFinalizedGeometry");
+const geometryContractEnd = indexSource.indexOf("function isOrdinaryReviewOnlyFinalizedResult", geometryContractStart);
 const browserContractStart = indexSource.indexOf("function hasCompleteUnifiedRecognitionEvidence");
 const browserContractEnd = indexSource.indexOf("function getConvertibleCoordinateGroups", browserContractStart);
+assert.notEqual(geometryContractStart, -1);
+assert.notEqual(geometryContractEnd, -1);
 assert.notEqual(browserContractStart, -1);
 assert.notEqual(browserContractEnd, -1);
 const createBrowserAuthorizationState = Function(`
+  ${indexSource.slice(geometryContractStart, geometryContractEnd)}
   ${indexSource.slice(browserContractStart, browserContractEnd)}
   return createRecognitionAuthorizationState;
 `)();
@@ -141,7 +156,7 @@ const browserBlocked = createBrowserAuthorizationState({
   mapStatus: "ENABLED",
   kmlReady: false,
   kmlStatus: "CLOSED",
-  finalizedCoordinateResult: finalized({ geometry: { type: "Point", coordinates: [181, 5] } }),
+  finalizedCoordinateResult: hardBlockedResults[0][1],
   candidateCoordinates: evidence.candidateCoordinates,
   candidateCoordinateGroups: evidence.candidateCoordinateGroups,
   visibleCrsEvidence: evidence.visibleCrsEvidence,
@@ -149,6 +164,73 @@ const browserBlocked = createBrowserAuthorizationState({
 });
 assert.equal(browserBlocked.kmlStatus, "CLOSED");
 assert.equal(browserBlocked.kmlReady, false);
+assert.equal(browserBlocked.mapStatus, "CLOSED");
+
+const actionContractStart = indexSource.indexOf("function getConvertibleCoordinateGroups");
+const actionContractEnd = indexSource.indexOf("function recognitionAuthorizationReasonMessage", actionContractStart);
+assert.notEqual(actionContractStart, -1);
+assert.notEqual(actionContractEnd, -1);
+const createBrowserActionContract = Function(
+  "getKmlCoordinateGroups",
+  "activeRecognitionAcquisitionResult",
+  "activeFinalizedCoordinateResult",
+  "getFinalizedCoordinateIdentity",
+  `
+    ${indexSource.slice(actionContractStart, actionContractEnd)}
+    return {
+      blocked: coordinateRecognitionActionBlocked,
+      provisional: shouldUseProvisionalCoordinateResult
+    };
+  `
+);
+const convertibleGroups = () => [[{ longitude: -8.01, latitude: 10.01 }]];
+const reviewActions = createBrowserActionContract(
+  convertibleGroups,
+  browserReview,
+  review,
+  () => ({ resultId: review.resultId, resultRevision: review.resultRevision })
+);
+assert.equal(reviewActions.blocked("map"), false, "valid review map action stays enabled");
+assert.equal(reviewActions.blocked("kml"), false, "valid review KML action stays enabled");
+assert.equal(reviewActions.provisional("map"), true, "valid review uses provisional map flow");
+assert.equal(reviewActions.provisional("kml"), true, "valid review uses provisional KML flow");
+
+const blockedActions = createBrowserActionContract(
+  convertibleGroups,
+  browserBlocked,
+  hardBlockedResults[0][1],
+  () => null
+);
+assert.equal(blockedActions.blocked("map"), true, "closed recognition map cannot use parseable text as a bypass");
+assert.equal(blockedActions.blocked("kml"), true, "closed recognition KML cannot use parseable text as a bypass");
+assert.equal(blockedActions.provisional("map"), false, "closed recognition cannot enter provisional map flow");
+assert.equal(blockedActions.provisional("kml"), false, "closed recognition cannot enter provisional KML flow");
+
+for (const [name, result] of hardBlockedResults) {
+  const authorization = authorizationFor(result);
+  const blockedBrowserState = createBrowserAuthorizationState({
+    recognitionAcquisition: evidence,
+    acquisitionStatus: "COMPLETED",
+    mapReady: authorization.mapReady,
+    mapStatus: authorization.mapReady ? "ENABLED" : "CLOSED",
+    kmlReady: authorization.kmlReady,
+    kmlStatus: authorization.kmlReady ? "ENABLED" : "CLOSED",
+    finalizedCoordinateResult: result,
+    candidateCoordinates: evidence.candidateCoordinates,
+    candidateCoordinateGroups: evidence.candidateCoordinateGroups,
+    visibleCrsEvidence: evidence.visibleCrsEvidence,
+    imageAcquisitionEvidence: evidence.imageEvidence
+  });
+  const actions = createBrowserActionContract(convertibleGroups, blockedBrowserState, result, () => null);
+  assert.equal(actions.blocked("map"), true, `${name} keeps the frontend map action blocked`);
+  assert.equal(actions.blocked("kml"), true, `${name} keeps the frontend KML action blocked`);
+  assert.equal(actions.provisional("map"), false, `${name} cannot enter the provisional map flow`);
+  assert.equal(actions.provisional("kml"), false, `${name} cannot enter the provisional KML flow`);
+}
+
+const manualActions = createBrowserActionContract(convertibleGroups, null, null, () => null);
+assert.equal(manualActions.blocked("map"), false, "manual input retains its independent map path");
+assert.equal(manualActions.blocked("kml"), false, "manual input retains its independent KML path");
 
 assert.match(indexSource, /const displayCoordinates = sourceDisplayText\s*\|\| acquisitionCandidateDisplayText/u,
   "editable coordinates prefer the preserved source rows");
@@ -156,12 +238,16 @@ assert.doesNotMatch(indexSource, /const heading = titlePath\.length/u,
   "diagnostic title paths are not inserted into editable coordinate text");
 assert.match(indexSource, /if \(provisionalMapReady && provisionalKmlReady\) \{\s*appendDebug\("地图和未确认 KML 已准备，可继续核对"\)/u,
   "recognition details only claim provisional KML when the response enables it");
+assert.match(indexSource, /const reviewMapReady = activeRecognitionAcquisitionResult\?\.mapStatus === "ENABLED"/u,
+  "recognition completion message follows the server map state");
+assert.match(indexSource, /const reviewKmlReady = activeRecognitionAcquisitionResult\?\.kmlStatus === "ENABLED"/u,
+  "recognition completion message follows the server KML state");
 assert.doesNotMatch(serverSource, /finalizedRequiresFailClose[\s\S]{0,350}finalizedCoordinateResult\.kmlReady === true/u,
   "review-ready KML is not mistaken for an unauthorized AUTO_EXPORT result");
 
 console.log(JSON.stringify({
   suite: "review-output-contract-regression",
-  passed: 12,
+  passed: 20,
   providerCalls: 0,
   cases: [
     "VALID_REVIEW_MAP_ENABLED",
@@ -172,9 +258,17 @@ console.log(JSON.stringify({
     "INVALID_SOURCE_BLOCKED",
     "STALE_REVISION_BLOCKED",
     "REJECTED_CONFIRMATION_BLOCKED",
+    "INVALID_CONFIRMATION_BINDING_BLOCKED",
+    "HARD_BLOCKS_CLOSE_MAP_AND_KML",
     "FRONTEND_REVIEW_KML_ENABLED",
     "FRONTEND_INVALID_KML_BLOCKED",
+    "FRONTEND_VALID_REVIEW_ACTIONS_ENABLED",
+    "FRONTEND_CLOSED_ACTIONS_BLOCKED",
+    "FRONTEND_CLOSED_PROVISIONAL_FLOW_BLOCKED",
+    "MANUAL_INPUT_ACTIONS_REMAIN_INDEPENDENT",
     "SOURCE_TEXT_PRECEDENCE",
-    "DETAIL_STATUS_MATCHES_KML_STATE"
+    "DETAIL_STATUS_MATCHES_KML_STATE",
+    "COMPLETION_MESSAGE_MATCHES_MAP_STATE",
+    "COMPLETION_MESSAGE_MATCHES_KML_STATE"
   ]
 }, null, 2));

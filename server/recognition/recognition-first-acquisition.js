@@ -1,8 +1,10 @@
 import sharp from "sharp";
 import {
   COORDINATE_DECISION_STATE,
-  COORDINATE_QUALITY_GATE_STATUS
+  COORDINATE_QUALITY_GATE_STATUS,
+  FINALIZED_COORDINATE_SOURCE_AUTHORITIES
 } from "../coordinate-finalizer/reason-codes.js";
+import { validateFinalizedGeometry } from "../coordinate-finalizer/geometry-finalizer.js";
 import {
   buildRecognitionAcquisitionLogSummary,
   extractRecognitionCandidateEvidence
@@ -533,11 +535,24 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     && finalizerGatePassed
     && mapGatePassed
     && kmlGatePassed;
+  const provisionalReviewIdentityValid = Boolean(
+    finalized.decisionState === COORDINATE_DECISION_STATE.REVIEW_REQUIRED
+    && finalized.requiresReview === true
+    && finalized.confirmationStatus === "pending"
+    && [
+      COORDINATE_QUALITY_GATE_STATUS.PASSED,
+      COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED
+    ].includes(finalized.qualityGateStatus)
+    && FINALIZED_COORDINATE_SOURCE_AUTHORITIES.includes(finalized.sourceAuthority)
+    && finalized.explicitAuthorityRejected !== true
+    && finalized.kmlAuthorityBlocked !== true
+    && finalized.crs?.id === "EPSG:4326"
+    && finalized.crs?.axisOrder === "longitude_latitude"
+    && validateFinalizedGeometry(finalized.geometry).ok === true
+  );
   const provisionalMapReady = Boolean(
     mapGatePassed
-    && finalized.geometry
-    && finalized.crs?.id === "EPSG:4326"
-    && finalized.explicitAuthorityRejected !== true
+    && provisionalReviewIdentityValid
   );
   const provisionalKmlReady = Boolean(
     provisionalMapReady
