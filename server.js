@@ -95,6 +95,7 @@ import {
   validateOneShotAcquisitionContract
 } from "./server/recognition/family-primary-routing.js";
 import { finiteNumberOrNull, hasFiniteNumericValue } from "./server/coordinate-values.js";
+import { applyAuthoritativeUsageQuota } from "./server/client-config-user.js";
 import { COORDINATE_REVIEW_REASON_CODE, deriveCoordinateReviewReason } from "./server/coordinate-review-reason.js";
 import { utmToWgs84 } from "./server/projection/utm.js";
 import { bftmToWgs84 } from "./server/projection/bftm.js";
@@ -137,7 +138,8 @@ import {
   createRecognitionAcquisitionEvidenceStore,
   createRecognitionImageVariants,
   evaluateUnifiedRecognitionFinalAuthorization,
-  evaluateUnifiedRecognitionAcquisition
+  evaluateUnifiedRecognitionAcquisition,
+  isDirectionBoundDmsProvisionalReviewEligible
 } from "./server/recognition/recognition-first-acquisition.js";
 import {
   ACQUISITION_REVIEW_STATUS,
@@ -11227,8 +11229,9 @@ app.get("/api/config", async (req, res) => {
       await writeAdminData(data);
     }
 
+    let authoritativeUser = null;
     if (visitorId) {
-      await getOrCreateSupabaseUser(visitorId);
+      authoritativeUser = await getOrCreateSupabaseUser(visitorId);
       await updateSupabaseUserVisitMeta(visitorId, req);
       await updateSupabaseUserSourceMeta(visitorId, req);
       await writeSourceVisitLog(visitorId, req);
@@ -11236,7 +11239,10 @@ app.get("/api/config", async (req, res) => {
 
     res.json({
       visitorId,
-      user,
+      user: applyAuthoritativeUsageQuota(
+        user,
+        authoritativeUser ? buildUsageQuotaPayload(authoritativeUser) : null
+      ),
       featureFlags: data.featureFlags,
       permissions: getEffectivePermissions(user, data.featureFlags)
     });
@@ -15497,19 +15503,14 @@ async function recognizeCoordinatesHandler(req, res) {
     if (!context || !body || typeof body !== "object" || Array.isArray(body)) return body;
     const { evidence, decision } = context;
     const originalFinalizedCoordinateResult = body.finalizedCoordinateResult;
-    const dmsReviewDowngradeEligible = Boolean(
-      decision?.dmsGeographicReviewEligible === true
-      && originalFinalizedCoordinateResult?.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
-      && originalFinalizedCoordinateResult?.crs?.id === "EPSG:4326"
-      && originalFinalizedCoordinateResult?.crs?.axisOrder === "longitude_latitude"
-      && originalFinalizedCoordinateResult?.geometry
-      && originalFinalizedCoordinateResult?.kmlAuthorityBlocked !== true
-      && originalFinalizedCoordinateResult?.explicitAuthorityRejected !== true
-      && originalFinalizedCoordinateResult?.resultId
-      && Number.isSafeInteger(originalFinalizedCoordinateResult?.resultRevision)
-      && originalFinalizedCoordinateResult.resultRevision === originalFinalizedCoordinateResult.currentRevision
-    );
-    const provisionalDmsReviewResult = dmsReviewDowngradeEligible
+    const coordinateEvidenceConflict = String(body.coordinateEvidenceConsistencyStatus || "").toUpperCase() === "CONFLICT";
+    const dmsReviewDowngradeEligible = isDirectionBoundDmsProvisionalReviewEligible({
+      decision,
+      evidence,
+      providerDmsReviewEvidence: body.providerDmsReviewEvidence,
+      finalized: originalFinalizedCoordinateResult
+    });
+    const provisionalDmsReviewResult = !coordinateEvidenceConflict && dmsReviewDowngradeEligible
       ? coordinateConfirmationRuntime.register(finalizeCoordinateResult({
           ...originalFinalizedCoordinateResult,
           currentRevision: originalFinalizedCoordinateResult.resultRevision,
@@ -15535,7 +15536,13 @@ async function recognizeCoordinatesHandler(req, res) {
           ]
         }))
       : null;
-    const authorizationBody = provisionalDmsReviewResult
+    const authorizationBody = coordinateEvidenceConflict
+      ? {
+          ...body,
+          mapReady: false,
+          kmlReady: false
+        }
+      : provisionalDmsReviewResult
       ? {
           ...body,
           authorizationStatus: "REVIEW_REQUIRED",
@@ -15559,40 +15566,47 @@ async function recognizeCoordinatesHandler(req, res) {
     const acquisitionStatus = decision.acquisitionStatus || evidence?.acquisitionStatus || "EMPTY";
     const candidateCounts = getStructuredRecognitionCandidateCounts(body, evidence);
     const authorizationStatus = authorized ? "AUTHORIZED" : "REVIEW_REQUIRED";
-    const finalizedRequiresFailClose = !authorized
-      && authorizationBody.finalizedCoordinateResult && typeof authorizationBody.finalizedCoordinateResult === "object"
-      && authorizationBody.finalizedCoordinateResult.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT;
-    const failClosedFinalizedCoordinateResult = finalizedRequiresFailClose
+    const finalizedRequiresStateAlignment = Boolean(
+      authorizationBody.finalizedCoordinateResult
+      && typeof authorizationBody.finalizedCoordinateResult === "object"
+      && (!finalAuthorization.mapReady || !finalAuthorization.kmlReady)
+    );
+    const alignedFinalizedCoordinateResult = finalizedRequiresStateAlignment
       ? finalizeCoordinateResult({
         ...authorizationBody.finalizedCoordinateResult,
         currentRevision: authorizationBody.finalizedCoordinateResult.resultRevision,
         confirmedRevision: null,
         confirmationStatus: "pending",
         qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
-        technicalKmlReady: false,
-        kmlAuthorityBlocked: true,
-        currentAuthorizedGeometryExportable: false,
+        technicalKmlReady: finalAuthorization.kmlReady === true,
+        ...(!finalAuthorization.mapReady ? { mapReady: false } : {}),
+        kmlAuthorityBlocked: finalAuthorization.kmlReady !== true,
+        currentAuthorizedGeometryExportable: finalAuthorization.kmlReady === true,
         requiresReview: true,
-        kmlReady: false,
+        kmlReady: finalAuthorization.kmlReady === true,
         groups: Array.isArray(authorizationBody.finalizedCoordinateResult.groups)
           ? authorizationBody.finalizedCoordinateResult.groups.map(group => ({
             ...group,
             requiresReview: true,
-            kmlReady: false
+            kmlReady: finalAuthorization.kmlReady === true
           }))
           : authorizationBody.finalizedCoordinateResult.groups
       })
       : null;
     const finalizedCoordinateResult = authorizationBody.finalizedCoordinateResult
       && typeof authorizationBody.finalizedCoordinateResult === "object"
-      ? !finalizedRequiresFailClose
+      ? !finalizedRequiresStateAlignment
         ? authorizationBody.finalizedCoordinateResult
         : coordinateConfirmationRuntime.register(Object.freeze({
-          ...failClosedFinalizedCoordinateResult,
-          decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+          ...alignedFinalizedCoordinateResult,
+          decisionState: authorizationBody.finalizedCoordinateResult.decisionState === COORDINATE_DECISION_STATE.BLOCKED
+            ? COORDINATE_DECISION_STATE.BLOCKED
+            : COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
           gate: Object.freeze({
-            ...failClosedFinalizedCoordinateResult.gate,
-            decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED
+            ...alignedFinalizedCoordinateResult.gate,
+            decisionState: authorizationBody.finalizedCoordinateResult.decisionState === COORDINATE_DECISION_STATE.BLOCKED
+              ? COORDINATE_DECISION_STATE.BLOCKED
+              : COORDINATE_DECISION_STATE.REVIEW_REQUIRED
           })
         }))
       : authorizationBody.finalizedCoordinateResult;
@@ -17706,6 +17720,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             ? "投影转换结果与 DMS 参考不一致或参考不完整；保留 X/Y 转换几何，请结合原图核对。"
             : "识别到明确的 UTM WGS 1984 ZONA 50S 平面坐标表；已按 EPSG:32750 的 X=Easting、Y=Northing 转换，请结合原图核对。",
           indonesiaUtm50: trustedProviderIndonesiaUtm50,
+          coordinateEvidenceConsistencyStatus: trustedProviderIndonesiaUtm50.projectedDmsCrosscheck === "FAIL"
+            ? "CONFLICT"
+            : trustedProviderIndonesiaUtm50.projectedDmsCrosscheck === "PASS" ? "CONSISTENT" : "INCOMPLETE",
           requiresReview: trustedProviderIndonesiaUtm50.requiresReview,
           parserTrace: [
             "INDONESIA_UTM50:explicit_document_evidence",
@@ -18272,6 +18289,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ? "投影转换结果与 DMS 参考不一致或参考不完整；保留 X/Y 转换几何，请结合原图核对。"
           : "识别到 UTM WGS 1984 ZONA 50S 平面坐标表；已按 EPSG:32750 的 X=Easting、Y=Northing 转换，请结合原图核对。",
         indonesiaUtm50,
+        coordinateEvidenceConsistencyStatus: indonesiaUtm50.projectedDmsCrosscheck === "FAIL"
+          ? "CONFLICT"
+          : indonesiaUtm50.projectedDmsCrosscheck === "PASS" ? "CONSISTENT" : "INCOMPLETE",
         requiresReview: indonesiaUtm50.requiresReview,
         parserTrace: [
           "INDONESIA_UTM50:explicit_document_evidence",

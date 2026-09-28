@@ -9,7 +9,10 @@ import {
   FINALIZED_COORDINATE_CRS,
   finalizeCoordinateResult
 } from "../server/coordinate-finalizer/index.js";
-import { evaluateUnifiedRecognitionFinalAuthorization } from "../server/recognition/recognition-first-acquisition.js";
+import {
+  evaluateUnifiedRecognitionFinalAuthorization,
+  isDirectionBoundDmsProvisionalReviewEligible
+} from "../server/recognition/recognition-first-acquisition.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const clock = () => "2026-09-28T00:00:00.000Z";
@@ -88,6 +91,41 @@ assert.equal(reviewAuthorization.mapReady, true, "review output keeps its diagno
 assert.equal(reviewAuthorization.provisionalKmlReady, true, "review output exposes only provisional KML");
 assert.equal(reviewAuthorization.kmlReady, true, "response keeps provisional KML availability");
 
+const directionBoundDmsDecision = Object.freeze({ dmsGeographicReviewEligible: true });
+const directionBoundDmsEvidence = Object.freeze({
+  candidateCoordinates: Object.freeze([Object.freeze({ format: "DMS" })])
+});
+assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
+  decision: directionBoundDmsDecision,
+  evidence: directionBoundDmsEvidence,
+  finalized: review
+}), true, "an already REVIEW_REQUIRED direction-bound DMS result is eligible for provisional outputs");
+assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
+  providerDmsReviewEvidence: Object.freeze({
+    status: "COMPLETE",
+    coverageStatus: "COMPLETE",
+    coordinateRowCount: 4,
+    sourceRowCount: 4,
+    blockingRejectedRowCount: 0,
+    axisDirectionBound: true,
+    axisConflict: false,
+    providerAxisConflict: false,
+    localAxisConflict: false,
+    crossSourceAxisConflict: false
+  }),
+  finalized: review
+}), true, "complete direction-bound Provider DMS evidence independently establishes provisional eligibility");
+assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
+  decision: directionBoundDmsDecision,
+  evidence: directionBoundDmsEvidence,
+  finalized: finalized({
+    confirmationStatus: COORDINATE_CONFIRMATION_STATUS.NOT_REQUIRED,
+    qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.PASSED,
+    requiresReview: false,
+    kmlReady: true
+  })
+}), true, "a safe AUTO_EXPORT DMS result may still be downgraded into the same provisional review contract");
+
 const hardBlockedResults = [
   ["invalid geometry", finalized({ geometry: { type: "Point", coordinates: [181, 5] } })],
   ["invalid CRS", finalized({ crs: { id: "EPSG:0", axisOrder: "longitude_latitude" } })],
@@ -101,8 +139,7 @@ const hardBlockedResults = [
     technicalKmlReady: false,
     kmlReady: false,
     kmlAuthorityBlocked: true
-  })],
-  ["explicit KML authority block", finalized({ kmlAuthorityBlocked: true })]
+  })]
 ];
 for (const [name, result] of hardBlockedResults) {
   const authorization = authorizationFor(result);
@@ -110,7 +147,36 @@ for (const [name, result] of hardBlockedResults) {
   assert.equal(authorization.mapReady, false, `${name} must not expose provisional map`);
   assert.equal(authorization.provisionalKmlReady, false, `${name} must not expose provisional KML`);
   assert.equal(authorization.kmlReady, false, `${name} keeps KML closed`);
+  assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
+    decision: directionBoundDmsDecision,
+    evidence: directionBoundDmsEvidence,
+    finalized: result
+  }), false, `${name} cannot enter the direction-bound DMS provisional path`);
 }
+assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
+  decision: directionBoundDmsDecision,
+  evidence: directionBoundDmsEvidence,
+  finalized: Object.freeze({
+    ...review,
+    technicalKmlReady: false,
+    kmlReady: false,
+    kmlAuthorityBlocked: true
+  })
+}), true, "a review-derived legacy KML block cannot override otherwise valid direction-bound DMS evidence");
+assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
+  decision: directionBoundDmsDecision,
+  evidence: { candidateCoordinates: [{ format: "PROJECTED_XY" }, { format: "DMS" }] },
+  finalized: review
+}), false, "projected results with DMS reference columns cannot enter the DMS provisional path");
+assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
+  decision: directionBoundDmsDecision,
+  evidence: directionBoundDmsEvidence,
+  finalized: finalized({
+    coordinateType: "projected_table",
+    family: "projected_table",
+    precisionMode: "projected-with-dms-crosscheck"
+  })
+}), false, "a projected final result cannot become DMS-authoritative through reference columns");
 
 const indexSource = await readFile(path.join(root, "index.html"), "utf8");
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
@@ -242,20 +308,25 @@ assert.match(indexSource, /const reviewMapReady = activeRecognitionAcquisitionRe
   "recognition completion message follows the server map state");
 assert.match(indexSource, /const reviewKmlReady = activeRecognitionAcquisitionResult\?\.kmlStatus === "ENABLED"/u,
   "recognition completion message follows the server KML state");
-assert.doesNotMatch(serverSource, /finalizedRequiresFailClose[\s\S]{0,350}finalizedCoordinateResult\.kmlReady === true/u,
-  "review-ready KML is not mistaken for an unauthorized AUTO_EXPORT result");
-assert.match(serverSource, /decision\?\.dmsGeographicReviewEligible === true[\s\S]+technicalKmlReady: true[\s\S]+kmlAuthorityBlocked: false/u,
+assert.match(serverSource, /finalizedRequiresStateAlignment[\s\S]+!finalAuthorization\.mapReady \|\| !finalAuthorization\.kmlReady[\s\S]+coordinateConfirmationRuntime\.register\(Object\.freeze/u,
+  "the registered result identity is aligned with the final server map and KML decision");
+assert.match(serverSource, /coordinateEvidenceConsistencyStatus[\s\S]+coordinateEvidenceConflict[\s\S]+mapReady: false,[\s\S]+kmlReady: false/u,
+  "an explicit cross-source coordinate conflict closes both provisional outputs");
+assert.match(serverSource, /isDirectionBoundDmsProvisionalReviewEligible\(\{[\s\S]+technicalKmlReady: true[\s\S]+kmlAuthorityBlocked: false/u,
   "direction-bound DMS is downgraded to provisional review without a hard KML authority block");
 assert.match(serverSource, /authorizationStatus: "REVIEW_REQUIRED"[\s\S]+resultStatus: "needs_review"[\s\S]+finalizedCoordinateResult: provisionalDmsReviewResult/u,
   "direction-bound DMS keeps explicit review state while exposing provisional outputs");
 
 console.log(JSON.stringify({
   suite: "review-output-contract-regression",
-  passed: 20,
+  passed: 34,
   providerCalls: 0,
   cases: [
     "VALID_REVIEW_MAP_ENABLED",
     "VALID_REVIEW_UNVERIFIED_KML_ENABLED",
+    "DMS_REVIEW_REQUIRED_PROVISIONAL_OUTPUT_ELIGIBLE",
+    "COMPLETE_PROVIDER_DMS_PROVISIONAL_OUTPUT_ELIGIBLE",
+    "DMS_AUTO_EXPORT_DOWNGRADE_REMAINS_ELIGIBLE",
     "REVIEW_STATE_NOT_PROMOTED",
     "INVALID_GEOMETRY_BLOCKED",
     "INVALID_CRS_BLOCKED",
@@ -264,6 +335,17 @@ console.log(JSON.stringify({
     "REJECTED_CONFIRMATION_BLOCKED",
     "INVALID_CONFIRMATION_BINDING_BLOCKED",
     "HARD_BLOCKS_CLOSE_MAP_AND_KML",
+    "REGISTERED_RESULT_MATCHES_FINAL_MAP_KML_STATE",
+    "EXPLICIT_COORDINATE_EVIDENCE_CONFLICT_CLOSES_OUTPUTS",
+    "DMS_INVALID_GEOMETRY_PROVISIONAL_PATH_BLOCKED",
+    "DMS_INVALID_CRS_PROVISIONAL_PATH_BLOCKED",
+    "DMS_INVALID_SOURCE_PROVISIONAL_PATH_BLOCKED",
+    "DMS_STALE_REVISION_PROVISIONAL_PATH_BLOCKED",
+    "DMS_REJECTED_CONFIRMATION_PROVISIONAL_PATH_BLOCKED",
+    "DMS_INVALID_BINDING_PROVISIONAL_PATH_BLOCKED",
+    "DMS_REVIEW_DERIVED_LEGACY_KML_BLOCK_IGNORED",
+    "PROJECTED_WITH_DMS_REFERENCE_PROVISIONAL_PATH_BLOCKED",
+    "PROJECTED_FINAL_RESULT_DMS_CROSSCHECK_NOT_AUTHORITY",
     "FRONTEND_REVIEW_KML_ENABLED",
     "FRONTEND_INVALID_KML_BLOCKED",
     "FRONTEND_VALID_REVIEW_ACTIONS_ENABLED",

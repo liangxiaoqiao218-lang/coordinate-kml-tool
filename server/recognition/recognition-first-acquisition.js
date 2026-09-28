@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import {
+  COORDINATE_CONFIRMATION_STATUS,
   COORDINATE_DECISION_STATE,
   COORDINATE_QUALITY_GATE_STATUS,
   FINALIZED_COORDINATE_SOURCE_AUTHORITIES
@@ -750,4 +751,67 @@ export function evaluateUnifiedRecognitionAcquisition({
     projectedAuthorizationEligible,
     dmsGeographicReviewEligible: false
   });
+}
+
+export function isDirectionBoundDmsProvisionalReviewEligible({
+  decision = null,
+  evidence = null,
+  providerDmsReviewEvidence = null,
+  finalized = null
+} = {}) {
+  if (!finalized || typeof finalized !== "object") return false;
+  const candidates = Array.isArray(evidence?.candidateCoordinates)
+    ? evidence.candidateCoordinates
+    : [];
+  const finalizedCoordinateIdentity = [
+    finalized.coordinateType,
+    finalized.family,
+    finalized.precisionMode
+  ].map(value => String(value || "").toLowerCase());
+  const finalizedDmsIdentity = finalizedCoordinateIdentity.some(value => value.includes("dms"))
+    && finalizedCoordinateIdentity.every(value => !/(?:projected|utm|bftm|mgrs|gauss|grid)/u.test(value));
+  const resultRevision = Number(finalized.resultRevision);
+  const currentRevision = finalized.currentRevision == null
+    ? resultRevision
+    : Number(finalized.currentRevision);
+  const reviewIdentityValid = finalized.decisionState === COORDINATE_DECISION_STATE.REVIEW_REQUIRED
+    && finalized.confirmationStatus === COORDINATE_CONFIRMATION_STATUS.PENDING;
+  const autoExportIdentityValid = finalized.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
+    && finalized.confirmationStatus === COORDINATE_CONFIRMATION_STATUS.NOT_REQUIRED;
+  const providerDmsCoordinateRowCount = Number(providerDmsReviewEvidence?.coordinateRowCount || 0);
+  const providerDmsSourceRowCount = Number(providerDmsReviewEvidence?.sourceRowCount || 0);
+  const completeProviderDmsEvidence = providerDmsReviewEvidence?.status === "COMPLETE"
+    && providerDmsReviewEvidence?.coverageStatus === "COMPLETE"
+    && providerDmsCoordinateRowCount > 0
+    && providerDmsCoordinateRowCount === providerDmsSourceRowCount
+    && Number(providerDmsReviewEvidence?.blockingRejectedRowCount || 0) === 0
+    && providerDmsReviewEvidence?.axisDirectionBound === true
+    && providerDmsReviewEvidence?.axisConflict !== true
+    && providerDmsReviewEvidence?.providerAxisConflict !== true
+    && providerDmsReviewEvidence?.localAxisConflict !== true
+    && providerDmsReviewEvidence?.crossSourceAxisConflict !== true;
+  const unifiedDmsEvidence = decision?.dmsGeographicReviewEligible === true
+    && candidates.length > 0
+    && candidates.every(candidate => String(candidate?.format || "") === "DMS");
+  const eligible = Boolean(
+    (unifiedDmsEvidence || completeProviderDmsEvidence)
+    && (candidates.length === 0 || candidates.every(candidate => String(candidate?.format || "") === "DMS"))
+    && finalizedDmsIdentity
+    && (reviewIdentityValid || autoExportIdentityValid)
+    && [
+      COORDINATE_QUALITY_GATE_STATUS.PASSED,
+      COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED
+    ].includes(finalized.qualityGateStatus)
+    && finalized.confirmedRevision == null
+    && FINALIZED_COORDINATE_SOURCE_AUTHORITIES.includes(finalized.sourceAuthority)
+    && finalized.crs?.id === "EPSG:4326"
+    && finalized.crs?.axisOrder === "longitude_latitude"
+    && validateFinalizedGeometry(finalized.geometry).ok === true
+    && finalized.explicitAuthorityRejected !== true
+    && Boolean(finalized.resultId)
+    && Number.isSafeInteger(resultRevision)
+    && resultRevision > 0
+    && resultRevision === currentRevision
+  );
+  return eligible;
 }
