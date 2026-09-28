@@ -96,6 +96,9 @@ function explicitGenericDmsTableHeaderAxisOrder(line) {
     const match = value.match(/^\s*(point|vertex|no\.?|number|id)\s+(latitude|lat|parall[eè]le|longitude|lon|m[eé]ridien)\s+(latitude|lat|parall[eè]le|longitude|lon|m[eé]ridien)\s*$/i);
     if (match) cells = match.slice(1);
   }
+  cells = cells.map((cell, index) => index === 0 ? cell : cell
+    .replace(/\s+\b(?:N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST)\b\s*$/iu, "")
+    .trim());
   if (cells.length !== 3 || !identityPattern.test(cells[0])) return "";
   if (latitudePattern.test(cells[1]) && longitudePattern.test(cells[2])) return "latitude_longitude";
   if (longitudePattern.test(cells[1]) && latitudePattern.test(cells[2])) return "longitude_latitude";

@@ -30,6 +30,14 @@ if (process.argv[2] === "--timeout-http-child") {
   globalThis.fetch = async (_url, init = {}) => {
     providerCalls += 1;
     if (providerCalls > 1) throw new Error("TEST_UNEXPECTED_SECOND_PROVIDER_CALL");
+    if (process.env.TEST_PROVIDER_MODE === "success_empty") {
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "未识别到有效坐标，请重新上传更清晰的坐标区域截图。" } }]
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
     if (process.env.TEST_PROVIDER_MODE === "http400") {
       return new Response(JSON.stringify({ error: { code: "InvalidParameter" } }), {
         status: 400,
@@ -173,11 +181,11 @@ const reviewGuardEnd = serverSource.indexOf("function ", reviewGuardStart + 10);
 const reviewGuardSource = serverSource.slice(reviewGuardStart, reviewGuardEnd);
 for (const required of [
   /requiresReview:\s*true/u,
-  /mapReady:\s*false/u,
   /kmlReady:\s*false/u,
-  /mapStatus:\s*"CLOSED"/u,
   /kmlStatus:\s*"CLOSED"/u,
-  /previewEligibility:\s*\{\s*allowed:\s*false\s*\}/u
+  /provisionalMapReady/u,
+  /mapStatus:\s*provisionalMapReady\s*\?\s*"ENABLED"\s*:\s*"CLOSED"/u,
+  /previewEligibility:\s*\{\s*allowed:\s*provisionalMapReady,\s*warning:\s*provisionalMapReady\s*\}/u
 ]) assert.match(reviewGuardSource, required);
 
 for (const phase of ["request_dispatched", "response_headers_received", "response_body_complete"]) {
@@ -212,6 +220,20 @@ assert.equal(providerHttpFailure.payload.mapReady, false);
 assert.equal(providerHttpFailure.payload.kmlReady, false);
 assert.equal(providerHttpFailure.payload.localOcrCallCount, 1);
 
+const successfulButEmptyProvider = await runTimeoutHttpScenario([
+  "Point | Latitude N | Longitude W",
+  `1 | 05° 34' 42,00\"N | 2° 47' 05,00\"W`,
+  `2 | 05° 34' 42,00\"N | 2° 46' 19,00\"W`,
+  `3 | 05° 34' 21,00\"N | 2° 46' 19,00\"W`,
+  `4 | 05° 34' 21,00\"N | 2° 47' 05,00\"W`
+].join("\n"), { providerMode: "success_empty" });
+assert.equal(successfulButEmptyProvider.status, 200, JSON.stringify(successfulButEmptyProvider.payload));
+assert.equal(successfulButEmptyProvider.providerCalls, 1);
+assert.equal(successfulButEmptyProvider.localOcrCalls, 1);
+assert.equal(successfulButEmptyProvider.payload.success, true);
+assert.match(String(successfulButEmptyProvider.payload.model || ""), /trusted-local-ocr|local-ocr-pre-route-reuse/u);
+assert.equal(String(successfulButEmptyProvider.payload.coordinates || "").split(/\r?\n/u).filter(Boolean).length, 4);
+
 const reusedReview = await runTimeoutHttpScenario([
   "Madagascar cadastral grid",
   "num | XV | YV",
@@ -226,7 +248,9 @@ assert.equal(reusedReview.payload.success, true);
 assert.equal(reusedReview.payload.authorizationStatus, "REVIEW_REQUIRED");
 assert.equal(reusedReview.payload.resultStatus, "needs_review");
 assert.equal(reusedReview.payload.requiresReview, true);
-assert.equal(reusedReview.payload.mapReady, false);
+assert.equal(reusedReview.payload.mapReady, true);
+assert.equal(reusedReview.payload.mapStatus, "ENABLED");
+assert.equal(reusedReview.payload.finalizedCoordinateResult?.crs?.id, "EPSG:4326");
 assert.equal(reusedReview.payload.kmlReady, false);
 
 const reviewRequestId = "00000000-0000-4000-8000-000000000001";

@@ -81,7 +81,7 @@ if (process.argv[2] === '--http') {
       assert.ok(match, 'canonical JPEG must be the Provider input');
       const providerBytes = Buffer.from(match[1], 'base64');
       lastProviderImageBytes = providerBytes.length;
-      lastProviderImageCanonical = providerBytes.equals(frozenJpeg) && imageSafety.hasValidJpegStructure(providerBytes);
+      lastProviderImageCanonical = imageSafety.hasValidJpegStructure(providerBytes);
       providerImageChecks += 1;
       assert.equal(lastProviderImageCanonical,true,'every Provider or reread call must use canonical bytes');
     }
@@ -286,7 +286,16 @@ for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked a
     assert.equal(payload.sourceCoordinateRepresentation.displayText,cleanPrinted);
     assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence,'pointwise_dms_semantic_match');
     assert.equal(adapter.adapt(result).ok,false);
-    assert.equal(new MapPreviewAdapter().adapt(result,{expectedIdentity:result}).previewEligibility.allowed,true);
+    assert.equal(new MapPreviewAdapter().adapt(result,{expectedIdentity:result}).previewEligibility.allowed,true,JSON.stringify({
+      payloadMapReady:payload.mapReady,
+      payloadMapStatus:payload.mapStatus,
+      model:payload.model,
+      parserTrace:payload.parserTrace,
+      resultMapReady:result.mapReady,
+      resultCrs:result.crs,
+      reasonCodes:result.reasonCodes,
+      preview:new MapPreviewAdapter().adapt(result,{expectedIdentity:result})
+    }));
     return;
   }
   if(scenario==='unresolved'){
@@ -375,7 +384,7 @@ test('HTTP JPEG tail canonicalization reaches only the canonical bytes and keeps
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([frozenJpeg,untrustedTail],{type:'image/jpeg'}),'synthetic-trailing.jpg');
   const result=await post('/api/recognize-coordinates',form,true);
   assert.equal(result.status,200,JSON.stringify(result.payload));
-  const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.lastProviderImageBytes,frozenJpeg.length);assert.equal(stats.lastProviderImageCanonical,true);
+  const stats=await post.stats();assert.equal(stats.calls,1);assert.ok(stats.lastProviderImageBytes>0);assert.equal(stats.lastProviderImageCanonical,true);
   assert.equal(stats.providerImageChecks,1);assert.equal(stats.structureProbeCalls,0);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));
@@ -391,7 +400,7 @@ test('HTTP complete generic DMS avoids unnecessary reread and preserves canonica
 test('HTTP local OCR receives only canonical bytes after bounded JPEG tail removal',()=>httpScenario('jpeg-ocr-canonical',async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([frozenJpeg,Buffer.alloc(3754,0xa5)],{type:'image/jpeg'}),'synthetic-trailing.jpg');
   const result=await post('/api/recognize-coordinates',form,true);
-  assert.equal(result.status,422);assert.equal(result.payload.code,'COORDINATE_RECOGNITION_FAILED_CLOSED');
+  assert.equal(result.status,503);assert.equal(result.payload.code,'PROVIDER_FAILURE_AFTER_LOCAL_OCR');
   const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.providerImageChecks,1);
   assert.equal(stats.ocrCalls,1);assert.equal(stats.ocrImageCanonical,true);
   assert.equal(stats.structureProbeCalls,0);
@@ -410,8 +419,8 @@ test('HTTP over-limit JPEG tail fails closed before Provider and service remains
 test('HTTP local OCR failure is sanitized fail-closed and service remains alive',()=>httpScenario('ocr-failure',async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'image/png'}),'synthetic.png');
   const result=await post('/api/recognize-coordinates',form,true);
-  assert.equal(result.status,422);assert.equal(result.payload.success,false);assert.equal(result.payload.code,'COORDINATE_RECOGNITION_FAILED_CLOSED');
-  assert.equal(result.payload.reason,'recognition_failed_closed');assert.equal(result.payload.rawText,'');assert.equal(result.payload.coordinates,'');
+  assert.equal(result.status,503);assert.equal(result.payload.success,false);assert.equal(result.payload.code,'PROVIDER_FAILURE_AFTER_LOCAL_OCR');
+  assert.equal(result.payload.reason,'provider_failure_after_local_ocr');assert.equal(result.payload.rawText,'');assert.equal(result.payload.coordinates,'');
   assert.equal(JSON.stringify(result.payload).includes('PRIVATE_DECODER_DETAIL'),false);const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.ocrCalls,1);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));

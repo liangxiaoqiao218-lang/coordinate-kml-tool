@@ -135,9 +135,9 @@ const noHeading = normalizeProviderDmsReviewResult([
 ].join("\n"));
 assert.equal(noHeading.status, ACQUISITION_REVIEW_STATUS.REVIEW_REQUIRED);
 assert.equal(noHeading.candidatePointCount, 8);
-assert.equal(noHeading.candidateGroupCount, 0);
-assert.equal(noHeading.unboundRowCount, 8);
-assert.ok(noHeading.reviewReasons.includes("GROUP_BOUNDARY_UNRESOLVED"));
+assert.equal(noHeading.candidateGroupCount, 1);
+assert.equal(noHeading.unboundRowCount, 0);
+assert.ok(noHeading.reviewReasons.includes("SOURCE_LABELS_DUPLICATE"));
 
 const incomplete = normalizeProviderDmsReviewResult([
   "CONTEXT | WGS 84", "HEADING | Area", "Point | Latitude | Longitude",
@@ -193,9 +193,10 @@ const headerBoundDirections = normalizeProviderDmsReviewResult([
 ].join("\n"));
 assert.equal(headerBoundDirections.status, ACQUISITION_REVIEW_STATUS.REVIEW_REQUIRED);
 assert.equal(headerBoundDirections.candidatePointCount, 4);
-assert.equal(headerBoundDirections.unboundRowCount, 4);
-assert.equal(headerBoundDirections.unboundCandidates[0].latitude > 0, true);
-assert.equal(headerBoundDirections.unboundCandidates[0].longitude < 0, true);
+assert.equal(headerBoundDirections.boundRowCount, 4);
+assert.equal(headerBoundDirections.unboundRowCount, 0);
+assert.equal(headerBoundDirections.candidateGroups[0].rows[0].latitude > 0, true);
+assert.equal(headerBoundDirections.candidateGroups[0].rows[0].longitude < 0, true);
 assert.equal(headerBoundDirections.authorizationCandidate, false);
 
 const canonicalAxisContract = normalizeProviderDmsReviewResult([
@@ -207,9 +208,10 @@ const canonicalAxisContract = normalizeProviderDmsReviewResult([
 ].join("\n"));
 assert.equal(canonicalAxisContract.status, ACQUISITION_REVIEW_STATUS.REVIEW_REQUIRED);
 assert.equal(canonicalAxisContract.candidatePointCount, 4);
-assert.equal(canonicalAxisContract.unboundRowCount, 4);
-assert.equal(canonicalAxisContract.unboundCandidates[0].latitude > 0, true);
-assert.equal(canonicalAxisContract.unboundCandidates[0].longitude < 0, true);
+assert.equal(canonicalAxisContract.boundRowCount, 4);
+assert.equal(canonicalAxisContract.unboundRowCount, 0);
+assert.equal(canonicalAxisContract.candidateGroups[0].rows[0].latitude > 0, true);
+assert.equal(canonicalAxisContract.candidateGroups[0].rows[0].longitude < 0, true);
 
 const reviewOnlyFinalized = finalizeCoordinateResult({
   sourceAuthority: "legacy",

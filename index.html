@@ -7559,6 +7559,11 @@ Au值 = 纯度 × 10 后取整数</div>
     function createRecognitionAuthorizationState(payload = {}) {
       const evidenceComplete = hasCompleteUnifiedRecognitionEvidence(payload);
       const finalized = payload?.finalizedCoordinateResult || {};
+      const provisionalMapEnabled = payload.mapReady === true
+        && String(payload.mapStatus || "").toUpperCase() === "ENABLED"
+        && finalized.mapReady !== false
+        && finalized.geometry
+        && finalized.crs?.id === "EPSG:4326";
       const explicitlyAuthorized = evidenceComplete
         && String(payload.authorizationStatus || "").toUpperCase() === "AUTHORIZED"
         && String(payload.resultStatus || "").toLowerCase() === "authorized"
@@ -7579,7 +7584,7 @@ Au值 = 纯度 × 10 后取整数</div>
         resultStatus: explicitlyAuthorized ? "authorized" : "needs_review",
         requiresReview: !explicitlyAuthorized,
         boundaryBlocked: !explicitlyAuthorized,
-        mapStatus: explicitlyAuthorized ? "ENABLED" : "CLOSED",
+        mapStatus: explicitlyAuthorized || provisionalMapEnabled ? "ENABLED" : "CLOSED",
         kmlStatus: explicitlyAuthorized ? "ENABLED" : "CLOSED",
         kmlReady: explicitlyAuthorized,
         evidenceComplete,

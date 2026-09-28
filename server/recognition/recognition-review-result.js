@@ -12,7 +12,7 @@ const DMS_COMPONENT_PATTERN = /[-+]?\d{1,3}\s*[°º˚]\s*\d{1,2}\s*(?:['′’]\
 const DMS_VALUE_PATTERN = /[-+]?\d{1,3}\s*[°º˚]\s*\d{1,2}\s*(?:['′’]\s*)?\d{1,2}(?:[.,]\d+)?\s*(?:["″”]\s*)?/giu;
 const CANDIDATE_DMS_SIGNAL = /[°º˚]|\b(?:N|S|E|W|O|NORTH|SOUTH|EAST|WEST|NORD|SUD|EST|OUEST)\b/iu;
 const GROUP_MARKER = /^\s*(?:GROUP|HEADING|SECTION|TITLE)\s*\|\s*(\S[\s\S]*?)\s*$/iu;
-const META_MARKER = /^\s*(?:CONTEXT|UNCLASSIFIED\s+STRUCTURED\s+COORDINATE\s+EVIDENCE)\b/iu;
+const META_MARKER = /^\s*[\[(]?\s*(?:CONTEXT|UNCLASSIFIED\s+STRUCTURED\s+COORDINATE\s+EVIDENCE)\b/iu;
 const HEADER_AXIS_PATTERN = /\b(?:LAT(?:ITUDE)?|PARALL[EÈ]LE)\b[\s\S]*\b(?:LON(?:GITUDE)?|M[EÉ]RIDIEN)\b|\b(?:LON(?:GITUDE)?|M[EÉ]RIDIEN)\b[\s\S]*\b(?:LAT(?:ITUDE)?|PARALL[EÈ]LE)\b/iu;
 
 function normalizeHemisphere(value) {
@@ -202,7 +202,10 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
     const line = sourceLine.trim();
     if (!line) return;
     const tokenCount = [...line.matchAll(DMS_COMPONENT_PATTERN)].length;
-    const candidateSignal = tokenCount > 0 || ((line.match(/[°º˚]/gu) || []).length > 0 && CANDIDATE_DMS_SIGNAL.test(line));
+    const unsignedDmsTokenCount = [...line.matchAll(DMS_VALUE_PATTERN)].length;
+    const candidateSignal = tokenCount > 0
+      || (Array.isArray(activeDmsHeaderBinding) && unsignedDmsTokenCount === 2)
+      || ((line.match(/[°º˚]/gu) || []).length > 0 && CANDIDATE_DMS_SIGNAL.test(line));
     if (candidateSignal) {
       const parsed = parseProviderDmsRow(line, lineNumber, activeDmsHeaderBinding);
       if (!parsed.accepted) {
@@ -269,8 +272,12 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
   const repeatedHeaderContinuationUnresolved = groups.some(group => (
     group.boundaryEvidence === "repeated_visible_header" && group.titlePath.length === 0
   ));
-  const boundariesUnique = titlePathsUnique
-    && (groups.length === 1 || groups.slice(1).every(group => [
+  // A document with exactly one observed coordinate group has no inter-group
+  // boundary to prove. Requiring a title here discarded every otherwise
+  // complete untitled table into the unbound bucket. Multi-group documents
+  // still require unique visible identities and proven transitions.
+  const boundariesUnique = groups.length === 1 || (titlePathsUnique
+    && groups.slice(1).every(group => [
       "visible_group_marker",
       "visible_heading_transition"
     ].includes(group.boundaryEvidence)));

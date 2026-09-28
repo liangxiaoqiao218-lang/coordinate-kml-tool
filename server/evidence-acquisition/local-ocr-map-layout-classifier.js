@@ -965,7 +965,24 @@ function parseDelimitedProjectedHeaderLayout(line) {
   if (!/[|\t;]/u.test(raw)) return null;
   const fields = raw.split(/[|\t;]/u).map(field => field.trim());
   if (fields.length < 3 || fields.length > 12 || fields.some(field => !field || field.length > 48)) return null;
-  const tokens = fields.map(field => field.toUpperCase().replace(/[._-]+/gu, ""));
+  const tokens = fields.map(field => {
+    const normalized = field
+      .normalize("NFKD")
+      .replace(/\p{M}+/gu, "")
+      .trim()
+      .toUpperCase()
+      .replace(/^(?:№|#)\s*/u, "")
+      .replace(/[\s._-]+/gu, "");
+    return new Map([
+      ["POINTS", "POINT"],
+      ["NOPOINT", "POINT"],
+      ["NOPOINTS", "POINT"],
+      ["POINTNO", "POINT"],
+      ["POINTNUMBER", "POINT"],
+      ["VERTICES", "VERTEX"],
+      ["SOMMETS", "SOMMET"]
+    ]).get(normalized) || normalized;
+  });
   if (tokens.some(token => /^(?:LAT|LATITUDE|LON|LONG|LONGITUDE|PARALLELE|MERIDIEN)\d*$/iu.test(token))) return null;
   const xIndexes = tokens.flatMap((token, index) => /^(?:X|XV|EASTING)\d*$/iu.test(token) ? [index] : []);
   const yIndexes = tokens.flatMap((token, index) => /^(?:Y|YV|NORTHING)\d*$/iu.test(token) ? [index] : []);
@@ -975,11 +992,12 @@ function parseDelimitedProjectedHeaderLayout(line) {
   if (leadingLabelIndexes.length !== 1) return null;
   const structuralIndexes = new Set([leadingLabelIndexes[0], xIndexes[0], yIndexes[0]]);
   if (!fields.every((field, index) => structuralIndexes.has(index) || /\p{L}/u.test(field))) return null;
+  const labelIndex = leadingLabelIndexes[0];
   return Object.freeze({
-    fieldCount: fields.length,
-    labelIndex: leadingLabelIndexes[0],
-    xIndex: xIndexes[0],
-    yIndex: yIndexes[0]
+    fieldCount: fields.length - labelIndex,
+    labelIndex: 0,
+    xIndex: xIndexes[0] - labelIndex,
+    yIndex: yIndexes[0] - labelIndex
   });
 }
 
@@ -1101,8 +1119,11 @@ export function extractProviderProjectedCoordinateEvidence({
     }
     orderedRows = normalizedRows.slice().sort((left, right) => Number(left.label) - Number(right.label));
   }
-  if (numericLabels.every(Number.isInteger)
-    && orderedRows.some((row, index) => Number(row.label) !== index + 1)) {
+  const orderedNumericLabels = numericLabels.every(Number.isInteger)
+    ? numericLabels.slice().sort((left, right) => left - right)
+    : [];
+  if (orderedNumericLabels.length > 0
+    && orderedNumericLabels.some((label, index) => label !== index + 1)) {
     return Object.freeze({
       text: "", rows: Object.freeze([]), rowCount: 0,
       status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
