@@ -182,7 +182,7 @@ function normalizedTitlePathKey(titlePath) {
 export function normalizeProviderDmsReviewResult(rawText = "") {
   const source = String(rawText || "");
   const visibleCrsEvidence = extractVisibleCrsEvidence(source);
-  const geographicCrsExplicit = visibleCrsEvidence.some(evidence => (
+  const explicitDatumEvidence = visibleCrsEvidence.some(evidence => (
     /\bWGS\s*[- ]?84\b|\bEPSG\s*:?\s*4326\b/iu.test(String(evidence?.text || ""))
   ));
   const provisionalGroups = [];
@@ -286,6 +286,15 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
     ...row,
     candidateOrder: index + 1
   }));
+  const dmsAxisDirectionBound = allCandidates.length > 0
+    && rejectedRows.length === 0
+    && unboundCandidates.length === 0
+    && allCandidates.every(row => (
+      Number.isFinite(Number(row?.latitude))
+      && Number.isFinite(Number(row?.longitude))
+      && ["latitude_longitude", "longitude_latitude"].includes(String(row?.axisOrder || ""))
+    ));
+  const geographicCrsExplicit = explicitDatumEvidence || dmsAxisDirectionBound;
   const reasons = new Set();
   if (!boundariesUnique) reasons.add("GROUP_BOUNDARY_UNRESOLVED");
   if (nonEmptyTitlePaths && !titlePathsUnique) reasons.add("GROUP_TITLE_PATH_DUPLICATE");
@@ -315,6 +324,14 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
     rejectedRows: Object.freeze(rejectedRows),
     visibleCrsEvidence,
     geographicCrsExplicit,
+    geographicCrsEvidence: Object.freeze({
+      status: explicitDatumEvidence
+        ? "EXPLICIT_GEOGRAPHIC_DATUM"
+        : dmsAxisDirectionBound ? "EXPLICIT_DMS_AXIS_DIRECTIONS" : "UNRESOLVED",
+      axisDirectionBound: dmsAxisDirectionBound,
+      datumExplicit: explicitDatumEvidence,
+      reviewOnly: dmsAxisDirectionBound && !explicitDatumEvidence
+    }),
     reviewReasons: Object.freeze([...reasons]),
     authorizationCandidate
   });

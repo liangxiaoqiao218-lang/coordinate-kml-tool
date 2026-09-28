@@ -361,6 +361,17 @@ export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, prov
   const acquisitionStatus = candidates.candidateCoordinates.length > 0
     ? "COMPLETED"
     : (exactRawText.trim() ? "NO_COORDINATE_EVIDENCE" : "EMPTY");
+  const explicitGeographicDatum = visibleCrsEvidence.some(evidence => (
+    /\bWGS\s*[- ]?(?:19)?84\b|\bEPSG\s*:?\s*4326\b/iu.test(String(evidence?.text || ""))
+  ));
+  const geographicCrsEvidence = Object.freeze({
+    ...(candidates.geographicCrsEvidence || {}),
+    status: explicitGeographicDatum
+      ? "EXPLICIT_GEOGRAPHIC_DATUM"
+      : candidates.geographicCrsEvidence?.status || "UNRESOLVED",
+    datumExplicit: explicitGeographicDatum,
+    reviewOnly: candidates.geographicCrsEvidence?.complete === true && !explicitGeographicDatum
+  });
   return Object.freeze({
     version: RECOGNITION_FIRST_ACQUISITION_VERSION,
     providerCompletionState: exactRawText.trim() || providerResponseId ? "SUCCEEDED" : "EMPTY",
@@ -378,6 +389,7 @@ export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, prov
     unboundCandidates: candidates.unboundCandidates,
     rejectedRows: candidates.rejectedRows,
     visibleCrsEvidence,
+    geographicCrsEvidence,
     projectedCoordinateEvidence,
     reviewReasons: candidates.reviewReasons,
     diagnostics: Object.freeze({
@@ -629,8 +641,12 @@ export function evaluateUnifiedRecognitionAcquisition({
   const projectedAuthorizationEvidence = evaluateProjectedCoordinateAuthorizationEvidence(evidence);
   const projectedAuthorizationEligible = projectedAuthorizationEvidence.eligible
     && (normalizedContractStatus === "CONFORMANT" || normalizedContractReason === "GENERIC_REVIEW_ONLY");
+  const dmsGeographicReviewEligible = evidence?.geographicCrsEvidence?.status === "EXPLICIT_DMS_AXIS_DIRECTIONS"
+    && evidence?.geographicCrsEvidence?.axisDirectionBound === true
+    && evidence?.geographicCrsEvidence?.reviewOnly === true;
   const contractConformant = normalizedContractStatus === "CONFORMANT"
-    || projectedAuthorizationEligible;
+    || projectedAuthorizationEligible
+    || (dmsGeographicReviewEligible && normalizedContractReason === "GENERIC_REVIEW_ONLY");
   const contractReasonSet = new Set([
     ...(contractConformant ? [] : [normalizedContractReason]),
     ...projectedAuthorizationEvidence.reasons,
@@ -662,7 +678,10 @@ export function evaluateUnifiedRecognitionAcquisition({
     && allRowsBound
     && hasUniqueGroups
     && formatsEligible
-    && reviewReasons.length === 0;
+    && (reviewReasons.length === 0 || (
+      dmsGeographicReviewEligible
+      && reviewReasons.every(reason => reason === "CRS_EVIDENCE_MISSING")
+    ));
 
   if (!completed) {
     return Object.freeze({
@@ -698,6 +717,24 @@ export function evaluateUnifiedRecognitionAcquisition({
     });
   }
 
+  if (dmsGeographicReviewEligible) {
+    return Object.freeze({
+      providerCompletionState,
+      acquisitionStatus: "COMPLETED",
+      authorizationStatus: "REVIEW_REQUIRED",
+      resultStatus: "needs_review",
+      finalState: "COMPLETED_REVIEW_REQUIRED",
+      mapStatus: "CLOSED",
+      kmlStatus: "CLOSED",
+      contractReasons: Object.freeze(contractReasons),
+      mayProceedToGeometryValidation: true,
+      shouldReturnReview: true,
+      shouldReturnFailure: false,
+      projectedAuthorizationEligible,
+      dmsGeographicReviewEligible: true
+    });
+  }
+
   return Object.freeze({
     providerCompletionState,
     acquisitionStatus: "COMPLETED",
@@ -710,6 +747,7 @@ export function evaluateUnifiedRecognitionAcquisition({
     mayProceedToGeometryValidation: true,
     shouldReturnReview: false,
     shouldReturnFailure: false,
-    projectedAuthorizationEligible
+    projectedAuthorizationEligible,
+    dmsGeographicReviewEligible: false
   });
 }

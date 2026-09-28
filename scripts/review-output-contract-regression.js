@@ -244,6 +244,10 @@ assert.match(indexSource, /const reviewKmlReady = activeRecognitionAcquisitionRe
   "recognition completion message follows the server KML state");
 assert.doesNotMatch(serverSource, /finalizedRequiresFailClose[\s\S]{0,350}finalizedCoordinateResult\.kmlReady === true/u,
   "review-ready KML is not mistaken for an unauthorized AUTO_EXPORT result");
+assert.match(serverSource, /decision\?\.dmsGeographicReviewEligible === true[\s\S]+technicalKmlReady: true[\s\S]+kmlAuthorityBlocked: false/u,
+  "direction-bound DMS is downgraded to provisional review without a hard KML authority block");
+assert.match(serverSource, /authorizationStatus: "REVIEW_REQUIRED"[\s\S]+resultStatus: "needs_review"[\s\S]+finalizedCoordinateResult: provisionalDmsReviewResult/u,
+  "direction-bound DMS keeps explicit review state while exposing provisional outputs");
 
 console.log(JSON.stringify({
   suite: "review-output-contract-regression",

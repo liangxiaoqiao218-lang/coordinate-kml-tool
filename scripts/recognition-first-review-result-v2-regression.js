@@ -181,8 +181,10 @@ assert.equal(gap.authorizationCandidate, false);
 const noCrs = normalizeProviderDmsReviewResult(group("Parent", "Area", [
   row("1", "10", "10"), row("2", "11", "11"), row("3", "12", "12"), row("4", "13", "13")
 ]));
-assert.ok(noCrs.reviewReasons.includes("CRS_EVIDENCE_MISSING"));
-assert.equal(noCrs.authorizationCandidate, false);
+assert.equal(noCrs.reviewReasons.includes("CRS_EVIDENCE_MISSING"), false);
+assert.equal(noCrs.geographicCrsEvidence.status, "EXPLICIT_DMS_AXIS_DIRECTIONS");
+assert.equal(noCrs.geographicCrsEvidence.reviewOnly, true);
+assert.equal(noCrs.authorizationCandidate, true);
 
 const headerBoundDirections = normalizeProviderDmsReviewResult([
   "Point | Latitude nord | Longitude ouest",
@@ -191,13 +193,15 @@ const headerBoundDirections = normalizeProviderDmsReviewResult([
   "3 | 11° 43' 03.38\" | 09° 00' 58.67\"",
   "4 | 11° 43' 11.30\" | 09° 01' 15.25\""
 ].join("\n"));
-assert.equal(headerBoundDirections.status, ACQUISITION_REVIEW_STATUS.REVIEW_REQUIRED);
+assert.equal(headerBoundDirections.status, ACQUISITION_REVIEW_STATUS.AUTHORIZATION_CANDIDATE);
 assert.equal(headerBoundDirections.candidatePointCount, 4);
 assert.equal(headerBoundDirections.boundRowCount, 4);
 assert.equal(headerBoundDirections.unboundRowCount, 0);
 assert.equal(headerBoundDirections.candidateGroups[0].rows[0].latitude > 0, true);
 assert.equal(headerBoundDirections.candidateGroups[0].rows[0].longitude < 0, true);
-assert.equal(headerBoundDirections.authorizationCandidate, false);
+assert.equal(headerBoundDirections.authorizationCandidate, true);
+assert.equal(headerBoundDirections.geographicCrsEvidence.axisDirectionBound, true);
+assert.equal(headerBoundDirections.geographicCrsEvidence.reviewOnly, true);
 
 const canonicalAxisContract = normalizeProviderDmsReviewResult([
   "AXIS | LATITUDE=N | LONGITUDE=W",
@@ -206,12 +210,14 @@ const canonicalAxisContract = normalizeProviderDmsReviewResult([
   "ROW | 3 | 11° 43' 03.38\" | 09° 00' 58.67\"",
   "ROW | 4 | 11° 43' 11.30\" | 09° 01' 15.25\""
 ].join("\n"));
-assert.equal(canonicalAxisContract.status, ACQUISITION_REVIEW_STATUS.REVIEW_REQUIRED);
+assert.equal(canonicalAxisContract.status, ACQUISITION_REVIEW_STATUS.AUTHORIZATION_CANDIDATE);
 assert.equal(canonicalAxisContract.candidatePointCount, 4);
 assert.equal(canonicalAxisContract.boundRowCount, 4);
 assert.equal(canonicalAxisContract.unboundRowCount, 0);
 assert.equal(canonicalAxisContract.candidateGroups[0].rows[0].latitude > 0, true);
 assert.equal(canonicalAxisContract.candidateGroups[0].rows[0].longitude < 0, true);
+assert.equal(canonicalAxisContract.geographicCrsEvidence.axisDirectionBound, true);
+assert.equal(canonicalAxisContract.geographicCrsEvidence.reviewOnly, true);
 
 const reviewOnlyFinalized = finalizeCoordinateResult({
   sourceAuthority: "legacy",
