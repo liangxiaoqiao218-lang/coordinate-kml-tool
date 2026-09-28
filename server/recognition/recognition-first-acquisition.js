@@ -539,11 +539,19 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     && finalized.crs?.id === "EPSG:4326"
     && finalized.explicitAuthorityRejected !== true
   );
+  const provisionalKmlReady = Boolean(
+    provisionalMapReady
+    && finalized.decisionState === COORDINATE_DECISION_STATE.REVIEW_REQUIRED
+    && finalized.technicalKmlReady === true
+    && finalized.kmlReady === true
+    && finalized.kmlAuthorityBlocked !== true
+  );
   // Already-authorized legacy results may carry the older canonical CRS
   // marker instead of the newer explicit EPSG:4326 id. Their passed finalizer
   // gate remains authoritative; only review-mode previews require the explicit
   // WGS84 marker.
   const finalMapReady = authorized ? mapGatePassed : provisionalMapReady;
+  const finalKmlReady = authorized ? kmlGatePassed : provisionalKmlReady;
   const finalAuthorizationReasons = [...new Set([
     ...projectedEvidenceAuthorization.reasons,
     ...(projectedEvidenceAuthorization.applicable && Number(providerCallCount || 0) !== 1
@@ -577,7 +585,8 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     // finalized WGS84 geometry remains available as a clearly marked
     // provisional map so the user can detect swapped axes and wrong location.
     mapReady: finalMapReady,
-    kmlReady: authorized && kmlGatePassed
+    provisionalKmlReady,
+    kmlReady: finalKmlReady
   });
 }
 

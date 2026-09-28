@@ -15510,8 +15510,7 @@ async function recognizeCoordinatesHandler(req, res) {
     const authorizationStatus = authorized ? "AUTHORIZED" : "REVIEW_REQUIRED";
     const finalizedRequiresFailClose = !authorized
       && body.finalizedCoordinateResult && typeof body.finalizedCoordinateResult === "object"
-      && (body.finalizedCoordinateResult.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
-        || body.finalizedCoordinateResult.kmlReady === true);
+      && body.finalizedCoordinateResult.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT;
     const failClosedFinalizedCoordinateResult = finalizedRequiresFailClose
       ? finalizeCoordinateResult({
         ...body.finalizedCoordinateResult,
