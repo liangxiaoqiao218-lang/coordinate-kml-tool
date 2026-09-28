@@ -6,7 +6,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { inflateSync } from "node:zlib";
 import Tesseract from "tesseract.js";
 import sharp from "sharp";
 import { applyMiningJudgeabilityGate } from "./server/mining-judgeability.js";
@@ -20,7 +19,7 @@ import {
 import {
   canonicalizeCoordinateImageUpload,
   createCoordinateImageIdentity,
-  hasValidJpegStructure as hasValidCanonicalJpegStructure
+  validateCoordinateImageUpload
 } from "./server/recognition/coordinate-image-safety.js";
 import {
   COORDINATE_USAGE_COMMIT_RESULT,
@@ -212,127 +211,6 @@ const upload = multer({
 });
 
 const COORDINATE_IMAGE_INVALID_CODE = "COORDINATE_IMAGE_INVALID";
-
-let pngCrcTable = null;
-
-function getPngCrc32(buffer) {
-  if (!pngCrcTable) {
-    pngCrcTable = Array.from({ length: 256 }, (_, value) => {
-      let crc = value;
-      for (let bit = 0; bit < 8; bit += 1) {
-        crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
-      }
-      return crc >>> 0;
-    });
-  }
-  let crc = 0xffffffff;
-  for (const byte of buffer) crc = pngCrcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function hasValidPngStructure(buffer) {
-  if (!Buffer.isBuffer(buffer) || buffer.length < 45) return false;
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  if (!buffer.subarray(0, 8).equals(signature)) return false;
-  let offset = 8;
-  let width = 0;
-  let height = 0;
-  let bitDepth = 0;
-  let colorType = 0;
-  let sawPalette = false;
-  let sawHeader = false;
-  let sawEnd = false;
-  const imageData = [];
-  while (offset + 12 <= buffer.length) {
-    const chunkLength = buffer.readUInt32BE(offset);
-    const typeStart = offset + 4;
-    const dataStart = offset + 8;
-    const dataEnd = dataStart + chunkLength;
-    const chunkEnd = dataEnd + 4;
-    if (chunkEnd > buffer.length) return false;
-    const chunkType = buffer.toString("ascii", typeStart, dataStart);
-    if (getPngCrc32(buffer.subarray(typeStart, dataEnd)) !== buffer.readUInt32BE(dataEnd)) return false;
-    if (!sawHeader) {
-      if (chunkType !== "IHDR" || chunkLength !== 13) return false;
-      width = buffer.readUInt32BE(dataStart);
-      height = buffer.readUInt32BE(dataStart + 4);
-      bitDepth = buffer[dataStart + 8];
-      colorType = buffer[dataStart + 9];
-      const validDepths = {
-        0: [1, 2, 4, 8, 16],
-        2: [8, 16],
-        3: [1, 2, 4, 8],
-        4: [8, 16],
-        6: [8, 16]
-      };
-      if (width <= 0 || height <= 0 || !validDepths[colorType]?.includes(bitDepth)) return false;
-      if (buffer[dataStart + 10] !== 0 || buffer[dataStart + 11] !== 0 || buffer[dataStart + 12] !== 0) return false;
-      sawHeader = true;
-    } else if (chunkType === "IHDR") {
-      return false;
-    } else if (chunkType === "PLTE") {
-      if (chunkLength === 0 || chunkLength % 3 !== 0 || chunkLength > 768 || imageData.length > 0) return false;
-      sawPalette = true;
-    } else if (chunkType === "IDAT") {
-      if (chunkLength > 0) imageData.push(buffer.subarray(dataStart, dataEnd));
-    } else if (chunkType === "IEND") {
-      if (chunkLength !== 0 || chunkEnd !== buffer.length) return false;
-      sawEnd = true;
-      break;
-    }
-    offset = chunkEnd;
-  }
-  if (!sawHeader || !sawEnd || imageData.length === 0 || (colorType === 3 && !sawPalette)) return false;
-  try {
-    const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
-    const rowBytes = Math.ceil((width * channels * bitDepth) / 8);
-    const expectedLength = height * (rowBytes + 1);
-    if (!Number.isSafeInteger(expectedLength) || expectedLength <= 0 || expectedLength > 256 * 1024 * 1024) return false;
-    const decoded = inflateSync(Buffer.concat(imageData), { maxOutputLength: expectedLength });
-    if (decoded.length !== expectedLength) return false;
-    for (let offset = 0; offset < decoded.length; offset += rowBytes + 1) {
-      if (decoded[offset] > 4) return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function hasValidJpegStructure(buffer) {
-  return hasValidCanonicalJpegStructure(buffer);
-}
-
-function hasValidBmpStructure(buffer) {
-  if (!Buffer.isBuffer(buffer) || buffer.length < 54 || buffer.toString("ascii", 0, 2) !== "BM") return false;
-  const fileSize = buffer.readUInt32LE(2);
-  const pixelOffset = buffer.readUInt32LE(10);
-  const dibSize = buffer.readUInt32LE(14);
-  if (fileSize !== buffer.length || dibSize < 40 || pixelOffset < 14 + dibSize || pixelOffset >= buffer.length) return false;
-  const width = buffer.readInt32LE(18);
-  const height = buffer.readInt32LE(22);
-  const planes = buffer.readUInt16LE(26);
-  const bitsPerPixel = buffer.readUInt16LE(28);
-  const compression = buffer.readUInt32LE(30);
-  if (width <= 0 || height === 0 || planes !== 1 || ![1, 4, 8, 16, 24, 32].includes(bitsPerPixel) || ![0, 3].includes(compression)) return false;
-  const rowBytes = Math.floor(((bitsPerPixel * width) + 31) / 32) * 4;
-  const requiredBytes = rowBytes * Math.abs(height);
-  return Number.isSafeInteger(requiredBytes) && requiredBytes > 0 && pixelOffset + requiredBytes <= buffer.length;
-}
-
-function validateCoordinateImageUpload(file) {
-  const mimeType = String(file?.mimetype || "").toLowerCase();
-  const valid = mimeType === "image/png"
-    ? hasValidPngStructure(file?.buffer)
-    : ["image/jpeg", "image/jpg"].includes(mimeType)
-      ? hasValidJpegStructure(file?.buffer)
-      : ["image/bmp", "image/x-ms-bmp"].includes(mimeType)
-        ? hasValidBmpStructure(file?.buffer)
-        : false;
-  return valid
-    ? { valid: true, reason: "VALID_IMAGE_STRUCTURE" }
-    : { valid: false, reason: "INVALID_OR_UNSUPPORTED_IMAGE_STRUCTURE" };
-}
 const aliyunApiKey = process.env.ALIYUN_API_KEY || process.env.DASHSCOPE_API_KEY || "";
 const aliyunBaseURL = process.env.ALIYUN_BASE_URL || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || "qwen3.8-flash";
@@ -20971,6 +20849,24 @@ app.post(
 
 app.post("/api/recognize-coordinates/jobs", upload.single("image"), (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, reason: "image_required" });
+  const imageCanonicalization = canonicalizeCoordinateImageUpload(req.file);
+  if (!imageCanonicalization.valid) {
+    return res.status(400).json({
+      success: false,
+      reason: "invalid_image",
+      code: COORDINATE_IMAGE_INVALID_CODE,
+      safetyReason: imageCanonicalization.reason
+    });
+  }
+  req.file = imageCanonicalization.file;
+  if (!validateCoordinateImageUpload(req.file).valid) {
+    return res.status(400).json({
+      success: false,
+      reason: "invalid_image",
+      code: COORDINATE_IMAGE_INVALID_CODE,
+      safetyReason: COORDINATE_IMAGE_INVALID_CODE
+    });
+  }
   const suppliedRequestId = String(req.get("x-recognition-request-id") || "").trim().toLowerCase();
   const recognitionRequestId = isRecognitionRequestId(suppliedRequestId)
     ? suppliedRequestId

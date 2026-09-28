@@ -1,12 +1,94 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { deflateSync } from "node:zlib";
 import {
   COORDINATE_IMAGE_SAFETY_LIMITS,
   COORDINATE_IMAGE_SAFETY_REASON,
   COORDINATE_IMAGE_SAFETY_STATUS,
   canonicalizeCoordinateImageUpload,
-  hasValidJpegStructure
+  createCoordinateImageIdentity,
+  detectCoordinateImageMimeType,
+  hasValidBmpStructure,
+  hasValidJpegStructure,
+  hasValidPngStructure,
+  validateCoordinateImageUpload
 } from "../server/recognition/coordinate-image-safety.js";
+
+let pngCrcTable = null;
+function pngCrc32(buffer) {
+  if (!pngCrcTable) {
+    pngCrcTable = Array.from({ length: 256 }, (_, value) => {
+      let crc = value;
+      for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+      return crc >>> 0;
+    });
+  }
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = pngCrcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const typeBytes = Buffer.from(type, "ascii");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(pngCrc32(Buffer.concat([typeBytes, data])));
+  return Buffer.concat([length, typeBytes, data, crc]);
+}
+
+function makePng({ colorType = 2, splitIdat = false, width = 2, height = 2 } = {}) {
+  const channels = ({ 0: 1, 2: 3, 3: 1, 6: 4 })[colorType];
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = colorType;
+  const rows = [];
+  for (let row = 0; row < height; row += 1) {
+    rows.push(Buffer.from([0, ...Array(width * channels).fill(row + 1)]));
+  }
+  const compressed = deflateSync(Buffer.concat(rows));
+  const midpoint = Math.max(1, Math.floor(compressed.length / 2));
+  const idatChunks = splitIdat
+    ? [pngChunk("IDAT", compressed.subarray(0, midpoint)), pngChunk("IDAT", compressed.subarray(midpoint))]
+    : [pngChunk("IDAT", compressed)];
+  const palette = colorType === 3 ? [pngChunk("PLTE", Buffer.from([0, 0, 0, 255, 255, 255]))] : [];
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", header),
+    ...palette,
+    ...idatChunks,
+    pngChunk("IEND", Buffer.alloc(0))
+  ]);
+}
+
+function makeBmp(width = 2, height = 2) {
+  const rowBytes = Math.floor(((24 * width) + 31) / 32) * 4;
+  const pixelBytes = rowBytes * height;
+  const buffer = Buffer.alloc(54 + pixelBytes);
+  buffer.write("BM", 0, "ascii");
+  buffer.writeUInt32LE(buffer.length, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(width, 18);
+  buffer.writeInt32LE(height, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  return buffer;
+}
+
+async function listCoordinateImageFixtures(directory) {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await listCoordinateImageFixtures(absolute));
+    else if (/\.(?:png|jpe?g|bmp)$/i.test(entry.name)) files.push(absolute);
+  }
+  return files;
+}
 
 function segment(marker, payload) {
   const length = Buffer.alloc(2);
@@ -171,22 +253,85 @@ test("JPEG MIME and magic must agree", () => {
   assert.equal(result.reason, COORDINATE_IMAGE_SAFETY_REASON.COORDINATE_IMAGE_INVALID);
 });
 
-test("PNG and BMP stay outside the JPEG compatibility path", () => {
-  for (const [buffer, mimetype] of [[Buffer.from("png"), "image/png"], [Buffer.from("bmp"), "image/bmp"]]) {
+test("valid PNG and BMP receive complete structure validation", () => {
+  for (const [buffer, mimetype] of [[makePng(), "image/png"], [makeBmp(), "image/bmp"]]) {
     const input = file(buffer, mimetype);
     const result = canonicalizeCoordinateImageUpload(input);
     assert.equal(result.valid, true);
     assert.equal(result.status, COORDINATE_IMAGE_SAFETY_STATUS.NON_JPEG_UNCHANGED);
-    assert.equal(result.file, input);
+    assert.equal(result.file.buffer, input.buffer);
+    assert.equal(result.file.mimetype, mimetype);
   }
 });
 
-test("unsupported types receive no JPEG compatibility treatment", () => {
-  for (const mimetype of ["image/gif", "image/webp", "image/heif", "application/octet-stream"]) {
-    const input = file(canonical, mimetype);
-    const result = canonicalizeCoordinateImageUpload(input);
-    assert.equal(result.status, COORDINATE_IMAGE_SAFETY_STATUS.NON_JPEG_UNCHANGED);
-    assert.equal(result.file, input);
+test("supported signatures override missing, generic, or incorrect multipart MIME metadata", () => {
+  for (const [buffer, expectedMime] of [
+    [canonical, "image/jpeg"],
+    [makePng({ colorType: 6 }), "image/png"],
+    [makeBmp(), "image/bmp"]
+  ]) {
+    for (const claimedMime of ["", "application/octet-stream", "text/plain", "image/gif", "image/jpeg"]) {
+      const result = canonicalizeCoordinateImageUpload(file(buffer, claimedMime));
+      assert.equal(result.valid, true, `${expectedMime} must not depend on ${claimedMime}`);
+      assert.equal(result.file.mimetype, expectedMime);
+      assert.equal(validateCoordinateImageUpload(result.file).mimeType, expectedMime);
+    }
+  }
+});
+
+test("PNG grayscale, RGB, RGBA, palette, and multi-IDAT variants pass", () => {
+  for (const colorType of [0, 2, 3, 6]) {
+    for (const splitIdat of [false, true]) {
+      const png = makePng({ colorType, splitIdat });
+      assert.equal(detectCoordinateImageMimeType(png), "image/png");
+      assert.equal(hasValidPngStructure(png), true, `colorType=${colorType} split=${splitIdat}`);
+      assert.equal(canonicalizeCoordinateImageUpload(file(png, "application/octet-stream")).valid, true);
+    }
+  }
+});
+
+test("valid BMP and the frozen Cote d'Ivoire PNG normalize from generic MIME", async () => {
+  const bmp = makeBmp();
+  assert.equal(hasValidBmpStructure(bmp), true);
+  const frozenPng = await readFile(new URL("../regression-samples/fixtures/科特迪瓦02.png", import.meta.url));
+  const result = canonicalizeCoordinateImageUpload(file(frozenPng, "application/octet-stream"));
+  assert.equal(result.valid, true);
+  assert.equal(result.file.mimetype, "image/png");
+  const identity = createCoordinateImageIdentity(result.file, { requestId: "mime-regression", page: 1 });
+  assert.equal(identity.mime_type, "image/png");
+  assert.equal(identity.width, 620);
+  assert.equal(identity.height, 269);
+});
+
+test("every repository coordinate image fixture passes generic ingress validation", async () => {
+  const fixtureRoot = fileURLToPath(new URL("../regression-samples/", import.meta.url));
+  const fixtures = await listCoordinateImageFixtures(fixtureRoot);
+  assert.ok(fixtures.length > 0);
+  for (const fixturePath of fixtures) {
+    const buffer = await readFile(fixturePath);
+    const result = canonicalizeCoordinateImageUpload(file(buffer, "application/octet-stream"));
+    assert.equal(result.valid, true, path.relative(fixtureRoot, fixturePath));
+    assert.equal(validateCoordinateImageUpload(result.file).valid, true, path.relative(fixtureRoot, fixturePath));
+  }
+  console.log(`Coordinate fixture ingress sweep: ${fixtures.length}/${fixtures.length} PASS`);
+});
+
+test("corrupt, disguised, unsupported, and resource-limit images fail closed", () => {
+  const damagedPng = makePng();
+  damagedPng[damagedPng.length - 1] ^= 1;
+  const oversizedPng = makePng({ width: COORDINATE_IMAGE_SAFETY_LIMITS.maxDimension + 1, height: 1 });
+  for (const buffer of [
+    Buffer.from("not-an-image"),
+    Buffer.from("GIF89a", "ascii"),
+    damagedPng,
+    oversizedPng,
+    Buffer.concat([makeBmp(), Buffer.from([0])])
+  ]) {
+    for (const mimetype of ["image/png", "image/jpeg", "application/octet-stream"]) {
+      const result = canonicalizeCoordinateImageUpload(file(buffer, mimetype));
+      assert.equal(result.valid, false);
+      assert.equal(result.reason, COORDINATE_IMAGE_SAFETY_REASON.COORDINATE_IMAGE_INVALID);
+    }
   }
 });
 
@@ -205,7 +350,9 @@ test("server installs the safety boundary before user data and every image consu
   ]) {
     assert.ok(route.indexOf(marker) > replacement, `${marker} must use the canonical file`);
   }
-  assert.match(source, /function hasValidJpegStructure\(buffer\)\s*{\s*return hasValidCanonicalJpegStructure\(buffer\);\s*}/);
+  assert.match(source, /createCoordinateImageIdentity,\s*validateCoordinateImageUpload/);
+  const asyncRoute = source.slice(source.indexOf('app.post("\/api\/recognize-coordinates\/jobs"'));
+  assert.ok(asyncRoute.indexOf("canonicalizeCoordinateImageUpload(req.file)") < asyncRoute.indexOf("recognitionAcquisitionJobRuntime.enqueue"));
   assert.doesNotMatch(source, /JPEG_TRAILING_DATA_DISCARDED_UNTRUSTED[\s\S]{0,120}(?:tail|trailingData)\s*:/i);
 });
 

@@ -206,7 +206,7 @@ function commonInput({
   const productionSource = ["legacy", "manual_input", "coordinate_engine_v2"].includes(sourceAuthority);
   const currentAuthorizedGeometryExportable = geometryResult.ok && productionSource
     && !technicalFailure && !authorityRejected && !invalidCrs
-    && !familyPolicyApplies && !acquisitionDeltaDeclared && !partialRecoveryDeclared && !nearDuplicateBlocked
+    && !acquisitionDeltaDeclared && !partialRecoveryDeclared && !nearDuplicateBlocked
     && nearDuplicateAuthority.trustedPointIntent !== true;
   // Provider availability governs acquisition, not an already valid deterministic result.
   const availabilityStatus = currentAuthorizedGeometryExportable ? FAMILY_AVAILABILITY_STATUS.AVAILABLE

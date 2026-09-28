@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { inflateSync } from "node:zlib";
 
 export const COORDINATE_IMAGE_SAFETY_LIMITS = Object.freeze({
   maxUploadBytes: 12 * 1024 * 1024,
@@ -24,9 +25,25 @@ export const COORDINATE_IMAGE_SAFETY_REASON = Object.freeze({
 });
 
 const JPEG_MIME_TYPES = new Set(["image/jpeg", "image/jpg"]);
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const COORDINATE_IMAGE_MIME_TYPE = Object.freeze({
+  JPEG: "image/jpeg",
+  PNG: "image/png",
+  BMP: "image/bmp"
+});
 
 function fail(reason) {
   return Object.freeze({ valid: false, reason });
+}
+
+export function detectCoordinateImageMimeType(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 2) return "";
+  if (buffer.length >= PNG_SIGNATURE.length && buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    return COORDINATE_IMAGE_MIME_TYPE.PNG;
+  }
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return COORDINATE_IMAGE_MIME_TYPE.JPEG;
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) return COORDINATE_IMAGE_MIME_TYPE.BMP;
+  return "";
 }
 
 function inspectJpegStructure(buffer, { allowTrailing = false } = {}) {
@@ -268,10 +285,9 @@ function inspectJpegStructure(buffer, { allowTrailing = false } = {}) {
 }
 
 function readPngDimensions(buffer) {
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   if (!Buffer.isBuffer(buffer)
     || buffer.length < 24
-    || !buffer.subarray(0, 8).equals(signature)
+    || !buffer.subarray(0, 8).equals(PNG_SIGNATURE)
     || buffer.readUInt32BE(8) !== 13
     || buffer.toString("ascii", 12, 16) !== "IHDR") return null;
   const width = buffer.readUInt32BE(16);
@@ -296,9 +312,135 @@ function validImageDimensions(width, height) {
     && width * height <= COORDINATE_IMAGE_SAFETY_LIMITS.maxPixels;
 }
 
+let pngCrcTable = null;
+
+function getPngCrc32(buffer) {
+  if (!pngCrcTable) {
+    pngCrcTable = Array.from({ length: 256 }, (_, value) => {
+      let crc = value;
+      for (let bit = 0; bit < 8; bit += 1) {
+        crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+      }
+      return crc >>> 0;
+    });
+  }
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = pngCrcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+export function hasValidPngStructure(buffer) {
+  if (!Buffer.isBuffer(buffer)
+    || buffer.length < 45
+    || buffer.length > COORDINATE_IMAGE_SAFETY_LIMITS.maxUploadBytes
+    || !buffer.subarray(0, 8).equals(PNG_SIGNATURE)) return false;
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let sawPalette = false;
+  let sawHeader = false;
+  let sawEnd = false;
+  const imageData = [];
+  while (offset + 12 <= buffer.length) {
+    const chunkLength = buffer.readUInt32BE(offset);
+    const typeStart = offset + 4;
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + chunkLength;
+    const chunkEnd = dataEnd + 4;
+    if (!Number.isSafeInteger(chunkEnd) || chunkEnd > buffer.length) return false;
+    const chunkType = buffer.toString("ascii", typeStart, dataStart);
+    if (getPngCrc32(buffer.subarray(typeStart, dataEnd)) !== buffer.readUInt32BE(dataEnd)) return false;
+    if (!sawHeader) {
+      if (chunkType !== "IHDR" || chunkLength !== 13) return false;
+      width = buffer.readUInt32BE(dataStart);
+      height = buffer.readUInt32BE(dataStart + 4);
+      bitDepth = buffer[dataStart + 8];
+      colorType = buffer[dataStart + 9];
+      const validDepths = {
+        0: [1, 2, 4, 8, 16],
+        2: [8, 16],
+        3: [1, 2, 4, 8],
+        4: [8, 16],
+        6: [8, 16]
+      };
+      if (!validImageDimensions(width, height) || !validDepths[colorType]?.includes(bitDepth)) return false;
+      if (buffer[dataStart + 10] !== 0 || buffer[dataStart + 11] !== 0 || buffer[dataStart + 12] !== 0) return false;
+      sawHeader = true;
+    } else if (chunkType === "IHDR") {
+      return false;
+    } else if (chunkType === "PLTE") {
+      if (chunkLength === 0 || chunkLength % 3 !== 0 || chunkLength > 768 || imageData.length > 0) return false;
+      sawPalette = true;
+    } else if (chunkType === "IDAT") {
+      if (chunkLength > 0) imageData.push(buffer.subarray(dataStart, dataEnd));
+    } else if (chunkType === "IEND") {
+      if (chunkLength !== 0 || chunkEnd !== buffer.length) return false;
+      sawEnd = true;
+      break;
+    }
+    offset = chunkEnd;
+  }
+  if (!sawHeader || !sawEnd || imageData.length === 0 || (colorType === 3 && !sawPalette)) return false;
+  try {
+    const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
+    const rowBytes = Math.ceil((width * channels * bitDepth) / 8);
+    const expectedLength = height * (rowBytes + 1);
+    if (!Number.isSafeInteger(expectedLength) || expectedLength <= 0 || expectedLength > 256 * 1024 * 1024) return false;
+    const decoded = inflateSync(Buffer.concat(imageData), { maxOutputLength: expectedLength });
+    if (decoded.length !== expectedLength) return false;
+    for (let rowOffset = 0; rowOffset < decoded.length; rowOffset += rowBytes + 1) {
+      if (decoded[rowOffset] > 4) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function hasValidBmpStructure(buffer) {
+  if (!Buffer.isBuffer(buffer)
+    || buffer.length < 54
+    || buffer.length > COORDINATE_IMAGE_SAFETY_LIMITS.maxUploadBytes
+    || buffer.toString("ascii", 0, 2) !== "BM") return false;
+  const fileSize = buffer.readUInt32LE(2);
+  const pixelOffset = buffer.readUInt32LE(10);
+  const dibSize = buffer.readUInt32LE(14);
+  if (fileSize !== buffer.length || dibSize < 40 || pixelOffset < 14 + dibSize || pixelOffset >= buffer.length) return false;
+  const width = buffer.readInt32LE(18);
+  const height = buffer.readInt32LE(22);
+  const planes = buffer.readUInt16LE(26);
+  const bitsPerPixel = buffer.readUInt16LE(28);
+  const compression = buffer.readUInt32LE(30);
+  if (!validImageDimensions(width, Math.abs(height))
+    || height === 0
+    || planes !== 1
+    || ![1, 4, 8, 16, 24, 32].includes(bitsPerPixel)
+    || ![0, 3].includes(compression)) return false;
+  const rowBytes = Math.floor(((bitsPerPixel * width) + 31) / 32) * 4;
+  const requiredBytes = rowBytes * Math.abs(height);
+  return Number.isSafeInteger(requiredBytes) && requiredBytes > 0 && pixelOffset + requiredBytes <= buffer.length;
+}
+
+export function validateCoordinateImageUpload(file) {
+  const buffer = file?.buffer;
+  const detectedMimeType = detectCoordinateImageMimeType(buffer);
+  const valid = detectedMimeType === COORDINATE_IMAGE_MIME_TYPE.PNG
+    ? hasValidPngStructure(buffer)
+    : detectedMimeType === COORDINATE_IMAGE_MIME_TYPE.JPEG
+      ? hasValidJpegStructure(buffer)
+      : detectedMimeType === COORDINATE_IMAGE_MIME_TYPE.BMP
+        ? hasValidBmpStructure(buffer)
+        : false;
+  return valid
+    ? Object.freeze({ valid: true, reason: "VALID_IMAGE_STRUCTURE", mimeType: detectedMimeType })
+    : fail(COORDINATE_IMAGE_SAFETY_REASON.COORDINATE_IMAGE_INVALID);
+}
+
 function readCoordinateImageDimensions(file = {}) {
   const buffer = file.buffer;
-  const mimeType = String(file.mimetype || "").toLowerCase();
+  const mimeType = detectCoordinateImageMimeType(buffer);
   if (["image/jpeg", "image/jpg"].includes(mimeType)) {
     const inspection = inspectJpegStructure(buffer, { allowTrailing: false });
     return inspection.valid && validImageDimensions(inspection.width, inspection.height)
@@ -315,6 +457,8 @@ export function createCoordinateImageIdentity(file = {}, { requestId = "", page 
   if (!Buffer.isBuffer(buffer)
     || buffer.length <= 0
     || buffer.length > COORDINATE_IMAGE_SAFETY_LIMITS.maxUploadBytes) return null;
+  const validation = validateCoordinateImageUpload(file);
+  if (!validation.valid) return null;
   const dimensions = readCoordinateImageDimensions(file);
   if (!dimensions) return null;
   const normalizedPage = Number.parseInt(page, 10);
@@ -328,7 +472,7 @@ export function createCoordinateImageIdentity(file = {}, { requestId = "", page 
     schema_version: COORDINATE_IMAGE_IDENTITY_SCHEMA_VERSION,
     image_sha256: imageSha256,
     byte_length: buffer.length,
-    mime_type: String(file.mimetype || "").toLowerCase(),
+    mime_type: validation.mimeType,
     width: dimensions.width,
     height: dimensions.height,
     page: normalizedPage,
@@ -360,18 +504,22 @@ export function hasValidJpegStructure(buffer) {
 }
 
 export function canonicalizeCoordinateImageUpload(file) {
-  const mimeType = String(file?.mimetype || "").toLowerCase();
   const buffer = file?.buffer;
-  if (!Buffer.isBuffer(buffer) || buffer.length > COORDINATE_IMAGE_SAFETY_LIMITS.maxUploadBytes) {
+  if (!Buffer.isBuffer(buffer) || buffer.length <= 0 || buffer.length > COORDINATE_IMAGE_SAFETY_LIMITS.maxUploadBytes) {
     return fail(COORDINATE_IMAGE_SAFETY_REASON.COORDINATE_IMAGE_INVALID);
   }
 
-  if (!JPEG_MIME_TYPES.has(mimeType)) {
+  const detectedMimeType = detectCoordinateImageMimeType(buffer);
+  if (!detectedMimeType) return fail(COORDINATE_IMAGE_SAFETY_REASON.COORDINATE_IMAGE_INVALID);
+
+  if (!JPEG_MIME_TYPES.has(detectedMimeType)) {
+    const validation = validateCoordinateImageUpload(file);
+    if (!validation.valid) return validation;
     return Object.freeze({
       valid: true,
       reason: "NON_JPEG_PASSTHROUGH",
       status: COORDINATE_IMAGE_SAFETY_STATUS.NON_JPEG_UNCHANGED,
-      file
+      file: Object.freeze({ ...file, buffer, size: buffer.length, mimetype: detectedMimeType })
     });
   }
   if (buffer.length < 2 || buffer[0] !== 0xff || buffer[1] !== 0xd8) {
