@@ -29,6 +29,7 @@ const projected = replay.records[0].approvedAcquisitionLines.join('\n');
 const unresolved = projected.replace('UTM WGS 1984 ZONA 50S', '');
 const kyrgyz = 'Координаты угловых точек | № points | X | Y\n3 | 13261350 | 4607780\n1 | 13261341 | 4607777\n2 | 13261345 | 4607778';
 const syntheticPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+const syntheticAdam7Png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAAHncGNIAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC', 'base64');
 const frozenJpeg = await readFile(new URL('../regression-samples/OCR_GOLDEN/fixtures/indonesia-utm50s-real-001.jpg', import.meta.url));
 const syntheticRecoveryRows = Array.from({length:16},(_,index)=>{
   const label=index<8?index+1:index<12?index-7:index-11;
@@ -339,7 +340,7 @@ for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked a
   complete(result);assert.equal(result.kmlReady,true,JSON.stringify({type:payload.coordinateEngineV2?.coordinate_type,reasons:result.reasonCodes}));
 }));
 test('HTTP sync ingress normalizes generic multipart MIME before recognition',()=>httpScenario('handwritten',async post=>{
-  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'application/octet-stream'}),'coordinate-upload.bin');
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticAdam7Png],{type:'application/octet-stream'}),'coordinate-upload.bin');
   const result=await post('/api/recognize-coordinates',form,true);
   assert.equal(result.status,200,JSON.stringify(result.payload));
   const stats=await post.stats();assert.equal(stats.calls,1);
@@ -366,6 +367,7 @@ test('HTTP malformed image fails closed before Provider and service remains aliv
   const fakeJpeg=Buffer.from([0xff,0xd8,0xff,0xdb,0x00,0x03,0x00,0xff,0xc4,0x00,0x03,0x00,0xff,0xc0,0x00,0x08,0x08,0x00,0x01,0x00,0x01,0x01,0xff,0xda,0x00,0x02,0x01,0x02,0x03,0x04,0xff,0xd9]);
   const fakeGif=Buffer.from([0x47,0x49,0x46,0x38,0x39,0x61,1,0,1,0,0,0,0,0x2c,0,0,0,0,1,0,1,0,0,2,1,0,0,0x3b]);
   const fakeBmp=Buffer.alloc(54);fakeBmp.write('BM',0,'ascii');fakeBmp.writeUInt32LE(54,2);fakeBmp.writeUInt32LE(54,10);fakeBmp.writeUInt32LE(40,14);fakeBmp.writeInt32LE(1,18);fakeBmp.writeInt32LE(1,22);fakeBmp.writeUInt16LE(1,26);fakeBmp.writeUInt16LE(24,28);
+  const invalidBitfieldsBmp=Buffer.alloc(70);invalidBitfieldsBmp.write('BM',0,'ascii');invalidBitfieldsBmp.writeUInt32LE(70,2);invalidBitfieldsBmp.writeUInt32LE(66,10);invalidBitfieldsBmp.writeUInt32LE(40,14);invalidBitfieldsBmp.writeInt32LE(1,18);invalidBitfieldsBmp.writeInt32LE(1,22);invalidBitfieldsBmp.writeUInt16LE(1,26);invalidBitfieldsBmp.writeUInt16LE(24,28);invalidBitfieldsBmp.writeUInt32LE(3,30);invalidBitfieldsBmp.writeUInt32LE(0xff0000,54);invalidBitfieldsBmp.writeUInt32LE(0x00ff00,58);invalidBitfieldsBmp.writeUInt32LE(0x0000ff,62);
   const fakeWebp=Buffer.alloc(30);fakeWebp.write('RIFF',0,'ascii');fakeWebp.writeUInt32LE(22,4);fakeWebp.write('WEBPVP8 ',8,'ascii');fakeWebp.writeUInt32LE(10,16);fakeWebp.set([0,0,0,0x9d,0x01,0x2a,1,0,1,0],20);
   const fakeHeif=Buffer.alloc(38);fakeHeif.writeUInt32BE(16,0);fakeHeif.write('ftypmif1',4,'ascii');fakeHeif.writeUInt32BE(13,16);fakeHeif.write('meta',20,'ascii');fakeHeif.writeUInt32BE(9,29);fakeHeif.write('mdat',33,'ascii');
   const invalidImages=[
@@ -376,6 +378,7 @@ test('HTTP malformed image fails closed before Provider and service remains aliv
     [fakeJpeg,'image/jpeg','container-only.jpg'],
     [fakeGif,'image/gif','container-only.gif'],
     [fakeBmp,'image/bmp','container-only.bmp'],
+    [invalidBitfieldsBmp,'application/octet-stream','invalid-bitfields.bmp'],
     [fakeWebp,'image/webp','container-only.webp'],
     [fakeHeif,'image/heif','container-only.heif']
   ];
@@ -485,5 +488,12 @@ test('HTTP incomplete DMS recovery cannot erase technical or authority blockers'
     if(name==='missing'){complete(response.payload.finalizedCoordinateResult);assert.equal(response.payload.finalizedCoordinateResult.resultRevision,2);assert.equal(response.payload.finalizedCoordinateResult.kmlReady,true);}
   }
 }));
-for(const {name,fn} of tests){await fn();console.log('PASS '+name);}
-console.log(`Production Core Closure P0: ${tests.length}/${tests.length} PASS; REAL_PROVIDER_CALLS=0`);
+const selectedTests=process.argv.includes('--only-image-ingress')
+  ? tests.filter(({name})=>[
+    'HTTP sync ingress normalizes generic multipart MIME before recognition',
+    'HTTP async ingress normalizes generic multipart MIME before enqueue',
+    'HTTP malformed image fails closed before Provider and service remains alive'
+  ].includes(name))
+  : tests;
+for(const {name,fn} of selectedTests){await fn();console.log('PASS '+name);}
+console.log(`Production Core Closure P0: ${selectedTests.length}/${selectedTests.length} PASS; REAL_PROVIDER_CALLS=0`);

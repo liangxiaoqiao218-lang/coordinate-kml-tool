@@ -329,6 +329,41 @@ function getPngCrc32(buffer) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
+const PNG_ADAM7_PASSES = Object.freeze([
+  Object.freeze({ xStart: 0, yStart: 0, xStep: 8, yStep: 8 }),
+  Object.freeze({ xStart: 4, yStart: 0, xStep: 8, yStep: 8 }),
+  Object.freeze({ xStart: 0, yStart: 4, xStep: 4, yStep: 8 }),
+  Object.freeze({ xStart: 2, yStart: 0, xStep: 4, yStep: 4 }),
+  Object.freeze({ xStart: 0, yStart: 2, xStep: 2, yStep: 4 }),
+  Object.freeze({ xStart: 1, yStart: 0, xStep: 2, yStep: 2 }),
+  Object.freeze({ xStart: 0, yStart: 1, xStep: 1, yStep: 2 })
+]);
+
+function pngPassDimension(size, start, step) {
+  return size <= start ? 0 : Math.ceil((size - start) / step);
+}
+
+function pngScanLayout({ width, height, channels, bitDepth, interlaceMethod }) {
+  const passes = interlaceMethod === 0
+    ? [{ width, height }]
+    : PNG_ADAM7_PASSES.map(pass => ({
+      width: pngPassDimension(width, pass.xStart, pass.xStep),
+      height: pngPassDimension(height, pass.yStart, pass.yStep)
+    })).filter(pass => pass.width > 0 && pass.height > 0);
+  let expectedLength = 0;
+  const rows = [];
+  for (const pass of passes) {
+    const rowBytes = Math.ceil((pass.width * channels * bitDepth) / 8);
+    if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) return null;
+    const passLength = pass.height * (rowBytes + 1);
+    if (!Number.isSafeInteger(passLength) || passLength <= 0) return null;
+    expectedLength += passLength;
+    if (!Number.isSafeInteger(expectedLength) || expectedLength > 256 * 1024 * 1024) return null;
+    rows.push({ rowBytes, rowCount: pass.height });
+  }
+  return expectedLength > 0 ? { expectedLength, rows } : null;
+}
+
 export function hasValidPngStructure(buffer) {
   if (!Buffer.isBuffer(buffer)
     || buffer.length < 45
@@ -339,6 +374,7 @@ export function hasValidPngStructure(buffer) {
   let height = 0;
   let bitDepth = 0;
   let colorType = 0;
+  let interlaceMethod = 0;
   let sawPalette = false;
   let sawHeader = false;
   let sawEnd = false;
@@ -358,6 +394,7 @@ export function hasValidPngStructure(buffer) {
       height = buffer.readUInt32BE(dataStart + 4);
       bitDepth = buffer[dataStart + 8];
       colorType = buffer[dataStart + 9];
+      interlaceMethod = buffer[dataStart + 12];
       const validDepths = {
         0: [1, 2, 4, 8, 16],
         2: [8, 16],
@@ -366,7 +403,7 @@ export function hasValidPngStructure(buffer) {
         6: [8, 16]
       };
       if (!validImageDimensions(width, height) || !validDepths[colorType]?.includes(bitDepth)) return false;
-      if (buffer[dataStart + 10] !== 0 || buffer[dataStart + 11] !== 0 || buffer[dataStart + 12] !== 0) return false;
+      if (buffer[dataStart + 10] !== 0 || buffer[dataStart + 11] !== 0 || ![0, 1].includes(interlaceMethod)) return false;
       sawHeader = true;
     } else if (chunkType === "IHDR") {
       return false;
@@ -385,18 +422,37 @@ export function hasValidPngStructure(buffer) {
   if (!sawHeader || !sawEnd || imageData.length === 0 || (colorType === 3 && !sawPalette)) return false;
   try {
     const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
-    const rowBytes = Math.ceil((width * channels * bitDepth) / 8);
-    const expectedLength = height * (rowBytes + 1);
-    if (!Number.isSafeInteger(expectedLength) || expectedLength <= 0 || expectedLength > 256 * 1024 * 1024) return false;
-    const decoded = inflateSync(Buffer.concat(imageData), { maxOutputLength: expectedLength });
-    if (decoded.length !== expectedLength) return false;
-    for (let rowOffset = 0; rowOffset < decoded.length; rowOffset += rowBytes + 1) {
-      if (decoded[rowOffset] > 4) return false;
+    const layout = pngScanLayout({ width, height, channels, bitDepth, interlaceMethod });
+    if (!layout) return false;
+    const decoded = inflateSync(Buffer.concat(imageData), { maxOutputLength: layout.expectedLength });
+    if (decoded.length !== layout.expectedLength) return false;
+    let rowOffset = 0;
+    for (const pass of layout.rows) {
+      for (let row = 0; row < pass.rowCount; row += 1) {
+        if (decoded[rowOffset] > 4) return false;
+        rowOffset += pass.rowBytes + 1;
+      }
     }
-    return true;
+    return rowOffset === decoded.length;
   } catch {
     return false;
   }
+}
+
+function isContiguousBmpMask(mask) {
+  if (mask === 0n) return false;
+  let value = mask;
+  while ((value & 1n) === 0n) value >>= 1n;
+  while ((value & 1n) === 1n) value >>= 1n;
+  return value === 0n;
+}
+
+function readBmpBitfieldMasks(buffer, dibSize, pixelOffset) {
+  const maskOffset = 14 + 40;
+  const maskEnd = maskOffset + 12;
+  if (maskEnd > buffer.length || maskEnd > pixelOffset) return null;
+  if (dibSize > 40 && dibSize < 52) return null;
+  return [0, 4, 8].map(offset => BigInt(buffer.readUInt32LE(maskOffset + offset)));
 }
 
 export function hasValidBmpStructure(buffer) {
@@ -413,11 +469,26 @@ export function hasValidBmpStructure(buffer) {
   const planes = buffer.readUInt16LE(26);
   const bitsPerPixel = buffer.readUInt16LE(28);
   const compression = buffer.readUInt32LE(30);
+  const colorsUsed = buffer.readUInt32LE(46);
   if (!validImageDimensions(width, Math.abs(height))
     || height === 0
     || planes !== 1
     || ![1, 4, 8, 16, 24, 32].includes(bitsPerPixel)
     || ![0, 3].includes(compression)) return false;
+  if (compression === 3) {
+    if (![16, 32].includes(bitsPerPixel)) return false;
+    const masks = readBmpBitfieldMasks(buffer, dibSize, pixelOffset);
+    if (!masks || masks.some(mask => !isContiguousBmpMask(mask))) return false;
+    if ((masks[0] & masks[1]) !== 0n || (masks[0] & masks[2]) !== 0n || (masks[1] & masks[2]) !== 0n) return false;
+    const allowedMask = (1n << BigInt(bitsPerPixel)) - 1n;
+    if (masks.some(mask => (mask & ~allowedMask) !== 0n)) return false;
+  }
+  if (bitsPerPixel <= 8) {
+    const paletteEntries = colorsUsed || (1 << bitsPerPixel);
+    if (paletteEntries <= 0 || paletteEntries > (1 << bitsPerPixel)) return false;
+    const paletteEnd = 14 + dibSize + (paletteEntries * 4);
+    if (!Number.isSafeInteger(paletteEnd) || paletteEnd > pixelOffset) return false;
+  }
   const rowBytes = Math.floor(((bitsPerPixel * width) + 31) / 32) * 4;
   const requiredBytes = rowBytes * Math.abs(height);
   return Number.isSafeInteger(requiredBytes) && requiredBytes > 0 && pixelOffset + requiredBytes <= buffer.length;
