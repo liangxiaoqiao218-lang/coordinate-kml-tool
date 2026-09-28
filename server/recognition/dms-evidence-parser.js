@@ -22,6 +22,16 @@ const normalizeMarks = value => String(value || "")
   .replace(/[‘’´`′]/g, "'")
   .replace(/[“”″]/g, '"');
 
+// A comma between the seconds integer and fractional digits is a decimal
+// separator inside a DMS token, not a coordinate-column delimiter. Normalize
+// it only after a degree/minute prefix so ordinary CSV text remains untouched.
+export function normalizeDmsDecimalComma(value) {
+  return String(value || "").replace(
+    /(\d{1,3}\s*°\s*\d{1,2}\s*['"]?\s*\d{1,2}),(\d+)/g,
+    "$1.$2"
+  );
+}
+
 function stripLeadingCoordinateLabel(line) {
   return String(line || "")
     .replace(/^\s*(?:point|pt|ponto|sommet|vertex)\s*[-#:]?\s*\d{1,3}\s*[\).:：-]?\s*/i, "")
@@ -124,7 +134,7 @@ function unresolved(sourceText, parseStatus, reason, axis = null, sourceNotation
 
 export function parseDmsField(source, { ownerFamily } = {}) {
   const sourceText = String(source ?? "");
-  const text = normalizeMarks(sourceText).trim();
+  const text = normalizeDmsDecimalComma(normalizeMarks(sourceText)).trim();
   if (!text) return unresolved(sourceText, DMS_PARSE_STATUS.MISSING, "empty_field");
   const hemisphereMatches = text.match(/[NSEWO]/gi) || [];
   const hemispheres = [...new Set(hemisphereMatches.map(normalizeHemisphere))];
@@ -207,9 +217,14 @@ export function parseLooseDmsPart(part, fallbackDirection = "", options = {}) {
 }
 
 export function parseLooseDmsLine(line, options = {}) {
-  const text = normalizeDmsLineForParsing(stripOcrBboxPrefix(line)).trim();
-  const commaParts = text.split(/\s*[,;|]\s*/).filter(part => part.length > 0);
-  const parts = commaParts.length >= 2 ? commaParts : (text.match(/[-+]?\d{1,3}(?:°[^NSEWO]*|(?:\.\d+){2,3}|\s+\d{1,2}\s+\d{1,2}(?:\.\d+)?)\s*[NSEWO]/gi) || []);
+  const text = normalizeDmsDecimalComma(
+    normalizeDmsLineForParsing(stripOcrBboxPrefix(line))
+  ).trim();
+  // Extract complete direction-bound tokens first. Splitting on comma is
+  // unsafe for sources that use decimal-comma seconds.
+  const tokenParts = text.match(/[-+]?\d{1,3}(?:°[^NSEWO]*|(?:\.\d+){2,3}|\s+\d{1,2}\s+\d{1,2}(?:\.\d+)?)\s*[NSEWO]/gi) || [];
+  const delimitedParts = text.split(/\s*[;|]\s*/).filter(part => part.length > 0);
+  const parts = tokenParts.length >= 2 ? tokenParts : delimitedParts;
   const parsed = parts.map(part => parseDmsField(part, options)).filter(item => [DMS_PARSE_STATUS.VALID_COMPACT, DMS_PARSE_STATUS.VALID_STANDARD].includes(item.parseStatus));
   const latitude = parsed.find(item => item.axis === "latitude");
   const longitude = parsed.find(item => item.axis === "longitude");

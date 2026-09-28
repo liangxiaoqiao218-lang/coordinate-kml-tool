@@ -75,7 +75,7 @@ const uncertainPayload = {
   }
 };
 assert.equal(review.spatialReviewRequired(uncertainPayload), true);
-assert.match(review.spatialWarningText(uncertainPayload), /不确定信息/);
+assert.match(review.spatialWarningText(uncertainPayload), /尚未确认/);
 
 const selfIntersectionPayload = {
   mapPreviewObject: {

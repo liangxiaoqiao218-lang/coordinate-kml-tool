@@ -533,6 +533,17 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     && finalizerGatePassed
     && mapGatePassed
     && kmlGatePassed;
+  const provisionalMapReady = Boolean(
+    mapGatePassed
+    && finalized.geometry
+    && finalized.crs?.id === "EPSG:4326"
+    && finalized.explicitAuthorityRejected !== true
+  );
+  // Already-authorized legacy results may carry the older canonical CRS
+  // marker instead of the newer explicit EPSG:4326 id. Their passed finalizer
+  // gate remains authoritative; only review-mode previews require the explicit
+  // WGS84 marker.
+  const finalMapReady = authorized ? mapGatePassed : provisionalMapReady;
   const finalAuthorizationReasons = [...new Set([
     ...projectedEvidenceAuthorization.reasons,
     ...(projectedEvidenceAuthorization.applicable && Number(providerCallCount || 0) !== 1
@@ -562,7 +573,10 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     finalizerGatePassed,
     mapGatePassed,
     kmlGatePassed,
-    mapReady: authorized && mapGatePassed,
+    // A review state blocks authority/KML, not visual inspection. A finite,
+    // finalized WGS84 geometry remains available as a clearly marked
+    // provisional map so the user can detect swapped axes and wrong location.
+    mapReady: finalMapReady,
     kmlReady: authorized && kmlGatePassed
   });
 }

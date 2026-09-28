@@ -11,6 +11,10 @@ const HEADING_MARKER_PATTERN = /^\s*(?:GROUP|HEADING|SECTION|TITLE)\s*\|\s*(\S[\
 const META_MARKER_PATTERN = /^\s*(?:CONTEXT|CRS|DATUM|PROJECTION|ZONE|AXIS|SOURCE)\s*\|/iu;
 const GENERIC_VERTEX_HEADER_ALIASES = new Map([
   ["POINTS", "POINT"],
+  ["NOPOINT", "POINT"],
+  ["NOPOINTS", "POINT"],
+  ["POINTNO", "POINT"],
+  ["POINTNUMBER", "POINT"],
   ["VERTICES", "VERTEX"],
   ["SOMMETS", "SOMMET"]
 ]);
@@ -21,7 +25,8 @@ function normalizedHeaderToken(token) {
     .replace(/\p{M}+/gu, "")
     .trim()
     .toUpperCase()
-    .replace(/[._-]+/gu, "");
+    .replace(/^(?:№|#)\s*/u, "")
+    .replace(/[\s._-]+/gu, "");
   return GENERIC_VERTEX_HEADER_ALIASES.get(normalized) || normalized;
 }
 
@@ -51,10 +56,10 @@ function analyzeDelimitedProjectedHeader(text) {
     geographicAxisOrder: null,
     projectedAxisOrder: xIndexes[0] < yIndexes[0] ? "x_y" : "y_x",
     columnLayout: Object.freeze({
-      fieldCount: fields.length,
-      labelIndex,
-      xIndex: xIndexes[0],
-      yIndex: yIndexes[0]
+      fieldCount: fields.length - labelIndex,
+      labelIndex: 0,
+      xIndex: xIndexes[0] - labelIndex,
+      yIndex: yIndexes[0] - labelIndex
     }),
     text
   });
@@ -188,7 +193,9 @@ function parseDmsCoordinateRow(line, lineNumber, { header = null } = {}) {
   const labelMatch = remainder.match(/^\s*(?:(?:POINT|PT|VERTEX|SOMMET)\s*)?([1-9]\d{0,5}|[\p{L}][\p{L}\d._-]{0,31})(?=$|\s|[|:;,.#)\-])/iu);
   if (labelMatch) {
     sourceLabel = labelMatch[1];
-    remainder = remainder.slice(labelMatch[0].length).trim();
+    remainder = remainder.slice(labelMatch[0].length)
+      .replace(/^\s*[.|:;#)\-]\s*/u, "")
+      .trim();
   }
   const auxiliary = remainder.split(/[|\t;\s]+/u).filter(Boolean).map(normalizeCoordinateNumber);
   const structuralRemainder = remainder.replace(/[\s|:;,()\[\]{}-]+/gu, "");

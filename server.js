@@ -69,6 +69,7 @@ import {
   hasDmsGroupBoundaryContext,
   hasExplicitDmsMultiRegionEvidence,
   isStage1FullMultisiteConfirmationPending,
+  parseDmsSourceCoordinateRow,
   reconstructDmsGroupsFromNormalizedCoordinates,
   resolveDmsEngineGroupNames,
   resolveDmsRetryTrustBoundary
@@ -3779,6 +3780,7 @@ function parseLooseDmsPart(part, fallbackDirection) {
     .replace(/[\u00BA\u02DA]/g, "\u00B0")
     .replace(/[\u2018\u2019\u00B4`\u2032]/g, "'")
     .replace(/[\u201C\u201D\u2033]/g, '"')
+    .replace(/(\d{1,3}\s*\u00B0\s*\d{1,2}\s*['"]?\s*\d{1,2}),(\d+)/g, "$1.$2")
     .trim();
   const directionMatch = normalized.match(/[NSEWO]/);
   const direction = (directionMatch ? directionMatch[0] : fallbackDirection || "").toUpperCase();
@@ -3856,8 +3858,10 @@ function stripOcrBboxPrefix(line) {
 }
 
 function parseLooseDmsLine(line) {
-  const text = normalizeDmsLineForParsing(stripOcrBboxPrefix(line)).trim();
-  const partPattern = /[-+]?\d{1,3}(?:(?:\s*\u00B0\s*|\s+)\d{1,2}(?:[\s.'"'\u2032]+\d{1,2}){1,2}(?:\.\d+)?|\.\d{1,2}\.\d{1,2}(?:\.\d+)?)\s*["\u2033]?\s*[NSEWO]/gi;
+  const text = normalizeDmsLineForParsing(stripOcrBboxPrefix(line))
+    .replace(/(\d{1,3}\s*\u00B0\s*\d{1,2}\s*['"]?\s*\d{1,2}),(\d+)/g, "$1.$2")
+    .trim();
+  const partPattern = /[-+]?\d{1,3}(?:(?:\s*\u00B0\s*|\s+)\d{1,2}(?:[\s.'"'\u2032]+\d{1,2}){1,2}(?:[.,]\d+)?|\.\d{1,2}\.\d{1,2}(?:\.\d+)?)\s*["\u2033]?\s*[NSEWO]/gi;
   const parts = text.match(partPattern) || [];
 
   if (parts.length < 2) {
@@ -7378,6 +7382,19 @@ function extractDmsCoordinateLines(text) {
 
 function parseProviderDmsPair(line, { latitudeDirection = "", longitudeDirection = "" } = {}) {
   const normalized = normalizeText(line);
+  const structured = parseDmsSourceCoordinateRow(normalized, {
+    fallbackHemispheres: [latitudeDirection, longitudeDirection]
+  });
+  if (structured) {
+    const explicitDirections = (normalized.match(/\b(?:N|S|E|W|O)\b/giu) || [])
+      .map(value => value.toUpperCase());
+    return Object.freeze({
+      coordinate: `${structured.longitude},${structured.latitude}`,
+      directionBound: explicitDirections.some(value => ["N", "S"].includes(value))
+        && explicitDirections.some(value => ["E", "W", "O"].includes(value)),
+      axisOrder: structured.axisOrder
+    });
+  }
   const degreeStarts = [...normalized.matchAll(/[-+]?\d{1,3}\s*°/gu)];
   if (degreeStarts.length !== 2) return null;
   const segments = [
@@ -7403,7 +7420,8 @@ function parseProviderDmsPair(line, { latitudeDirection = "", longitudeDirection
     && ["E", "W", "O"].includes(longitude.direction);
   return Object.freeze({
     coordinate: `${longitude.value},${latitude.value}`,
-    directionBound
+    directionBound,
+    axisOrder: "latitude_longitude"
   });
 }
 
@@ -7535,7 +7553,8 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
       label: String(pipeLabel || whitespaceLabel).trim().toUpperCase(),
       sourceText: line,
       coordinate: parsedPair?.coordinate || null,
-      directionBound: parsedPair?.directionBound === true
+      directionBound: parsedPair?.directionBound === true,
+      axisOrder: parsedPair?.axisOrder || null
     };
   });
   const sourceRows = rowEntries.filter(entry => Boolean(entry.coordinate));
@@ -7565,6 +7584,7 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     };
   });
   const sourceLabels = normalizedEntries.map(entry => entry.label);
+  const sourceAxisOrders = [...new Set(normalizedEntries.map(entry => entry.axisOrder).filter(Boolean))];
   const coordinateLines = uniqueEntries.map(entry => entry.coordinate);
   const parsedCandidateRowCount = sourceRows.length;
   const rejectedCandidateRowCount = Math.max(0, candidateRows.length - parsedCandidateRowCount);
@@ -7619,6 +7639,7 @@ function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) 
     sourceDisplayText: normalizedEntries.map(entry => entry.sourceText).join("\n"),
     sourceRows: normalizedEntries.map(entry => entry.sourceText),
     sourceLabels,
+    sourceAxisOrder: sourceAxisOrders.length === 1 ? sourceAxisOrders[0] : null,
     axisDirections: explicitAxes ? { ...explicitAxes } : null,
     coordinates: complete || provisional ? coordinateLines.join("\n") : ""
   });
@@ -7640,7 +7661,7 @@ function attachTrustedProviderDmsSourceRepresentation(response = {}, evidence = 
       rows: [...rows],
       groups: [[...rows]],
       pointLabels: Array.isArray(evidence?.sourceLabels) ? [...evidence.sourceLabels] : [],
-      axisOrder: "latitude_longitude",
+      axisOrder: evidence?.sourceAxisOrder || prior.axisOrder || "latitude_longitude",
       hemisphere: [...new Set(hemispheres)],
       sourceEquivalence: evidence.axisDirectionBound
         ? "provider_dms_source_rows_with_verified_axis_evidence"
@@ -9711,6 +9732,20 @@ function getCoordinateEngineV2Geometry(points = []) {
   return "polygon";
 }
 
+function resolveCoordinateEngineV2Geometry(points = [], declaredGeometry = "") {
+  const inferredGeometry = getCoordinateEngineV2Geometry(points);
+  const declared = ["point", "line", "polygon"].includes(declaredGeometry)
+    ? declaredGeometry
+    : "";
+  const count = Array.isArray(points) ? points.length : 0;
+  const declaredGeometryMatchesCardinality = (
+    (declared === "point" && count === 1)
+    || (declared === "line" && count >= 2)
+    || (declared === "polygon" && count >= 3)
+  );
+  return declaredGeometryMatchesCardinality ? declared : inferredGeometry;
+}
+
 function hasCoordinateEngineV2Wgs84Point(point = {}) {
   if (point.lat === null || point.lat === undefined || point.lat === "" || point.lon === null || point.lon === undefined || point.lon === "") {
     return false;
@@ -9893,7 +9928,11 @@ function normalizeCoordinateEngineV2Group(group = {}, coordinateType = "", resul
   return {
     group_id: String(group.group_id || "group_1"),
     group_name: String(group.group_name || "矿地1"),
-    geometry: ["point", "line", "polygon"].includes(group.geometry) ? group.geometry : getCoordinateEngineV2Geometry(points),
+    // Never preserve an impossible upstream geometry label. A one-point
+    // response cannot be rendered as a Polygon, and a two-point response
+    // cannot be closed into a valid ring. Semantic geometry is preserved only
+    // when its coordinate cardinality can actually represent that geometry.
+    geometry: resolveCoordinateEngineV2Geometry(points, group.geometry),
     confidence: Number.isFinite(Number(group.confidence)) ? Number(group.confidence) : 0,
     requires_review: requiresReview,
     kml_ready: groupKmlReady,
@@ -14812,6 +14851,11 @@ function keepRecognizedCoordinatesAsPointReview(response = {}, warning = "", { b
 
 function keepReusedLocalOcrEvidenceAsReview(response = {}, warning = "") {
   const prior = response?.finalizedCoordinateResult;
+  const provisionalMapReady = Boolean(
+    prior?.geometry
+    && prior?.crs?.id === "EPSG:4326"
+    && prior?.explicitAuthorityRejected !== true
+  );
   const reviewResult = prior?.resultId && Number.isSafeInteger(prior?.resultRevision)
     ? coordinateConfirmationRuntime.register(finalizeCoordinateResult({
         ...prior,
@@ -14820,7 +14864,7 @@ function keepReusedLocalOcrEvidenceAsReview(response = {}, warning = "") {
         confirmationStatus: "pending",
         qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
         technicalKmlReady: false,
-        mapReady: false,
+        ...(provisionalMapReady ? {} : { mapReady: false }),
         currentAuthorizedGeometryExportable: false,
         requiresReview: true,
         kmlReady: false,
@@ -14852,11 +14896,11 @@ function keepReusedLocalOcrEvidenceAsReview(response = {}, warning = "") {
   const mapPreview = response?.mapPreview && typeof response.mapPreview === "object"
     ? {
         ...response.mapPreview,
-        previewEligibility: { allowed: false },
+        previewEligibility: { allowed: provisionalMapReady, warning: provisionalMapReady },
         mapPreviewObject: response.mapPreview.mapPreviewObject && typeof response.mapPreview.mapPreviewObject === "object"
           ? {
               ...response.mapPreview.mapPreviewObject,
-              previewEligibility: { allowed: false },
+              previewEligibility: { allowed: provisionalMapReady, warning: provisionalMapReady },
               kmlEligibility: { allowed: false, kmlReady: false }
             }
           : response.mapPreview.mapPreviewObject
@@ -14869,11 +14913,11 @@ function keepReusedLocalOcrEvidenceAsReview(response = {}, warning = "") {
     resultStatus: "needs_review",
     requiresReview: true,
     boundaryBlocked: true,
-    mapReady: false,
+    mapReady: provisionalMapReady,
     kmlReady: false,
-    mapStatus: "CLOSED",
+    mapStatus: provisionalMapReady ? "ENABLED" : "CLOSED",
     kmlStatus: "CLOSED",
-    previewEligibility: { allowed: false },
+    previewEligibility: { allowed: provisionalMapReady, warning: provisionalMapReady },
     kmlEligibility: { allowed: false, kmlReady: false },
     coordinateEngineV2,
     mapPreview,
@@ -15589,8 +15633,7 @@ async function recognizeCoordinatesHandler(req, res) {
     const finalizedRequiresFailClose = !authorized
       && body.finalizedCoordinateResult && typeof body.finalizedCoordinateResult === "object"
       && (body.finalizedCoordinateResult.decisionState === COORDINATE_DECISION_STATE.AUTO_EXPORT
-        || body.finalizedCoordinateResult.kmlReady === true
-        || body.finalizedCoordinateResult.mapReady !== false);
+        || body.finalizedCoordinateResult.kmlReady === true);
     const failClosedFinalizedCoordinateResult = finalizedRequiresFailClose
       ? finalizeCoordinateResult({
         ...body.finalizedCoordinateResult,
@@ -15599,7 +15642,6 @@ async function recognizeCoordinatesHandler(req, res) {
         confirmationStatus: "pending",
         qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
         technicalKmlReady: false,
-        mapReady: false,
         kmlAuthorityBlocked: true,
         currentAuthorizedGeometryExportable: false,
         requiresReview: true,
@@ -17540,6 +17582,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     // SANITIZED_ONE_SHOT_ACQUISITION_LOG_END
     const providerDmsRecoveryEligible = ["COMPLETE", "PROVISIONAL"].includes(providerDmsDiagnostic.status)
       && providerDmsDiagnostic.coordinateRowCount >= 3;
+    const providerProjectedRecoveryEligible = providerProjectedDiagnostic.status
+      === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE;
     const unifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
       rawText,
       acquisition: recognitionImageAcquisition,
@@ -17560,7 +17604,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       decision: unifiedAcquisitionDecision,
       conformance: oneShotAcquisitionConformance
     });
-    if (!providerDmsRecoveryEligible && (unifiedFormatRequiresReview || conformantWouldBypassReview)) {
+    if (!providerDmsRecoveryEligible
+      && !providerProjectedRecoveryEligible
+      && (unifiedFormatRequiresReview || conformantWouldBypassReview)) {
       const unifiedTerminalResponse = await returnUnifiedRecognitionAcquisitionTerminal({
         rawText,
         evidence: unifiedAcquisitionEvidence,
@@ -17796,7 +17842,6 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             evidence: trustedProviderProjectedEvidence
           })));
       if (trustedProviderProjectedEvidence.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
-        && !providerDmsRecoveryEligible
         && !completeProviderDmsSupersedesProjected) {
         const contextualUtm30BoundaryPreview = supportsLegacyUtm30BoundaryPreview({
           providerText: rawText,
@@ -18067,7 +18112,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           kmlReady: false,
           warning: authorizeForGeometryValidation
             ? "识别采集已完成；完整分组、连续点号和可见 CRS 证据已保留，现进入既有几何与 KML 安全验证。"
-            : "识别采集已完成并保留全部候选坐标；点号、分组、CRS 或几何仍需复核，地图边界与 KML 保持关闭。",
+            : "识别采集已完成并保留全部候选坐标；地图仅用于核对点位，点号、分组、CRS 或几何仍需复核，正式 KML 保持关闭。",
           candidateCoordinates: Object.freeze([
             ...groupedProviderDmsEvidence.candidateGroups.flatMap(group => group.rows),
             ...groupedProviderDmsEvidence.unboundCandidates
@@ -18099,8 +18144,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ? providerReviewResponse
           : keepRecognizedCoordinatesAsPointReview(
             providerReviewResponse,
-            "识别采集已完成；候选点仅供列表复核，地图与 KML 保持关闭。",
-            { blockMap: true }
+            "识别采集已完成；候选点可在地图中核对，但不代表已确认边界，正式 KML 保持关闭。"
           ));
       }
       const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText, {
@@ -19439,14 +19483,40 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
 
     if (!dmsGroupedRetryBoundaryFailure && !dmsGroupedAccepted && !dmsAccepted && !frenchPerimeterDms.isFrenchPerimeterDms && !bftmAccepted && !utm30Accepted && !cadastralGrid.isCadastralGrid && !mgrs.isMgrs && !mozambiqueGeographicTable.isMozambiqueGeographicTable && !wgs84TableCoordinates.isWgs84TableCoordinates && !chatCoordinates.isChatCoordinates && !kyrgyzGk.isKyrgyzGk && recognitionCompleteness.allowLocalOcrEvidence) {
       try {
-        console.log("Provider result has no parsed coordinate candidate; collecting one bounded local OCR evidence result.");
+        console.log("Provider result has no parsed coordinate candidate; reusing the request-scoped local OCR evidence when available.");
         recognitionBudget?.setAcquisitionRouteReason("LOCAL_OCR_EVIDENCE_ONLY");
-        const fallback = await runLocalOcrFallback(req.file.buffer, "provider_empty_result");
+        const localOcrRecovery = planProviderTimeoutLocalOcrRecovery({
+          localOcrAttempted: oneShotLocalOcrAttempted || (recognitionBudget?.localOcrAttemptCount || 0) > 0,
+          sourceText: oneShotLocalOcrSourceText,
+          layoutLines: oneShotLocalOcrLayoutLines,
+          axisOrderEvidence: oneShotLocalOcrAxisOrderEvidence,
+          projectedTableOcrAcquisition
+        });
+        const fallback = localOcrRecovery.hasReusableEvidence
+          ? {
+              model: "local-tesseract-pre-route-reuse",
+              rawText: localOcrRecovery.evidence.sourceText,
+              coordinates: extractCoordinateLines(localOcrRecovery.evidence.sourceText),
+              precisionMode: "local-ocr-evidence-review",
+              warning: "主视觉识别未返回有效坐标；已复用本次请求首次本地 OCR 证据，结果必须人工复核。",
+              reusedLocalOcrEvidence: true
+            }
+          : localOcrRecovery.allowNewLocalOcr
+            ? await runLocalOcrFallback(req.file.buffer, "provider_empty_result")
+            : null;
 
-        if (countCoordinateRows(fallback.coordinates) > countCoordinateRows(coordinates)) {
+        // Re-run every family parser against the reusable source evidence even
+        // when the generic coordinate-line extractor cannot yet understand it
+        // (for example a long DMS, projected, or handwritten table).
+        if (fallback?.rawText && (
+          countCoordinateRows(fallback.coordinates) > countCoordinateRows(coordinates)
+          || countCoordinateRows(coordinates) === 0
+        )) {
           rawText = fallback.rawText;
           coordinates = fallback.coordinates;
-          usedModel = `${aliyunOcrModel}+local-ocr-fallback`;
+          usedModel = fallback.reusedLocalOcrEvidence
+            ? `${aliyunOcrModel}+local-ocr-pre-route-reuse`
+            : `${aliyunOcrModel}+local-ocr-fallback`;
           warning = fallback.warning;
         } else if (!warning) {
           warning = "Provider与本地OCR均未返回稳定坐标证据，请人工核对。";
