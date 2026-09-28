@@ -126,6 +126,27 @@ function directionAxis(value) {
   return null;
 }
 
+function assessDmsGeographicEvidence(candidates = [], rejectedRows = [], unboundCandidates = []) {
+  const dmsCandidates = candidates.filter(candidate => candidate?.format === "DMS");
+  const applicable = candidates.length > 0 && dmsCandidates.length === candidates.length;
+  const axisDirectionBound = applicable && dmsCandidates.every(candidate => (
+    directionAxis(candidate?.latitudeSource) === "latitude"
+      && directionAxis(candidate?.longitudeSource) === "longitude"
+      && ["latitude_longitude", "longitude_latitude"].includes(String(candidate?.axisOrder || ""))
+  ));
+  const complete = axisDirectionBound
+    && rejectedRows.length === 0
+    && unboundCandidates.length === 0;
+  return Object.freeze({
+    applicable,
+    status: complete ? "EXPLICIT_DMS_AXIS_DIRECTIONS" : "UNRESOLVED",
+    axisDirectionBound,
+    complete,
+    datumExplicit: false,
+    reviewOnly: complete
+  });
+}
+
 function parseKeyedCoordinateRow(text, lineNumber) {
   const source = String(text || "").trim();
   const labelMatch = source.match(/^\s*(?:(?:POINT|PT|VERTEX|SOMMET)\s*)?([1-9]\d{0,5}|[\p{L}][\p{L}\d._-]{0,31})(?=\s+(?:X|Y|EASTING|NORTHING|LAT|LATITUDE|LON|LONG|LONGITUDE)\b)/iu);
@@ -480,10 +501,17 @@ export function extractRecognitionCandidateEvidence({ rawText = "", visibleCrsEv
     ...candidate,
     candidateOrder: index + 1
   }));
+  const geographicCrsEvidence = assessDmsGeographicEvidence(
+    allCandidates,
+    rejectedRows,
+    unboundCandidates
+  );
   const reviewReasons = new Set();
   if (!titlePathsUnique) reviewReasons.add("GROUP_BOUNDARY_AMBIGUOUS");
   if (rejectedRows.length > 0) reviewReasons.add("CANDIDATE_NORMALIZATION_PARTIAL");
-  if (visibleCrsEvidence.length === 0) reviewReasons.add("CRS_EVIDENCE_MISSING");
+  if (visibleCrsEvidence.length === 0 && geographicCrsEvidence.complete !== true) {
+    reviewReasons.add("CRS_EVIDENCE_MISSING");
+  }
   if (unboundCandidates.length > 0) reviewReasons.add("COORDINATE_ROW_UNBOUND");
   for (const group of frozenGroups) {
     if (group.sourceLabelState === "MISSING") reviewReasons.add("SOURCE_LABELS_MISSING");
@@ -501,6 +529,7 @@ export function extractRecognitionCandidateEvidence({ rawText = "", visibleCrsEv
     candidateCoordinateGroups: Object.freeze(candidateGroups),
     unboundCandidates: Object.freeze(unboundCandidates),
     rejectedRows: Object.freeze(rejectedRows),
+    geographicCrsEvidence,
     reviewReasons: Object.freeze([...reviewReasons]),
     diagnostics: Object.freeze({
       candidatePointCount: allCandidates.length,
@@ -509,6 +538,8 @@ export function extractRecognitionCandidateEvidence({ rawText = "", visibleCrsEv
       boundRowCount: candidateGroups.reduce((total, group) => total + group.rows.length, 0),
       unboundRowCount: unboundCandidates.length,
       rejectedRowCount: rejectedRows.length,
+      dmsAxisDirectionBound: geographicCrsEvidence.axisDirectionBound,
+      dmsGeographicEvidenceStatus: geographicCrsEvidence.status,
       repeatedHeaderCount
     })
   });

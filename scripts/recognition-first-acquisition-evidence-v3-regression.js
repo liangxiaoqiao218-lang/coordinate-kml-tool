@@ -303,6 +303,43 @@ assert.equal(safeDmsDecision.shouldReturnReview, false);
 assert.equal(safeDmsDecision.mayProceedToGeometryValidation, true);
 assert.equal(safeDmsDecision.authorizationStatus, "VALIDATION_PENDING");
 
+const directionBoundReviewEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: [
+    "Point | Latitude | Longitude",
+    dmsRow("1", "10", "10"),
+    dmsRow("2", "11", "11"),
+    dmsRow("3", "12", "12"),
+    dmsRow("4", "13", "13")
+  ].join("\n"),
+  acquisition
+});
+assert.equal(directionBoundReviewEvidence.visibleCrsEvidence.length, 0);
+assert.equal(directionBoundReviewEvidence.geographicCrsEvidence.status, "EXPLICIT_DMS_AXIS_DIRECTIONS");
+assert.equal(directionBoundReviewEvidence.geographicCrsEvidence.axisDirectionBound, true);
+assert.equal(directionBoundReviewEvidence.geographicCrsEvidence.reviewOnly, true);
+assert.equal(directionBoundReviewEvidence.reviewReasons.includes("CRS_EVIDENCE_MISSING"), false);
+const directionBoundReviewDecision = evaluateUnifiedRecognitionAcquisition({
+  evidence: directionBoundReviewEvidence,
+  contractStatus: "REVIEW_REQUIRED",
+  contractReason: "GENERIC_REVIEW_ONLY"
+});
+assert.equal(directionBoundReviewDecision.dmsGeographicReviewEligible, true);
+assert.equal(directionBoundReviewDecision.mayProceedToGeometryValidation, true);
+assert.equal(directionBoundReviewDecision.authorizationStatus, "REVIEW_REQUIRED");
+assert.equal(directionBoundReviewDecision.resultStatus, "needs_review");
+
+const conflictingDirectionEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: [
+    "Point | Latitude | Longitude",
+    `1 | 6° 45' 10\" N | 4° 22' 10\" S`,
+    dmsRow("2", "11", "11"),
+    dmsRow("3", "12", "12")
+  ].join("\n"),
+  acquisition
+});
+assert.equal(conflictingDirectionEvidence.geographicCrsEvidence.complete, false);
+assert.ok(conflictingDirectionEvidence.reviewReasons.includes("CRS_EVIDENCE_MISSING"));
+
 const multiPair = buildRecognitionAcquisitionEvidence({
   rawText: ["CONTEXT | BFTM", "Point | X1 | Y1 | X2 | Y2", "A | 658800 | 1364200 | 658900 | 1364300"].join("\n")
 });
@@ -505,7 +542,11 @@ assert.doesNotMatch(serverSource, /buildRecognitionAcquisitionEvidence\(\{/u);
 assert.match(serverSource, /const wgs84UnifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore\.getOrBuild[\s\S]+const acquisitionEvidence = wgs84UnifiedAcquisitionEvidence/u);
 assert.match(serverSource, /const unifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore\.getOrBuild[\s\S]+const groupedAcquisitionEvidence = unifiedAcquisitionEvidence/u);
 assert.match(serverSource, /if \(unifiedRecognitionAcquisitionContext\?\.evidence\)[\s\S]+requestRecognitionAcquisitionEvidenceStore\.getOrBuild/u);
-assert.match(serverSource, /evaluateUnifiedRecognitionFinalAuthorization\(\{\s*body,\s*evidence,\s*decision,\s*conformance: context\.conformance,\s*providerCallCount: recognitionBudget\?\.providerAttemptCount \|\| 0\s*\}\)/u);
+  assert.match(
+    serverSource,
+    /evaluateUnifiedRecognitionFinalAuthorization\(\{\s*body: authorizationBody,\s*evidence,\s*decision,\s*conformance: context\.conformance,\s*providerCallCount: recognitionBudget\?\.providerAttemptCount \|\| 0\s*\}\)/u,
+    '最终授权必须使用经过待核对结果收敛的 authorizationBody，而不是绕过该受控调用链直接使用原始 body',
+  );
 assert.doesNotMatch(serverSource, /const explicitlyAuthorized =/u);
 assert.match(serverSource, /Recognition acquisition final state:/u);
 assert.match(serverSource, /recovered\.result === COORDINATE_USAGE_COMMIT_RESULT\.NOT_FOUND/);
