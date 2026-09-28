@@ -9169,6 +9169,32 @@ Au值 = 纯度 × 10 后取整数</div>
       if (visible) debugText.scrollTop = debugText.scrollHeight;
     }
 
+    function buildRecognitionCandidateSourceEvidence(data, expectedCount = 0) {
+      const sourceGroups = Array.isArray(data?.candidateCoordinateGroups)
+        ? data.candidateCoordinateGroups.map(group => {
+          const rows = Array.isArray(group?.rows) ? group.rows.map(row => {
+            const sourceText = String(row?.sourceText || row?.raw || "").trim();
+            if (sourceText) return sourceText;
+            const label = row?.sourceLabel ? `${row.sourceLabel} | ` : "";
+            const latitude = row?.latitudeSource || row?.latitude || "";
+            const longitude = row?.longitudeSource || row?.longitude || "";
+            return latitude && longitude ? `${label}${latitude} | ${longitude}`.trim() : "";
+          }).filter(Boolean) : [];
+          return rows;
+        }).filter(rows => rows.length > 0)
+        : [];
+      const rows = sourceGroups.flat();
+      const requiredCount = Math.max(0, Number(expectedCount) || 0);
+      if (requiredCount > 0 && rows.length !== requiredCount) {
+        return { groups: [], rows: [], displayText: "" };
+      }
+      return {
+        groups: sourceGroups,
+        rows,
+        displayText: sourceGroups.map(groupRows => groupRows.join("\n")).join("\n\n")
+      };
+    }
+
     function compactRecognizedCoordinateDisplayText(text = "") {
       return String(text || "")
         .replace(/\r\n/g, "\n")
@@ -15615,18 +15641,13 @@ ${placemarks}
           || data.mapStatus === "CLOSED"
           || data.kmlStatus === "CLOSED"
           || !hasCompleteUnifiedRecognitionEvidence(data);
-        const acquisitionCandidateDisplayText = acquisitionReviewOnly
-          && Array.isArray(data.candidateCoordinateGroups)
-          ? data.candidateCoordinateGroups.map(group => {
-            const rows = Array.isArray(group?.rows) ? group.rows.map(row => {
-              const label = row?.sourceLabel ? `${row.sourceLabel} | ` : "";
-              const latitude = row?.latitudeSource || row?.latitude || "";
-              const longitude = row?.longitudeSource || row?.longitude || "";
-              return `${label}${latitude} | ${longitude}`;
-            }).filter(Boolean) : [];
-            return rows.join("\n").trim();
-          }).filter(Boolean).join("\n\n")
-          : "";
+        const acquisitionCandidateSourceEvidence = acquisitionReviewOnly
+          ? buildRecognitionCandidateSourceEvidence(
+            data,
+            isTrustedProviderDmsReview ? trustedProviderDmsCoordinateCount : 0
+          )
+          : { groups: [], rows: [], displayText: "" };
+        const acquisitionCandidateDisplayText = acquisitionCandidateSourceEvidence.displayText;
         const sourceCoordinateRepresentation = data.sourceCoordinateRepresentation || {};
         const sourceDisplayText = sourceCoordinateRepresentation.schema_version === "source_coordinate_representation_v1"
           && sourceCoordinateRepresentation.editable === true
@@ -15636,9 +15657,11 @@ ${placemarks}
           ? structuredClone(sourceCoordinateRepresentation)
           : null;
         if (isTrustedProviderDmsReview) {
-          const detailRows = Array.isArray(sourceCoordinateRepresentation.rows)
-            ? sourceCoordinateRepresentation.rows.map(row => String(row || "").trim()).filter(Boolean)
-            : sourceDisplayText.split(/\r?\n/).map(row => row.trim()).filter(Boolean);
+          const detailRows = sourceDisplayText
+            ? (Array.isArray(sourceCoordinateRepresentation.rows)
+              ? sourceCoordinateRepresentation.rows.map(row => String(row || "").trim()).filter(Boolean)
+              : sourceDisplayText.split(/\r?\n/).map(row => row.trim()).filter(Boolean))
+            : acquisitionCandidateSourceEvidence.rows;
           appendDebug(`发现坐标表，共 ${trustedProviderDmsCoordinateCount} 行`);
           await appendRecognizedCoordinateDetails(detailRows, trustedProviderDmsCoordinateCount);
           if (trustedProviderDmsEvidence.axisConflict === true) {

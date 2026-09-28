@@ -180,6 +180,8 @@ assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
 
 const indexSource = await readFile(path.join(root, "index.html"), "utf8");
 const serverSource = await readFile(path.join(root, "server.js"), "utf8");
+const candidateSourceEvidenceStart = indexSource.indexOf("function buildRecognitionCandidateSourceEvidence");
+const candidateSourceEvidenceEnd = indexSource.indexOf("function compactRecognizedCoordinateDisplayText", candidateSourceEvidenceStart);
 const geometryContractStart = indexSource.indexOf("function hasFiniteFinalizedGeometry");
 const geometryContractEnd = indexSource.indexOf("function isOrdinaryReviewOnlyFinalizedResult", geometryContractStart);
 const browserContractStart = indexSource.indexOf("function hasCompleteUnifiedRecognitionEvidence");
@@ -188,6 +190,39 @@ assert.notEqual(geometryContractStart, -1);
 assert.notEqual(geometryContractEnd, -1);
 assert.notEqual(browserContractStart, -1);
 assert.notEqual(browserContractEnd, -1);
+assert.notEqual(candidateSourceEvidenceStart, -1);
+assert.notEqual(candidateSourceEvidenceEnd, -1);
+const buildRecognitionCandidateSourceEvidence = Function(`
+  ${indexSource.slice(candidateSourceEvidenceStart, candidateSourceEvidenceEnd)}
+  return buildRecognitionCandidateSourceEvidence;
+`)();
+const sourceRows = [
+  "1 | 05° 34' 42.00\"N | 02° 47' 05.00\"W",
+  "2 | 05° 34' 42.00\"N | 02° 46' 19.00\"W",
+  "3 | 05° 34' 21.00\"N | 02° 46' 19.00\"W",
+  "4 | 05° 34' 21.00\"N | 02° 47' 05.00\"W"
+];
+const candidateSourceEvidence = buildRecognitionCandidateSourceEvidence({
+  candidateCoordinateGroups: [{
+    visibleTitle: "[UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE]",
+    rows: sourceRows.map((sourceText, index) => ({
+      sourceLabel: String(index + 1),
+      sourceText,
+      latitudeSource: sourceText.split(" | ")[1],
+      longitudeSource: sourceText.split(" | ")[2]
+    }))
+  }]
+}, 4);
+assert.deepEqual(candidateSourceEvidence.rows, sourceRows,
+  "validated candidate rows preserve the exact original text and point order");
+assert.equal(candidateSourceEvidence.displayText, sourceRows.join("\n"),
+  "editable candidate text contains only original coordinate rows");
+assert.doesNotMatch(candidateSourceEvidence.displayText, /UNCLASSIFIED|STRUCTURED COORDINATE EVIDENCE/u,
+  "internal diagnostic headings never enter editable coordinate text");
+assert.deepEqual(buildRecognitionCandidateSourceEvidence({
+  candidateCoordinateGroups: [{ rows: sourceRows.slice(0, 3).map(sourceText => ({ sourceText })) }]
+}, 4), { groups: [], rows: [], displayText: "" },
+"candidate row fallback stays closed when the validated row count does not match");
 const createBrowserAuthorizationState = Function(`
   ${indexSource.slice(geometryContractStart, geometryContractEnd)}
   ${indexSource.slice(browserContractStart, browserContractEnd)}
@@ -300,6 +335,8 @@ assert.equal(manualActions.blocked("kml"), false, "manual input retains its inde
 
 assert.match(indexSource, /const displayCoordinates = sourceDisplayText\s*\|\| acquisitionCandidateDisplayText/u,
   "editable coordinates prefer the preserved source rows");
+assert.match(indexSource, /const detailRows = sourceDisplayText[\s\S]+: acquisitionCandidateSourceEvidence\.rows;/u,
+  "recognition details use identity-bound candidate rows when the source representation is unavailable");
 assert.doesNotMatch(indexSource, /const heading = titlePath\.length/u,
   "diagnostic title paths are not inserted into editable coordinate text");
 assert.match(indexSource, /if \(provisionalMapReady && provisionalKmlReady\) \{\s*appendDebug\("地图和未确认 KML 已准备，可继续核对"\)/u,
@@ -319,7 +356,7 @@ assert.match(serverSource, /authorizationStatus: "REVIEW_REQUIRED"[\s\S]+resultS
 
 console.log(JSON.stringify({
   suite: "review-output-contract-regression",
-  passed: 34,
+  passed: 39,
   providerCalls: 0,
   cases: [
     "VALID_REVIEW_MAP_ENABLED",
@@ -353,6 +390,11 @@ console.log(JSON.stringify({
     "FRONTEND_CLOSED_PROVISIONAL_FLOW_BLOCKED",
     "MANUAL_INPUT_ACTIONS_REMAIN_INDEPENDENT",
     "SOURCE_TEXT_PRECEDENCE",
+    "CANDIDATE_SOURCE_ROWS_PRESERVE_ORIGINAL_TEXT",
+    "CANDIDATE_SOURCE_ROWS_PRESERVE_POINT_ORDER",
+    "CANDIDATE_SOURCE_ROWS_EXCLUDE_INTERNAL_TITLE",
+    "CANDIDATE_SOURCE_ROWS_REQUIRE_COUNT_MATCH",
+    "DETAIL_ROWS_USE_VALIDATED_CANDIDATE_FALLBACK",
     "DETAIL_STATUS_MATCHES_KML_STATE",
     "COMPLETION_MESSAGE_MATCHES_MAP_STATE",
     "COMPLETION_MESSAGE_MATCHES_KML_STATE"
