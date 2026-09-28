@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
+import sharp from "sharp";
 import {
   COORDINATE_IMAGE_SAFETY_LIMITS,
   COORDINATE_IMAGE_SAFETY_REASON,
@@ -39,16 +40,32 @@ function pngChunk(type, data) {
   return Buffer.concat([length, typeBytes, data, crc]);
 }
 
-function makePng({ colorType = 2, splitIdat = false, width = 2, height = 2 } = {}) {
+const adam7Passes = [
+  [0, 0, 8, 8],
+  [4, 0, 8, 8],
+  [0, 4, 4, 8],
+  [2, 0, 4, 4],
+  [0, 2, 2, 4],
+  [1, 0, 2, 2],
+  [0, 1, 1, 2]
+];
+
+function makePng({ colorType = 2, splitIdat = false, width = 2, height = 2, interlaced = false } = {}) {
   const channels = ({ 0: 1, 2: 3, 3: 1, 6: 4 })[colorType];
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
   header[8] = 8;
   header[9] = colorType;
+  header[12] = interlaced ? 1 : 0;
   const rows = [];
-  for (let row = 0; row < height; row += 1) {
-    rows.push(Buffer.from([0, ...Array(width * channels).fill(row + 1)]));
+  const passes = interlaced ? adam7Passes : [[0, 0, 1, 1]];
+  for (const [xStart, yStart, xStep, yStep] of passes) {
+    const passWidth = width <= xStart ? 0 : Math.ceil((width - xStart) / xStep);
+    const passHeight = height <= yStart ? 0 : Math.ceil((height - yStart) / yStep);
+    for (let row = 0; row < passHeight; row += 1) {
+      rows.push(Buffer.from([0, ...Array(passWidth * channels).fill(row + 1)]));
+    }
   }
   const compressed = deflateSync(Buffer.concat(rows));
   const midpoint = Math.max(1, Math.floor(compressed.length / 2));
@@ -65,18 +82,33 @@ function makePng({ colorType = 2, splitIdat = false, width = 2, height = 2 } = {
   ]);
 }
 
-function makeBmp(width = 2, height = 2) {
-  const rowBytes = Math.floor(((24 * width) + 31) / 32) * 4;
+function makeBmp({
+  width = 2,
+  height = 2,
+  bitsPerPixel = 24,
+  compression = 0,
+  masks = [0x00f800, 0x0007e0, 0x00001f],
+  colorsUsed = 0
+} = {}) {
+  const rowBytes = Math.floor(((bitsPerPixel * width) + 31) / 32) * 4;
   const pixelBytes = rowBytes * height;
-  const buffer = Buffer.alloc(54 + pixelBytes);
+  const maskBytes = compression === 3 ? 12 : 0;
+  const paletteEntries = bitsPerPixel <= 8 ? (colorsUsed || (1 << bitsPerPixel)) : 0;
+  const paletteBytes = paletteEntries * 4;
+  const pixelOffset = 54 + maskBytes + paletteBytes;
+  const buffer = Buffer.alloc(pixelOffset + pixelBytes);
   buffer.write("BM", 0, "ascii");
   buffer.writeUInt32LE(buffer.length, 2);
-  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(pixelOffset, 10);
   buffer.writeUInt32LE(40, 14);
   buffer.writeInt32LE(width, 18);
   buffer.writeInt32LE(height, 22);
   buffer.writeUInt16LE(1, 26);
-  buffer.writeUInt16LE(24, 28);
+  buffer.writeUInt16LE(bitsPerPixel, 28);
+  buffer.writeUInt32LE(compression, 30);
+  buffer.writeUInt32LE(pixelBytes, 34);
+  buffer.writeUInt32LE(colorsUsed, 46);
+  if (compression === 3) masks.forEach((mask, index) => buffer.writeUInt32LE(mask, 54 + (index * 4)));
   return buffer;
 }
 
@@ -290,9 +322,26 @@ test("PNG grayscale, RGB, RGBA, palette, and multi-IDAT variants pass", () => {
   }
 });
 
+test("valid Adam7 PNG normalizes from browser, generic, or incorrect MIME", async () => {
+  for (const colorType of [0, 2, 3, 6]) {
+    const png = makePng({ colorType, width: 9, height: 9, interlaced: true, splitIdat: true });
+    const metadata = await sharp(png).metadata();
+    assert.equal(metadata.format, "png");
+    assert.equal(metadata.isProgressive, true);
+    assert.equal(hasValidPngStructure(png), true, `colorType=${colorType}`);
+    for (const claimedMime of ["image/png", "application/octet-stream", "image/jpeg"]) {
+      const result = canonicalizeCoordinateImageUpload(file(png, claimedMime));
+      assert.equal(result.valid, true, `colorType=${colorType} claimedMime=${claimedMime}`);
+      assert.equal(result.file.mimetype, "image/png");
+    }
+  }
+});
+
 test("valid BMP and the frozen Cote d'Ivoire PNG normalize from generic MIME", async () => {
   const bmp = makeBmp();
   assert.equal(hasValidBmpStructure(bmp), true);
+  assert.equal(hasValidBmpStructure(makeBmp({ bitsPerPixel: 16, compression: 3 })), true);
+  assert.equal(hasValidBmpStructure(makeBmp({ bitsPerPixel: 8 })), true);
   const frozenPng = await readFile(new URL("../regression-samples/fixtures/科特迪瓦02.png", import.meta.url));
   const result = canonicalizeCoordinateImageUpload(file(frozenPng, "application/octet-stream"));
   assert.equal(result.valid, true);
@@ -319,13 +368,24 @@ test("every repository coordinate image fixture passes generic ingress validatio
 test("corrupt, disguised, unsupported, and resource-limit images fail closed", () => {
   const damagedPng = makePng();
   damagedPng[damagedPng.length - 1] ^= 1;
+  const damagedAdam7Png = makePng({ width: 9, height: 9, interlaced: true });
+  damagedAdam7Png[damagedAdam7Png.length - 1] ^= 1;
   const oversizedPng = makePng({ width: COORDINATE_IMAGE_SAFETY_LIMITS.maxDimension + 1, height: 1 });
+  const missingPaletteBmp = makeBmp({ bitsPerPixel: 8 });
+  missingPaletteBmp.writeUInt32LE(54, 10);
+  const missingBitfieldMasksBmp = makeBmp({ bitsPerPixel: 16, compression: 3 });
+  missingBitfieldMasksBmp.writeUInt32LE(54, 10);
   for (const buffer of [
     Buffer.from("not-an-image"),
     Buffer.from("GIF89a", "ascii"),
     damagedPng,
+    damagedAdam7Png,
     oversizedPng,
-    Buffer.concat([makeBmp(), Buffer.from([0])])
+    Buffer.concat([makeBmp(), Buffer.from([0])]),
+    makeBmp({ bitsPerPixel: 24, compression: 3 }),
+    makeBmp({ bitsPerPixel: 16, compression: 3, masks: [0xf800, 0x07e0, 0x07e0] }),
+    missingPaletteBmp,
+    missingBitfieldMasksBmp
   ]) {
     for (const mimetype of ["image/png", "image/jpeg", "application/octet-stream"]) {
       const result = canonicalizeCoordinateImageUpload(file(buffer, mimetype));
