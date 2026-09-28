@@ -2494,7 +2494,7 @@ test("one-shot structured Provider DMS review accepts complete triples without s
   assert.equal(evidence.coordinates.split("\n")[0], "-9.020463888888889,11.72123611111111");
 });
 
-test("one-shot structured actual HTTP generic DMS recovery enables provisional map but keeps export closed", async () => {
+test("one-shot structured actual HTTP generic DMS recovery enables provisional map and unconfirmed KML", async () => {
   const payload = await runHttpCandidate("generic-dms-review");
   const expectedSourceDisplay = [
     "1 | 11° 43' 16.45'' | 09° 01' 13.67''",
@@ -2507,7 +2507,7 @@ test("one-shot structured actual HTTP generic DMS recovery enables provisional m
   assert.equal(payload.authorizationStatus, "REVIEW_REQUIRED");
   assert.equal(payload.resultStatus, "needs_review");
   assert.equal(payload.mapStatus, "ENABLED");
-  assert.equal(payload.kmlStatus, "CLOSED");
+  assert.equal(payload.kmlStatus, "ENABLED");
   assert.equal(payload.providerDmsReviewEvidence.status, "COMPLETE");
   assert.equal(payload.providerDmsReviewEvidence.coordinateRowCount, 4);
   assert.equal(payload.coordinates.split("\n").length, 4);
@@ -2519,8 +2519,8 @@ test("one-shot structured actual HTTP generic DMS recovery enables provisional m
   assert.equal(payload.boundaryBlocked, true);
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
-  assert.equal(payload.finalizedCoordinateResult.technicalKmlReady, false);
-  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.finalizedCoordinateResult.technicalKmlReady, true);
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
   assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
   assert.equal(payload.sourceCoordinateRepresentation.displayText, expectedSourceDisplay);
   assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence, "pointwise_dms_semantic_match");
@@ -2587,7 +2587,7 @@ test("generic NC/XV/YV grid recovery ignores descriptive columns and uses the te
   assert.doesNotMatch(JSON.stringify(payload.parserTrace), /Madagascar|Ilakaka|fixture|filename/u);
 });
 
-test("Provider DMS recovery preserves independent A-Z family identity and blocks export until confirmation", async () => {
+test("Provider DMS recovery preserves independent A-Z family identity and exposes only unconfirmed KML", async () => {
   const payload = await runHttpCandidate("generic-dms-point-az");
   assert.equal(payload.success, true);
   assert.equal(payload.providerCallCount, 1);
@@ -2600,20 +2600,20 @@ test("Provider DMS recovery preserves independent A-Z family identity and blocks
   assert.equal(payload.finalizedCoordinateResult.family, "point-az-dms-table");
   assert.equal(payload.finalizedCoordinateResult.familySafetyPolicy?.policyId, "POINT_AZ_TEMPORARY_REVIEW_POLICY");
   assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
-  assert.ok(["BLOCKED", "REVIEW_REQUIRED"].includes(payload.finalizedCoordinateResult.decisionState));
-  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
   assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
   assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
 });
 
-test("one-shot structured HTTP generic DMS arrays enable provisional map but keep export closed", async () => {
+test("one-shot structured HTTP generic DMS arrays enable provisional map and unconfirmed KML", async () => {
   const payload = await runHttpCandidate("generic-dms-review-array");
   assert.equal(payload.success, true);
   assert.equal(payload.requiresReview, true);
   assert.equal(payload.authorizationStatus, "REVIEW_REQUIRED");
   assert.equal(payload.resultStatus, "needs_review");
   assert.equal(payload.mapStatus, "ENABLED");
-  assert.equal(payload.kmlStatus, "CLOSED");
+  assert.equal(payload.kmlStatus, "ENABLED");
   assert.equal(payload.providerDmsReviewEvidence.status, "COMPLETE");
   assert.equal(payload.providerDmsReviewEvidence.coordinateRowCount, 4);
   assert.equal(payload.coordinates.split("\n").length, 4);
@@ -2621,7 +2621,7 @@ test("one-shot structured HTTP generic DMS arrays enable provisional map but kee
   assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
   assert.equal(payload.geometryMode, "boundary");
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
-  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
   assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
 });
 
@@ -2685,7 +2685,7 @@ test("hash-bound Kyrgyz image still reaches the generic projected-table acquisit
   );
 });
 
-test("hash-bound Kyrgyz image completes one generic Provider call and preserves all 65 points", async () => {
+test("hash-bound Kyrgyz image completes one generic Provider call and preserves all 65 points with unconfirmed KML", async () => {
   const payload = await runHttpCandidate("generic-projected-kyrgyz-real");
   assert.equal(payload.success, true);
   assert.equal(payload.providerCallCount, 1);
@@ -2699,7 +2699,7 @@ test("hash-bound Kyrgyz image completes one generic Provider call and preserves 
   assert.match(payload.coordinates, /^65\s*\|\s*13261317\s*\|\s*4607721$/mu);
   assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
   assert.equal(payload.authorizationStatus, "REVIEW_REQUIRED");
-  assert.equal(payload.finalizedCoordinateResult?.kmlReady, false);
+  assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
   assert.equal(payload.mapPreview?.mapPreviewObject?.previewEligibility?.allowed, true);
 });
 
@@ -2727,7 +2727,7 @@ test("explicit projected family recovery requires context, continuous labels, an
   }), false);
 });
 
-test("forced local OCR timeout still accepts explicit complete Kyrgyz GK evidence from one Provider call", async () => {
+test("forced local OCR timeout still accepts explicit complete Kyrgyz GK evidence with unconfirmed KML", async () => {
   const payload = await runHttpCandidate("generic-projected-kyrgyz-real-local-ocr-timeout");
   assert.equal(payload.success, true);
   assert.equal(payload.providerCallCount, 1);
@@ -2739,7 +2739,7 @@ test("forced local OCR timeout still accepts explicit complete Kyrgyz GK evidenc
   assert.ok(payload.parserTrace.includes("LOCAL_OCR:unavailable_provider_family_evidence_confirmed"));
   assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
   assert.equal(payload.authorizationStatus, "REVIEW_REQUIRED");
-  assert.equal(payload.finalizedCoordinateResult?.kmlReady, false);
+  assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
   assert.equal(payload.mapPreview?.mapPreviewObject?.previewEligibility?.allowed, true);
 });
 
@@ -2766,9 +2766,10 @@ for (const [scenario, expectedPrecision] of [
     assert.equal(payload.precisionMode, expectedPrecision);
     assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
     if (payload.authorizationStatus === "REVIEW_REQUIRED") {
-      assert.equal(payload.finalizedCoordinateResult?.kmlReady, false);
-      assert.equal(payload.mapStatus, "ENABLED");
-      assert.equal(payload.kmlStatus, "CLOSED");
+      const expectUnconfirmedKml = expectedPrecision === "preserve-original-decimals-and-parse-dms";
+      assert.equal(payload.finalizedCoordinateResult?.kmlReady, expectUnconfirmedKml, scenario);
+      assert.equal(payload.mapStatus, expectUnconfirmedKml ? "ENABLED" : "CLOSED");
+      assert.equal(payload.kmlStatus, expectUnconfirmedKml ? "ENABLED" : "CLOSED");
     } else {
       assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
     }
@@ -2888,7 +2889,7 @@ test("complete directional DMS rows take precedence over ordinal and projected c
   assert.ok(payload.parserTrace.includes("INDONESIA_UTM50:dms_crosscheck_PASS"));
   assert.doesNotMatch(payload.coordinates.split(/\r?\n/u)[0], /^1,510000/u);
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
-  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
+  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
 });
 
@@ -2959,7 +2960,7 @@ test("contextual UTM site vertices remain closed when unified evidence is incomp
   assert.equal(payload.authorizationStatus, "REVIEW_REQUIRED");
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
+  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
   assert.equal(payload.providerCallCount, 1);
 });
 
@@ -2977,7 +2978,7 @@ test("explicit BFTM vertices preserve all rows while incomplete unified evidence
   assert.equal(payload.authorizationStatus, "REVIEW_REQUIRED");
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
   assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
+  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
   assert.equal(payload.providerCallCount, 1);
 });
 
