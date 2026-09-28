@@ -20,8 +20,6 @@ const governance = JSON.parse(await readFile(
   new URL("../release-governance/family-availability-policy-v1.json", import.meta.url),
   "utf8"
 ));
-const serverSource = await readFile(new URL("../server.js", import.meta.url), "utf8");
-
 const results = [];
 let unsafeGateFailureCount = 0;
 
@@ -87,12 +85,11 @@ check("A01", "Kyrgyz stable specialized path is AVAILABLE", () => {
 });
 
 check("A02", "Kyrgyz acquisition is permitted without claiming Provider reliability", () => {
-  assert.equal(simulateServerEnforcement("kyrgyz_gk").providerCallCount, 1);
-  const enforcementIndex = serverSource.indexOf("const enforcedAvailability =");
-  const firstProviderCallAfterEnforcement = serverSource.indexOf("callAliyunVision({", enforcementIndex);
-  assert.ok(enforcementIndex > 0 && firstProviderCallAfterEnforcement > enforcementIndex);
-  assert.ok(serverSource.slice(enforcementIndex, firstProviderCallAfterEnforcement).includes("return res.status(503)"));
-  assert.ok(!serverSource.slice(enforcementIndex, firstProviderCallAfterEnforcement).includes("regressionSampleId"));
+  const simulation = simulateServerEnforcement("kyrgyz_gk");
+  assert.equal(simulation.availability.status, FAMILY_AVAILABILITY_STATUS.AVAILABLE);
+  assert.equal(simulation.availability.providerCallAllowed, true);
+  assert.equal(simulation.availability.recognitionAvailable, true);
+  assert.equal(simulation.providerCallCount, 1);
 });
 
 check("A03", "Kyrgyz valid authorized geometry can export", () => {

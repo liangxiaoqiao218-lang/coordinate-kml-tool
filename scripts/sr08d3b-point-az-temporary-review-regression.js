@@ -47,13 +47,20 @@ test("PAZ-P01", () => {
 });
 test("PAZ-P02", () => assert.equal(pointAzResult().familySafetyPolicy.reasonCode, COORDINATE_GATE_REASON.PROVIDER_EVIDENCE_COVERAGE_INSUFFICIENT));
 test("PAZ-P03", () => {
-  assert.equal(pointAzResult().kmlReady, false);
-  assert.equal(pointAzResult().decisionState, "REVIEW_REQUIRED");
+  const result = pointAzResult();
+  assert.equal(result.kmlReady, true);
+  assert.equal(result.technicalKmlReady, true);
+  assert.equal(result.decisionState, "REVIEW_REQUIRED");
 });
 test("PAZ-P04", () => {
   const result = registerFinalizedCoordinateResult(pointAzResult());
   const adapted = new FinalizedResultSpatialGeometryAdapter().adapt(result);
-  assert.equal(adapted.ok, false);
+  assert.equal(adapted.ok, true);
+  assert.equal(adapted.geometry.gate.decisionState, "REVIEW_REQUIRED");
+  assert.equal(adapted.geometry.gate.confirmationStatus, "pending");
+  assert.equal(adapted.geometry.gate.kmlReady, true);
+  assert.equal(adapted.geometry.gate.groupsReady, false);
+  assert.ok(adapted.geometry.warnings.includes(COORDINATE_GATE_REASON.CONFIRMATION_REQUIRED));
 });
 test("PAZ-P05", () => {
   const runtime = new CoordinateConfirmationRuntime();

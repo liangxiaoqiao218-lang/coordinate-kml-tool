@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
+import net from 'node:net';
 import {fileURLToPath} from 'node:url';
 import {inflateSync} from 'node:zlib';
 import vm from 'node:vm';
@@ -69,7 +70,12 @@ if (process.argv[2] === '--http') {
     structureProbeCalls += 1;
     structureImageCanonical = Buffer.isBuffer(image) && image.equals(frozenJpeg);
   };
+  const nativeFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
+    if (String(url).startsWith('http://127.0.0.1:')
+      && String(url) !== 'http://127.0.0.1:1/v1/chat/completions') {
+      return nativeFetch(url, options);
+    }
     assert.equal(String(url), 'http://127.0.0.1:1/v1/chat/completions');
     assert.ok(++calls <= 3, 'unexpected retry expansion');
     const request = JSON.parse(String(options.body || '{}'));
@@ -131,9 +137,8 @@ const runtime = vm.createContext({
   ...boundary,
   Buffer,
   inflateSync,
-  pngCrcTable:null,
   canonicalizeCoordinateImageUpload:imageSafety.canonicalizeCoordinateImageUpload,
-  hasValidCanonicalJpegStructure:imageSafety.hasValidJpegStructure
+  validateCoordinateImageUpload:imageSafety.validateCoordinateImageUpload
 });
 for (const match of source.matchAll(/^(?:async )?function (\w+)\(/gm)) vm.runInContext(extract(source,match[1]),runtime);
 for (const name of ['noCoordinatesText','MGRS_BANDS','MGRS_COLUMN_SETS','MGRS_ROW_SETS','MOZAMBIQUE_TETE_KNOWN_ROW_TOLERANCE']) {
@@ -241,6 +246,11 @@ test('Madagascar 32 source rows, 32 cells and MultiPolygon remain intact',()=>{
 });
 
 async function httpScenario(scenario, run) {
+  const reservation=net.createServer();
+  reservation.listen(0,'127.0.0.1');
+  await once(reservation,'listening');
+  const reservedPort=reservation.address().port;
+  const reservationClosed=once(reservation,'close');reservation.close();await reservationClosed;
   const needsOcrProbe=['ocr-failure','post-provider-failure','jpeg-ocr-canonical'].includes(scenario);
   const needsStructureProbe=scenario.startsWith('jpeg-');
   const consumerProbePreload=(needsOcrProbe||needsStructureProbe)?`import {registerHooks} from 'node:module';
@@ -258,11 +268,12 @@ registerHooks({load(url,context,nextLoad){
   return {...result,source:"module.exports={createWorker:async()=>{globalThis.__coreOcrCalls=(globalThis.__coreOcrCalls||0)+1;return {recognize:async image=>{const expected=Buffer.from(globalThis.__coreExpectedCanonicalImageBase64||'', 'base64');globalThis.__coreOcrImageCanonical=Buffer.isBuffer(image)&&image.equals(expected);throw new Error('PRIVATE_DECODER_DETAIL')},terminate:async()=>{}}}};"};
 }});`:null;
   const child=spawn(process.execPath,[...(consumerProbePreload?['--import',`data:text/javascript,${encodeURIComponent(consumerProbePreload)}`]:[]),fileURLToPath(import.meta.url),'--http',scenario],{cwd:fileURLToPath(new URL('..',import.meta.url)),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],
-    env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,NODE_ENV:'test',PORT:'0',ENABLE_REGRESSION_TEST_MODE:'true',ALIYUN_API_KEY:'local-mock-only',ALIYUN_BASE_URL:'http://127.0.0.1:1/v1',DOTENV_CONFIG_PATH:'__no_core_test_env__'}});
+    env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,NODE_ENV:'test',PORT:String(reservedPort),ENABLE_REGRESSION_TEST_MODE:'true',ALIYUN_API_KEY:'local-mock-only',ALIYUN_BASE_URL:'http://127.0.0.1:1/v1',DOTENV_CONFIG_PATH:'__no_core_test_env__'}});
   child.stdout.resume();child.stderr.resume();const signal=AbortSignal.timeout(25000);
   try{const [{port}]=await once(child,'message',{signal});
     const post=async(route,body,form=false)=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,{method:'POST',headers:form?{'x-regression-test':'1',...(scenario==='post-provider-failure'?{'x-coordinate-regression-failure':'POST_PROVIDER_INTERNAL_FAILURE'}:{})}:{'content-type':'application/json'},body:form?body:JSON.stringify(body),signal});return {status:response.status,payload:await response.json()};};
     post.get=async route=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,{signal});return {status:response.status,payload:await response.json()};};
+    post.getJob=async(route,token)=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,{headers:{'x-recognition-job-token':token},signal});return {status:response.status,payload:await response.json()};};
     post.stats=async()=>{const pending=once(child,'message',{signal});child.send('stats');const [value]=await pending;return value;};
     await run(post);
   }finally{const ended=once(child,'exit');child.kill();await ended;}
@@ -327,6 +338,27 @@ for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked a
   }
   complete(result);assert.equal(result.kmlReady,true,JSON.stringify({type:payload.coordinateEngineV2?.coordinate_type,reasons:result.reasonCodes}));
 }));
+test('HTTP sync ingress normalizes generic multipart MIME before recognition',()=>httpScenario('handwritten',async post=>{
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'application/octet-stream'}),'coordinate-upload.bin');
+  const result=await post('/api/recognize-coordinates',form,true);
+  assert.equal(result.status,200,JSON.stringify(result.payload));
+  const stats=await post.stats();assert.equal(stats.calls,1);
+}));
+test('HTTP async ingress normalizes generic multipart MIME before enqueue',()=>httpScenario('handwritten',async post=>{
+  const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'application/octet-stream'}),'coordinate-upload.bin');
+  const accepted=await post('/api/recognize-coordinates/jobs',form,true);
+  assert.equal(accepted.status,202,JSON.stringify(accepted.payload));
+  let terminal;
+  for(let attempt=0;attempt<100;attempt+=1){
+    terminal=await post.getJob(accepted.payload.jobStatusUrl||`/api/recognize-coordinates/jobs/${accepted.payload.jobId}`,accepted.payload.jobAccessToken);
+    if(['SUCCEEDED','FAILED'].includes(terminal.payload?.status))break;
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.equal(terminal.status,200,JSON.stringify(terminal.payload));
+  assert.equal(terminal.payload.status,'SUCCEEDED');
+  assert.equal(terminal.payload.result?.success,true);
+  const stats=await post.stats();assert.equal(stats.calls,1);
+}));
 test('HTTP malformed image fails closed before Provider and service remains alive',()=>httpScenario('malformed',async post=>{
   const truncatedPng=Buffer.alloc(24);Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]).copy(truncatedPng);truncatedPng.write('IHDR',12,'ascii');truncatedPng.writeUInt32BE(1,16);truncatedPng.writeUInt32BE(1,20);
   const truncatedJpeg=Buffer.from([0xff,0xd8,0xff,0xc0,0x00,0x08,0x08,0x00,0x01,0x00,0x01,0x01]);
@@ -356,13 +388,12 @@ test('HTTP malformed image fails closed before Provider and service remains aliv
   assert.equal((await post.stats()).calls,0);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));
-test('coordinate image preflight accepts only strictly validated container types',()=>{
-  assert.match(source,/mimeType === "image\/png"[\s\S]*?hasValidPngStructure/);
-  assert.match(source,/\["image\/jpeg", "image\/jpg"\][\s\S]*?hasValidJpegStructure/);
-  assert.match(source,/\["image\/bmp", "image\/x-ms-bmp"\][\s\S]*?hasValidBmpStructure/);
-  assert.doesNotMatch(source,/mimeType === "image\/gif"[\s\S]{0,120}hasValidGifStructure/);
-  assert.doesNotMatch(source,/mimeType === "image\/webp"[\s\S]{0,120}hasValidWebpStructure/);
-  assert.doesNotMatch(source,/\["image\/heic", "image\/heif"\][\s\S]{0,120}hasValidHeifStructure/);
+test('coordinate image preflight uses shared signature and structure authority',()=>{
+  assert.match(source,/canonicalizeCoordinateImageUpload,\s*createCoordinateImageIdentity,\s*validateCoordinateImageUpload/);
+  assert.doesNotMatch(source,/function hasValidPngStructure/);
+  assert.doesNotMatch(source,/function hasValidBmpStructure/);
+  assert.equal(imageSafety.detectCoordinateImageMimeType(syntheticPng),'image/png');
+  assert.equal(imageSafety.validateCoordinateImageUpload({buffer:syntheticPng,mimetype:'application/octet-stream'}).valid,true);
 });
 test('frozen non-customer JPEG and PNG fixtures pass the actual strict preflight',async()=>{
   const fixtures=[
@@ -375,7 +406,7 @@ test('frozen non-customer JPEG and PNG fixtures pass the actual strict preflight
     assert.equal(createHash('sha256').update(buffer).digest('hex'),sha256);
     const canonicalization=imageSafety.canonicalizeCoordinateImageUpload({buffer,mimetype,size:buffer.length});
     assert.equal(canonicalization.valid,true);assert.equal(canonicalization.file.buffer,buffer);
-    const validation=runtime.validateCoordinateImageUpload({buffer,mimetype});
+    const validation=imageSafety.validateCoordinateImageUpload({buffer,mimetype});
     assert.equal(validation.valid,true);assert.equal(validation.reason,'VALID_IMAGE_STRUCTURE');
   }
 });
