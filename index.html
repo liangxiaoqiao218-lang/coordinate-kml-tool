@@ -7562,8 +7562,16 @@ Au值 = 纯度 × 10 后取整数</div>
       const provisionalMapEnabled = payload.mapReady === true
         && String(payload.mapStatus || "").toUpperCase() === "ENABLED"
         && finalized.mapReady !== false
-        && finalized.geometry
-        && finalized.crs?.id === "EPSG:4326";
+        && finalized.decisionState === "REVIEW_REQUIRED"
+        && finalized.requiresReview === true
+        && finalized.confirmationStatus === "pending"
+        && ["passed", "review_required"].includes(finalized.qualityGateStatus)
+        && ["legacy", "manual_input", "coordinate_engine_v2", "coordinate_engine_v3"].includes(finalized.sourceAuthority)
+        && finalized.explicitAuthorityRejected !== true
+        && finalized.kmlAuthorityBlocked !== true
+        && finalized.crs?.id === "EPSG:4326"
+        && finalized.crs?.axisOrder === "longitude_latitude"
+        && hasFiniteFinalizedGeometry(finalized.geometry);
       const provisionalKmlEnabled = provisionalMapEnabled
         && payload.kmlReady === true
         && String(payload.kmlStatus || "").toUpperCase() === "ENABLED"
@@ -7634,16 +7642,25 @@ Au值 = 纯度 × 10 后取整数</div>
           || activeRecognitionAcquisitionResult.kmlReady !== true);
     }
 
-    function shouldUseProvisionalCoordinateResult() {
-      return hasConvertibleCoordinateResult()
+    function recognitionActionEnabled(action = "map") {
+      if (!activeRecognitionAcquisitionResult) return true;
+      if (action === "kml") {
+        return activeRecognitionAcquisitionResult.kmlStatus === "ENABLED"
+          && activeRecognitionAcquisitionResult.kmlReady === true;
+      }
+      return activeRecognitionAcquisitionResult.mapStatus === "ENABLED";
+    }
+
+    function shouldUseProvisionalCoordinateResult(action = "map") {
+      return !coordinateRecognitionActionBlocked(action)
         && (coordinateResultNeedsReview()
           || activeFinalizedCoordinateResult?.mapReady === false
           || activeFinalizedCoordinateResult?.kmlReady === false
           || !getFinalizedCoordinateIdentity());
     }
 
-    function coordinateRecognitionActionBlocked() {
-      return !hasConvertibleCoordinateResult();
+    function coordinateRecognitionActionBlocked(action = "map") {
+      return !hasConvertibleCoordinateResult() || !recognitionActionEnabled(action);
     }
 
     function recognitionAuthorizationReasonMessage(action = "map") {
@@ -7713,7 +7730,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function coordinateKmlVisualState() {
       if (!String(input?.value || "").trim()) return "blocked";
       if (coordinateRecognitionActionBlocked("kml")) return "blocked";
-      if (shouldUseProvisionalCoordinateResult()) return "enabled";
+      if (shouldUseProvisionalCoordinateResult("kml")) return "enabled";
       if (agenticCoordinateController?.enabled) return "enabled";
       if (projectedCrsSelectionNeedsConfirmation()) return "blocked";
       if (!activeFinalizedCoordinateResult) return "enabled";
@@ -8126,7 +8143,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     async function openSpatialResult() {
       if (stopBlockedCoordinateAction("map")) return null;
-      if (shouldUseProvisionalCoordinateResult()) return openProvisionalSpatialResult();
+      if (shouldUseProvisionalCoordinateResult("map")) return openProvisionalSpatialResult();
       if (agenticCoordinateController?.enabled) return openAgenticSpatialResult();
       if (!spatialResultEnabled) return;
       if (projectedCrsSelectionNeedsConfirmation()) {
@@ -14311,7 +14328,7 @@ ${placemarks}
         return;
       }
 
-      if (shouldUseProvisionalCoordinateResult()) {
+      if (shouldUseProvisionalCoordinateResult("kml")) {
         if (!agenticCoordinateController?.hasCommittedRecognitionUsage?.()) {
           const usageAllowed = await consumeUsage("convert");
           if (!usageAllowed) {
@@ -15704,11 +15721,15 @@ ${placemarks}
           projected: hasProjectedCoordinateRows(finalCoordinates)
         });
         if (acquisitionReviewOnly) {
-          showMessage(
-            "坐标已识别。您可以查看地图或下载未确认 KML，核对位置和形状。",
-            false,
-            COORDINATE_RECOGNITION_MESSAGE_MS
-          );
+          const reviewMapReady = activeRecognitionAcquisitionResult?.mapStatus === "ENABLED";
+          const reviewKmlReady = activeRecognitionAcquisitionResult?.kmlStatus === "ENABLED"
+            && activeRecognitionAcquisitionResult?.kmlReady === true;
+          const reviewMessage = reviewMapReady && reviewKmlReady
+            ? "坐标已识别。您可以查看地图或下载未确认 KML，核对位置和形状。"
+            : reviewMapReady
+              ? "坐标已识别。您可以查看地图核对位置和形状，未确认 KML 暂不可用。"
+              : "坐标已识别，但地图和 KML 暂未开放，请根据提示继续核对。";
+          showMessage(reviewMessage, !reviewMapReady, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isCadastralGrid) {
           showMessage(`已识别矿权网格表 ${cadastralGridRows.length} 行，已提取 num / XV / YV。已识别为马达加斯加矿权格网，生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isMgrs) {
