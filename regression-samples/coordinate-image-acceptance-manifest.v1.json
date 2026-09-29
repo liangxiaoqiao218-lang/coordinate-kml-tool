@@ -16,8 +16,10 @@
       "confirmationStatus": "pending",
       "needsReview": true,
       "warningRequired": true,
-      "mapStatus": "TEMPORARY_ENABLED",
-      "kmlStatus": "UNCONFIRMED_ENABLED",
+      "mapStatus": "ENABLED",
+      "mapPurpose": "TEMPORARY_REVIEW",
+      "kmlStatus": "ENABLED",
+      "kmlAuthority": "UNCONFIRMED",
       "formalExportCompleted": false
     },
     "hardBlockedResult": {
