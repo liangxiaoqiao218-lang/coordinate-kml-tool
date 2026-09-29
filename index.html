@@ -7123,12 +7123,16 @@ Au值 = 纯度 × 10 后取整数</div>
       const ordinaryReviewOnly = isOrdinaryReviewOnlyFinalizedResult();
       const pointIntentReview = handwrittenDmsReviewState.source === "trusted_point_geometry_intent_v1"
         && activePointGeometryIntentReview;
+      const ordinaryReviewAcknowledged = ordinaryReviewOnly && isConfirmed
+        && handwrittenDmsReviewState.source === "ordinary_review_acknowledgement_v1";
       statusText.textContent = pointIntentReview
         ? "检测到同一位置以不同精度重复显示。请对照原图，明确选择是否作为一个 Point。"
         : ordinaryReviewOnly && activeCoordinateFieldConflictCount > 0
         ? `发现 ${activeCoordinateFieldConflictCount} 处坐标可能存在识别差异，请重点核对标记位置。`
+        : ordinaryReviewAcknowledged
+          ? "已核对；地图和 KML 仍为未确认输出。"
         : ordinaryReviewOnly
-          ? "建议对照原图核对坐标，部分字符可能存在识别误差。"
+          ? "请对照原图核对坐标；地图和 KML 为未确认输出。"
           : isConfirmed
         ? "已确认当前坐标；再次修改后需要重新核对。"
         : handwrittenDmsReviewState.status === HANDWRITTEN_DMS_REVIEW_STATUS.EDITED_PENDING
@@ -7136,14 +7140,18 @@ Au值 = 纯度 × 10 后取整数</div>
           : "当前坐标需要对照原图人工核对。";
       handwrittenDmsReviewPanel.appendChild(statusText);
 
-      if (!isConfirmed && !ordinaryReviewOnly) {
+      if (!isConfirmed) {
         const confirmButton = document.createElement("button");
         confirmButton.type = "button";
         confirmButton.className = "handwritten-dms-review-button";
         confirmButton.textContent = pointIntentReview
           ? "确认同一位置并作为 Point"
-          : "我已对照原图核对当前坐标";
-        confirmButton.addEventListener("click", pointIntentReview
+          : ordinaryReviewOnly
+            ? "我已核对，继续使用未确认结果"
+            : "我已对照原图核对当前坐标";
+        confirmButton.addEventListener("click", ordinaryReviewOnly
+          ? acknowledgeOrdinaryCoordinateReview
+          : pointIntentReview
           ? confirmPointGeometryIntentReview
           : confirmHandwrittenDmsReview);
         handwrittenDmsReviewPanel.appendChild(confirmButton);
@@ -7437,7 +7445,10 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function renderProjectedCrsReviewPanel({ confirmed = false, selectedCrs = "", pointsOnly = false } = {}) {
       if (!projectedCrsReviewPanel) return;
-      const visible = isProjectedCoordinateWorkflow() && (confirmed || projectedCrsReviewRequested);
+      const authorizationBlocked = activeRecognitionAcquisitionResult
+        && activeRecognitionAcquisitionResult.mapStatus !== "ENABLED";
+      const visible = isProjectedCoordinateWorkflow()
+        && (confirmed || (projectedCrsReviewRequested && authorizationBlocked));
       projectedCrsReviewPanel.hidden = !visible;
       projectedCrsReviewPanel.classList.toggle("is-confirmed", confirmed);
       if (!visible) return;
@@ -9247,6 +9258,26 @@ Au值 = 纯度 × 10 后取整数</div>
       }
     }
 
+    function acknowledgeOrdinaryCoordinateReview() {
+      const identity = getFinalizedCoordinateIdentity();
+      if (!identity || !isOrdinaryReviewOnlyFinalizedResult()) {
+        showMessage("当前结果已更新，请重新核对。", true, 5000);
+        return;
+      }
+      handwrittenDmsReviewState = createHandwrittenDmsReviewState({
+        ...handwrittenDmsReviewState,
+        required: true,
+        status: HANDWRITTEN_DMS_REVIEW_STATUS.CONFIRMED,
+        confirmedRevision: handwrittenDmsReviewState.revision,
+        source: "ordinary_review_acknowledgement_v1",
+        acknowledgedResultId: identity.resultId,
+        acknowledgedResultRevision: identity.resultRevision,
+        acknowledgedGeometryHash: identity.geometryHash
+      });
+      renderHandwrittenDmsReviewState();
+      showMessage("已记录本次核对；结果仍保持待核对状态。", false, 4500);
+    }
+
     function buildRecognitionDetailEvidence(data = {}, sourceRepresentation = {}) {
       const sourceRows = Array.isArray(sourceRepresentation?.rows)
         ? sourceRepresentation.rows.map(row => String(row || "").trim()).filter(Boolean)
@@ -9289,7 +9320,9 @@ Au值 = 纯度 × 10 后取整数</div>
             : data?.providerDmsReviewEvidence ? "DMS 纬经度"
               : data?.providerProjectedReviewEvidence || data?.projectedCoordinateReviewEvidence ? "投影 X/Y" : "坐标行";
       const sourceCrs = data?.coordinateEngineV2?.source_crs;
-      const sourceCrsId = String(sourceCrs?.id || sourceCrs || sourceRepresentation?.sourceCrsEvidence?.id || "").trim();
+      const multiSourceCrs = multi?.sourceCrs;
+      const sourceCrsId = String(multiSourceCrs?.id || sourceCrs?.id || sourceCrs
+        || sourceRepresentation?.sourceCrsEvidence?.id || "").trim();
       const finalCrsId = String(data?.finalizedCoordinateResult?.crs?.id || "").trim();
       return {
         acceptedRows,
@@ -15872,12 +15905,7 @@ ${placemarks}
         });
         input.focus();
         coordinateUploadPanel?.classList.add("is-complete");
-        if (acquisitionReviewOnly) {
-          setRecognitionStatus(
-            "识别完成，建议通过地图核对位置和形状。",
-            "warning"
-          );
-        }
+        if (acquisitionReviewOnly) setRecognitionStatus("", "");
         trackEvent("image_recognize_success", {
           rows: countCoordinateRows(finalCoordinates),
           cadastralGrid: isCadastralGrid,

@@ -533,6 +533,18 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
   providerCallCount = body?.providerCallCount
 } = {}) {
   const finalized = body?.finalizedCoordinateResult || {};
+  const finalizedIdentity = [finalized.coordinateType, finalized.family, finalized.precisionMode]
+    .map(value => String(value || "").toLowerCase());
+  const finalizedUsesGeographicDms = finalizedIdentity.some(value => value.includes("dms"))
+    && finalizedIdentity.every(value => !/(?:projected|utm|bftm|mgrs|gauss|grid)/u.test(value));
+  const multiRepresentation = body?.multiRepresentationEvidence || {};
+  const multiRepresentationDmsSelection = finalizedUsesGeographicDms
+    && String(multiRepresentation.status || "").toUpperCase() === "COMPLETE"
+    && ["BOTH", "DMS_ONLY"].includes(String(multiRepresentation.providerMode || "").toUpperCase())
+    && Number(multiRepresentation.sourceRowCount || 0) >= 3
+    && Number(multiRepresentation.providerDmsRowCount || 0) === Number(multiRepresentation.sourceRowCount || 0)
+    && Array.isArray(multiRepresentation.missingLabels) && multiRepresentation.missingLabels.length === 0
+    && multiRepresentation.orderConflict !== true;
   const evidenceAcquisitionCompleted = String(evidence?.acquisitionStatus || "").toUpperCase() === "COMPLETED";
   const decisionAcquisitionCompleted = !decision
     || String(decision?.acquisitionStatus || "").toUpperCase() === "COMPLETED";
@@ -546,6 +558,8 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     && Array.isArray(evidence.visibleCrsEvidence)
     && evidence.imageEvidence && typeof evidence.imageEvidence === "object");
   const projectedEvidenceAuthorization = evaluateProjectedCoordinateAuthorizationEvidence(evidence);
+  const projectedEvidenceAppliesToSelectedResult = projectedEvidenceAuthorization.applicable
+    && !multiRepresentationDmsSelection;
   const projectedDecisionEligible = projectedEvidenceAuthorization.applicable
     && projectedEvidenceAuthorization.eligible
     && decision?.projectedAuthorizationEligible === true;
@@ -554,7 +568,7 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
   const unifiedDecisionRequiresReview = decision?.authorizationStatus === "REVIEW_REQUIRED"
     || decision?.resultStatus === "needs_review";
   const acquisitionIncomplete = !evidenceAcquisitionCompleted || !decisionAcquisitionCompleted;
-  const projectedFinalRequirementsFailed = projectedEvidenceAuthorization.applicable && (
+  const projectedFinalRequirementsFailed = projectedEvidenceAppliesToSelectedResult && (
     !projectedDecisionEligible
     || Number(providerCallCount || 0) !== 1
     || String(body?.coordinateEngineV2?.source_crs?.id || "").trim() === ""
@@ -615,16 +629,16 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
   const finalMapReady = authorized ? mapGatePassed : provisionalMapReady;
   const finalKmlReady = authorized ? kmlGatePassed : provisionalKmlReady;
   const finalAuthorizationReasons = [...new Set([
-    ...projectedEvidenceAuthorization.reasons,
-    ...(projectedEvidenceAuthorization.applicable && Number(providerCallCount || 0) !== 1
+    ...(projectedEvidenceAppliesToSelectedResult ? projectedEvidenceAuthorization.reasons : []),
+    ...(projectedEvidenceAppliesToSelectedResult && Number(providerCallCount || 0) !== 1
       ? ["PROJECTED_PROVIDER_CALL_COUNT_INVALID"] : []),
-    ...(projectedEvidenceAuthorization.applicable
+    ...(projectedEvidenceAppliesToSelectedResult
       && String(body?.coordinateEngineV2?.source_crs?.id || "").trim() === ""
       ? ["PROJECTED_CRS_UNRESOLVED"] : []),
-    ...(projectedEvidenceAuthorization.applicable
+    ...(projectedEvidenceAppliesToSelectedResult
       && !["easting_northing", "northing_easting"].includes(String(body?.coordinateEngineV2?.source_crs?.axisOrder || ""))
       ? ["PROJECTED_AXIS_ORDER_UNRESOLVED"] : []),
-    ...(projectedEvidenceAuthorization.applicable && !finalizerGatePassed
+    ...(projectedEvidenceAppliesToSelectedResult && !finalizerGatePassed
       ? ["PROJECTED_FINALIZER_GEOMETRY_CRS_VALIDATION_FAILED"] : []),
     ...(contractRequiresReview ? ["ACQUISITION_CONTRACT_NOT_CONFORMANT"] : []),
     ...(acquisitionIncomplete ? ["UNIFIED_RECOGNITION_ACQUISITION_INCOMPLETE"] : []),
@@ -791,7 +805,8 @@ export function isDirectionBoundDmsProvisionalReviewEligible({
   decision = null,
   evidence = null,
   providerDmsReviewEvidence = null,
-  finalized = null
+  finalized = null,
+  multiRepresentationEvidence = null
 } = {}) {
   if (!finalized || typeof finalized !== "object") return false;
   const candidates = Array.isArray(evidence?.candidateCoordinates)
@@ -827,9 +842,19 @@ export function isDirectionBoundDmsProvisionalReviewEligible({
   const unifiedDmsEvidence = decision?.dmsGeographicReviewEligible === true
     && candidates.length > 0
     && candidates.every(candidate => String(candidate?.format || "") === "DMS");
+  const completeMultiRepresentationBinding = String(multiRepresentationEvidence?.status || "").toUpperCase() === "COMPLETE"
+    && ["BOTH", "DMS_ONLY"].includes(String(multiRepresentationEvidence?.providerMode || "").toUpperCase())
+    && Number(multiRepresentationEvidence?.sourceRowCount || 0) >= 3
+    && Number(multiRepresentationEvidence?.providerDmsRowCount || 0) === Number(multiRepresentationEvidence?.sourceRowCount || 0)
+    && Array.isArray(multiRepresentationEvidence?.missingLabels)
+    && multiRepresentationEvidence.missingLabels.length === 0
+    && multiRepresentationEvidence.orderConflict !== true;
+  const candidateFormatsCompatible = candidates.length === 0
+    || candidates.every(candidate => String(candidate?.format || "") === "DMS")
+    || completeMultiRepresentationBinding;
   const eligible = Boolean(
     (unifiedDmsEvidence || completeProviderDmsEvidence)
-    && (candidates.length === 0 || candidates.every(candidate => String(candidate?.format || "") === "DMS"))
+    && candidateFormatsCompatible
     && finalizedDmsIdentity
     && (reviewIdentityValid || autoExportIdentityValid)
     && [

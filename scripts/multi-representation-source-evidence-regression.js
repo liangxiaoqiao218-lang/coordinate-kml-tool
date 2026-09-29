@@ -11,7 +11,9 @@ import {
 import { normalizeProviderDmsReviewResult } from "../server/recognition/recognition-review-result.js";
 import {
   buildRecognitionAcquisitionEvidence,
-  evaluateUnifiedRecognitionAcquisition
+  evaluateUnifiedRecognitionAcquisition,
+  evaluateUnifiedRecognitionFinalAuthorization,
+  isDirectionBoundDmsProvisionalReviewEligible
 } from "../server/recognition/recognition-first-acquisition.js";
 
 const sha256 = "7".repeat(64);
@@ -125,6 +127,99 @@ assert.equal(boundProjected.providerMode, "PROJECTED_ONLY");
 const boundBoth = bind(both);
 assert.equal(boundBoth.status, "COMPLETE");
 assert.equal(boundBoth.providerMode, "BOTH");
+
+const verboseStructuredProvider = `Provider analysis follows.\n\`\`\`json\n${JSON.stringify({
+  rows: sourceEvidence.rows.map(row => ({
+    point: row.label,
+    x: row.xSource,
+    y: row.ySource,
+    latitude: row.latitudeSource,
+    longitude: row.longitudeSource
+  }))
+}, null, 2)}\n\`\`\``;
+const verboseStructuredDms = normalizeProviderDmsReviewResult(verboseStructuredProvider);
+assert.equal(verboseStructuredDms.status, "ACQUISITION_COMPLETED_AUTHORIZATION_CANDIDATE");
+assert.equal(verboseStructuredDms.candidatePointCount, 6);
+assert.equal(verboseStructuredDms.boundRowCount, 6);
+assert.equal(verboseStructuredDms.rejectedRows.length, 0);
+
+const mixedFormatEvidence = {
+  acquisitionStatus: "COMPLETED",
+  candidateCoordinates: [
+    { format: "PROJECTED_XY" },
+    { format: "PROJECTED_XY" },
+    { format: "PROJECTED_XY" }
+  ],
+  candidateCoordinateGroups: [{ rows: [{}, {}, {}] }],
+  visibleCrsEvidence: [{ text: "UTM WGS 84 ZONE 50S" }],
+  imageEvidence: { sha256: sha256 },
+  providerCompletionState: "SUCCEEDED"
+};
+const reviewFinalized = {
+  resultId: "multi-representation-review",
+  resultRevision: 1,
+  currentRevision: 1,
+  confirmedRevision: null,
+  coordinateType: "provider_dms",
+  family: "dms",
+  precisionMode: "preserve-original-decimals-and-parse-dms",
+  decisionState: "REVIEW_REQUIRED",
+  confirmationStatus: "pending",
+  qualityGateStatus: "review_required",
+  requiresReview: true,
+  sourceAuthority: "coordinate_engine_v2",
+  explicitAuthorityRejected: false,
+  technicalKmlReady: true,
+  kmlReady: true,
+  kmlAuthorityBlocked: false,
+  crs: { id: "EPSG:4326", axisOrder: "longitude_latitude" },
+  geometry: { type: "Polygon", coordinates: [[[119, -2], [120, -2], [120, -3], [119, -2]]] }
+};
+const completeMultiRepresentationSummary = {
+  status: "COMPLETE",
+  providerMode: "BOTH",
+  sourceRowCount: 6,
+  providerDmsRowCount: 6,
+  providerProjectedRowCount: 6,
+  missingLabels: [],
+  orderConflict: false
+};
+assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
+  decision: { dmsGeographicReviewEligible: false },
+  evidence: mixedFormatEvidence,
+  providerDmsReviewEvidence: {
+    status: "COMPLETE",
+    coverageStatus: "COMPLETE",
+    coordinateRowCount: 6,
+    sourceRowCount: 6,
+    blockingRejectedRowCount: 0,
+    axisDirectionBound: true,
+    axisConflict: false,
+    providerAxisConflict: false,
+    localAxisConflict: false,
+    crossSourceAxisConflict: false
+  },
+  finalized: reviewFinalized,
+  multiRepresentationEvidence: completeMultiRepresentationSummary
+}), true);
+const finalAuthorization = evaluateUnifiedRecognitionFinalAuthorization({
+  body: {
+    requiresReview: true,
+    authorizationStatus: "REVIEW_REQUIRED",
+    resultStatus: "needs_review",
+    mapReady: true,
+    kmlReady: true,
+    finalizedCoordinateResult: reviewFinalized,
+    multiRepresentationEvidence: completeMultiRepresentationSummary,
+    coordinateEngineV2: { source_crs: { id: "EPSG:4326", axisOrder: "longitude_latitude" } }
+  },
+  evidence: mixedFormatEvidence,
+  decision: { acquisitionStatus: "COMPLETED", projectedAuthorizationEligible: true },
+  conformance: { status: "REVIEW_REQUIRED" },
+  providerCallCount: 1
+});
+assert.equal(finalAuthorization.mapReady, true);
+assert.equal(finalAuthorization.kmlReady, true);
 
 const longSourceRows = Array.from({ length: 16 }, (_, index) => {
   const label = index + 1;

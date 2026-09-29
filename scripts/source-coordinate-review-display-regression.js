@@ -272,8 +272,12 @@ const canonicalFallback = html.indexOf("|| getCanonicalCoordinateDisplayText(dat
 assert.ok(sourcePriority >= 0 && canonicalFallback > sourcePriority, "canonical display is only a fallback after source display");
 assert.match(html, /const ordinaryReviewOnly = isOrdinaryReviewOnlyFinalizedResult\(\)/, "render uses serialized finalized-result predicate");
 assert.doesNotMatch(extractFunctionSource(html, "isOrdinaryReviewOnlyFinalizedResult"), /currentAuthorizedGeometryExportable|kmlAuthorityBlocked/);
-assert.match(html, /if \(!isConfirmed && !ordinaryReviewOnly\)/, "ordinary review omits redundant confirmation button");
-assert.match(html, /建议对照原图核对坐标，部分字符可能存在识别误差。/, "ordinary review warning remains visible");
+assert.match(html, /if \(!isConfirmed\)/, "review acknowledgement is offered only while the current result is pending");
+assert.match(html, /我已核对，继续使用未确认结果/, "ordinary review exposes a non-authoritative acknowledgement action");
+assert.match(html, /结果仍保持待核对状态/, "ordinary review acknowledgement cannot promote formal authority");
+assert.match(html, /请对照原图核对坐标；地图和 KML 为未确认输出。/, "ordinary review uses one calm warning");
+assert.match(extractFunctionSource(html, "renderProjectedCrsReviewPanel"), /projectedCrsReviewRequested && authorizationBlocked/u,
+  "projected recovery actions are hidden when the server enables provisional map review");
 assert.match(html, /发现 \$\{activeCoordinateFieldConflictCount\} 处坐标可能存在识别差异/, "field conflict count is user-visible");
 assert.match(html, /fetch\("\/api\/coordinate-confirmation"/, "authority-changing confirmation endpoint remains available");
 assert.match(html, /getAuthorizedFinalizedGeometryKmlSource/, "KML still consumes finalized canonical geometry");

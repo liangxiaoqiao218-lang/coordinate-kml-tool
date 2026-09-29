@@ -294,7 +294,9 @@ assert.match(serverSource, /AXIS \| LATITUDE=N或S \| LONGITUDE=E或W/);
 assert.match(serverSource, /不得只输出无方向的度分秒数值/);
 assert.match(serverSource, /isCoordinateEngineV2SelfIntersecting/);
 assert.match(deadlineSource, /"ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED"/);
-assert.match(uiSource, /识别完成，建议通过地图核对位置和形状/);
+assert.match(uiSource, /请对照原图核对坐标；地图和 KML 为未确认输出。/);
+assert.match(uiSource, /我已核对，继续使用未确认结果/);
+assert.match(uiSource, /结果仍保持待核对状态/);
 assert.match(uiSource, /已识别 \$\{safeCandidatePointCount\} 个坐标点/);
 assert.match(uiSource, /发现 \$\{safeCandidateGroupCount\} 个坐标区域/);
 

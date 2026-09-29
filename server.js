@@ -15147,7 +15147,10 @@ function summarizeMultiRepresentationEvidence(binding = null) {
     matchedLabels: Object.freeze(Array.isArray(binding.matchedLabels) ? [...binding.matchedLabels] : []),
     missingLabels: Object.freeze(Array.isArray(binding.missingLabels) ? [...binding.missingLabels] : []),
     orderConflict: binding.orderConflict === true,
-    sourceContextBound: binding?.sourceEvidence?.sourceContextBinding?.bound === true
+    sourceContextBound: binding?.sourceEvidence?.sourceContextBinding?.bound === true,
+    sourceCrs: binding?.sourceEvidence?.crsEvidence
+      ? Object.freeze({ ...binding.sourceEvidence.crsEvidence }) : null,
+    sourceAxisOrder: String(binding?.sourceEvidence?.axisOrder || "")
   });
 }
 
@@ -15682,7 +15685,8 @@ async function recognizeCoordinatesHandler(req, res) {
       decision,
       evidence,
       providerDmsReviewEvidence: body.providerDmsReviewEvidence,
-      finalized: originalFinalizedCoordinateResult
+      finalized: originalFinalizedCoordinateResult,
+      multiRepresentationEvidence: body.multiRepresentationEvidence
     });
     const provisionalDmsReviewResult = !coordinateEvidenceConflict && dmsReviewDowngradeEligible
       ? coordinateConfirmationRuntime.register(finalizeCoordinateResult({
