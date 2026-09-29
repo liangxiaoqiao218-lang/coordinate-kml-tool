@@ -126,6 +126,94 @@ function parseProviderDmsRow(line, lineNumber, headerBinding = null) {
   });
 }
 
+function normalizeStructuredFieldName(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/gu, "");
+}
+
+function parseStructuredProviderPayload(rawText) {
+  const source = String(rawText || "").trim();
+  const candidates = [source.replace(/^```(?:json)?\s*|\s*```$/giu, "").trim()];
+  const arrayStart = source.indexOf("[");
+  const arrayEnd = source.lastIndexOf("]");
+  if (arrayStart >= 0 && arrayEnd > arrayStart) candidates.push(source.slice(arrayStart, arrayEnd + 1));
+  const objectStart = source.indexOf("{");
+  const objectEnd = source.lastIndexOf("}");
+  if (objectStart >= 0 && objectEnd > objectStart) candidates.push(source.slice(objectStart, objectEnd + 1));
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Provider prose may surround a fenced or embedded JSON value.
+    }
+  }
+  return null;
+}
+
+function collectStructuredProviderRows(value, rows = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectStructuredProviderRows(item, rows);
+    return rows;
+  }
+  if (!value || typeof value !== "object") return rows;
+  const normalizedKeys = new Set(Object.keys(value).map(normalizeStructuredFieldName));
+  const hasLatitudeField = normalizedKeys.has("latitude") || normalizedKeys.has("lat");
+  const hasLongitudeField = normalizedKeys.has("longitude")
+    || normalizedKeys.has("lon")
+    || normalizedKeys.has("lng");
+  if (hasLatitudeField || hasLongitudeField) {
+    rows.push(value);
+    return rows;
+  }
+  for (const child of Object.values(value)) collectStructuredProviderRows(child, rows);
+  return rows;
+}
+
+function parseStructuredProviderDmsRows(rawText) {
+  const payload = parseStructuredProviderPayload(rawText);
+  if (!payload) return Object.freeze({ recognized: false, rows: Object.freeze([]), rejectedRows: Object.freeze([]) });
+  const parsedRows = [];
+  const rejectedRows = [];
+  const sourceRows = collectStructuredProviderRows(payload);
+  for (const [sourceIndex, sourceRow] of sourceRows.entries()) {
+    const fields = new Map(Object.entries(sourceRow).map(([key, value]) => [normalizeStructuredFieldName(key), value]));
+    const label = fields.get("point") ?? fields.get("pointnumber") ?? fields.get("no")
+      ?? fields.get("number") ?? fields.get("label") ?? fields.get("id");
+    const latitude = fields.get("latitude") ?? fields.get("lat");
+    const longitude = fields.get("longitude") ?? fields.get("lon") ?? fields.get("lng");
+    const normalizedLabel = String(label ?? "").trim();
+    const sourceLineNumber = sourceIndex + 1;
+    if ((normalizedLabel && !/^(?:[1-9]\d{0,5}|[A-Z])$/iu.test(normalizedLabel))
+      || typeof latitude !== "string" || typeof longitude !== "string") {
+      rejectedRows.push(Object.freeze({
+        lineNumber: sourceLineNumber,
+        text: JSON.stringify(sourceRow),
+        reason: "DMS_ROW_MALFORMED"
+      }));
+      continue;
+    }
+    const combinedRow = `${normalizedLabel ? `${normalizedLabel} | ` : ""}${latitude} | ${longitude}`;
+    const parsed = parseProviderDmsRow(combinedRow, sourceLineNumber);
+    if (!parsed.accepted) {
+      rejectedRows.push(Object.freeze({
+        lineNumber: sourceLineNumber,
+        text: JSON.stringify(sourceRow),
+        reason: parsed.reason
+      }));
+      continue;
+    }
+    parsedRows.push(Object.freeze({
+      ...parsed.row,
+      sourceText: combinedRow,
+      sourceLineNumber
+    }));
+  }
+  return Object.freeze({
+    recognized: sourceRows.length > 0,
+    rows: Object.freeze(parsedRows),
+    rejectedRows: Object.freeze(rejectedRows)
+  });
+}
+
 function isPlainStructuralHeading(line) {
   const text = String(line || "").trim();
   if (!text || META_MARKER.test(text) || HEADER_AXIS_PATTERN.test(text) || CANDIDATE_DMS_SIGNAL.test(text)) return false;
@@ -187,6 +275,7 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
   ));
   const provisionalGroups = [];
   const rejectedRows = [];
+  const structuredEvidence = parseStructuredProviderDmsRows(source);
   let pendingHeadings = [];
   let currentGroup = null;
   let pendingBoundaryEvidence = "document_start";
@@ -197,7 +286,9 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
     currentGroup = null;
   };
 
-  source.split(/\r?\n/u).forEach((sourceLine, index) => {
+  if (structuredEvidence.recognized) {
+    rejectedRows.push(...structuredEvidence.rejectedRows);
+  } else source.split(/\r?\n/u).forEach((sourceLine, index) => {
     const lineNumber = index + 1;
     const line = sourceLine.trim();
     if (!line) return;
@@ -246,6 +337,14 @@ export function normalizeProviderDmsReviewResult(rawText = "") {
     }
   });
   closeGroup();
+
+  if (provisionalGroups.length === 0 && structuredEvidence.rows.length > 0) {
+    provisionalGroups.push({
+      titlePath: [],
+      boundaryEvidence: "structured_provider_payload",
+      rows: structuredEvidence.rows
+    });
+  }
 
   const allCandidates = provisionalGroups.flatMap(group => group.rows);
   if (allCandidates.length === 0) {
