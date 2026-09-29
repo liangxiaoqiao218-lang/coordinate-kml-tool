@@ -8041,9 +8041,18 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
-    function buildProvisionalCoordinateGeometry(groups = getConvertibleCoordinateGroups()) {
-      const positions = groups.map(group => group.map(pair => [Number(pair.longitude), Number(pair.latitude)]));
+    function buildProvisionalCoordinateGeometry(groups = null) {
+      const finalizedSource = groups == null ? getFinalizedGeometryCoordinateSource() : null;
+      const coordinateGroups = groups || finalizedSource?.groups || getConvertibleCoordinateGroups();
+      const positions = coordinateGroups.map(group => group.map(pair => [Number(pair.longitude), Number(pair.latitude)]));
       const pointCount = positions.reduce((total, group) => total + group.length, 0);
+      if (finalizedSource?.type === "Point") return { type: "Point", coordinates: positions[0][0] };
+      if (finalizedSource?.type === "MultiPoint") return { type: "MultiPoint", coordinates: positions.flat() };
+      if (finalizedSource?.type === "LineString") return { type: "LineString", coordinates: positions[0] };
+      if (finalizedSource?.type === "Polygon") return { type: "Polygon", coordinates: positions };
+      if (finalizedSource?.type === "MultiPolygon") {
+        return { type: "MultiPolygon", coordinates: positions.map(group => [group]) };
+      }
       if (pointCount === 1) return { type: "Point", coordinates: positions.flat()[0] };
       if (positions.length === 1 && pointCount === 2) return { type: "LineString", coordinates: positions[0] };
       if (positions.length === 1 && pointCount >= 3) {
@@ -8071,27 +8080,34 @@ Au值 = 纯度 × 10 后取整数</div>
     function createProvisionalSpatialPayload() {
       const geometry = buildProvisionalCoordinateGeometry();
       const pointCount = countCoordinatePairsInGroups(getConvertibleCoordinateGroups());
+      const finalizedIdentity = getFinalizedCoordinateIdentity(activeFinalizedCoordinateResult);
+      const mapAllowed = recognitionActionEnabled("map");
+      const kmlAllowed = recognitionActionEnabled("kml");
+      const geometryHash = String(finalizedIdentity?.geometryHash || `unverified-${geometry.type}-${pointCount}`);
       return {
         mapPreviewObject: {
           schemaVersion: "map_preview_object_v1",
-          sourceResultId: "local-unverified-coordinate-result",
-          sourceRevision: Date.now(),
-          sourceGeometryHash: `unverified-${geometry.type}-${pointCount}`,
+          sourceResultId: finalizedIdentity?.resultId || "local-unverified-coordinate-result",
+          sourceRevision: Number(finalizedIdentity?.resultRevision || 0),
+          sourceGeometryHash: geometryHash,
           crs: { id: "EPSG:4326" },
           axisOrder: "longitude_latitude",
           geometryType: geometry.type,
           geometry,
-          previewWarnings: ["当前为未确认预览，请根据地图核对位置和形状。"],
-          previewEligibility: { allowed: true }
+          previewWarnings: [
+            "当前为未确认预览，请根据地图核对位置和形状。",
+            ...(kmlAllowed ? [] : ["当前结果的 KML 已由识别服务关闭；地图仅用于核对。"])
+          ],
+          previewEligibility: { allowed: mapAllowed }
         },
         kmlEligibility: {
-          allowed: true,
-          kmlReady: true,
-          technicalKmlReady: true,
-          confirmationStatus: "REVIEW_REQUIRED",
-          qualityGateStatus: "REVIEW",
-          decisionState: "NEEDS_REVIEW",
-          kmlHash: `unverified-${geometry.type}-${pointCount}`
+          allowed: kmlAllowed,
+          kmlReady: kmlAllowed,
+          technicalKmlReady: kmlAllowed && activeFinalizedCoordinateResult?.technicalKmlReady === true,
+          confirmationStatus: activeFinalizedCoordinateResult?.confirmationStatus || "REVIEW_REQUIRED",
+          qualityGateStatus: activeFinalizedCoordinateResult?.qualityGateStatus || "REVIEW",
+          decisionState: activeFinalizedCoordinateResult?.decisionState || "NEEDS_REVIEW",
+          kmlHash: geometryHash
         },
         spatialFactsStatus: "unavailable",
         spatialFacts: null,
@@ -9229,6 +9245,92 @@ Au值 = 纯度 × 10 后取整数</div>
         appendDebug(`第 ${index + 1} 行已识别：${visibleRows[index]}`);
         await new Promise(resolve => requestAnimationFrame(() => resolve()));
       }
+    }
+
+    function buildRecognitionDetailEvidence(data = {}, sourceRepresentation = {}) {
+      const sourceRows = Array.isArray(sourceRepresentation?.rows)
+        ? sourceRepresentation.rows.map(row => String(row || "").trim()).filter(Boolean)
+        : [];
+      const candidateRows = Array.isArray(data?.candidateCoordinateGroups)
+        ? data.candidateCoordinateGroups.flatMap(group => Array.isArray(group?.rows)
+          ? group.rows.map(row => String(row?.sourceText || row?.raw || "").trim()).filter(Boolean)
+          : [])
+        : [];
+      const coordinateRows = String(data?.coordinates || "")
+        .split(/\r?\n/u).map(row => row.trim()).filter(Boolean);
+      const acceptedRows = sourceRows.length > 0 ? sourceRows : candidateRows.length > 0 ? candidateRows : coordinateRows;
+      const reviewEvidence = data?.providerReviewEvidence || {};
+      const rejectedRows = Array.isArray(reviewEvidence.rejectedRows)
+        ? reviewEvidence.rejectedRows.map(row => ({
+            lineNumber: Number(row?.lineNumber || 0),
+            text: String(row?.text || row?.sourceText || "").trim(),
+            reason: String(row?.reason || "需要核对")
+          }))
+        : [];
+      const multi = data?.multiRepresentationEvidence || {};
+      const dmsEvidence = data?.providerDmsReviewEvidence || {};
+      const sourceRowCount = Math.max(0, Number(multi.sourceRowCount || 0));
+      const providerCandidateCount = Math.max(0, Number(
+        dmsEvidence.candidateRowCount
+        || dmsEvidence.parsedCandidateRowCount
+        || reviewEvidence.candidatePointCount
+        || 0
+      ));
+      const totalRowCount = Math.max(sourceRowCount, providerCandidateCount, acceptedRows.length + rejectedRows.length);
+      const labels = Array.isArray(sourceRepresentation?.pointLabels) && sourceRepresentation.pointLabels.length > 0
+        ? sourceRepresentation.pointLabels.map(label => String(label || "").trim()).filter(Boolean)
+        : Array.isArray(multi.labels) && multi.labels.length > 0
+          ? multi.labels.map(label => String(label || "").trim()).filter(Boolean)
+          : (Array.isArray(multi.matchedLabels) ? multi.matchedLabels.map(label => String(label || "").trim()).filter(Boolean) : []);
+      const providerMode = String(multi.providerMode || "").toUpperCase();
+      const representation = providerMode === "BOTH" ? "投影 X/Y 与 DMS"
+        : providerMode === "PROJECTED_ONLY" ? "投影 X/Y"
+          : providerMode === "DMS_ONLY" ? "DMS 纬经度"
+            : data?.providerDmsReviewEvidence ? "DMS 纬经度"
+              : data?.providerProjectedReviewEvidence || data?.projectedCoordinateReviewEvidence ? "投影 X/Y" : "坐标行";
+      const sourceCrs = data?.coordinateEngineV2?.source_crs;
+      const sourceCrsId = String(sourceCrs?.id || sourceCrs || sourceRepresentation?.sourceCrsEvidence?.id || "").trim();
+      const finalCrsId = String(data?.finalizedCoordinateResult?.crs?.id || "").trim();
+      return {
+        acceptedRows,
+        rejectedRows,
+        totalRowCount,
+        labels,
+        representation,
+        sourceCrsId,
+        finalCrsId,
+        missingLabels: Array.isArray(multi.missingLabels)
+          ? multi.missingLabels.map(label => String(label || "").trim()).filter(Boolean) : [],
+        evidenceStatus: String(multi.status || dmsEvidence.coverageStatus || reviewEvidence.status || "").toUpperCase()
+      };
+    }
+
+    function appendRecognitionEvidenceSummary(data = {}, detail = {}) {
+      const acceptedCount = Array.isArray(detail.acceptedRows) ? detail.acceptedRows.length : 0;
+      const explicitRejectedCount = Array.isArray(detail.rejectedRows) ? detail.rejectedRows.length : 0;
+      const totalCount = Math.max(acceptedCount + explicitRejectedCount, Number(detail.totalRowCount || 0));
+      const rejectedCount = Math.max(explicitRejectedCount, totalCount - acceptedCount);
+      appendDebug(`识别行统计：总计 ${totalCount}，接受 ${acceptedCount}，未采用 ${rejectedCount}`);
+      if (detail.labels?.length) appendDebug(`点号顺序：${detail.labels.join(" → ")}`);
+      if (detail.missingLabels?.length) appendDebug(`缺失点号：${detail.missingLabels.join("、")}`);
+      if (detail.evidenceStatus && detail.evidenceStatus !== "COMPLETE") {
+        appendDebug("完整性：证据不完整，当前点集不得视为完整边界");
+      } else if (detail.evidenceStatus === "COMPLETE") {
+        appendDebug("完整性：同图点号、行序和坐标证据已绑定");
+      }
+      appendDebug(`坐标表示：${detail.representation || "坐标行"}`);
+      if (detail.sourceCrsId && detail.finalCrsId && detail.sourceCrsId !== detail.finalCrsId) {
+        appendDebug(`坐标参考：${detail.sourceCrsId} → ${detail.finalCrsId}`);
+      } else if (detail.sourceCrsId || detail.finalCrsId) {
+        appendDebug(`坐标参考：${detail.sourceCrsId || detail.finalCrsId}`);
+      }
+      for (const rejected of detail.rejectedRows || []) {
+        const rowLabel = rejected.lineNumber > 0 ? `第 ${rejected.lineNumber} 行` : "候选行";
+        appendDebug(`${rowLabel}未采用：${rejected.reason}${rejected.text ? ` | ${rejected.text}` : ""}`);
+      }
+      const mapEnabled = data.mapReady === true && String(data.mapStatus || "").toUpperCase() === "ENABLED";
+      const kmlEnabled = data.kmlReady === true && String(data.kmlStatus || "").toUpperCase() === "ENABLED";
+      appendDebug(`最终状态：地图${mapEnabled ? "可核对" : "关闭"}；未确认 KML ${kmlEnabled ? "可下载" : "关闭"}`);
     }
 
     function setDebugRunning(running) {
@@ -15307,7 +15409,9 @@ ${placemarks}
           fileSize: file.size,
           fileType: file.type
         });
-        setDebug(`正在上传图片\n图片读取完成（${Math.round(file.size / 1024)} KB）`);
+        const safeRecognitionFileName = String(file.name || "图片")
+          .replace(/[\r\n\t]+/gu, " ").trim().slice(0, 260) || "图片";
+        setDebug(`正在上传图片\n文件名：${safeRecognitionFileName}\n图片读取完成（${Math.round(file.size / 1024)} KB）`);
         showMessage("正在上传图片……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
       } else if (jobRecoveryOnly) {
         setDebug("正在恢复识别任务…");
@@ -15661,6 +15765,8 @@ ${placemarks}
         activeSourceCoordinateRepresentation = sourceDisplayText
           ? structuredClone(sourceCoordinateRepresentation)
           : null;
+        const recognitionDetailEvidence = buildRecognitionDetailEvidence(data, sourceCoordinateRepresentation);
+        let recognitionDetailRowsRendered = false;
         if (isTrustedProviderDmsReview) {
           const rawDetailRows = sourceDisplayText
             ? (Array.isArray(sourceCoordinateRepresentation.rows)
@@ -15677,6 +15783,7 @@ ${placemarks}
           });
           appendDebug(`发现坐标表，共 ${trustedProviderDmsCoordinateCount} 行`);
           await appendRecognizedCoordinateDetails(detailRows, trustedProviderDmsCoordinateCount);
+          recognitionDetailRowsRendered = true;
           if (trustedProviderDmsEvidence.axisConflict === true) {
             appendDebug("方向信息需要结合原图核对，坐标已保留供地图查看");
           }
@@ -15695,6 +15802,7 @@ ${placemarks}
             : String(data.coordinates || "").split(/\r?\n/).map(row => row.trim()).filter(Boolean);
           appendDebug(`发现坐标表，共 ${detailRows.length} 行`);
           await appendRecognizedCoordinateDetails(detailRows, detailRows.length);
+          recognitionDetailRowsRendered = true;
           const provisionalMapReady = data.mapReady === true && String(data.mapStatus || "").toUpperCase() === "ENABLED";
           const provisionalKmlReady = data.kmlReady === true && String(data.kmlStatus || "").toUpperCase() === "ENABLED";
           if (provisionalMapReady && provisionalKmlReady) {
@@ -15702,6 +15810,13 @@ ${placemarks}
           } else if (provisionalMapReady) {
             appendDebug("待核对地图已准备，KML 暂不可用");
           }
+        }
+        if (!recognitionDetailRowsRendered && recognitionDetailEvidence.acceptedRows.length > 0) {
+          appendDebug(`发现坐标表，共 ${recognitionDetailEvidence.acceptedRows.length} 行`);
+          await appendRecognizedCoordinateDetails(
+            recognitionDetailEvidence.acceptedRows,
+            recognitionDetailEvidence.acceptedRows.length
+          );
         }
         const existingFamilySourceText = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
         const displayCoordinates = sourceDisplayText
@@ -15716,6 +15831,9 @@ ${placemarks}
         activeFinalizedCoordinateResult = data.finalizedCoordinateResult || null;
         activeRecognitionAcquisitionResult = createRecognitionAuthorizationState(data);
         activePointGeometryIntentReview = data.pointGeometryIntentReview || null;
+        const responseFileName = String(data.recognitionFileName || "").replace(/[\r\n\t]+/gu, " ").trim();
+        if (!file && responseFileName) appendDebug(`文件名：${responseFileName.slice(0, 260)}`);
+        appendRecognitionEvidenceSummary(data, recognitionDetailEvidence);
         invalidateSpatialPreview();
 
         rememberState();

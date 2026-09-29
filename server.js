@@ -15130,6 +15130,27 @@ function buildExplicitProjectedBoundaryResponse({ payload = {}, coordinateEngine
   };
 }
 
+function summarizeMultiRepresentationEvidence(binding = null) {
+  if (!binding || typeof binding !== "object") return null;
+  const sourceRows = Array.isArray(binding?.sourceEvidence?.rows)
+    ? binding.sourceEvidence.rows.length
+    : Number(binding.sourceRowCount || 0);
+  return Object.freeze({
+    version: String(binding.version || ""),
+    status: String(binding.status || "NOT_AVAILABLE"),
+    reason: String(binding.reason || ""),
+    providerMode: String(binding.providerMode || "NONE"),
+    sourceRowCount: sourceRows,
+    providerDmsRowCount: Number(binding.providerDmsRowCount || 0),
+    providerProjectedRowCount: Number(binding.providerProjectedRowCount || 0),
+    labels: Object.freeze(Array.isArray(binding.labels) ? [...binding.labels] : []),
+    matchedLabels: Object.freeze(Array.isArray(binding.matchedLabels) ? [...binding.matchedLabels] : []),
+    missingLabels: Object.freeze(Array.isArray(binding.missingLabels) ? [...binding.missingLabels] : []),
+    orderConflict: binding.orderConflict === true,
+    sourceContextBound: binding?.sourceEvidence?.sourceContextBinding?.bound === true
+  });
+}
+
 function supportsLegacyUtm30BoundaryPreview({ providerText = "", localOcrText = "", evidence = null } = {}) {
   const rows = Array.isArray(evidence?.rows) ? evidence.rows : [];
   if (evidence?.status !== LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE || rows.length < 3) return false;
@@ -17835,6 +17856,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
         const providerReviewPayload = {
           success: true,
+          recognitionFileName: uploadedFileName,
           model: `${selectedProviderModel}+trusted-provider-decimal-recovery`,
           rawText: trustedProviderDecimalEvidence.text,
           coordinates: trustedProviderCoordinates,
@@ -18252,6 +18274,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
         const providerReviewPayload = {
           success: true,
+          recognitionFileName: uploadedFileName,
           ...(authorizeForGeometryValidation ? {} : {
             code: "ONE_SHOT_ACQUISITION_CONTRACT_REVIEW_REQUIRED",
             reason: "acquisition_completed_review_required"
@@ -18279,6 +18302,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           visibleCrsEvidence: groupedProviderDmsEvidence.visibleCrsEvidence,
           imageAcquisitionEvidence: groupedAcquisitionEvidence.imageEvidence,
           providerReviewEvidence: groupedProviderDmsEvidence,
+          multiRepresentationEvidence: summarizeMultiRepresentationEvidence(multiRepresentationBinding),
           acquisitionContractConformance: oneShotAcquisitionConformance,
           reviewReasons: groupedProviderDmsEvidence.reviewReasons,
           parserTrace: [
@@ -18323,6 +18347,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
         const providerDmsReviewPayload = {
           success: true,
+          recognitionFileName: uploadedFileName,
           model: `${selectedProviderModel}+trusted-provider-dms-review`,
           rawText,
           coordinates: trustedProviderDmsEvidence.coordinates,
@@ -18348,8 +18373,11 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             localAxisConflict: trustedProviderDmsEvidence.localAxisConflict,
             crossSourceAxisConflict: trustedProviderDmsEvidence.crossSourceAxisConflict,
             selectedAxisSource: trustedProviderDmsEvidence.selectedAxisSource,
-            coordinateFamily: trustedProviderDmsEvidence.coordinateFamily
+            coordinateFamily: trustedProviderDmsEvidence.coordinateFamily,
+            sourceLabels: Array.isArray(trustedProviderDmsEvidence.sourceLabels)
+              ? [...trustedProviderDmsEvidence.sourceLabels] : []
           },
+          multiRepresentationEvidence: summarizeMultiRepresentationEvidence(multiRepresentationBinding),
           acquisitionContractConformance: oneShotAcquisitionConformance,
           parserTrace: [
             "ONE_SHOT_ACQUISITION_CONTRACT:review_required",

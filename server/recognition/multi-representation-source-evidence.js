@@ -89,15 +89,22 @@ function normalizeProjectedColumn(tokens, { axis, context } = {}) {
   });
 }
 
-function labelsAreContinuous(labels) {
-  if (labels.length === 0 || new Set(labels).size !== labels.length) return false;
-  if (labels.every(label => /^\d{1,6}$/u.test(label))) {
-    return labels.every((label, index) => Number(label) === index + 1);
-  }
-  if (labels.every(label => /^[A-Z]$/u.test(label))) {
-    return labels.every((label, index) => label.charCodeAt(0) === 65 + index);
-  }
-  return false;
+function labelOrdinal(label) {
+  const value = String(label || "").toUpperCase();
+  if (/^\d{1,6}$/u.test(value)) return Number(value);
+  if (/^[A-Z]$/u.test(value)) return value.charCodeAt(0) - 64;
+  return null;
+}
+
+function orderContinuousRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const numeric = rows.every(row => /^\d{1,6}$/u.test(String(row?.label || "")));
+  const alphabetic = rows.every(row => /^[A-Z]$/u.test(String(row?.label || "")));
+  if (!numeric && !alphabetic) return null;
+  const ordered = [...rows].sort((left, right) => labelOrdinal(left.label) - labelOrdinal(right.label));
+  return ordered.every((row, index) => labelOrdinal(row.label) === index + 1)
+    ? ordered
+    : null;
 }
 
 function parseCandidateRows(sourceText) {
@@ -174,15 +181,29 @@ export function extractMultiRepresentationSourceEvidence({
     if (prior && prior.identity !== identity) conflictingDuplicate = true;
     if (!prior) byLabel.set(candidate.label, { identity, candidate });
   }
-  const selected = [...byLabel.values()].map(value => value.candidate);
-  const labels = selected.map(row => row.label);
-  const xValues = normalizeProjectedColumn(selected.map(row => row.xToken), { axis: "x", context });
-  const yValues = normalizeProjectedColumn(selected.map(row => row.yToken), { axis: "y", context });
-  if (conflictingDuplicate || !labelsAreContinuous(labels) || xValues.some(value => !value) || yValues.some(value => !value)) {
+  // OCR composites intentionally contain an overview and a table crop. The
+  // overview may repeat a few rows before the complete table, so first-seen
+  // order is not source row order. Only a unique, conflict-free, continuous
+  // label sequence is allowed to establish order; row count alone is never
+  // used as a binding signal.
+  const selected = orderContinuousRows([...byLabel.values()].map(value => value.candidate));
+  const labels = selected?.map(row => row.label) || [];
+  if (conflictingDuplicate || !selected) {
     return Object.freeze({
       version: MULTI_REPRESENTATION_SOURCE_EVIDENCE_VERSION,
       status: "CONFLICT",
       reason: conflictingDuplicate ? "SOURCE_ROW_CONFLICT" : "SOURCE_LABEL_OR_PROJECTED_VALUE_CONFLICT",
+      rows: Object.freeze([]),
+      sourceContextBinding: Object.freeze({ bound: true, image_sha256: imageSha256 })
+    });
+  }
+  const xValues = normalizeProjectedColumn(selected.map(row => row.xToken), { axis: "x", context });
+  const yValues = normalizeProjectedColumn(selected.map(row => row.yToken), { axis: "y", context });
+  if (xValues.some(value => !value) || yValues.some(value => !value)) {
+    return Object.freeze({
+      version: MULTI_REPRESENTATION_SOURCE_EVIDENCE_VERSION,
+      status: "CONFLICT",
+      reason: "SOURCE_LABEL_OR_PROJECTED_VALUE_CONFLICT",
       rows: Object.freeze([]),
       sourceContextBinding: Object.freeze({ bound: true, image_sha256: imageSha256 })
     });
@@ -227,6 +248,28 @@ function providerDmsRows(reviewEvidence) {
   return grouped.length > 0
     ? grouped
     : Array.isArray(reviewEvidence?.unboundCandidates) ? reviewEvidence.unboundCandidates : [];
+}
+
+function matchProviderDmsRowsToSource(dmsRows, sourceRows) {
+  const matchedSourceIndexes = [];
+  const used = new Set();
+  for (const row of dmsRows) {
+    const matches = sourceRows
+      .map((sourceRow, index) => ({ sourceRow, index }))
+      .filter(({ sourceRow, index }) => !used.has(index)
+        && closeEnough(row.latitude, sourceRow.latitude, 0.000002)
+        && closeEnough(row.longitude, sourceRow.longitude, 0.000002)
+        && (!row.sourceLabel || String(row.sourceLabel).toUpperCase() === sourceRow.label));
+    if (matches.length !== 1) return Object.freeze({ complete: false, orderConflict: false, labels: Object.freeze([]) });
+    used.add(matches[0].index);
+    matchedSourceIndexes.push(matches[0].index);
+  }
+  const orderConflict = matchedSourceIndexes.some((value, index) => index > 0 && value <= matchedSourceIndexes[index - 1]);
+  return Object.freeze({
+    complete: matchedSourceIndexes.length === dmsRows.length,
+    orderConflict,
+    labels: Object.freeze(matchedSourceIndexes.map(index => sourceRows[index].label))
+  });
 }
 
 export function bindProviderRepresentationsToSource({
@@ -288,14 +331,14 @@ export function bindProviderRepresentationsToSource({
       labels: Object.freeze([])
     });
   }
+  const dmsSourceMatches = hasDms
+    ? matchProviderDmsRowsToSource(dmsRows, sourceEvidence.rows)
+    : Object.freeze({ complete: true, orderConflict: false, labels: Object.freeze([]) });
   const countMatches = (!hasDms || dmsRows.length === sourceEvidence.rows.length)
     && (!hasProjected || projectedRows.length === sourceEvidence.rows.length);
-  const dmsMatches = !hasDms || dmsRows.every((row, index) => {
-    const sourceRow = sourceEvidence.rows[index];
-    return closeEnough(row.latitude, sourceRow.latitude, 0.000002)
-      && closeEnough(row.longitude, sourceRow.longitude, 0.000002)
-      && (!row.sourceLabel || String(row.sourceLabel).toUpperCase() === sourceRow.label);
-  });
+  const dmsMatches = !hasDms || (dmsSourceMatches.complete
+    && !dmsSourceMatches.orderConflict
+    && dmsSourceMatches.labels.every((label, index) => label === sourceEvidence.rows[index]?.label));
   const projectedMatches = !hasProjected || projectedRows.every((row, index) => {
     const sourceRow = sourceEvidence.rows[index];
     return closeEnough(row.x, sourceRow.x, 0.01)
@@ -303,6 +346,9 @@ export function bindProviderRepresentationsToSource({
       && (!row.label || String(row.label).toUpperCase() === sourceRow.label);
   });
   if (!countMatches || !dmsMatches || !projectedMatches) {
+    const matchedLabels = dmsSourceMatches.complete ? [...dmsSourceMatches.labels] : [];
+    const matchedLabelSet = new Set(matchedLabels);
+    const missingLabels = sourceEvidence.labels.filter(label => !matchedLabelSet.has(label));
     return Object.freeze({
       version: MULTI_REPRESENTATION_SOURCE_EVIDENCE_VERSION,
       status: "CONFLICT",
@@ -312,7 +358,13 @@ export function bindProviderRepresentationsToSource({
       sourceEvidence,
       providerMode: hasDms && hasProjected ? "BOTH" : hasDms ? "DMS_ONLY" : "PROJECTED_ONLY",
       rows: Object.freeze([]),
-      labels: Object.freeze([])
+      labels: Object.freeze([]),
+      sourceRowCount: sourceEvidence.rows.length,
+      providerDmsRowCount: dmsRows.length,
+      providerProjectedRowCount: projectedRows.length,
+      matchedLabels: Object.freeze(matchedLabels),
+      missingLabels: Object.freeze(missingLabels),
+      orderConflict: dmsSourceMatches.orderConflict
     });
   }
   const rows = Object.freeze(sourceEvidence.rows.map((sourceRow, index) => Object.freeze({
@@ -328,6 +380,12 @@ export function bindProviderRepresentationsToSource({
     providerMode: hasDms && hasProjected ? "BOTH" : hasDms ? "DMS_ONLY" : "PROJECTED_ONLY",
     rows,
     labels: sourceEvidence.labels,
+    sourceRowCount: sourceEvidence.rows.length,
+    providerDmsRowCount: dmsRows.length,
+    providerProjectedRowCount: projectedRows.length,
+    matchedLabels: Object.freeze(hasDms ? [...dmsSourceMatches.labels] : [...sourceEvidence.labels]),
+    missingLabels: Object.freeze([]),
+    orderConflict: false,
     candidateDmsText: hasDms
       ? rows.map((row, index) => `${row.label} | ${dmsRows[index].latitudeSource} | ${dmsRows[index].longitudeSource}`).join("\n")
       : ""
