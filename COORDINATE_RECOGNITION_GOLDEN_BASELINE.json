@@ -3,8 +3,10 @@
   "status": "draft",
   "purpose": "Golden regression baseline and release gate for Coordinate Recognition Reliability Phase 1.",
   "created_at": "2026-07-11",
+  "image_acceptance_manifest": "regression-samples/coordinate-image-acceptance-manifest.v1.json",
   "notes": [
     "This file is machine-readable and is the unified index over existing regression-samples/*/baseline.json files plus currently known real local image fixtures.",
+    "Image identity, duplicate paths, evidence maturity and the current Map/KML review contract are reconciled by regression-samples/coordinate-image-acceptance-manifest.v1.json.",
     "Do not treat samples with baseline_status=missing or partial as blocking stable gates until their expected coordinates are manually confirmed.",
     "Image Pipeline 1500/0.8 is experimental only. It must not become default until this baseline passes without regression."
   ],

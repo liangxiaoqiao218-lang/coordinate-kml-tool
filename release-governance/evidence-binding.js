@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -77,6 +77,55 @@ async function runGit(repoRoot, args, { env = {}, encoding = "utf8" } = {}) {
   return result.stdout;
 }
 
+async function readGitObjectsBatch(repoRoot, indexEnv, objectSpecs) {
+  if (!objectSpecs.length) return [];
+  return await new Promise((resolve, reject) => {
+    const child = spawn("git", ["cat-file", "--batch"], {
+      cwd: repoRoot,
+      env: { ...process.env, ...indexEnv },
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", chunk => stdout.push(chunk));
+    child.stderr.on("data", chunk => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", code => {
+      if (code !== 0) {
+        reject(new Error(`git cat-file --batch failed (${code}): ${Buffer.concat(stderr).toString("utf8")}`));
+        return;
+      }
+      try {
+        const output = Buffer.concat(stdout);
+        const objects = [];
+        let offset = 0;
+        for (const objectSpec of objectSpecs) {
+          const headerEnd = output.indexOf(10, offset);
+          if (headerEnd < 0) throw new Error(`GIT_BATCH_HEADER_MISSING:${objectSpec}`);
+          const header = output.subarray(offset, headerEnd).toString("utf8");
+          const headerParts = header.split(" ");
+          const byteLength = Number(headerParts.at(-1));
+          if (headerParts.at(-2) !== "blob" || !Number.isSafeInteger(byteLength) || byteLength < 0) {
+            throw new Error(`GIT_BATCH_BLOB_INVALID:${objectSpec}:${header}`);
+          }
+          const contentStart = headerEnd + 1;
+          const contentEnd = contentStart + byteLength;
+          if (contentEnd >= output.length || output[contentEnd] !== 10) {
+            throw new Error(`GIT_BATCH_BLOB_TRUNCATED:${objectSpec}`);
+          }
+          objects.push(output.subarray(contentStart, contentEnd));
+          offset = contentEnd + 1;
+        }
+        resolve(objects);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    child.stdin.end(`${objectSpecs.join("\n")}\n`);
+  });
+}
+
 function productionPathsFromGitTree(relativePaths) {
   const rootRuntimeFiles = relativePaths
     .filter(relativePath => !relativePath.includes("/"))
@@ -114,15 +163,12 @@ function fixturePathsFromGitTree(relativePaths) {
 
 async function hashGitIndexFileSet(repoRoot, indexEnv, relativePaths) {
   const paths = uniqueCanonicalPaths(relativePaths);
-  const lines = [];
-  for (const relativePath of paths) {
-    const bytes = await runGit(repoRoot, ["show", `:${relativePath}`], {
-      env: indexEnv,
-      encoding: "buffer"
-    });
+  const objects = await readGitObjectsBatch(repoRoot, indexEnv, paths.map(relativePath => `:${relativePath}`));
+  const lines = paths.map((relativePath, index) => {
+    const bytes = objects[index];
     const fileHash = createHash("sha256").update(bytes).digest("hex");
-    lines.push(`${relativePath}:${fileHash}`);
-  }
+    return `${relativePath}:${fileHash}`;
+  });
   return {
     hash: createHash("sha256").update(lines.join("\n")).digest("hex"),
     fileCount: paths.length,

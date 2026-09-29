@@ -1,7 +1,13 @@
 # Coordinate Regression Test Samples Plan
 
 This document plans the long-term regression sample library for GeoKit Lab coordinate recognition.
-It does not include real images. Real samples should be stored separately and reviewed before use.
+The repository now includes reviewed and unreviewed real-image fixtures. Their byte identity,
+duplicate paths, evidence maturity, authority references, and current Map/KML review contract are
+tracked in `regression-samples/coordinate-image-acceptance-manifest.v1.json`.
+
+An image being present in the repository is not a PASS. `ACCEPTANCE_READY` requires frozen truth,
+no unresolved cross-catalog contradiction, and an offline behavioral path. Partial, unstable,
+experimental, missing, or OCR-only records remain non-blocking evidence gaps until reconciled.
 
 ## Planned Directory Structure
 
