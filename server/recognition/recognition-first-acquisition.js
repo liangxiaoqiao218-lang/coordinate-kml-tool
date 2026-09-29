@@ -349,15 +349,35 @@ function buildLegacyRecognitionAcquisitionEvidence({ rawText, acquisition, provi
   });
 }
 
-export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, providerResponseId = null } = {}) {
+export function buildRecognitionAcquisitionEvidence({
+  rawText,
+  acquisition,
+  providerResponseId = null,
+  sourceContextText = "",
+  sourceBoundProjectedEvidence = null
+} = {}) {
   const exactRawText = String(rawText || "");
-  const visibleCrsEvidence = extractVisibleCrsEvidence(exactRawText);
+  const visibleCrsEvidence = extractVisibleCrsEvidence(`${exactRawText}\n${String(sourceContextText || "")}`);
+  const sourceBoundProjectedCandidateText = sourceBoundProjectedEvidence?.sourceContextBinding?.bound === true
+    && sourceBoundProjectedEvidence?.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
+    && Array.isArray(sourceBoundProjectedEvidence?.rows)
+    && sourceBoundProjectedEvidence.rows.length > 0
+    && ["easting_northing", "northing_easting"].includes(String(sourceBoundProjectedEvidence?.axisOrder || ""))
+    ? [
+        sourceBoundProjectedEvidence.axisOrder === "northing_easting"
+          ? "POINT | Y | X"
+          : "POINT | X | Y",
+        sourceBoundProjectedEvidence.text
+      ].join("\n")
+    : "";
+  const candidateEvidenceText = sourceBoundProjectedCandidateText || exactRawText;
   const candidates = extractRecognitionCandidateEvidence({
-    rawText: exactRawText,
+    rawText: candidateEvidenceText,
     visibleCrsEvidence
   });
   const projectedCoordinateEvidence = candidates.candidateCoordinates.some(candidate => candidate?.format === "PROJECTED_XY")
-    ? extractProviderProjectedCoordinateEvidence({ sourceText: exactRawText, minimumRows: 1 })
+    ? (sourceBoundProjectedEvidence
+      || extractProviderProjectedCoordinateEvidence({ sourceText: exactRawText, minimumRows: 1 }))
     : null;
   const acquisitionStatus = candidates.candidateCoordinates.length > 0
     ? "COMPLETED"
@@ -395,7 +415,10 @@ export function buildRecognitionAcquisitionEvidence({ rawText, acquisition, prov
     reviewReasons: candidates.reviewReasons,
     diagnostics: Object.freeze({
       ...candidates.diagnostics,
-      providerOutputLength: exactRawText.length
+      providerOutputLength: exactRawText.length,
+      candidateEvidenceSource: sourceBoundProjectedCandidateText
+        ? "SOURCE_BOUND_PROJECTED_HEADER"
+        : "PROVIDER_OUTPUT"
     }),
     imageEvidence: Object.freeze({
       sourceWidth: Number(acquisition?.width || 0),

@@ -133,6 +133,10 @@ import {
 import { applyWgs84NearDuplicateAuthority } from "./server/recognition/wgs84-near-duplicate-consolidation.js";
 import { pointGeometryIntentReviewRuntime } from "./server/recognition/trusted-point-geometry-intent.js";
 import {
+  bindProjectedEvidenceToSourceContext,
+  createLocalOcrClassificationImage
+} from "./server/recognition/projected-source-evidence.js";
+import {
   buildRecognitionAcquisitionLogSummary,
   buildRecognitionFirstPromptPrefix,
   createRecognitionAcquisitionEvidenceStore,
@@ -8689,7 +8693,9 @@ async function runLocalOcrFamilyClassification({
       layoutLines: Object.freeze([]),
       axisEvidenceText: "",
       axisOrderEvidence: null,
-      projectedTableOcrAcquisition: false
+      projectedTableOcrAcquisition: false,
+      sourceContextText: "",
+      sourceContextProvenance: null
     };
   };
   if (!imageBuffer || !imageIdentity) return genericResult();
@@ -8717,6 +8723,8 @@ async function runLocalOcrFamilyClassification({
   let stageResult = "success";
   try {
     let localOcrImage = imageBuffer;
+    let localOcrLayoutSafe = true;
+    let sourceContextProvenance = null;
     try {
       const metadata = await sharp(imageBuffer).metadata();
       const width = Number(metadata.width) || 0;
@@ -8732,9 +8740,27 @@ async function runLocalOcrFamilyClassification({
           .sharpen()
           .png()
           .toBuffer();
+        sourceContextProvenance = Object.freeze({
+          schema_version: "projected_source_context_v1",
+          image_sha256: String(imageIdentity?.image_sha256 || ""),
+          source_width: width,
+          source_height: height,
+          same_request: true,
+          mode: "header_crop"
+        });
+      } else {
+        const classificationImage = await createLocalOcrClassificationImage({
+          imageBuffer,
+          imageIdentity
+        });
+        localOcrImage = classificationImage.image;
+        localOcrLayoutSafe = classificationImage.layoutSafe;
+        sourceContextProvenance = classificationImage.provenance;
       }
     } catch {
       localOcrImage = imageBuffer;
+      localOcrLayoutSafe = true;
+      sourceContextProvenance = null;
     }
     const result = await runCancellableOcrJob({
       createWorker: () => Tesseract.createWorker("eng", 1, {
@@ -8752,13 +8778,15 @@ async function runLocalOcrFamilyClassification({
     const axisEvidenceText = rawLocalOcrText
       .split(/\r?\n/u)
       .map(line => normalizeText(line).trim())
-      .filter(line => /(?:\blat(?:itude)?\b|\blon(?:gitude)?\b|纬度|经度|北纬|南纬|东经|西经)/iu.test(line))
+      .filter(line => /(?:\blat(?:itude)?\b|\blon(?:gitude)?\b|\beasting\b|\bnorthing\b|\bX\b[^\r\n]{0,40}\bY\b|\bY\b[^\r\n]{0,40}\bX\b|纬度|经度|北纬|南纬|东经|西经)/iu.test(line))
       .map(line => line.replace(/[+-]?\d+(?:[.,]\d+)?/gu, " ").replace(/\s+/gu, " ").trim())
       .filter(Boolean)
       .slice(0, 8)
       .join("\n")
       .slice(0, 1000);
-    const extractedLayoutLines = extractLocalOcrLayoutLines(result, imageIdentity);
+    const extractedLayoutLines = localOcrLayoutSafe
+      ? extractLocalOcrLayoutLines(result, imageIdentity)
+      : Object.freeze([]);
     const normalizedLocalEvidence = normalizeLocalOcrStructuredEvidence({
       sourceText: rawLocalOcrText,
       layoutLines: extractedLayoutLines
@@ -8789,6 +8817,8 @@ async function runLocalOcrFamilyClassification({
       axisEvidenceText,
       axisOrderEvidence: selectedLocalEvidence.axisOrderEvidence || null,
       projectedTableOcrAcquisition: shouldUseProjectedTableOcrAcquisition(rawLocalOcrText),
+      sourceContextText: rawLocalOcrText.slice(0, 40_000),
+      sourceContextProvenance,
       contract: createOneShotAcquisitionContract({
         route,
         sourceText,
@@ -8953,20 +8983,24 @@ function buildPendingManualProjectedCoordinateEngine(rows) {
   }, { forceRequiresReview: true });
 }
 
-function buildConfirmedProjectedCoordinateEngine(rows, selection) {
+function buildConfirmedProjectedCoordinateEngine(rows, selection, { axisOrder = "easting_northing" } = {}) {
   const definition = getProjectedCrsDefinition(selection);
-  if (!definition || !Array.isArray(rows) || rows.length < 3) return null;
+  const normalizedAxisOrder = String(axisOrder || "").toLowerCase();
+  if (!definition || !Array.isArray(rows) || rows.length < 3
+    || !["easting_northing", "northing_easting"].includes(normalizedAxisOrder)) return null;
   const sourceCrs = Object.freeze({
     id: definition.id,
     projection: definition.projection,
     ...(definition.zone ? { zone: definition.zone } : {}),
     hemisphere: definition.hemisphere,
-    axisOrder: "easting_northing"
+    axisOrder: normalizedAxisOrder
   });
   const points = rows.map(row => {
+    const easting = normalizedAxisOrder === "northing_easting" ? row.y : row.x;
+    const northing = normalizedAxisOrder === "northing_easting" ? row.x : row.y;
     const converted = definition.projection === "bftm"
-      ? bftmToWgs84(row.x, row.y)
-      : utmToWgs84(definition.zone, row.x, row.y, definition.hemisphere === "N");
+      ? bftmToWgs84(easting, northing)
+      : utmToWgs84(definition.zone, easting, northing, definition.hemisphere === "N");
     const lat = finiteNumberOrNull(converted?.lat ?? converted?.latitude);
     const lon = finiteNumberOrNull(converted?.lon ?? converted?.longitude);
     if (lat === null || lon === null || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
@@ -14965,10 +14999,24 @@ function buildExplicitProjectedBoundaryAutoReleaseEngine({ evidence = null } = {
     || Number(evidence?.rowCount || 0) !== rows.length
     || !hasContinuousProjectedPointNumbers(rows)) return null;
   const sourceCrsSelection = getExplicitProjectedCrsSelection(evidence);
-  const confirmationRows = parseProjectedCoordinateConfirmationRows(evidence?.text || "");
-  if (!sourceCrsSelection || !confirmationRows || confirmationRows.length !== rows.length) return null;
+  const axisOrder = ["easting_northing", "northing_easting"].includes(String(evidence?.axisOrder || ""))
+    ? String(evidence.axisOrder)
+    : "easting_northing";
+  const confirmationRows = rows.map(row => Object.freeze({
+    label: String(row?.label || "").trim().toUpperCase(),
+    x: finiteNumberOrNull(row?.x),
+    y: finiteNumberOrNull(row?.y),
+    raw: String(row?.sourceText || `${row?.label || ""} | ${row?.x || ""} | ${row?.y || ""}`)
+  }));
+  const projectedValuesValid = confirmationRows.every(row => {
+    const easting = axisOrder === "northing_easting" ? row.y : row.x;
+    const northing = axisOrder === "northing_easting" ? row.x : row.y;
+    return Number.isFinite(easting) && easting >= 100000 && easting <= 900000
+      && Number.isFinite(northing) && northing >= 0 && northing <= 10000000;
+  });
+  if (!sourceCrsSelection || !projectedValuesValid || confirmationRows.length !== rows.length) return null;
   try {
-    const projectedEngine = buildConfirmedProjectedCoordinateEngine(confirmationRows, sourceCrsSelection);
+    const projectedEngine = buildConfirmedProjectedCoordinateEngine(confirmationRows, sourceCrsSelection, { axisOrder });
     const points = projectedEngine?.groups?.[0]?.points || [];
     return points.length === rows.length
       && hasNonDegenerateProjectedBoundary(points)
@@ -15006,19 +15054,79 @@ function supportsExplicitProjectedFamilyRecovery({
 
 function buildExplicitProjectedBoundaryResponse({ payload = {}, coordinateEngineV2 = null, requestId = null } = {}) {
   if (!coordinateEngineV2) return null;
+  const warning = "已依据原图中明确的投影坐标系、轴序和边界顶点形成待核对边界；地图和 KML 均为未确认输出。";
+  const reviewEngine = normalizeCoordinateEngineV2Result({
+    ...coordinateEngineV2,
+    requires_review: true,
+    kml_ready: true,
+    groups: (Array.isArray(coordinateEngineV2.groups) ? coordinateEngineV2.groups : []).map(group => ({
+      ...group,
+      requires_review: true,
+      kml_ready: true,
+      warnings: [warning, ...(Array.isArray(group?.warnings) ? group.warnings : [])]
+    })),
+    warnings: [warning, ...(Array.isArray(coordinateEngineV2.warnings) ? coordinateEngineV2.warnings : [])]
+  }, { forceRequiresReview: true });
   const response = buildCoordinateVerificationResponse({
     ...payload,
-    requiresReview: false,
-    warning: "已依据原图中明确的投影坐标系和边界顶点说明，按原始点号顺序形成矿区边界。",
+    requiresReview: true,
+    warning,
     parserTrace: [
       ...(Array.isArray(payload.parserTrace) ? payload.parserTrace : []),
-      "PROJECTED_BOUNDARY_AUTHORITY:safe_auto_release"
+      "PROJECTED_BOUNDARY_AUTHORITY:provisional_review"
     ]
-  }, coordinateEngineV2);
-  return promoteRecognizedCoordinatesToSafeBoundary({
-    ...response,
-    ...(requestId ? { requestId } : {})
+  }, reviewEngine);
+  const engineGroups = Array.isArray(reviewEngine.groups) ? reviewEngine.groups : [];
+  const points = engineGroups.flatMap(group => Array.isArray(group?.points) ? group.points : []);
+  const positions = points.map(point => [Number(point?.lon), Number(point?.lat)]);
+  if (!response.finalizedCoordinateResult?.resultId
+    || positions.length < 3
+    || positions.some(([lon, lat]) => !Number.isFinite(lon) || Math.abs(lon) > 180
+      || !Number.isFinite(lat) || Math.abs(lat) > 90)) return null;
+  const ring = [...positions, [...positions[0]]];
+  const prior = response.finalizedCoordinateResult;
+  const finalized = finalizeCoordinateResult({
+    ...prior,
+    currentRevision: prior.resultRevision,
+    confirmedRevision: null,
+    confirmationStatus: "pending",
+    qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+    crs: FINALIZED_COORDINATE_CRS,
+    geometry: { type: "Polygon", coordinates: [ring] },
+    technicalKmlReady: true,
+    currentAuthorizedGeometryExportable: true,
+    requiresReview: true,
+    kmlReady: true,
+    kmlAuthorityBlocked: false,
+    groups: engineGroups.map(group => ({
+      groupId: group?.group_id || null,
+      requiresReview: true,
+      kmlReady: true
+    })),
+    warnings: [warning, ...(Array.isArray(prior.warnings) ? prior.warnings : [])]
   });
+  const reviewResult = coordinateConfirmationRuntime.register(Object.freeze({
+    ...finalized,
+    decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+    gate: Object.freeze({
+      ...(finalized.gate || {}),
+      decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED
+    })
+  }));
+  return {
+    ...response,
+    ...(requestId ? { requestId } : {}),
+    authorizationStatus: "REVIEW_REQUIRED",
+    resultStatus: "needs_review",
+    requiresReview: true,
+    boundaryBlocked: true,
+    geometryMode: "boundary",
+    mapReady: true,
+    kmlReady: true,
+    mapStatus: "ENABLED",
+    kmlStatus: "ENABLED",
+    finalizedCoordinateResult: reviewResult
+  };
 }
 
 function supportsLegacyUtm30BoundaryPreview({ providerText = "", localOcrText = "", evidence = null } = {}) {
@@ -15386,6 +15494,8 @@ async function recognizeCoordinatesHandler(req, res) {
   let oneShotLocalOcrSourceText = "";
   let oneShotLocalOcrAxisEvidenceText = "";
   let oneShotLocalOcrAxisOrderEvidence = null;
+  let oneShotLocalOcrSourceContextText = "";
+  let oneShotLocalOcrSourceContextProvenance = null;
   let projectedTableOcrAcquisition = false;
   let oneShotStructuredFamilyRoute = classifyOneShotStructuredFamily();
   let oneShotAcquisitionContract = createOneShotAcquisitionContract({ route: oneShotStructuredFamilyRoute });
@@ -16273,6 +16383,8 @@ async function recognizeCoordinatesHandler(req, res) {
     oneShotLocalOcrSourceText = String(oneShotFamilyClassification.sourceText || "");
     oneShotLocalOcrAxisEvidenceText = String(oneShotFamilyClassification.axisEvidenceText || "");
     oneShotLocalOcrAxisOrderEvidence = oneShotFamilyClassification.axisOrderEvidence || null;
+    oneShotLocalOcrSourceContextText = String(oneShotFamilyClassification.sourceContextText || "");
+    oneShotLocalOcrSourceContextProvenance = oneShotFamilyClassification.sourceContextProvenance || null;
     projectedTableOcrAcquisition = oneShotFamilyClassification.projectedTableOcrAcquisition === true;
     oneShotStructuredFamilyRoute = oneShotFamilyClassification.route;
     oneShotAcquisitionContract = oneShotFamilyClassification.contract;
@@ -17512,7 +17624,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       axisEvidenceText: oneShotLocalOcrAxisEvidenceText || oneShotLocalOcrSourceText
     });
     const providerGroupedDmsDiagnostic = normalizeProviderDmsReviewResult(rawText);
-    const providerProjectedDiagnostic = extractProviderProjectedCoordinateEvidence({ sourceText: rawText });
+    const providerProjectedDiagnostic = bindProjectedEvidenceToSourceContext({
+      providerEvidence: extractProviderProjectedCoordinateEvidence({ sourceText: rawText }),
+      sourceContextText: oneShotLocalOcrSourceContextText,
+      sourceContextProvenance: oneShotLocalOcrSourceContextProvenance,
+      imageIdentity: coordinateImageIdentity
+    });
     console.log("One-shot acquisition conformance:", {
       family: oneShotAcquisitionConformance.family,
       status: oneShotAcquisitionConformance.status,
@@ -17572,7 +17689,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const unifiedAcquisitionEvidence = requestRecognitionAcquisitionEvidenceStore.getOrBuild({
       rawText,
       acquisition: recognitionImageAcquisition,
-      providerResponseId: providerLayoutResponseId
+      providerResponseId: providerLayoutResponseId,
+      sourceContextText: oneShotLocalOcrSourceContextText,
+      sourceBoundProjectedEvidence: providerProjectedDiagnostic
     });
     const unifiedAcquisitionDecision = evaluateUnifiedRecognitionAcquisition({
       evidence: unifiedAcquisitionEvidence,
@@ -17955,19 +18074,23 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
               model: `${selectedProviderModel}+explicit-projected-boundary`,
               rawText,
               coordinates: trustedProviderProjectedEvidence.text,
-              precisionMode: String(trustedProviderProjectedEvidence.crsEvidence?.projection || "").toLowerCase() === "bftm"
-                ? "bftm-projected-x-y"
-                : "projected-x-y-confirmed",
+              precisionMode: "projected-x-y-review",
               projection: getExplicitProjectedCrsSelection(trustedProviderProjectedEvidence),
+              sourceCrs: projectedBoundaryEngine.source_crs,
               providerProjectedReviewEvidence: {
                 status: trustedProviderProjectedEvidence.status,
                 coordinateRowCount: trustedProviderProjectedEvidence.rowCount,
-                crsEvidence: trustedProviderProjectedEvidence.crsEvidence
+                crsEvidence: trustedProviderProjectedEvidence.crsEvidence,
+                axisOrder: trustedProviderProjectedEvidence.axisOrder,
+                sourceContextBinding: trustedProviderProjectedEvidence.sourceContextBinding || null
               },
               acquisitionContractConformance: oneShotAcquisitionConformance,
               parserTrace: [
                 "ONE_SHOT_ACQUISITION_CONTRACT:review_required",
-                "PROVIDER:trusted_projected_rows_recovered"
+                "PROVIDER:trusted_projected_rows_recovered",
+                trustedProviderProjectedEvidence.sourceContextBinding?.bound === true
+                  ? "LOCAL_OCR:source_bound_projected_crs"
+                  : "PROVIDER:explicit_projected_crs"
               ],
               quota: consumeResult.quota
             },

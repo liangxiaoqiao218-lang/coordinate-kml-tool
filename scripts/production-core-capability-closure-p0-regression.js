@@ -66,10 +66,29 @@ if (process.argv[2] === '--http') {
   const providerPromptKinds = [];
   let structureProbeCalls = 0;
   let structureImageCanonical = false;
+  let derivedSourceProbeCalls = 0;
+  let derivedSourceCanonical = false;
+  let derivedSourceIdentityBound = false;
   globalThis.__coreExpectedCanonicalImageBase64 = frozenJpeg.toString('base64');
+  const expectedCanonicalImageSha256 = createHash('sha256').update(frozenJpeg).digest('hex');
   globalThis.__coreStructureProbe = image => {
     structureProbeCalls += 1;
     structureImageCanonical = Buffer.isBuffer(image) && image.equals(frozenJpeg);
+  };
+  globalThis.__coreDerivedSourceProbe = (image, imageIdentity) => {
+    derivedSourceProbeCalls += 1;
+    derivedSourceCanonical = Buffer.isBuffer(image) && image.equals(frozenJpeg);
+    derivedSourceIdentityBound = imageIdentity?.image_sha256 === expectedCanonicalImageSha256
+      && imageIdentity?.byte_length === frozenJpeg.length;
+  };
+  globalThis.__coreOcrImageProbe = image => {
+    const exactCanonical = Buffer.isBuffer(image) && image.equals(frozenJpeg);
+    const validation = Buffer.isBuffer(image)
+      ? imageSafety.validateCoordinateImageUpload({buffer:image,size:image.length,mimetype:'application/octet-stream'})
+      : {valid:false};
+    globalThis.__coreOcrImageCanonical = exactCanonical;
+    globalThis.__coreOcrImageSafe = validation.valid === true;
+    globalThis.__coreOcrImageDerived = validation.valid === true && !exactCanonical;
   };
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
@@ -111,6 +130,11 @@ if (process.argv[2] === '--http') {
     calls,
     ocrCalls:Number(globalThis.__coreOcrCalls||0),
     ocrImageCanonical:globalThis.__coreOcrImageCanonical===true,
+    ocrImageSafe:globalThis.__coreOcrImageSafe===true,
+    ocrImageDerived:globalThis.__coreOcrImageDerived===true,
+    derivedSourceProbeCalls,
+    derivedSourceCanonical,
+    derivedSourceIdentityBound,
     lastProviderImageBytes,
     lastProviderImageCanonical,
     providerImageChecks,
@@ -265,8 +289,15 @@ registerHooks({load(url,context,nextLoad){
     );
     return {...result,source};
   }
+  if(${needsOcrProbe}&&normalized.endsWith('/server/recognition/projected-source-evidence.js')){
+    const source=String(result.source).replace(
+      'export async function createLocalOcrClassificationImage({ imageBuffer, imageIdentity } = {}) {',
+      'export async function createLocalOcrClassificationImage({ imageBuffer, imageIdentity } = {}) { globalThis.__coreDerivedSourceProbe?.(imageBuffer,imageIdentity);'
+    );
+    return {...result,source};
+  }
   if(!${needsOcrProbe}||!normalized.endsWith('/node_modules/tesseract.js/src/index.js'))return result;
-  return {...result,source:"module.exports={createWorker:async()=>{globalThis.__coreOcrCalls=(globalThis.__coreOcrCalls||0)+1;return {recognize:async image=>{const expected=Buffer.from(globalThis.__coreExpectedCanonicalImageBase64||'', 'base64');globalThis.__coreOcrImageCanonical=Buffer.isBuffer(image)&&image.equals(expected);throw new Error('PRIVATE_DECODER_DETAIL')},terminate:async()=>{}}}};"};
+  return {...result,source:"module.exports={createWorker:async()=>{globalThis.__coreOcrCalls=(globalThis.__coreOcrCalls||0)+1;return {recognize:async image=>{globalThis.__coreOcrImageProbe?.(image);throw new Error('PRIVATE_DECODER_DETAIL')},terminate:async()=>{}}}};"};
 }});`:null;
   const child=spawn(process.execPath,[...(consumerProbePreload?['--import',`data:text/javascript,${encodeURIComponent(consumerProbePreload)}`]:[]),fileURLToPath(import.meta.url),'--http',scenario],{cwd:fileURLToPath(new URL('..',import.meta.url)),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],
     env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,NODE_ENV:'test',PORT:String(reservedPort),ENABLE_REGRESSION_TEST_MODE:'true',ALIYUN_API_KEY:'local-mock-only',ALIYUN_BASE_URL:'http://127.0.0.1:1/v1',DOTENV_CONFIG_PATH:'__no_core_test_env__'}});
@@ -431,12 +462,13 @@ test('HTTP complete generic DMS avoids unnecessary reread and preserves canonica
   assert.deepEqual(stats.providerPromptKinds,['STAGE_1']);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));
-test('HTTP local OCR receives only canonical bytes after bounded JPEG tail removal',()=>httpScenario('jpeg-ocr-canonical',async post=>{
+test('HTTP local OCR derives a safe identity-bound artifact only from canonical bytes after bounded JPEG tail removal',()=>httpScenario('jpeg-ocr-canonical',async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([frozenJpeg,Buffer.alloc(3754,0xa5)],{type:'image/jpeg'}),'synthetic-trailing.jpg');
   const result=await post('/api/recognize-coordinates',form,true);
   assert.equal(result.status,503);assert.equal(result.payload.code,'PROVIDER_FAILURE_AFTER_LOCAL_OCR');
   const stats=await post.stats();assert.equal(stats.calls,1);assert.equal(stats.providerImageChecks,1);
-  assert.equal(stats.ocrCalls,1);assert.equal(stats.ocrImageCanonical,true);
+  assert.equal(stats.ocrCalls,1);assert.equal(stats.ocrImageSafe,true);assert.equal(stats.ocrImageDerived,true);
+  assert.equal(stats.derivedSourceProbeCalls,1);assert.equal(stats.derivedSourceCanonical,true);assert.equal(stats.derivedSourceIdentityBound,true);
   assert.equal(stats.structureProbeCalls,0);
   const version=await post.get('/api/version');assert.equal(version.status,200);assert.ok(version.payload.runtimeIdentity);
 }));

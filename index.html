@@ -15674,6 +15674,21 @@ ${placemarks}
           } else if (provisionalMapReady) {
             appendDebug("待核对地图已准备，KML 暂不可用");
           }
+        } else if (isProjectedReview) {
+          const detailRows = sourceDisplayText
+            ? (Array.isArray(sourceCoordinateRepresentation.rows)
+              ? sourceCoordinateRepresentation.rows.map(row => String(row || "").trim()).filter(Boolean)
+              : sourceDisplayText.split(/\r?\n/).map(row => row.trim()).filter(Boolean))
+            : String(data.coordinates || "").split(/\r?\n/).map(row => row.trim()).filter(Boolean);
+          appendDebug(`发现坐标表，共 ${detailRows.length} 行`);
+          await appendRecognizedCoordinateDetails(detailRows, detailRows.length);
+          const provisionalMapReady = data.mapReady === true && String(data.mapStatus || "").toUpperCase() === "ENABLED";
+          const provisionalKmlReady = data.kmlReady === true && String(data.kmlStatus || "").toUpperCase() === "ENABLED";
+          if (provisionalMapReady && provisionalKmlReady) {
+            appendDebug("地图和未确认 KML 已准备，可继续核对");
+          } else if (provisionalMapReady) {
+            appendDebug("待核对地图已准备，KML 暂不可用");
+          }
         }
         const existingFamilySourceText = buildCoordinateReviewGroupDisplayText(finalCoordinates, summaryEngine);
         const displayCoordinates = sourceDisplayText

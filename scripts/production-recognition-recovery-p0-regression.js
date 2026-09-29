@@ -2808,8 +2808,28 @@ test("forced local OCR timeout keeps Kyrgyz-shaped rows without explicit family 
   assert.ok(!payload.parserTrace.includes("KYRGYZ_GK:accepted"));
 });
 
+test("forced local OCR timeout keeps source-bound BFTM as provisional projected review", async () => {
+  const payload = await runHttpCandidate("generic-projected-bftm-boundary-local-ocr-timeout");
+  assert.equal(payload.success, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.precisionMode, "projected-x-y-review");
+  assert.equal(payload.authorizationStatus, "REVIEW_REQUIRED");
+  assert.equal(payload.resultStatus, "needs_review");
+  assert.equal(payload.requiresReview, true);
+  assert.equal(payload.finalizedCoordinateResult?.decisionState, "REVIEW_REQUIRED");
+  assert.equal(payload.finalizedCoordinateResult?.confirmationStatus, "pending");
+  assert.equal(payload.finalizedCoordinateResult?.requiresReview, true);
+  assert.equal(payload.finalizedCoordinateResult?.technicalKmlReady, true);
+  assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
+  assert.notEqual(payload.finalizedCoordinateResult?.kmlAuthorityBlocked, true);
+  assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
+  assert.equal(payload.mapStatus, "ENABLED");
+  assert.equal(payload.kmlStatus, "ENABLED");
+  assert.notEqual(payload.authorizationStatus, "AUTHORIZED");
+  assert.notEqual(payload.finalizedCoordinateResult?.decisionState, "AUTO_EXPORT");
+});
+
 for (const [scenario, expectedPrecision] of [
-  ["generic-projected-bftm-boundary-local-ocr-timeout", "bftm-projected-x-y"],
   ["generic-projected-contextual-utm30-safe-local-ocr-timeout", "utm30n-projected-x-y"],
   ["generic-dms-review-local-ocr-timeout", "preserve-original-decimals-and-parse-dms"]
 ]) {
@@ -3018,21 +3038,31 @@ test("contextual UTM site vertices remain closed when unified evidence is incomp
   assert.equal(payload.providerCallCount, 1);
 });
 
-test("explicit BFTM vertices preserve all rows while incomplete unified evidence closes export", async () => {
+test("source-bound explicit BFTM vertices preserve all rows as provisional projected review", async () => {
   const payload = await runHttpCandidate("generic-projected-bftm-boundary");
   assert.equal(payload.success, true);
-  assert.equal(payload.precisionMode, "bftm-projected-x-y");
+  assert.equal(payload.precisionMode, "projected-x-y-review");
   assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, "EXPLICIT");
   assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.projection, "bftm");
   assert.equal(payload.coordinates.split("\n").length, 20);
   assert.equal(payload.coordinateEngineV2.groups[0].points.length, 20);
-  assert.ok(payload.parserTrace.includes("PROJECTED_BOUNDARY_AUTHORITY:safe_auto_release"));
+  assert.ok(payload.parserTrace.includes("PROJECTED_BOUNDARY_AUTHORITY:provisional_review"));
   assert.equal(payload.geometryMode, "boundary");
   assert.equal(payload.boundaryBlocked, true);
   assert.equal(payload.authorizationStatus, "REVIEW_REQUIRED");
+  assert.equal(payload.resultStatus, "needs_review");
+  assert.equal(payload.requiresReview, true);
+  assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+  assert.equal(payload.finalizedCoordinateResult.confirmationStatus, "pending");
+  assert.equal(payload.finalizedCoordinateResult.requiresReview, true);
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
-  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
+  assert.equal(payload.finalizedCoordinateResult.technicalKmlReady, true);
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+  assert.notEqual(payload.finalizedCoordinateResult.kmlAuthorityBlocked, true);
+  assert.equal(payload.mapStatus, "ENABLED");
+  assert.equal(payload.kmlStatus, "ENABLED");
+  assert.notEqual(payload.authorizationStatus, "AUTHORIZED");
+  assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
   assert.equal(payload.providerCallCount, 1);
 });
 
