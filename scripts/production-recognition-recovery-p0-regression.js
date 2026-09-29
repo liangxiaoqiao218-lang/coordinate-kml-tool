@@ -173,6 +173,8 @@ if (process.argv[2] === '--http-candidate') {
       };
       const prompt = requestBody.messages.map(message => JSON.stringify(message.content)).join(' ');
       if (baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
+        || baseScenario === 'generic-dms-summary-review'
+        || baseScenario === 'generic-dms-ancillary-review'
         || baseScenario === 'generic-dms-overlap-review'
         || baseScenario === 'generic-dms-provisional'
         || baseScenario === 'generic-dms-point-az'
@@ -316,6 +318,25 @@ if (process.argv[2] === '--http-candidate') {
           'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
           'Point | Latitude north | Longitude east',
           ...pointAzRows
+        ].join('\n')
+      : baseScenario === 'generic-dms-summary-review'
+      ? [
+          '[UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE > POINTS | Latitude N | longitude W]',
+          '1 | 05°34\'42,00”N | 2°47\'05,00”W',
+          '2 | 05°34\'42,00”N | 2°46\'19,00”W',
+          '3 | 05°34\'21,00”N | 2°46\'19,00”W',
+          '4 | 05°34\'21,00”N | 2°47\'05,00”W',
+          'Superficies (ha) | 91,25'
+        ].join('\n')
+      : baseScenario === 'generic-dms-ancillary-review'
+      ? [
+          'UNCLASSIFIED STRUCTURED COORDINATE EVIDENCE',
+          'Point | Latitude north | Longitude west',
+          '1 | 11° 34\' 20.50\" N | 8° 50\' 39.50\" W',
+          '2 | 11° 34\' 8.87\" N | 8° 50\' 22.58\" W',
+          '3 | 11° 34\' 4.35\" N | 8° 50\' 25.09\" W',
+          '4 | 11° 34\' 16.50\" N | 8° 50\' 42.40\" W',
+          'Reference annotation | bearing 12° pending review'
         ].join('\n')
       : baseScenario === 'generic-dms-review' || baseScenario === 'generic-dms-review-array'
         || baseScenario === 'generic-dms-overlap-review'
@@ -500,6 +521,8 @@ async function runHttpCandidate(scenario) {
       || baseScenario === 'generic-projected-kyrgyz-real'
       || baseScenario === 'structured'
       || baseScenario === 'generic-dms-review'
+      || baseScenario === 'generic-dms-summary-review'
+      || baseScenario === 'generic-dms-ancillary-review'
       || baseScenario === 'generic-dms-point-az'
       || baseScenario === 'generic-dms-review-array'
       || baseScenario === 'generic-cadastral-grid') {
@@ -2536,6 +2559,37 @@ test("one-shot structured actual HTTP generic DMS recovery enables provisional m
     confirmationStatus: payload.finalizedCoordinateResult.confirmationStatus,
     qualityGateStatus: payload.finalizedCoordinateResult.qualityGateStatus
   } }));
+});
+
+test("direction-bound DMS with non-coordinate summary metadata preserves the ordered polygon", async () => {
+  const payload = await runHttpCandidate("generic-dms-summary-review");
+  assert.equal(payload.success, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.providerDmsReviewEvidence.status, "COMPLETE");
+  assert.equal(payload.providerDmsReviewEvidence.axisDirectionBound, true);
+  assert.equal(payload.providerDmsReviewEvidence.coordinateRowCount, 4);
+  assert.deepEqual(payload.coordinateEngineV2.groups[0].points.map(point => point.label), ["1", "2", "3", "4"]);
+  assert.equal(payload.geometryMode, "boundary");
+  assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+  assert.equal(payload.mapStatus, "ENABLED");
+  assert.equal(payload.kmlStatus, "ENABLED");
+  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
+  assert.doesNotMatch(payload.warnings?.join("\n") || "", /(?:self[- ]?intersect|axis order|abnormal area|\u81ea\u4ea4|\u8f74\u5e8f|\u9762\u79ef\u5f02\u5e38)/iu);
+});
+
+test("complete direction-bound DMS outranks an unrelated malformed angular annotation", async () => {
+  const payload = await runHttpCandidate("generic-dms-ancillary-review");
+  assert.equal(payload.success, true);
+  assert.equal(payload.providerCallCount, 1);
+  assert.equal(payload.providerDmsReviewEvidence.status, "COMPLETE");
+  assert.equal(payload.providerDmsReviewEvidence.coverageStatus, "COMPLETE");
+  assert.equal(payload.providerDmsReviewEvidence.axisDirectionBound, true);
+  assert.equal(payload.geometryMode, "boundary");
+  assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
+  assert.equal(payload.finalizedCoordinateResult.decisionState, "REVIEW_REQUIRED");
+  assert.equal(payload.mapStatus, "ENABLED");
+  assert.equal(payload.kmlStatus, "ENABLED");
 });
 
 test("directionless Provider DMS rows return one provisional review result instead of recognition failure", async () => {

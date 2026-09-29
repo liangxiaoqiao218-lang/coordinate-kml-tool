@@ -7624,6 +7624,14 @@ function buildProviderGroupedDmsEngine(reviewResult, { forceRequiresReview = tru
     coordinate_type: "dms",
     coordinate_family: "provider-grouped-dms",
     precision_mode: forceRequiresReview ? "provider-dms-candidate-review" : "dms-grouped-coordinates",
+    axisOrderEvidence: reviewResult?.geographicCrsEvidence?.axisDirectionBound === true
+      ? {
+          status: "FORMAT_RESOLVED",
+          axisOrder: "latitude_longitude",
+          interpretation: "as_parsed",
+          source: "explicit_dms_directions"
+        }
+      : null,
     source_crs: reviewResult?.geographicCrsExplicit === true ? "EPSG:4326" : null,
     confidence: forceRequiresReview ? 0.7 : 0.9,
     requires_review: forceRequiresReview,
@@ -7665,6 +7673,29 @@ function buildProviderGroupedDmsEngine(reviewResult, { forceRequiresReview = tru
       supplemental_fallbacks: []
     }
   }, { forceRequiresReview });
+}
+
+function isCompleteSingleBoundaryProviderDmsEvidence(trustedEvidence = {}, groupedEvidence = {}) {
+  const trustedRowCount = Number(trustedEvidence?.coordinateRowCount || 0);
+  const groupedRows = Array.isArray(groupedEvidence?.candidateGroups?.[0]?.rows)
+    ? groupedEvidence.candidateGroups[0].rows
+    : [];
+  return trustedEvidence?.status === "COMPLETE"
+    && trustedEvidence?.coverageStatus === "COMPLETE"
+    && trustedEvidence?.axisDirectionBound === true
+    && trustedEvidence?.axisConflict !== true
+    && trustedEvidence?.providerAxisConflict !== true
+    && trustedEvidence?.localAxisConflict !== true
+    && trustedEvidence?.crossSourceAxisConflict !== true
+    && Number(trustedEvidence?.blockingRejectedRowCount || 0) === 0
+    && trustedRowCount >= 3
+    && Number(trustedEvidence?.sourceRowCount || 0) === trustedRowCount
+    && Number(groupedEvidence?.candidateGroupCount || 0) === 1
+    && Number(groupedEvidence?.unboundRowCount || 0) === 0
+    && Number(groupedEvidence?.boundRowCount || 0) === trustedRowCount
+    && groupedRows.length === trustedRowCount
+    && groupedEvidence?.candidateGroups?.[0]?.sourceLabelsContinuous === true
+    && !groupedEvidence?.reviewReasons?.some(reason => String(reason).startsWith("SOURCE_LABELS_"));
 }
 
 function extractCoordinateLines(text) {
@@ -9929,6 +9960,17 @@ function getCoordinateEngineV2AxisEvidence(coordinateType = "", result = {}, opt
       status: "locked_by_parser",
       interpretation: "as_parsed",
       reason: "WGS84 Chat parser defines latitude/longitude order"
+    };
+  }
+  if (coordinateType === "dms"
+    && result.axisOrderEvidence?.status === "FORMAT_RESOLVED"
+    && result.axisOrderEvidence?.axisOrder === "latitude_longitude"
+    && result.axisOrderEvidence?.interpretation === "as_parsed"
+    && result.axisOrderEvidence?.source === "explicit_dms_directions") {
+    return {
+      status: "locked_by_parser",
+      interpretation: "as_parsed",
+      reason: "explicit DMS latitude/longitude directions bind the parsed axis order"
     };
   }
   if (precisionMode === "wgs84-platform-lonlat-coordinates"
@@ -18014,7 +18056,15 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         });
       }
       const groupedProviderDmsEvidence = providerGroupedDmsDiagnostic;
-      const groupedProviderReviewApplies = groupedProviderDmsEvidence.candidatePointCount >= 3
+      const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText, {
+        axisEvidenceText: oneShotLocalOcrAxisEvidenceText || oneShotLocalOcrSourceText
+      });
+      const completeSingleBoundaryDmsEvidence = isCompleteSingleBoundaryProviderDmsEvidence(
+        trustedProviderDmsEvidence,
+        groupedProviderDmsEvidence
+      );
+      const groupedProviderReviewApplies = !completeSingleBoundaryDmsEvidence
+        && groupedProviderDmsEvidence.candidatePointCount >= 3
         && (groupedProviderDmsEvidence.candidateGroupCount > 1
           || groupedProviderDmsEvidence.unboundRowCount > 0
           || groupedProviderDmsEvidence.rejectedRows.length > 0
@@ -18093,9 +18143,6 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             "识别采集已完成；候选点可在地图中核对，但不代表已确认边界，正式 KML 保持关闭。"
           ));
       }
-      const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText, {
-        axisEvidenceText: oneShotLocalOcrAxisEvidenceText || oneShotLocalOcrSourceText
-      });
       if (["COMPLETE", "PROVISIONAL"].includes(trustedProviderDmsEvidence.status)) {
         const pointAzFamilyRecovered = trustedProviderDmsEvidence.coordinateFamily === "point-az-dms-table";
         const provisionalDirection = trustedProviderDmsEvidence.status === "PROVISIONAL";
