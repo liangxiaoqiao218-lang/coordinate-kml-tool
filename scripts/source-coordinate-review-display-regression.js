@@ -16,7 +16,18 @@ function extractFunctionSource(source, functionName) {
   const marker = `function ${functionName}(`;
   const start = source.indexOf(marker);
   assert.notEqual(start, -1, `${functionName} must exist`);
-  const openBrace = source.indexOf("{", start);
+  const openParen = source.indexOf("(", start);
+  let parameterDepth = 0;
+  let closeParen = -1;
+  for (let index = openParen; index < source.length; index += 1) {
+    if (source[index] === "(") parameterDepth += 1;
+    if (source[index] === ")" && --parameterDepth === 0) {
+      closeParen = index;
+      break;
+    }
+  }
+  assert.notEqual(closeParen, -1, `${functionName} parameters must be closed`);
+  const openBrace = source.indexOf("{", closeParen);
   let depth = 0;
   for (let index = openBrace; index < source.length; index += 1) {
     if (source[index] === "{") depth += 1;
@@ -42,6 +53,17 @@ const parseCanonicalLonLat = Function(`
     setInternalCanonicalLonLatSourceFromText(text);
     return internalNormalizedCoordinateGroups;
   };
+`)();
+
+const buildRecognitionDetailEvidence = Function(`
+  ${extractFunctionSource(html, "buildRecognitionDetailEvidence")}
+  return buildRecognitionDetailEvidence;
+`)();
+const collectRecognitionSummary = Function(`
+  const lines = [];
+  function appendDebug(value) { lines.push(String(value)); }
+  ${extractFunctionSource(html, "appendRecognitionEvidenceSummary")}
+  return (data, detail) => { appendRecognitionEvidenceSummary(data, detail); return lines; };
 `)();
 
 const canonicalDmsGroups = parseCanonicalLonLat([
@@ -188,6 +210,63 @@ const wgs84 = buildSourceCoordinateRepresentation({ coordinates: preciseWgs84, p
 });
 assert.equal(wgs84.displayText, preciseWgs84, "original WGS84 precision remains unchanged");
 
+const completeDetail = buildRecognitionDetailEvidence({
+  mapReady: true,
+  mapStatus: "ENABLED",
+  kmlReady: true,
+  kmlStatus: "ENABLED",
+  multiRepresentationEvidence: {
+    status: "COMPLETE",
+    providerMode: "BOTH",
+    sourceRowCount: 6,
+    labels: ["1", "2", "3", "4", "5", "6"]
+  },
+  finalizedCoordinateResult: { crs: { id: "EPSG:4326" } },
+  coordinateEngineV2: { source_crs: { id: "EPSG:32750" } }
+}, {
+  rows: ["r1", "r2", "r3", "r4", "r5", "r6"],
+  pointLabels: ["1", "2", "3", "4", "5", "6"]
+});
+assert.equal(completeDetail.acceptedRows.length, 6);
+assert.equal(completeDetail.totalRowCount, 6);
+assert.equal(completeDetail.representation, "投影 X/Y 与 DMS");
+assert.deepEqual(completeDetail.labels, ["1", "2", "3", "4", "5", "6"]);
+const completeSummary = collectRecognitionSummary({
+  mapReady: true,
+  mapStatus: "ENABLED",
+  kmlReady: true,
+  kmlStatus: "ENABLED"
+}, completeDetail);
+assert.ok(completeSummary.some(line => line.includes("总计 6，接受 6，未采用 0")));
+assert.ok(completeSummary.some(line => line.includes("未确认 KML 可下载")));
+
+const partialDetail = buildRecognitionDetailEvidence({
+  coordinates: Array.from({ length: 14 }, (_, index) => `row-${index + 1}`).join("\n"),
+  multiRepresentationEvidence: {
+    status: "CONFLICT",
+    providerMode: "DMS_ONLY",
+    sourceRowCount: 16,
+    matchedLabels: ["1", "2", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"],
+    missingLabels: ["3", "4"]
+  },
+  providerReviewEvidence: {
+    rejectedRows: [{ lineNumber: 3, text: "unreadable", reason: "DMS_ROW_MALFORMED" }]
+  }
+}, {});
+assert.equal(partialDetail.acceptedRows.length, 14);
+assert.equal(partialDetail.totalRowCount, 16);
+assert.deepEqual(partialDetail.missingLabels, ["3", "4"]);
+assert.equal(partialDetail.rejectedRows.length, 1);
+const partialSummary = collectRecognitionSummary({
+  mapReady: true,
+  mapStatus: "ENABLED",
+  kmlReady: false,
+  kmlStatus: "CLOSED"
+}, partialDetail);
+assert.ok(partialSummary.some(line => line.includes("总计 16，接受 14，未采用 2")));
+assert.ok(partialSummary.some(line => line.includes("证据不完整")));
+assert.ok(partialSummary.some(line => line.includes("未确认 KML 关闭")));
+
 const sourcePriority = html.indexOf("const sourceDisplayText =");
 const canonicalFallback = html.indexOf("|| getCanonicalCoordinateDisplayText(data.finalizedCoordinateResult)", sourcePriority);
 assert.ok(sourcePriority >= 0 && canonicalFallback > sourcePriority, "canonical display is only a fallback after source display");
@@ -210,13 +289,17 @@ assert.match(html, /appendDebug\(`第 \$\{index \+ 1\} 行已识别：\$\{visibl
   "recognition details retain safe per-row evidence for review and support");
 assert.match(html, /await appendRecognizedCoordinateDetails\(detailRows, trustedProviderDmsCoordinateCount\)/u,
   "recognized rows are rendered progressively in the live detail panel");
+assert.match(html, /文件名：\$\{safeRecognitionFileName\}/u,
+  "recognition details show the selected file name");
+assert.match(html, /appendRecognitionEvidenceSummary\(data, recognitionDetailEvidence\)/u,
+  "recognition details show row counts, evidence, CRS and final Map\/KML state");
 for (const forbidden of ["geometry", "resultId", "resultRevision", "geometryHash", "kmlReady"]) {
   assert.equal(Object.hasOwn(source, forbidden), false, `source display contract cannot become ${forbidden} authority`);
 }
 
 console.log(JSON.stringify({
   suite: "source-coordinate-review-display-regression",
-  passed: 22,
+  passed: 32,
   cases: [
     "HANDWRITTEN_SOURCE_DMS_PRESERVED",
     "CANONICAL_WGS84_RETAINED_INTERNAL",
@@ -239,6 +322,16 @@ console.log(JSON.stringify({
     "CANONICAL_LON_LAT_IGNORES_DISPLAY_ORDER",
     "DISPLAY_TEXT_NOT_REPARSED_FOR_MAP_KML",
     "SAFE_PER_ROW_RECOGNITION_DETAILS",
-    "LIVE_PROGRESSIVE_ROW_DETAILS"
+    "LIVE_PROGRESSIVE_ROW_DETAILS",
+    "COMPLETE_TABLE_DETAIL_COUNTS",
+    "COMPLETE_TABLE_POINT_ORDER",
+    "COMPLETE_TABLE_REPRESENTATION",
+    "PARTIAL_TABLE_TOTAL_COUNT",
+    "PARTIAL_TABLE_MISSING_LABELS",
+    "PARTIAL_TABLE_REJECTED_ROWS",
+    "PARTIAL_TABLE_REJECTED_COUNT",
+    "PARTIAL_TABLE_COMPLETENESS_WARNING",
+    "PARTIAL_TABLE_KML_CLOSED",
+    "FINAL_MAP_KML_STATE_DETAILS"
   ]
 }, null, 2));

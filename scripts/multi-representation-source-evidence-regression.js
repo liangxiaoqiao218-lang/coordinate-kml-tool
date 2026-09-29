@@ -42,6 +42,21 @@ assert.deepEqual(sourceEvidence.labels, ["1", "2", "3", "4", "5", "6"]);
 assert.equal(sourceEvidence.rows[5].x, 778984.492);
 assert.equal(sourceEvidence.rows[5].y, 9721180.576);
 
+const repeatedOverviewBeforeCompleteTable = [
+  "No. X Y LATITUDE LONGITUDE",
+  sourceRows[1],
+  sourceRows[3],
+  ...sourceRows,
+  "SISTEM KOORDINAT UTM WGS 1984 ZONA 50S"
+].join("\n");
+const repeatedOverviewEvidence = extractMultiRepresentationSourceEvidence({
+  sourceContextText: repeatedOverviewBeforeCompleteTable,
+  sourceContextProvenance,
+  imageIdentity
+});
+assert.equal(repeatedOverviewEvidence.status, "COMPLETE");
+assert.deepEqual(repeatedOverviewEvidence.labels, ["1", "2", "3", "4", "5", "6"]);
+
 const dmsOnly = [
   `2°31'2,794"S | 119°30'31,553"E`,
   `2°31'2,783"S | 119°30'35,279"E`,
@@ -110,6 +125,43 @@ assert.equal(boundProjected.providerMode, "PROJECTED_ONLY");
 const boundBoth = bind(both);
 assert.equal(boundBoth.status, "COMPLETE");
 assert.equal(boundBoth.providerMode, "BOTH");
+
+const longSourceRows = Array.from({ length: 16 }, (_, index) => {
+  const label = index + 1;
+  const x = (700000 + index * 10).toFixed(3);
+  const y = (9000000 - index * 10).toFixed(3);
+  const seconds = (10 + index).toFixed(3);
+  return `${label} ${x} ${y} 2°31'${seconds}"S 119°30'${seconds}"E`;
+});
+const longSourceContext = [
+  "No. X Y LATITUDE LONGITUDE",
+  ...longSourceRows,
+  "SISTEM KOORDINAT UTM WGS 1984 ZONA 50S"
+].join("\n");
+const longProviderDmsRows = longSourceRows.map(row => row.replace(/^\d+\s+\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\s+/u, ""));
+const longCompleteBinding = bindProviderRepresentationsToSource({
+  providerDmsReviewEvidence: normalizeProviderDmsReviewResult(longProviderDmsRows.join("\n")),
+  providerProjectedEvidence: extractProviderProjectedCoordinateEvidence({ sourceText: longProviderDmsRows.join("\n") }),
+  sourceContextText: longSourceContext,
+  sourceContextProvenance,
+  imageIdentity
+});
+assert.equal(longCompleteBinding.status, "COMPLETE");
+assert.equal(longCompleteBinding.rows.length, 16);
+const longPartialProviderRows = longProviderDmsRows.filter((_, index) => ![2, 3].includes(index));
+const longPartialBinding = bindProviderRepresentationsToSource({
+  providerDmsReviewEvidence: normalizeProviderDmsReviewResult(longPartialProviderRows.join("\n")),
+  providerProjectedEvidence: extractProviderProjectedCoordinateEvidence({ sourceText: longPartialProviderRows.join("\n") }),
+  sourceContextText: longSourceContext,
+  sourceContextProvenance,
+  imageIdentity
+});
+assert.equal(longPartialBinding.status, "CONFLICT");
+assert.equal(longPartialBinding.reason, "PROVIDER_SOURCE_ROW_COUNT_CONFLICT");
+assert.equal(longPartialBinding.sourceRowCount, 16);
+assert.equal(longPartialBinding.providerDmsRowCount, 14);
+assert.deepEqual(longPartialBinding.missingLabels, ["3", "4"]);
+assert.equal(longPartialBinding.orderConflict, false);
 
 const missingPointEvidence = extractMultiRepresentationSourceEvidence({
   sourceContextText: sourceContextText.replace(/^3\s+/mu, ""),

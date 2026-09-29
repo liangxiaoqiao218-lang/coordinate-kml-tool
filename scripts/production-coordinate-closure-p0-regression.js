@@ -83,6 +83,38 @@ assert.equal(payload.mapPreviewObject.previewEligibility.allowed, true);
 assert.equal(payload.kmlEligibility.allowed, true);
 assert.equal(payload.kmlEligibility.confirmationStatus, "REVIEW_REQUIRED");
 
+context.activeRecognitionAcquisitionResult.kmlStatus = "CLOSED";
+context.activeRecognitionAcquisitionResult.kmlReady = false;
+const serverClosedKmlPayload = context.createProvisionalSpatialPayload();
+assert.equal(serverClosedKmlPayload.mapPreviewObject.previewEligibility.allowed, true);
+assert.equal(serverClosedKmlPayload.kmlEligibility.allowed, false,
+  "map page KML must remain closed when the recognition service closes KML");
+
+context.activeFinalizedCoordinateResult = {
+  resultId: "partial-table-result",
+  resultRevision: 2,
+  geometryHash: "partial-multipoint-hash",
+  geometry: {
+    type: "MultiPoint",
+    coordinates: [[119.1, -2.1], [119.2, -2.2], [119.3, -2.3]]
+  },
+  technicalKmlReady: false,
+  confirmationStatus: "pending",
+  qualityGateStatus: "review_required",
+  decisionState: "REVIEW_REQUIRED"
+};
+context.getFinalizedCoordinateIdentity = result => result?.resultId ? {
+  resultId: result.resultId,
+  resultRevision: result.resultRevision,
+  geometryHash: result.geometryHash
+} : null;
+const partialTablePayload = context.createProvisionalSpatialPayload();
+assert.equal(partialTablePayload.mapPreviewObject.geometryType, "MultiPoint",
+  "an incomplete table preview must not be promoted to Polygon");
+assert.equal(partialTablePayload.mapPreviewObject.sourceResultId, "partial-table-result");
+assert.equal(partialTablePayload.mapPreviewObject.sourceRevision, 2);
+assert.equal(partialTablePayload.kmlEligibility.allowed, false);
+
 assert.match(source, /coordinates-unverified\.kml/u);
 assert.match(source, /UNVERIFIED: This file is provided for visual checking/u);
 assert.match(source, /图片内容较多，还需要一点时间。/u);

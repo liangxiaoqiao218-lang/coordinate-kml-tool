@@ -135,6 +135,11 @@ registerHooks({load(url, context, nextLoad) {
     assert.equal(payload.kmlReady, true);
     assert.equal(payload.finalizedCoordinateResult?.decisionState, "REVIEW_REQUIRED");
     assert.equal(payload.finalizedCoordinateResult?.confirmationStatus, "pending");
+    assert.equal(payload.recognitionFileName, "multi-representation.jpg");
+    assert.equal(payload.multiRepresentationEvidence?.status, "COMPLETE");
+    assert.equal(payload.multiRepresentationEvidence?.sourceRowCount, 6);
+    assert.deepEqual(payload.multiRepresentationEvidence?.labels, ["1", "2", "3", "4", "5", "6"]);
+    assert.deepEqual(payload.providerDmsReviewEvidence?.sourceLabels, ["1", "2", "3", "4", "5", "6"]);
     assert.deepEqual(payload.sourceCoordinateRepresentation?.pointLabels, ["1", "2", "3", "4", "5", "6"]);
     assert.equal(payload.sourceCoordinateRepresentation?.rows?.length, 6);
     assert.ok(!String(payload.sourceCoordinateRepresentation?.displayText || "").includes("POINT | X | Y"));
