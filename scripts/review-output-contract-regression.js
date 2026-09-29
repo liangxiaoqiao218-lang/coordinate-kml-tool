@@ -273,6 +273,7 @@ assert.notEqual(actionContractStart, -1);
 assert.notEqual(actionContractEnd, -1);
 const createBrowserActionContract = Function(
   "getKmlCoordinateGroups",
+  "getFinalizedGeometryCoordinateSource",
   "activeRecognitionAcquisitionResult",
   "activeFinalizedCoordinateResult",
   "getFinalizedCoordinateIdentity",
@@ -287,6 +288,7 @@ const createBrowserActionContract = Function(
 const convertibleGroups = () => [[{ longitude: -8.01, latitude: 10.01 }]];
 const reviewActions = createBrowserActionContract(
   convertibleGroups,
+  () => null,
   browserReview,
   review,
   () => ({ resultId: review.resultId, resultRevision: review.resultRevision })
@@ -298,6 +300,7 @@ assert.equal(reviewActions.provisional("kml"), true, "valid review uses provisio
 
 const blockedActions = createBrowserActionContract(
   convertibleGroups,
+  () => null,
   browserBlocked,
   hardBlockedResults[0][1],
   () => null
@@ -322,21 +325,21 @@ for (const [name, result] of hardBlockedResults) {
     visibleCrsEvidence: evidence.visibleCrsEvidence,
     imageAcquisitionEvidence: evidence.imageEvidence
   });
-  const actions = createBrowserActionContract(convertibleGroups, blockedBrowserState, result, () => null);
+  const actions = createBrowserActionContract(convertibleGroups, () => null, blockedBrowserState, result, () => null);
   assert.equal(actions.blocked("map"), true, `${name} keeps the frontend map action blocked`);
   assert.equal(actions.blocked("kml"), true, `${name} keeps the frontend KML action blocked`);
   assert.equal(actions.provisional("map"), false, `${name} cannot enter the provisional map flow`);
   assert.equal(actions.provisional("kml"), false, `${name} cannot enter the provisional KML flow`);
 }
 
-const manualActions = createBrowserActionContract(convertibleGroups, null, null, () => null);
+const manualActions = createBrowserActionContract(convertibleGroups, () => null, null, null, () => null);
 assert.equal(manualActions.blocked("map"), false, "manual input retains its independent map path");
 assert.equal(manualActions.blocked("kml"), false, "manual input retains its independent KML path");
 
 assert.match(indexSource, /const displayCoordinates = sourceDisplayText\s*\|\| acquisitionCandidateDisplayText/u,
   "editable coordinates prefer the preserved source rows");
-assert.match(indexSource, /const detailRows = sourceDisplayText[\s\S]+: acquisitionCandidateSourceEvidence\.rows;/u,
-  "recognition details use identity-bound candidate rows when the source representation is unavailable");
+assert.match(indexSource, /const rawDetailRows = sourceDisplayText[\s\S]+: acquisitionCandidateSourceEvidence\.rows;[\s\S]+const pointLabels = Array\.isArray\(sourceCoordinateRepresentation\.pointLabels\)[\s\S]+const detailRows = rawDetailRows\.map/u,
+  "recognition details use identity-bound candidate rows and add separately bound point labels without changing editable source text");
 assert.doesNotMatch(indexSource, /const heading = titlePath\.length/u,
   "diagnostic title paths are not inserted into editable coordinate text");
 assert.match(indexSource, /if \(provisionalMapReady && provisionalKmlReady\) \{\s*appendDebug\("地图和未确认 KML 已准备，可继续核对"\)/u,
@@ -345,6 +348,14 @@ assert.match(indexSource, /const reviewMapReady = activeRecognitionAcquisitionRe
   "recognition completion message follows the server map state");
 assert.match(indexSource, /const reviewKmlReady = activeRecognitionAcquisitionResult\?\.kmlStatus === "ENABLED"/u,
   "recognition completion message follows the server KML state");
+const provisionalMapRule = indexSource.slice(
+  indexSource.indexOf("const provisionalMapEnabled ="),
+  indexSource.indexOf("const provisionalKmlEnabled =")
+);
+assert.doesNotMatch(provisionalMapRule, /kmlAuthorityBlocked/u,
+  "the frontend map action follows map authority independently from KML authority");
+assert.doesNotMatch(provisionalMapRule, /finalized\.mapReady/u,
+  "the frontend map action follows the final server map status instead of a stale finalized mapReady field");
 assert.match(serverSource, /finalizedRequiresStateAlignment[\s\S]+!finalAuthorization\.mapReady \|\| !finalAuthorization\.kmlReady[\s\S]+coordinateConfirmationRuntime\.register\(Object\.freeze/u,
   "the registered result identity is aligned with the final server map and KML decision");
 assert.match(serverSource, /coordinateEvidenceConsistencyStatus[\s\S]+coordinateEvidenceConflict[\s\S]+mapReady: false,[\s\S]+kmlReady: false/u,

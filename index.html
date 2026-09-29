@@ -7561,14 +7561,12 @@ Au值 = 纯度 × 10 后取整数</div>
       const finalized = payload?.finalizedCoordinateResult || {};
       const provisionalMapEnabled = payload.mapReady === true
         && String(payload.mapStatus || "").toUpperCase() === "ENABLED"
-        && finalized.mapReady !== false
         && finalized.decisionState === "REVIEW_REQUIRED"
         && finalized.requiresReview === true
         && finalized.confirmationStatus === "pending"
         && ["passed", "review_required"].includes(finalized.qualityGateStatus)
         && ["legacy", "manual_input", "coordinate_engine_v2", "coordinate_engine_v3"].includes(finalized.sourceAuthority)
         && finalized.explicitAuthorityRejected !== true
-        && finalized.kmlAuthorityBlocked !== true
         && finalized.crs?.id === "EPSG:4326"
         && finalized.crs?.axisOrder === "longitude_latitude"
         && hasFiniteFinalizedGeometry(finalized.geometry);
@@ -7613,7 +7611,9 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function getConvertibleCoordinateGroups() {
-      return getKmlCoordinateGroups()
+      const finalizedGeometrySource = getFinalizedGeometryCoordinateSource();
+      const coordinateGroups = finalizedGeometrySource?.groups || getKmlCoordinateGroups();
+      return coordinateGroups
         .map(group => {
           const valid = group.length > 0 && group.every(pair => {
           const longitude = Number(pair?.longitude);
@@ -13342,11 +13342,12 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       return "";
     }
 
-    function getAuthorizedFinalizedGeometryKmlSource() {
-      if (!activeFinalizedCoordinateResult
+    function getFinalizedGeometryCoordinateSource(result = activeFinalizedCoordinateResult, { requireKmlReady = false } = {}) {
+      if (!result
         || finalizedCoordinateDirty
-        || activeFinalizedCoordinateResult.kmlReady !== true) return null;
-      const geometry = activeFinalizedCoordinateResult.geometry;
+        || !getFinalizedCoordinateIdentity(result)
+        || (requireKmlReady && result.kmlReady !== true)) return null;
+      const geometry = result.geometry;
       const toPair = position => ({ longitude: Number(position?.[0]), latitude: Number(position?.[1]) });
       const validPair = pair => Number.isFinite(pair.longitude) && Number.isFinite(pair.latitude)
         && pair.longitude >= -180 && pair.longitude <= 180
@@ -13360,6 +13361,10 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       if (type === "MultiPolygon") groups = (geometry.coordinates || []).map(polygon => (polygon?.[0] || []).map(toPair));
       if (!groups.length || groups.some(group => !group.length || group.some(pair => !validPair(pair)))) return null;
       return { type, groups };
+    }
+
+    function getAuthorizedFinalizedGeometryKmlSource() {
+      return getFinalizedGeometryCoordinateSource(activeFinalizedCoordinateResult, { requireKmlReady: true });
     }
 
     function countCoordinatePairsInGroups(groups) {
@@ -15657,11 +15662,19 @@ ${placemarks}
           ? structuredClone(sourceCoordinateRepresentation)
           : null;
         if (isTrustedProviderDmsReview) {
-          const detailRows = sourceDisplayText
+          const rawDetailRows = sourceDisplayText
             ? (Array.isArray(sourceCoordinateRepresentation.rows)
               ? sourceCoordinateRepresentation.rows.map(row => String(row || "").trim()).filter(Boolean)
               : sourceDisplayText.split(/\r?\n/).map(row => row.trim()).filter(Boolean))
             : acquisitionCandidateSourceEvidence.rows;
+          const pointLabels = Array.isArray(sourceCoordinateRepresentation.pointLabels)
+            ? sourceCoordinateRepresentation.pointLabels.map(label => String(label || "").trim())
+            : [];
+          const detailRows = rawDetailRows.map((row, index) => {
+            const label = pointLabels[index] || "";
+            if (!label || new RegExp(`^\\s*(?:POINT\\s*)?${label.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=\\s|[|:;,.#)\\-])`, "iu").test(row)) return row;
+            return `${label} | ${row}`;
+          });
           appendDebug(`发现坐标表，共 ${trustedProviderDmsCoordinateCount} 行`);
           await appendRecognizedCoordinateDetails(detailRows, trustedProviderDmsCoordinateCount);
           if (trustedProviderDmsEvidence.axisConflict === true) {

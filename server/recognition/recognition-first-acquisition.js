@@ -354,7 +354,8 @@ export function buildRecognitionAcquisitionEvidence({
   acquisition,
   providerResponseId = null,
   sourceContextText = "",
-  sourceBoundProjectedEvidence = null
+  sourceBoundProjectedEvidence = null,
+  sourceBoundDmsEvidence = null
 } = {}) {
   const exactRawText = String(rawText || "");
   const visibleCrsEvidence = extractVisibleCrsEvidence(`${exactRawText}\n${String(sourceContextText || "")}`);
@@ -370,7 +371,12 @@ export function buildRecognitionAcquisitionEvidence({
         sourceBoundProjectedEvidence.text
       ].join("\n")
     : "";
-  const candidateEvidenceText = sourceBoundProjectedCandidateText || exactRawText;
+  const sourceBoundDmsCandidateText = sourceBoundDmsEvidence?.status === "COMPLETE"
+    && sourceBoundDmsEvidence?.providerMode !== "PROJECTED_ONLY"
+    && String(sourceBoundDmsEvidence?.candidateDmsText || "").trim()
+    ? String(sourceBoundDmsEvidence.candidateDmsText)
+    : "";
+  const candidateEvidenceText = sourceBoundProjectedCandidateText || sourceBoundDmsCandidateText || exactRawText;
   const candidates = extractRecognitionCandidateEvidence({
     rawText: candidateEvidenceText,
     visibleCrsEvidence
@@ -382,9 +388,12 @@ export function buildRecognitionAcquisitionEvidence({
   const acquisitionStatus = candidates.candidateCoordinates.length > 0
     ? "COMPLETED"
     : (exactRawText.trim() ? "NO_COORDINATE_EVIDENCE" : "EMPTY");
-  const explicitGeographicDatum = visibleCrsEvidence.some(evidence => (
-    /\bWGS\s*[- ]?(?:19)?84\b|\bEPSG\s*:?\s*4326\b/iu.test(String(evidence?.text || ""))
-  ));
+  const explicitGeographicDatum = visibleCrsEvidence.some(evidence => {
+    const evidenceText = String(evidence?.text || "");
+    if (/\bEPSG\s*:?\s*4326\b/iu.test(evidenceText)) return true;
+    return /\bWGS\s*[- ]?(?:19)?84\b/iu.test(evidenceText)
+      && !/\b(?:UTM|BFTM|PROJECTED|ZONE|ZONA|EASTING|NORTHING)\b/iu.test(evidenceText);
+  });
   const geographicCrsEvidence = Object.freeze({
     ...(candidates.geographicCrsEvidence || {}),
     status: explicitGeographicDatum
@@ -418,7 +427,9 @@ export function buildRecognitionAcquisitionEvidence({
       providerOutputLength: exactRawText.length,
       candidateEvidenceSource: sourceBoundProjectedCandidateText
         ? "SOURCE_BOUND_PROJECTED_HEADER"
-        : "PROVIDER_OUTPUT"
+        : sourceBoundDmsCandidateText
+          ? "SOURCE_BOUND_MULTI_REPRESENTATION_DMS"
+          : "PROVIDER_OUTPUT"
     }),
     imageEvidence: Object.freeze({
       sourceWidth: Number(acquisition?.width || 0),

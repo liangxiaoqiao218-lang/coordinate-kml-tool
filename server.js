@@ -136,6 +136,7 @@ import {
   bindProjectedEvidenceToSourceContext,
   createLocalOcrClassificationImage
 } from "./server/recognition/projected-source-evidence.js";
+import { bindProviderRepresentationsToSource } from "./server/recognition/multi-representation-source-evidence.js";
 import {
   buildRecognitionAcquisitionLogSummary,
   buildRecognitionFirstPromptPrefix,
@@ -7564,7 +7565,7 @@ function buildTrustedProviderDmsEngine(evidence, { forceRequiresReview = false, 
     .map((line, index) => {
       const [longitude, latitude] = line.split(",").map(Number);
       return {
-        label: String(index + 1),
+        label: String(evidence?.sourceLabels?.[index] || index + 1),
         raw: line,
         lat: latitude,
         lon: longitude,
@@ -17624,12 +17625,32 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       axisEvidenceText: oneShotLocalOcrAxisEvidenceText || oneShotLocalOcrSourceText
     });
     const providerGroupedDmsDiagnostic = normalizeProviderDmsReviewResult(rawText);
-    const providerProjectedDiagnostic = bindProjectedEvidenceToSourceContext({
+    let providerProjectedDiagnostic = bindProjectedEvidenceToSourceContext({
       providerEvidence: extractProviderProjectedCoordinateEvidence({ sourceText: rawText }),
       sourceContextText: oneShotLocalOcrSourceContextText,
       sourceContextProvenance: oneShotLocalOcrSourceContextProvenance,
       imageIdentity: coordinateImageIdentity
     });
+    const multiRepresentationBinding = bindProviderRepresentationsToSource({
+      providerDmsReviewEvidence: providerGroupedDmsDiagnostic,
+      providerProjectedEvidence: providerProjectedDiagnostic,
+      sourceContextText: oneShotLocalOcrSourceContextText,
+      sourceContextProvenance: oneShotLocalOcrSourceContextProvenance,
+      imageIdentity: coordinateImageIdentity
+    });
+    if (multiRepresentationBinding.status === "CONFLICT"
+      && multiRepresentationBinding.providerMode !== "DMS_ONLY"
+      && providerProjectedDiagnostic?.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE) {
+      providerProjectedDiagnostic = Object.freeze({
+        ...providerProjectedDiagnostic,
+        status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.INCOMPLETE,
+        rows: Object.freeze([]),
+        rowCount: 0,
+        text: "",
+        reason: multiRepresentationBinding.reason,
+        multiRepresentationBinding
+      });
+    }
     console.log("One-shot acquisition conformance:", {
       family: oneShotAcquisitionConformance.family,
       status: oneShotAcquisitionConformance.status,
@@ -17691,7 +17712,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       acquisition: recognitionImageAcquisition,
       providerResponseId: providerLayoutResponseId,
       sourceContextText: oneShotLocalOcrSourceContextText,
-      sourceBoundProjectedEvidence: providerProjectedDiagnostic
+      sourceBoundProjectedEvidence: providerProjectedDiagnostic,
+      sourceBoundDmsEvidence: multiRepresentationBinding
     });
     const unifiedAcquisitionDecision = evaluateUnifiedRecognitionAcquisition({
       evidence: unifiedAcquisitionEvidence,
@@ -18179,14 +18201,31 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         });
       }
       const groupedProviderDmsEvidence = providerGroupedDmsDiagnostic;
-      const trustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText, {
+      const extractedTrustedProviderDmsEvidence = extractProviderDmsReviewEvidence(rawText, {
         axisEvidenceText: oneShotLocalOcrAxisEvidenceText || oneShotLocalOcrSourceText
       });
+      const trustedProviderDmsEvidence = multiRepresentationBinding.status === "COMPLETE"
+        && multiRepresentationBinding.providerMode !== "PROJECTED_ONLY"
+        ? Object.freeze({
+            ...extractedTrustedProviderDmsEvidence,
+            sourceLabels: multiRepresentationBinding.labels,
+            multiRepresentationBinding
+          })
+        : ["CONFLICT", "INCOMPLETE"].includes(multiRepresentationBinding.status)
+          && ["DMS_ONLY", "BOTH"].includes(multiRepresentationBinding.providerMode)
+          ? Object.freeze({
+              ...extractedTrustedProviderDmsEvidence,
+              status: "REVIEW_REQUIRED",
+              coordinates: "",
+              multiRepresentationBinding
+            })
+        : extractedTrustedProviderDmsEvidence;
       const completeSingleBoundaryDmsEvidence = isCompleteSingleBoundaryProviderDmsEvidence(
         trustedProviderDmsEvidence,
         groupedProviderDmsEvidence
       );
       const groupedProviderReviewApplies = !completeSingleBoundaryDmsEvidence
+        && multiRepresentationBinding.status !== "COMPLETE"
         && groupedProviderDmsEvidence.candidatePointCount >= 3
         && (groupedProviderDmsEvidence.candidateGroupCount > 1
           || groupedProviderDmsEvidence.unboundRowCount > 0

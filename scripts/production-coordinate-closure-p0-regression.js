@@ -14,7 +14,18 @@ for (const match of source.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}`);
   assert.notEqual(start, -1, `missing ${name}`);
-  const brace = source.indexOf("{", start);
+  const parametersStart = source.indexOf("(", start);
+  let parameterDepth = 0;
+  let brace = -1;
+  for (let index = parametersStart; index < source.length; index += 1) {
+    if (source[index] === "(") parameterDepth += 1;
+    if (source[index] === ")") parameterDepth -= 1;
+    if (parameterDepth === 0) {
+      brace = source.indexOf("{", index + 1);
+      break;
+    }
+  }
+  assert.notEqual(brace, -1, `missing ${name} body`);
   let depth = 0;
   for (let index = brace; index < source.length; index += 1) {
     if (source[index] === "{") depth += 1;
@@ -40,12 +51,15 @@ const context = vm.createContext({
     kmlReady: true
   },
   activeFinalizedCoordinateResult: { mapReady: false, kmlReady: false },
+  finalizedCoordinateDirty: false,
   getKmlCoordinateGroups: () => structuredClone(sampleGroups),
   getFinalizedCoordinateIdentity: () => null,
+  normalizeKmlPair: pair => ({ ...pair }),
   countCoordinatePairsInGroups: groups => groups.reduce((total, group) => total + group.length, 0),
   Date
 });
 vm.runInContext([
+  extractFunction("getFinalizedGeometryCoordinateSource"),
   extractFunction("getConvertibleCoordinateGroups"),
   extractFunction("hasConvertibleCoordinateResult"),
   extractFunction("coordinateResultNeedsReview"),

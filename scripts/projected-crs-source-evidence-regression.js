@@ -10,6 +10,8 @@ import {
   createLocalOcrClassificationImage,
   extractProjectedSourceContext
 } from "../server/recognition/projected-source-evidence.js";
+import { bindProviderRepresentationsToSource } from "../server/recognition/multi-representation-source-evidence.js";
+import { normalizeProviderDmsReviewResult } from "../server/recognition/recognition-review-result.js";
 import {
   buildRecognitionAcquisitionEvidence,
   evaluateProjectedCoordinateAuthorizationEvidence,
@@ -87,6 +89,25 @@ assert.equal(boundEvidence.crsEvidence.id, "EPSG:32750");
 assert.equal(boundEvidence.axisOrder, "easting_northing");
 assert.equal(boundEvidence.diagnostics.headerPresent, true);
 assert.equal(boundEvidence.rowCount, 6);
+
+const providerDmsOnlyText = [
+  `2°31'2,794" S | 119°30'31,553" E`,
+  `2°31'2,783" S | 119°30'35,279" E`,
+  `2°31'14,694" S | 119°30'35,302" E`,
+  `2°31'14,708" S | 119°30'28,050" E`,
+  `2°31'12,437" S | 119°30'28,046" E`,
+  `2°31'12,430" S | 119°30'31,571" E`
+].join("\n");
+const fixtureMultiRepresentationBinding = bindProviderRepresentationsToSource({
+  providerDmsReviewEvidence: normalizeProviderDmsReviewResult(providerDmsOnlyText),
+  providerProjectedEvidence: extractProviderProjectedCoordinateEvidence({ sourceText: providerDmsOnlyText }),
+  sourceContextText: localContextText,
+  sourceContextProvenance: classificationImage.provenance,
+  imageIdentity
+});
+assert.equal(fixtureMultiRepresentationBinding.status, "COMPLETE");
+assert.equal(fixtureMultiRepresentationBinding.providerMode, "DMS_ONLY");
+assert.deepEqual(fixtureMultiRepresentationBinding.labels, ["1", "2", "3", "4", "5", "6"]);
 
 const acquisition = {
   width: imageIdentity.width,
