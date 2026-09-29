@@ -1,5 +1,6 @@
 schema_version: "1.0"
 purpose: "GeoKit Lab v1.0.3 OCR P0 Golden Record formalization"
+unified_acceptance_manifest: "regression-samples/coordinate-image-acceptance-manifest.v1.json"
 record_count: 6
 confirmed_count: 5
 baseline_only_count: 1

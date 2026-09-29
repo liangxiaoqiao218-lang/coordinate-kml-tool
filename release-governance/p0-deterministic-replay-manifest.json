@@ -1,5 +1,6 @@
 {
   "schemaVersion": "production_recognition_p0_replay_manifest_v1",
+  "coordinateImageAcceptanceManifest": "regression-samples/coordinate-image-acceptance-manifest.v1.json",
   "networkFallbackAllowed": false,
   "evidenceScope": "APPROVED_DETERMINISTIC_REPLAY_EVIDENCE",
   "transformFailureMayUseDmsSubstitute": false,

@@ -87,7 +87,7 @@ test("Provider review removes protocol title but keeps all source rows", () => {
   assert.equal(review.candidatePointCount, 4);
   assert.equal(review.candidateGroupCount, 1);
   assert.deepEqual(review.candidateGroups[0].titlePath, []);
-  assert.equal(review.status, ACQUISITION_REVIEW_STATUS.REVIEW_REQUIRED);
+  assert.equal(review.status, ACQUISITION_REVIEW_STATUS.AUTHORIZATION_CANDIDATE);
 });
 
 test("bracketed generic protocol title cannot become a user-visible group", () => {

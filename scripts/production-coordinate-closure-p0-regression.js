@@ -31,7 +31,14 @@ const sampleGroups = [[
   { longitude: -9.02090277777778, latitude: 11.719805555555556 }
 ]];
 const context = vm.createContext({
-  activeRecognitionAcquisitionResult: { requiresReview: true, authorizationStatus: "REVIEW_REQUIRED" },
+  activeRecognitionAcquisitionResult: {
+    requiresReview: true,
+    authorizationStatus: "REVIEW_REQUIRED",
+    resultStatus: "needs_review",
+    mapStatus: "ENABLED",
+    kmlStatus: "ENABLED",
+    kmlReady: true
+  },
   activeFinalizedCoordinateResult: { mapReady: false, kmlReady: false },
   getKmlCoordinateGroups: () => structuredClone(sampleGroups),
   getFinalizedCoordinateIdentity: () => null,
@@ -42,6 +49,7 @@ vm.runInContext([
   extractFunction("getConvertibleCoordinateGroups"),
   extractFunction("hasConvertibleCoordinateResult"),
   extractFunction("coordinateResultNeedsReview"),
+  extractFunction("recognitionActionEnabled"),
   extractFunction("shouldUseProvisionalCoordinateResult"),
   extractFunction("coordinateRecognitionActionBlocked"),
   extractFunction("buildProvisionalCoordinateGeometry"),

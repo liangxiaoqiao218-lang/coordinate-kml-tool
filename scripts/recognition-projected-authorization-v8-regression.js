@@ -424,12 +424,12 @@ browserContext.activeRecognitionAcquisitionResult = browserContext.createRecogni
   reviewReasons: ["PROJECTED_CRS_UNRESOLVED"]
 });
 browserContext.refreshMapPreviewAction();
-assert.equal(browserContext.mapPreviewAction.disabled, false);
-assert.equal(browserContext.coordinateKmlVisualState(), "enabled");
+assert.equal(browserContext.mapPreviewAction.disabled, true);
+assert.equal(browserContext.coordinateKmlVisualState(), "blocked");
 await browserContext.openAgenticSpatialResult();
 await browserContext.downloadAgenticCoordinateKml();
-assert.equal(finalizeCalls, 4);
-assert.equal(linkClicks, 2);
+assert.equal(finalizeCalls, 2);
+assert.equal(linkClicks, 1);
 
 const portProbe = net.createServer();
 portProbe.listen(0, "127.0.0.1");
