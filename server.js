@@ -16035,13 +16035,14 @@ async function recognizeCoordinatesHandler(req, res) {
               providerCompletionState: body?.providerCompletionState || recognitionBudget?.providerCompletionState,
               providerCallCount: body?.providerCallCount ?? recognitionBudget?.providerAttemptCount ?? 0
             },
-            recognitionRequestId: recognitionBudget?.requestId || null
+            recognitionRequestId: recognitionBudget?.requestId || null,
+            authorityReason: settlement.authorityReason
           });
           logUnifiedRecognitionAcquisitionFinalState({
             body: unchargedBody,
             usageConsumed: false,
             recoveryRequired: false,
-            finalState: "FAILED_NO_COORDINATE_EVIDENCE"
+            finalState: unchargedBody.failureState
           });
           return sendRecognitionJson(unchargedBody);
         }
