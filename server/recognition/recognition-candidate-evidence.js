@@ -352,9 +352,11 @@ function parseNumericCoordinateRow(line, lineNumber, { header = null, crsEvidenc
 }
 
 function parseCoordinateCandidates(line, lineNumber, options = {}) {
-  return parseDmsCoordinateRow(line, lineNumber, options)
-    || parseMgrsCoordinateRow(line, lineNumber)
-    || parseNumericCoordinateRow(line, lineNumber, options);
+  const content = String(line).trim().replace(/^\|\s*/u, "").replace(/\s*\|$/u, "");
+  const candidates = parseDmsCoordinateRow(content, lineNumber, options)
+    || parseMgrsCoordinateRow(content, lineNumber)
+    || parseNumericCoordinateRow(content, lineNumber, options);
+  return candidates?.map(candidate => Object.freeze({ ...candidate, sourceText: String(line).trim() })) || null;
 }
 
 function isPlainStructuralHeading(line) {
@@ -422,6 +424,13 @@ export function extractRecognitionCandidateEvidence({ rawText = "", visibleCrsEv
     const lineNumber = index + 1;
     const text = String(sourceLine || "").trim();
     if (!text) return;
+    // Markdown alignment cells are table structure, never coordinate evidence.
+    // Preserve only an established header with exactly the same column count.
+    const tableCells = text.replace(/^\|/u, "").replace(/\|$/u, "").split("|").map(cell => cell.trim());
+    if (activeHeader && tableCells.length > 1 && tableCells.every(cell => /^:?-{3,}:?$/u.test(cell))) {
+      const headerCells = activeHeader.text.replace(/^\|/u, "").replace(/\|$/u, "").split("|");
+      if (headerCells.length === tableCells.length) return;
+    }
     const markedHeading = text.match(HEADING_MARKER_PATTERN)?.[1]?.trim() || "";
     if (markedHeading || isPlainStructuralHeading(text)) {
       if (currentGroup?.rows.length) {
