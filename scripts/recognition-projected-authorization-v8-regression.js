@@ -309,6 +309,7 @@ const browserGuardSource = [
   sliceBetween(indexSource, "function hasCompleteUnifiedRecognitionEvidence", "function coordinateKmlVisualState"),
   sliceBetween(indexSource, "function coordinateKmlVisualState", "function syncKmlActionVisualState"),
   sliceBetween(indexSource, "function syncKmlActionVisualState", "function setKmlGenerationInProgress"),
+  sliceBetween(indexSource, "function getFinalizedGeometryCoordinateSource", "function getAuthorizedFinalizedGeometryKmlSource"),
   sliceBetween(indexSource, "function createAgenticSpatialPayload", "async function openAgenticSpatialResult"),
   sliceBetween(indexSource, "async function openAgenticSpatialResult", "async function openSpatialResult"),
   sliceBetween(indexSource, "async function downloadAgenticCoordinateKml", "async function downloadKml")
@@ -327,6 +328,7 @@ const finalizedOutcome = {
 const browserContext = vm.createContext({
   activeRecognitionAcquisitionResult: null,
   activeFinalizedCoordinateResult: null,
+  finalizedCoordinateDirty: false,
   activeMapPreviewResponse: null,
   activeMapPreviewCacheKey: "",
   agenticCoordinateController: {

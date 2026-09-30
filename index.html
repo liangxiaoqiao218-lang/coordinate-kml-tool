@@ -7102,10 +7102,17 @@ Au值 = 纯度 × 10 后取整数</div>
         && blockingReasons.length === 0;
     }
 
+    function recognitionReviewActionsBlocked(acquisitionResult = activeRecognitionAcquisitionResult) {
+      if (!acquisitionResult || typeof acquisitionResult !== "object") return false;
+      return String(acquisitionResult.mapStatus || "").toUpperCase() !== "ENABLED"
+        || String(acquisitionResult.kmlStatus || "").toUpperCase() !== "ENABLED"
+        || acquisitionResult.kmlReady !== true;
+    }
+
     function renderHandwrittenDmsReviewState() {
       if (!handwrittenDmsReviewPanel) return;
 
-      if (!handwrittenDmsReviewState.required) {
+      if (!handwrittenDmsReviewState.required || recognitionReviewActionsBlocked()) {
         handwrittenDmsReviewPanel.style.display = "none";
         handwrittenDmsReviewPanel.replaceChildren();
         handwrittenDmsReviewPanel.className = "handwritten-dms-review-panel";
@@ -9321,9 +9328,16 @@ Au值 = 纯度 × 10 后取整数</div>
               : data?.providerProjectedReviewEvidence || data?.projectedCoordinateReviewEvidence ? "投影 X/Y" : "坐标行";
       const sourceCrs = data?.coordinateEngineV2?.source_crs;
       const multiSourceCrs = multi?.sourceCrs;
+      const projectedEvidence = data?.providerProjectedReviewEvidence || data?.projectedCoordinateReviewEvidence || {};
+      const projectedSourceCrs = projectedEvidence?.crsEvidence;
       const sourceCrsId = String(multiSourceCrs?.id || sourceCrs?.id || sourceCrs
-        || sourceRepresentation?.sourceCrsEvidence?.id || "").trim();
+        || projectedSourceCrs?.id || sourceRepresentation?.sourceCrsEvidence?.id || "").trim();
       const finalCrsId = String(data?.finalizedCoordinateResult?.crs?.id || "").trim();
+      const sourceZone = Number(multiSourceCrs?.zone || sourceCrs?.zone || projectedSourceCrs?.zone || 0) || null;
+      const sourceHemisphere = String(multiSourceCrs?.hemisphere || sourceCrs?.hemisphere
+        || projectedSourceCrs?.hemisphere || "").trim().toUpperCase();
+      const sourceAxisOrder = String(multi?.sourceAxisOrder || sourceCrs?.axisOrder
+        || projectedEvidence?.axisOrder || "").trim();
       return {
         acceptedRows,
         rejectedRows,
@@ -9332,6 +9346,9 @@ Au值 = 纯度 × 10 后取整数</div>
         representation,
         sourceCrsId,
         finalCrsId,
+        sourceZone,
+        sourceHemisphere,
+        sourceAxisOrder,
         missingLabels: Array.isArray(multi.missingLabels)
           ? multi.missingLabels.map(label => String(label || "").trim()).filter(Boolean) : [],
         evidenceStatus: String(multi.status || dmsEvidence.coverageStatus || reviewEvidence.status || "").toUpperCase()
@@ -9352,10 +9369,21 @@ Au值 = 纯度 × 10 后取整数</div>
         appendDebug("完整性：同图点号、行序和坐标证据已绑定");
       }
       appendDebug(`坐标表示：${detail.representation || "坐标行"}`);
+      const projectedRepresentation = /投影\s*X\/Y/u.test(String(detail.representation || ""));
+      if (projectedRepresentation && !detail.sourceCrsId) {
+        appendDebug("原始 CRS：未确认");
+      } else if (projectedRepresentation && detail.sourceCrsId) {
+        appendDebug(`原始 CRS：${detail.sourceCrsId}`);
+      }
+      if (projectedRepresentation && detail.sourceZone) appendDebug(`投影区域：${detail.sourceZone}`);
+      if (projectedRepresentation && detail.sourceHemisphere) appendDebug(`投影半球：${detail.sourceHemisphere}`);
+      if (projectedRepresentation && detail.sourceAxisOrder) appendDebug(`投影轴序：${detail.sourceAxisOrder}`);
       if (detail.sourceCrsId && detail.finalCrsId && detail.sourceCrsId !== detail.finalCrsId) {
         appendDebug(`坐标参考：${detail.sourceCrsId} → ${detail.finalCrsId}`);
-      } else if (detail.sourceCrsId || detail.finalCrsId) {
+      } else if (!projectedRepresentation && (detail.sourceCrsId || detail.finalCrsId)) {
         appendDebug(`坐标参考：${detail.sourceCrsId || detail.finalCrsId}`);
+      } else if (projectedRepresentation && detail.sourceCrsId && detail.finalCrsId === "EPSG:4326") {
+        appendDebug("转换结果：EPSG:4326");
       }
       for (const rejected of detail.rejectedRows || []) {
         const rowLabel = rejected.lineNumber > 0 ? `第 ${rejected.lineNumber} 行` : "候选行";
@@ -15926,7 +15954,11 @@ ${placemarks}
             : reviewMapReady
               ? "坐标已识别。您可以查看地图核对位置和形状，未确认 KML 暂不可用。"
               : "坐标已识别，但地图和 KML 暂未开放，请根据提示继续核对。";
-          showMessage(reviewMessage, !reviewMapReady, COORDINATE_RECOGNITION_MESSAGE_MS);
+          if (reviewMapReady) {
+            showMessage(reviewMessage, false, COORDINATE_RECOGNITION_MESSAGE_MS);
+          } else {
+            showRecognitionProgress(recognitionAuthorizationReasonMessage("map"), "error", 0);
+          }
         } else if (isCadastralGrid) {
           showMessage(`已识别矿权网格表 ${cadastralGridRows.length} 行，已提取 num / XV / YV。已识别为马达加斯加矿权格网，生成 KML 时会尝试转换为 WGS84 经纬度，转换结果需结合原图人工核对。`, false, COORDINATE_RECOGNITION_MESSAGE_MS);
         } else if (isMgrs) {

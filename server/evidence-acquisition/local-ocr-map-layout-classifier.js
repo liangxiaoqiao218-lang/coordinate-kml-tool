@@ -1035,6 +1035,20 @@ export function extractProviderProjectedCoordinateEvidence({
     ? labelledHeaderIndex
     : delimitedHeaderIndex >= 0 ? delimitedHeaderIndex : axisHeaderIndex;
   const delimitedHeaderLayout = headerIndex >= 0 ? parseDelimitedProjectedHeaderLayout(lines[headerIndex]) : null;
+  const headerText = headerIndex >= 0 ? String(lines[headerIndex] || "") : "";
+  const normalizedHeaderText = headerText
+    .replace(/[|;,:/()[\]{}._-]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const headerEastingIndex = normalizedHeaderText.search(/\b(?:EASTING|X)\b/iu);
+  const headerNorthingIndex = normalizedHeaderText.search(/\b(?:NORTHING|Y)\b/iu);
+  const axisOrder = delimitedHeaderLayout
+    ? (delimitedHeaderLayout.xIndex < delimitedHeaderLayout.yIndex
+      ? "easting_northing"
+      : "northing_easting")
+    : headerEastingIndex >= 0 && headerNorthingIndex >= 0 && headerEastingIndex !== headerNorthingIndex
+      ? (headerEastingIndex < headerNorthingIndex ? "easting_northing" : "northing_easting")
+      : null;
   // Generic acquisition sometimes preserves all labelled rows and visible CRS
   // text but omits a separate X/Y header. The server-issued unclassified title
   // is then the required contract boundary; ordinary headerless number lists
@@ -1170,6 +1184,7 @@ export function extractProviderProjectedCoordinateEvidence({
     status: LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE,
     reason: LOCAL_OCR_STRUCTURE_NORMALIZATION_REASON.TRUSTED_PROJECTED_ROWS_ONLY,
     crsEvidence,
+    axisOrder,
     diagnostics: Object.freeze({
       contractTitlePresent: unclassifiedTitleIndex >= 0,
       headerPresent: headerIndex >= 0,

@@ -15002,7 +15002,8 @@ function buildExplicitProjectedBoundaryAutoReleaseEngine({ evidence = null } = {
   const sourceCrsSelection = getExplicitProjectedCrsSelection(evidence);
   const axisOrder = ["easting_northing", "northing_easting"].includes(String(evidence?.axisOrder || ""))
     ? String(evidence.axisOrder)
-    : "easting_northing";
+    : null;
+  if (!axisOrder) return null;
   const confirmationRows = rows.map(row => Object.freeze({
     label: String(row?.label || "").trim().toUpperCase(),
     x: finiteNumberOrNull(row?.x),

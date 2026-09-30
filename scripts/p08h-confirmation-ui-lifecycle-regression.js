@@ -60,9 +60,9 @@ assert.doesNotMatch(
 const renderSource = extractFunctionSource(html, "renderHandwrittenDmsReviewState");
 assert.match(renderSource, /ordinaryReviewOnly/, "ordinary review is distinguished from authority-changing confirmation");
 assert.match(renderSource, /isOrdinaryReviewOnlyFinalizedResult\(\)/, "ordinary review is derived from serialized response fields");
-assert.match(renderSource, /!isConfirmed && !ordinaryReviewOnly/, "ordinary review omits the redundant confirmation control");
+assert.match(renderSource, /我已核对，继续使用未确认结果/, "enabled ordinary review exposes the non-authoritative acknowledgement action");
 assert.match(renderSource, /我已对照原图核对当前坐标/, "authority-changing confirmation control remains available");
-assert.match(renderSource, /建议对照原图核对坐标，部分字符可能存在识别误差。/, "ordinary review warning remains visible");
+assert.match(renderSource, /请对照原图核对坐标；地图和 KML 为未确认输出。/, "current lightweight ordinary review warning remains visible");
 assert.match(renderSource, /当前坐标需要对照原图人工核对/, "pending copy is generic authority-state copy");
 assert.match(renderSource, /当前坐标已修改，请对照原图重新核对/, "edit lifecycle copy requires reconfirmation");
 assert.match(renderSource, /已确认当前坐标；再次修改后需要重新核对/, "accepted lifecycle copy resolves the panel");
@@ -245,11 +245,14 @@ const renderOrdinaryReview = Function("context", `
   const handwrittenDmsReviewState = context.state;
   const HANDWRITTEN_DMS_REVIEW_STATUS = context.statuses;
   const activeFinalizedCoordinateResult = context.result;
+  const activeRecognitionAcquisitionResult = context.acquisitionResult;
   const activeCoordinateFieldConflictCount = context.conflicts;
   const confirmHandwrittenDmsReview = () => {};
+  const acknowledgeOrdinaryCoordinateReview = () => {};
   ${extractFunctionSource(html, "getFinalizedCoordinateIdentity")}
   ${extractFunctionSource(html, "hasFiniteFinalizedGeometry")}
   ${extractFunctionSource(html, "isOrdinaryReviewOnlyFinalizedResult")}
+  ${extractFunctionSource(html, "recognitionReviewActionsBlocked")}
   ${renderSource}
   renderHandwrittenDmsReviewState();
 `);
@@ -259,15 +262,18 @@ const context = {
   state: { required: true, status: "pending", revision: 1, confirmedRevision: null },
   statuses: { CONFIRMED: "confirmed", EDITED_PENDING: "edited_pending" },
   result: serializedReviewOnly,
+  acquisitionResult: { mapStatus: "ENABLED", kmlStatus: "ENABLED", kmlReady: true },
   conflicts: 0
 };
 renderOrdinaryReview(context);
-assert.equal(panel.children.length, 1, "ordinary review renders warning without a confirmation button");
-assert.match(panel.children[0].textContent, /建议对照原图核对坐标/);
+assert.equal(panel.children.length, 2, "enabled review result renders one lightweight acknowledgement action");
+assert.match(panel.children[0].textContent, /请对照原图核对坐标；地图和 KML 为未确认输出/);
+assert.equal(panel.children[1].textContent, "我已核对，继续使用未确认结果");
 context.result = { ...serializedReviewOnly, kmlReady: false, blockingReasons: [{ code: "CRS_NOT_FINALIZED" }] };
+context.acquisitionResult = { mapStatus: "CLOSED", kmlStatus: "CLOSED", kmlReady: false };
 renderOrdinaryReview(context);
-assert.equal(panel.children.length, 2, "authority-changing blocked state retains confirmation UI");
-assert.equal(panel.children[1].textContent, "我已对照原图核对当前坐标");
+assert.equal(panel.style.display, "none", "blocked recognition hides all review acknowledgement actions");
+assert.equal(panel.children.length, 0, "blocked recovery UI and review acknowledgement are mutually exclusive");
 
 const stateAfterTextChange = Function(`
   const HANDWRITTEN_DMS_REVIEW_STATUS = { CONFIRMED: "confirmed", EDITED_PENDING: "edited_pending" };
