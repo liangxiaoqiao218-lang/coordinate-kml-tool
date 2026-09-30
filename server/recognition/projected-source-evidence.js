@@ -121,15 +121,22 @@ export function bindProjectedEvidenceToSourceContext({
   const providerCrs = String(providerEvidence?.crsEvidence?.status || "").toUpperCase() === "EXPLICIT"
     ? providerEvidence.crsEvidence
     : null;
+  const providerAxisOrder = providerEvidence?.diagnostics?.headerPresent === true
+    && ["easting_northing", "northing_easting"].includes(String(providerEvidence?.axisOrder || ""))
+    ? String(providerEvidence.axisOrder)
+    : null;
   if (!sourceContextText.trim() && providerCrs && providerEvidence.diagnostics?.headerPresent === true) {
     return providerEvidence;
   }
   const crsConflict = context.crsConflict || (providerCrs && context.crsEvidence
     ? !sameCrs(providerCrs, context.crsEvidence)
     : false);
-  const axisConflict = context.axisConflict;
+  const axisConflict = context.axisConflict || Boolean(
+    providerAxisOrder && context.axisOrder && providerAxisOrder !== context.axisOrder
+  );
   const selectedCrs = crsConflict ? null : (providerCrs || context.crsEvidence);
-  const bound = sourceBound && !crsConflict && !axisConflict && Boolean(selectedCrs && context.axisOrder);
+  const selectedAxisOrder = axisConflict ? null : (providerAxisOrder || context.axisOrder);
+  const bound = sourceBound && !crsConflict && !axisConflict && Boolean(selectedCrs && selectedAxisOrder);
   return Object.freeze({
     ...providerEvidence,
     crsEvidence: bound ? selectedCrs : Object.freeze({
@@ -138,12 +145,14 @@ export function bindProjectedEvidenceToSourceContext({
       zone: null,
       hemisphere: ""
     }),
-    axisOrder: bound ? context.axisOrder : null,
+    axisOrder: bound ? selectedAxisOrder : null,
     sourceContextBinding: Object.freeze({
       schema_version: PROJECTED_SOURCE_CONTEXT_SCHEMA,
       bound,
       image_sha256: sourceBound ? imageSha256 : null,
       mode: String(sourceContextProvenance?.mode || ""),
+      crsSource: bound ? (providerCrs ? "provider" : "local_ocr") : null,
+      axisSource: bound ? (providerAxisOrder ? "provider_header" : "local_ocr") : null,
       crsConflict,
       axisConflict
     }),
