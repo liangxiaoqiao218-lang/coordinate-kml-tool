@@ -115,13 +115,46 @@ function sanitizeQuota(quota) {
   return Object.keys(safe).length > 0 ? Object.freeze(safe) : null;
 }
 
-export function buildUnchargedCoordinateFailureResponse({ body = null, recognitionRequestId = null } = {}) {
+export function buildUnchargedCoordinateFailureResponse({
+  body = null,
+  recognitionRequestId = null,
+  authorityReason = null
+} = {}) {
   const explicitFailure = body?.success === false;
   const originalReason = String(body?.reason || "");
   const originalCode = String(body?.code || "");
+  const candidates = Array.isArray(body?.candidateCoordinates) ? body.candidateCoordinates : [];
+  const acquisitionCandidateCount = Number(body?.recognitionAcquisition?.diagnostics?.candidatePointCount);
+  const candidatePointCount = Math.max(
+    candidates.length,
+    Number.isSafeInteger(acquisitionCandidateCount) && acquisitionCandidateCount > 0
+      ? acquisitionCandidateCount
+      : 0
+  );
+  const finalized = body?.finalizedCoordinateResult;
+  const finalizedGeometryValid = finalized
+    && finalized.schemaVersion === FINALIZED_COORDINATE_SCHEMA_VERSION
+    && validateFinalizedGeometry(finalized.geometry).ok === true
+    && finalized.crs?.id === FINALIZED_COORDINATE_CRS.id
+    && finalized.crs?.axisOrder === FINALIZED_COORDINATE_CRS.axisOrder
+    && constantTimeEqual(createGeometryHash(finalized.geometry, finalized.schemaVersion), finalized.geometryHash);
+  const safeAuthorityReason = /^[A-Z0-9_]{1,120}$/.test(String(authorityReason || ""))
+    ? String(authorityReason)
+    : null;
+  const failureState = explicitFailure
+    ? "EXPLICIT_PRODUCT_FAILURE"
+    : finalizedGeometryValid
+      ? "USAGE_AUTHORITY_NOT_ESTABLISHED"
+      : candidatePointCount > 0
+        ? "CANDIDATES_RETAINED_OUTPUT_BLOCKED"
+        : "FAILED_NO_COORDINATE_EVIDENCE";
   const reason = explicitFailure && /^[a-z0-9_]{1,80}$/.test(originalReason)
     ? originalReason
-    : "coordinate_authority_not_established";
+    : failureState === "CANDIDATES_RETAINED_OUTPUT_BLOCKED"
+      ? "coordinate_candidates_retained_output_blocked"
+      : failureState === "FAILED_NO_COORDINATE_EVIDENCE"
+        ? "coordinate_no_candidate_evidence"
+        : "coordinate_usage_authority_not_established";
   const code = explicitFailure && /^[A-Z0-9_]{1,100}$/.test(originalCode)
     ? originalCode
     : COORDINATE_USAGE_ERROR_CODE.AUTHORITY_NOT_ESTABLISHED;
@@ -147,6 +180,10 @@ export function buildUnchargedCoordinateFailureResponse({ body = null, recogniti
     recoveryRequired: false,
     recoveryTerminal: true,
     retryAllowed: true,
+    failureState,
+    authorityReason: safeAuthorityReason,
+    candidateEvidenceStatus: candidatePointCount > 0 ? "PRESENT" : "ABSENT",
+    candidatePointCount,
     rawText: "",
     coordinates: ""
   });
@@ -593,7 +630,12 @@ export function buildRecognitionAcquisitionReviewUsageAuthority({ recognitionReq
 export function attachRecognitionAcquisitionReviewUsageAuthority({ recognitionRequestId, body } = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;
   const requestId = String(recognitionRequestId || body.requestId || "").trim().toLowerCase();
-  const candidate = { ...body, requestId };
+  // Never retain an authority that was hashed before final output capability,
+  // identity, revision or geometry changed. Candidate-only review results can
+  // receive a fresh acquisition authority below; inspectable geometry falls
+  // through to the finalized-result authority evaluated by the same usage gate.
+  const { recognitionAcquisitionReviewAuthority: _staleAuthority, ...bodyWithoutAuthority } = body;
+  const candidate = { ...bodyWithoutAuthority, requestId };
   try {
     return Object.freeze({
       ...candidate,
@@ -604,7 +646,7 @@ export function attachRecognitionAcquisitionReviewUsageAuthority({ recognitionRe
     });
   } catch (error) {
     if (error?.code !== COORDINATE_USAGE_ERROR_CODE.AUTHORITY_NOT_ESTABLISHED) throw error;
-    return body;
+    return candidate;
   }
 }
 

@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { validateFinalizedGeometry } from '../server/coordinate-finalizer/geometry-finalizer.js';
 import { createGeometryHash } from '../server/coordinate-finalizer/geometry-hash.js';
+import { evaluateCoordinateUsageAuthority } from '../server/coordinate-usage-atomicity.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const captureOnly = process.argv.includes('--capture-only');
@@ -189,6 +190,14 @@ try {
       assert.equal(f.decisionState,'REVIEW_REQUIRED'); assert.equal(f.requiresReview,true);
       assert.equal(f.technicalKmlReady,true); assert.equal(f.kmlReady,true);
       assert.notEqual(f.kmlAuthorityBlocked,true); assert.equal(f.geometry.type,'Polygon');
+      assert.equal(p.recognitionAcquisitionReviewAuthority,undefined,'stale candidate-only authority must not survive output promotion');
+      const usageAuthority = evaluateCoordinateUsageAuthority({httpStatus:captured.httpStatus,body:p});
+      assert.equal(usageAuthority.eligible,true,'inspectable review output must retain a chargeable final identity');
+      assert.equal(usageAuthority.reason,'FINAL_SERVER_AUTHORITY_ESTABLISHED');
+      assert.equal(usageAuthority.identity.resultId,f.resultId);
+      assert.equal(usageAuthority.identity.resultRevision,f.resultRevision);
+      assert.equal(usageAuthority.identity.geometryHash,f.geometryHash);
+      assert.notEqual(p.failureState,'FAILED_NO_COORDINATE_EVIDENCE');
       for (const r of [captured,disabled]) {
         assert.equal(r.payload.mapReady,true); assert.equal(r.payload.kmlReady,true);
         assert.equal(r.payload.mapStatus,'ENABLED'); assert.equal(r.payload.kmlStatus,'ENABLED');

@@ -7,6 +7,8 @@ import {
   COORDINATE_USAGE_COMMIT_RESULT,
   COORDINATE_USAGE_ERROR_CODE,
   CoordinateUsageAtomicityService,
+  attachRecognitionAcquisitionReviewUsageAuthority,
+  buildRecognitionAcquisitionReviewUsageAuthority,
   buildProjectedCoordinateReviewUsageAuthority,
   buildUnchargedCoordinateFailureResponse,
   createCoordinateUsageCommitController,
@@ -305,6 +307,111 @@ test("review-required authority accepts coherent technical KML readiness behind 
   assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body }).eligible, true);
 });
 
+test("inspectable acquisition review refresh drops stale closed-output authority and uses finalized identity", async () => {
+  const rawText = [
+    "Coordinate report",
+    "Point | X | Y",
+    "1 | 778984.492 | 9721476.737",
+    "2 | 779099.680 | 9721476.848",
+    "3 | 779099.680 | 9721110.798"
+  ].join("\n");
+  const candidateCoordinates = [
+    { sourceLabel: "1", x: 778984.492, y: 9721476.737, sourceText: "1 | 778984.492 | 9721476.737" },
+    { sourceLabel: "2", x: 779099.680, y: 9721476.848, sourceText: "2 | 779099.680 | 9721476.848" },
+    { sourceLabel: "3", x: 779099.680, y: 9721110.798, sourceText: "3 | 779099.680 | 9721110.798" }
+  ];
+  const closedBody = {
+    success: true,
+    requestId,
+    rawText,
+    coordinates: candidateCoordinates.map(row => row.sourceText).join("\n"),
+    acquisitionStatus: "COMPLETED",
+    authorizationStatus: "REVIEW_REQUIRED",
+    resultStatus: "needs_review",
+    requiresReview: true,
+    mapReady: false,
+    kmlReady: false,
+    candidateCoordinates,
+    candidateCoordinateGroups: [],
+    visibleCrsEvidence: [{ crs: "EPSG:32750", source: "provider_response" }],
+    reviewReasons: ["REVIEW_REQUIRED"],
+    recognitionAcquisition: {
+      version: "recognition_acquisition_evidence_v1",
+      providerCompletionState: "SUCCEEDED",
+      acquisitionStatus: "COMPLETED",
+      authorizationStatus: "REVIEW_REQUIRED",
+      rawProviderText: rawText,
+      candidateCoordinates,
+      candidateCoordinateGroups: [],
+      visibleCrsEvidence: [{ crs: "EPSG:32750", source: "provider_response" }],
+      diagnostics: { candidatePointCount: candidateCoordinates.length }
+    }
+  };
+  closedBody.recognitionAcquisitionReviewAuthority = buildRecognitionAcquisitionReviewUsageAuthority({
+    recognitionRequestId: requestId,
+    body: closedBody
+  });
+  const finalized = authorityPayload({
+    decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+    gate: {
+      decisionState: COORDINATE_DECISION_STATE.REVIEW_REQUIRED,
+      qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+      confirmationStatus: COORDINATE_CONFIRMATION_STATUS.PENDING,
+      availabilityStatus: FAMILY_AVAILABILITY_STATUS.AVAILABLE,
+      availabilityReasonCode: null
+    },
+    qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+    confirmationStatus: COORDINATE_CONFIRMATION_STATUS.PENDING,
+    blockingReasons: [{ code: COORDINATE_GATE_REASON.REVIEW_REQUIRED }],
+    requiresReview: true,
+    technicalKmlReady: true,
+    kmlAuthorityBlocked: false,
+    kmlReady: true
+  }).finalizedCoordinateResult;
+  const inspectableBody = {
+    ...closedBody,
+    mapReady: true,
+    kmlReady: true,
+    finalizedCoordinateResult: finalized,
+    outputCapabilities: {
+      schemaVersion: "recognition_output_capability_v1",
+      technicallyGeneratable: true,
+      mapReady: true,
+      kmlReady: true,
+      resultId: finalized.resultId,
+      resultRevision: finalized.resultRevision,
+      geometryHash: finalized.geometryHash
+    }
+  };
+  assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body: inspectableBody }).eligible, false);
+  const refreshed = attachRecognitionAcquisitionReviewUsageAuthority({
+    recognitionRequestId: requestId,
+    body: inspectableBody
+  });
+  assert.equal(refreshed.recognitionAcquisitionReviewAuthority, undefined);
+  const evaluated = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: refreshed });
+  assert.equal(evaluated.eligible, true);
+  assert.equal(evaluated.reason, "FINAL_SERVER_AUTHORITY_ESTABLISHED");
+  assert.equal(evaluated.identity.resultId, finalized.resultId);
+  assert.equal(evaluated.identity.resultRevision, finalized.resultRevision);
+  assert.equal(evaluated.identity.geometryHash, finalized.geometryHash);
+
+  const mock = createMemoryRpc();
+  const service = new CoordinateUsageAtomicityService({ supabase: mock, sealKey });
+  const controller = createCoordinateUsageCommitController({
+    atomicityService: service,
+    recognitionRequestId: requestId,
+    userId,
+    sessionBindingSha256
+  });
+  controller.schedule({ note: "inspectable acquisition review" });
+  const settled = await controller.settle({ httpStatus: 200, body: refreshed });
+  assert.equal(settled.kind, "USAGE_COMMITTED");
+  assert.equal(mock.state.prepareCalls, 1);
+  assert.equal(mock.state.commitCalls, 1);
+  assert.equal(mock.state.usageLogs.length, 1);
+});
+
 test("complete projected review evidence is chargeable while map and KML remain blocked", () => {
   const body = projectedReviewPayload();
   const evaluated = evaluateCoordinateUsageAuthority({ httpStatus: 200, body });
@@ -421,10 +528,13 @@ test("uncharged responses are fixed-field failures and cannot disclose Provider-
     }
   });
   assert.deepEqual(Object.keys(request).sort(), [
-    "code", "coordinates", "error", "providerCallCount", "providerCompletionState", "quota", "rawText", "reason", "recoveryRequired", "recoveryTerminal", "requestId", "retryAllowed", "success", "usageConsumed", "userUsageConsumed"
+    "authorityReason", "candidateEvidenceStatus", "candidatePointCount", "code", "coordinates", "error", "failureState", "providerCallCount", "providerCompletionState", "quota", "rawText", "reason", "recoveryRequired", "recoveryTerminal", "requestId", "retryAllowed", "success", "usageConsumed", "userUsageConsumed"
   ].sort());
   assert.equal(request.success, false);
-  assert.equal(request.reason, "coordinate_authority_not_established");
+  assert.equal(request.reason, "coordinate_no_candidate_evidence");
+  assert.equal(request.failureState, "FAILED_NO_COORDINATE_EVIDENCE");
+  assert.equal(request.candidateEvidenceStatus, "ABSENT");
+  assert.equal(request.candidatePointCount, 0);
   assert.equal(request.rawText, "");
   assert.equal(request.coordinates, "");
   assert.equal(request.recoveryRequired, false);
@@ -435,6 +545,32 @@ test("uncharged responses are fixed-field failures and cannot disclose Provider-
   assert.deepEqual(request.quota, { free_convert_count: 2 });
   assert.equal(JSON.stringify(request).includes("provider-derived"), false);
   assert.equal(JSON.stringify(request).includes("do-not-copy"), false);
+});
+
+test("uncharged classification distinguishes retained candidates and valid geometry authority failures", () => {
+  const candidateFailure = buildUnchargedCoordinateFailureResponse({
+    recognitionRequestId: requestId,
+    authorityReason: "ACQUISITION_REVIEW_AUTHORITY_MISSING",
+    body: {
+      success: true,
+      candidateCoordinates: [{ sourceLabel: "1", x: 10, y: 20 }],
+      recognitionAcquisition: { diagnostics: { candidatePointCount: 1 } }
+    }
+  });
+  assert.equal(candidateFailure.failureState, "CANDIDATES_RETAINED_OUTPUT_BLOCKED");
+  assert.equal(candidateFailure.reason, "coordinate_candidates_retained_output_blocked");
+  assert.equal(candidateFailure.candidateEvidenceStatus, "PRESENT");
+  assert.equal(candidateFailure.candidatePointCount, 1);
+  assert.equal(candidateFailure.authorityReason, "ACQUISITION_REVIEW_AUTHORITY_MISSING");
+
+  const geometryFailure = buildUnchargedCoordinateFailureResponse({
+    recognitionRequestId: requestId,
+    authorityReason: "USAGE_NOT_SCHEDULED",
+    body: authorityPayload()
+  });
+  assert.equal(geometryFailure.failureState, "USAGE_AUTHORITY_NOT_ESTABLISHED");
+  assert.equal(geometryFailure.reason, "coordinate_usage_authority_not_established");
+  assert.equal(geometryFailure.authorityReason, "USAGE_NOT_SCHEDULED");
 });
 
 for (const [name, body] of [

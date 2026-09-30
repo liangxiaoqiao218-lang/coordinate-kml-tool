@@ -162,6 +162,70 @@ assert.equal(longUnifiedDecision.mayProceedToGeometryValidation, true);
 assert.equal(longUnifiedDecision.authorizationStatus, "VALIDATION_PENDING");
 assert.equal(longUnifiedDecision.contractReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"), false);
 
+const sixteenRowsWithNarrative = Array.from({ length: 16 }, (_, index) => (
+  `${index + 1} | ${778000 + (index * 11.25)} | ${9721000 - (index * 17.5)}`
+));
+const sixteenRowsWithNarrativeEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: [
+    "Boundary coordinate report",
+    "Survey notes: values below are projected coordinates",
+    "| Point | X | Y |",
+    "| --- | ---: | ---: |",
+    ...sixteenRowsWithNarrative,
+    "End of coordinate table"
+  ].join("\n"),
+  acquisition,
+  providerResponseId: "provider-sixteen-with-narrative"
+});
+assert.equal(sixteenRowsWithNarrativeEvidence.acquisitionStatus, "COMPLETED");
+assert.equal(sixteenRowsWithNarrativeEvidence.candidateCoordinates.length, 16);
+assert.deepEqual(
+  sixteenRowsWithNarrativeEvidence.candidateCoordinates.map(candidate => candidate.sourceLabel),
+  Array.from({ length: 16 }, (_, index) => String(index + 1))
+);
+assert.equal(sixteenRowsWithNarrativeEvidence.candidateCoordinateLines.length, 16);
+assert.ok(sixteenRowsWithNarrativeEvidence.rawProviderText.includes("Boundary coordinate report"));
+assert.ok(sixteenRowsWithNarrativeEvidence.rawProviderText.includes("End of coordinate table"));
+const sixteenRowsWithoutCrsDecision = evaluateUnifiedRecognitionAcquisition({
+  evidence: sixteenRowsWithNarrativeEvidence,
+  contractStatus: "CONFORMANT"
+});
+assert.equal(sixteenRowsWithoutCrsDecision.mayProceedToGeometryValidation, false);
+assert.equal(sixteenRowsWithoutCrsDecision.authorizationStatus, "REVIEW_REQUIRED");
+assert.equal(sixteenRowsWithoutCrsDecision.mapStatus, "CLOSED");
+assert.equal(sixteenRowsWithoutCrsDecision.kmlStatus, "CLOSED");
+assert.ok(sixteenRowsWithoutCrsDecision.contractReasons.includes("PROJECTED_CRS_UNRESOLVED"));
+
+const sixteenRowsWithExplicitCrsEvidence = buildRecognitionAcquisitionEvidence({
+  rawText: [
+    "CONTEXT | UTM Zone 50S | WGS 84",
+    "Boundary coordinate report",
+    "Survey notes: values below use easting then northing",
+    "| Point | X | Y |",
+    "| --- | ---: | ---: |",
+    ...sixteenRowsWithNarrative,
+    "End of coordinate table"
+  ].join("\n"),
+  acquisition,
+  providerResponseId: "provider-sixteen-with-explicit-crs"
+});
+assert.equal(sixteenRowsWithExplicitCrsEvidence.acquisitionStatus, "COMPLETED");
+assert.equal(sixteenRowsWithExplicitCrsEvidence.candidateCoordinates.length, 16);
+assert.deepEqual(
+  sixteenRowsWithExplicitCrsEvidence.candidateCoordinates.map(candidate => candidate.sourceLabel),
+  Array.from({ length: 16 }, (_, index) => String(index + 1))
+);
+assert.ok(sixteenRowsWithExplicitCrsEvidence.candidateCoordinates.every(candidate => candidate.axisOrder === "x_y"));
+assert.equal(sixteenRowsWithExplicitCrsEvidence.candidateCoordinateLines.length, 16);
+assert.ok(sixteenRowsWithExplicitCrsEvidence.visibleCrsEvidence.some(item => /UTM/iu.test(item.text)));
+const sixteenRowsWithExplicitCrsDecision = evaluateUnifiedRecognitionAcquisition({
+  evidence: sixteenRowsWithExplicitCrsEvidence,
+  contractStatus: "CONFORMANT"
+});
+assert.equal(sixteenRowsWithExplicitCrsDecision.mayProceedToGeometryValidation, true);
+assert.equal(sixteenRowsWithExplicitCrsDecision.authorizationStatus, "VALIDATION_PENDING");
+assert.equal(sixteenRowsWithExplicitCrsDecision.contractReasons.includes("PROJECTED_CRS_UNRESOLVED"), false);
+
 const gkRows = Array.from({ length: 65 }, (_, index) => (
   `${index + 1}\t${13_640_000 + (index * 19)}\t${4_650_000 + (index * 23)}`
 ));
