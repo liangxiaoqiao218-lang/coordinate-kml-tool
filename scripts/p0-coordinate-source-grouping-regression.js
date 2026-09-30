@@ -590,6 +590,7 @@ dynamicCase("Stage-1 full multi-site result cannot bypass confirmation", () => {
   assert.equal(pending.familySafetyPolicy.effectiveState, "REVIEW_REQUIRED_UNTIL_EXACT_IDENTITY_CONFIRMED");
   assert.equal(pending.familySafetyPolicy.exportEligible, false);
   assert.equal(pending.groups.every(group => group.requiresReview === true && group.kmlReady === false), true);
+  assert.equal(new MapPreviewAdapter().adapt(pending).previewEligibility.allowed, true);
 
   const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
   runtime.register(pending);
@@ -1144,7 +1145,7 @@ dynamicCase("production verification keeps 16-point candidate blocked until exac
   assert.equal(response.sourceCoordinateRepresentation.sourceCandidates.stage1.rowCount, 13);
   assert.equal(response.sourceCoordinateRepresentation.sourceCandidates.structuredReread.rowCount, 16);
   assert.equal(pending.kmlReady, false);
-  assert.equal(new MapPreviewAdapter().adapt(pending).previewEligibility.allowed, false);
+  assert.equal(new MapPreviewAdapter().adapt(pending).previewEligibility.allowed, true);
 
   const runtime = new CoordinateConfirmationRuntime({ now: () => 1_000 });
   runtime.register(pending);
@@ -3450,10 +3451,9 @@ staticAssertion("Stage-1 full multi-site safety is applied before response and r
   assert.match(server.slice(response, pending), /buildStage1FullMultisiteConfirmationPolicy\(\{[\s\S]*verification:\s*verificationResponse\.verification[\s\S]*stage1Safety:\s*stage1FullMultisiteSafety[\s\S]*confirmationSource:\s*STAGE1_FULL_MULTISITE_CONFIRMATION_SOURCE/);
   assert.match(server.slice(pending, send), /familySafetyPolicy:\s*stage1FullMultisiteConfirmationPolicy/);
   const mapRoute = server.slice(server.indexOf('app.post("/api/map-preview"'), server.indexOf('app.post("/api/spatial-shares"'));
-  const confirmationGuard = mapRoute.indexOf("isStage1FullMultisiteConfirmationPending(current.result)");
   const adapter = mapRoute.indexOf("mapPreviewAdapter.adapt(current.result");
-  assert.ok(confirmationGuard >= 0 && adapter > confirmationGuard);
-  assert.match(mapRoute.slice(confirmationGuard, adapter), /STAGE1_FULL_MULTISITE_CONFIRMATION_REQUIRED/);
+  assert.ok(adapter >= 0);
+  assert.doesNotMatch(mapRoute, /STAGE1_FULL_MULTISITE_CONFIRMATION_REQUIRED/);
 });
 staticAssertion("13-point Stage-1 candidate is snapshotted before downstream routing can mutate working variables", () => {
   const acquisitionBranch = server.indexOf("} else if (dmsGroupedExpansionCoverage.accepted === true) {");

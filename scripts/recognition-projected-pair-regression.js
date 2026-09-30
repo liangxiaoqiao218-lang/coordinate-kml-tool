@@ -1,7 +1,7 @@
 // Actual acquisition/adapter/final gate; synthetic evidence, no Provider I/O.
 import './recognition-audit-offline-guard.cjs';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { adaptRecognitionTableInput } from '../server/recognition/recognition-table-input.js';
@@ -15,11 +15,6 @@ const output = process.env.RECOGNITION_AUDIT_RECEIPT_ROOT || path.join(root, 'Te
 mkdirSync(output, {recursive:true});
 const receiptPath = path.join(output, 'pair-results.json');
 if (existsSync(receiptPath)) throw new Error('EXISTING_RECEIPT_NO_RETRY');
-const history = JSON.parse(readFileSync(path.join(root, 'Temp/recognition-table-phase-d1-projected-diagnostic/captured-evidence.json')));
-const events = history.diagnostics.sessions.flatMap(s => s.events);
-const event = stage => events.find(e => e.stage === stage).data;
-const source = event('candidate_input_selection').rawProviderText;
-const expected = event('extractProviderProjectedCoordinateEvidence').result;
 const acquisition = {width:800, height:600, bytes:2048, images:[{role:'overview'}]};
 const cases = [];
 function test(name, text, action, mutate = state => state) {
@@ -69,10 +64,13 @@ const values = [
 const lines = values.map(v => `${v.label} | ${v.x},${v.y}`);
 const table = ['CRS | WGS 84 UTM zone 31N','No | X | Y',...lines].join('\n');
 try {
-  test('matrix_complete_mixed_delimiter', source, state => {
-    complete(expected.rows.map(r => ({...r,raw:r.sourceText})))(state);
-    assert.deepEqual(extractProviderProjectedCoordinateEvidence({sourceText:source,minimumRows:3}), expected,
-      'existing projected parser semantics must be unchanged');
+  test('projected_parser_adapter_consistency', table, state => {
+    complete(values.map((v,i) => ({...v,raw:lines[i]})))(state);
+    const parsed = extractProviderProjectedCoordinateEvidence({sourceText:table,minimumRows:3});
+    assert.equal(parsed.status, 'COMPLETE');
+    assert.equal(parsed.rowCount, values.length);
+    assert.deepEqual(parsed.rows.map(({label,x,y,sourceText}) => ({label,x,y,sourceText})),
+      values.map((value,index) => ({...value,sourceText:lines[index]})));
     assert.equal(state.evidence.normalizationStatus,'COMPLETED');
   });
   test('generic_dot_decimals_near_values', table, complete(values.map((v,i) => ({...v,raw:lines[i]}))));

@@ -50,13 +50,13 @@ function state(result, reviewReasons = []) {
 const checks = [];
 function check(name, action) { action(); checks.push(name); console.log(`PASS ${name}`); }
 
-check('valid review MultiPoint keeps map open while KML remains closed', () => {
+check('valid review MultiPoint keeps map and unverified KML open', () => {
   const result = finalized();
   const current = state(result, ['SOURCE_LABELS_MISSING']);
   assert.deepEqual(getRecognitionAcquisitionIntegrityBlockReasons(current), ['SOURCE_LABELS_MISSING']);
   assert.deepEqual(getRecognitionAcquisitionMapBlockReasons(current), []);
   assert.equal(current.authorization.mapReady, true);
-  assert.equal(current.authorization.kmlReady, false);
+  assert.equal(current.authorization.kmlReady, true);
   assert.equal(new MapPreviewAdapter().adapt(result, { expectedIdentity: result }).previewEligibility.allowed, true);
 });
 
@@ -82,22 +82,23 @@ check('invalid CRS closes map and KML', () => {
   assert.equal(current.authorization.kmlReady, false);
 });
 
-check('integrity conflict closes map and KML', () => {
+check('integrity conflict remains a warning when current geometry is technically generatable', () => {
   const result = finalized();
   const current = state(result, ['SOURCE_LABELS_DUPLICATE']);
   assert.deepEqual(getRecognitionAcquisitionMapBlockReasons(current), ['SOURCE_LABELS_DUPLICATE']);
-  assert.equal(current.authorization.mapReady, false);
-  assert.equal(current.authorization.kmlReady, false);
+  assert.equal(current.authorization.mapReady, true);
+  assert.equal(current.authorization.kmlReady, true);
+  assert.equal(current.authorization.authorized, false);
 });
 
 check('stale result revision closes map and KML', () => {
-  const result = finalized({ currentRevision: 2 });
+  const result = Object.freeze({ ...finalized(), currentRevision: 2 });
   const current = state(result);
   assert.equal(current.authorization.mapReady, false);
   assert.equal(current.authorization.kmlReady, false);
   const preview = new MapPreviewAdapter().adapt(result, { expectedIdentity: { ...result, resultRevision: 2 } });
   assert.equal(preview.previewEligibility.allowed, false);
-  assert.equal(preview.previewReasonCodes[0], 'STALE_SOURCE_REVISION');
+  assert.equal(preview.previewReasonCodes[0], 'RESULT_REVISION_STALE');
 });
 
 const http = spawnSync(process.execPath,

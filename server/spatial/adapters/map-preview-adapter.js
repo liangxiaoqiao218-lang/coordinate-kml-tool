@@ -1,12 +1,11 @@
 import {
-  DMS_GROUPED_ACQUISITION_DELTA_POLICY,
   FINALIZED_COORDINATE_CRS,
   FINALIZED_COORDINATE_SCHEMA_VERSION,
   createGeometryHash,
-  isPendingDmsGroupedAcquisitionDeltaPolicy,
   validateFinalizedGeometry,
   validateFinalizedCrs
 } from "../../coordinate-finalizer/index.js";
+import { evaluateRecognitionOutputCapability } from "../../recognition/recognition-output-capability.js";
 
 export const MAP_PREVIEW_SCHEMA_VERSION = "map_preview_object_v1";
 
@@ -75,13 +74,9 @@ export class MapPreviewAdapter {
       || input.schemaVersion !== FINALIZED_COORDINATE_SCHEMA_VERSION) {
       return blocked(input || {}, BLOCK_REASON.NO_STRUCTURED_RESULT, clock);
     }
-    if (input.mapReady === false) {
-      return blocked(input, BLOCK_REASON.REVIEW_RESULT_NOT_MAP_READY, clock);
-    }
-    const acquisitionDeltaPolicy = input.familySafetyPolicy?.policyId === DMS_GROUPED_ACQUISITION_DELTA_POLICY.policyId;
-    if (isPendingDmsGroupedAcquisitionDeltaPolicy(input.familySafetyPolicy)
-      || (acquisitionDeltaPolicy && input.confirmationStatus !== "accepted")) {
-      return blocked(input, BLOCK_REASON.ACQUISITION_DELTA_CONFIRMATION_REQUIRED, clock);
+    const outputCapabilities = evaluateRecognitionOutputCapability(input);
+    if (!outputCapabilities.mapReady) {
+      return blocked(input, outputCapabilities.blockReasons[0] || BLOCK_REASON.NO_DRAWABLE_GEOMETRY, clock);
     }
     if (!input.geometry) {
       const unavailable = input.availabilityStatus && input.availabilityStatus !== "AVAILABLE";

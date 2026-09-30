@@ -19,6 +19,7 @@ import {
   evaluateUnifiedRecognitionFinalAuthorization
 } from "../server/recognition/recognition-first-acquisition.js";
 import { extractProviderProjectedCoordinateEvidence } from "../server/evidence-acquisition/local-ocr-map-layout-classifier.js";
+import { FINALIZED_COORDINATE_CRS, finalizeCoordinateResult } from "../server/coordinate-finalizer/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixturePath = path.join(root, "regression-samples", "production-recognition-recovery-p0", "indonesia-utm50s-real-002.jpg");
@@ -237,7 +238,7 @@ const reviewBody = {
   coordinateEngineV2: {
     source_crs: { id: "EPSG:32750", axisOrder: "easting_northing" }
   },
-  finalizedCoordinateResult: {
+  finalizedCoordinateResult: finalizeCoordinateResult({
     resultId: "result_projected_review",
     resultRevision: 1,
     currentRevision: 1,
@@ -252,8 +253,8 @@ const reviewBody = {
     kmlReady: true,
     kmlAuthorityBlocked: false,
     geometry: { type: "Polygon", coordinates: [[[119, -2], [120, -2], [120, -3], [119, -2]]] },
-    crs: { id: "EPSG:4326", axisOrder: "longitude_latitude" }
-  }
+    crs: FINALIZED_COORDINATE_CRS
+  })
 };
 const finalAuthorization = evaluateUnifiedRecognitionFinalAuthorization({
   body: reviewBody,

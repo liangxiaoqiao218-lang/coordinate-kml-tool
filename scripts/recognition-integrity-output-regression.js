@@ -1,12 +1,9 @@
 // Synthetic behavioral gate tests: actual product functions, no Provider I/O.
 import './recognition-audit-offline-guard.cjs';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { createProductRuntime } from './recognition-architecture-probe.js';
 import * as finalizer from '../server/coordinate-finalizer/index.js';
 import {
   buildRecognitionAcquisitionEvidence, evaluateUnifiedRecognitionAcquisition,
@@ -14,13 +11,12 @@ import {
 } from '../server/recognition/recognition-first-acquisition.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const baseline = '86ea4ac44a6d44a2332d7aaaffb1926504a73dca';
+const baseline = '335ff17e45b349fbbbdf36a3f5f2d59011b546d3';
 const output = process.env.RECOGNITION_AUDIT_RECEIPT_ROOT
   || path.join(root, 'Temp/recognition-table-phase-d1-integrity-recovery');
 mkdirSync(output, { recursive: true });
 const resultPath = path.join(output, 'integrity-results.json');
 if (existsSync(resultPath)) throw new Error('EXISTING_RECEIPT_NO_AUTOMATIC_RETRY');
-const plain = v => JSON.parse(JSON.stringify(v));
 const records = [];
 let active = null;
 function checkpoint(data) {
@@ -34,15 +30,6 @@ function test(name, action) {
       expected: error.expected, stack: error.stack }); throw error;
   }
 }
-const oldFile = 'server/recognition/recognition-first-acquisition.js';
-const oldText = execFileSync('git', ['show', baseline + ':' + oldFile],
-  { cwd: root, encoding: 'utf8', windowsHide: true });
-const oldUrl = new URL('../' + oldFile, import.meta.url);
-const oldProduct = await import('data:text/javascript,' + encodeURIComponent(oldText.replace(/from\s+"([^"]+)"/g,
-  (_, specifier) => 'from ' + JSON.stringify(specifier.startsWith('.')
-    ? new URL(specifier, oldUrl).href : import.meta.resolve(specifier)))));
-const runtime = createProductRuntime(readFileSync(path.join(root, 'server.js'), 'utf8'));
-Object.assign(runtime, finalizer, { coordinateConfirmationRuntime: new finalizer.CoordinateConfirmationRuntime() });
 const acquisition = { width: 800, height: 600, bytes: 2803, images: [{ role: 'overview' }] };
 const rows = [
   { point: '1', latitude: '18° 1\' 1.000" N', longitude: '3° 1\' 1.000" E' },
@@ -80,32 +67,29 @@ function inputFor(text, mutate = evidence => evidence) {
     conformance: { status: 'REVIEW_REQUIRED', reason: 'GENERIC_REVIEW_ONLY' }, providerCallCount: 1 };
 }
 try {
-  test('retained_current_http_failure', () => {
-    const bytes = readFileSync(path.join(root, 'Temp/recognition-table-phase-d1-historical-baseline-recovery/requests/json_missing-disabled.json'));
-    const hash = createHash('sha256').update(bytes).digest('hex');
-    const saved = JSON.parse(bytes);
-    checkpoint({ hash, saved });
-    assert.equal(hash, '45c9a6d0145b4df7bdebcf88b86a41e5da848c42251202e171a5c53acdfa7544');
-    assert.equal(saved.business.mapReady, true);
-    assert.equal(saved.business.kmlReady, false);
-    const previousEvidence = saved.observations.find(o => o.operation === 'buildRecognitionAcquisitionEvidence').result;
-    const input = inputFor(previousEvidence.rawProviderText);
-    assert.deepEqual(plain(input.evidence), previousEvidence, 'evidence/values/order/source unchanged by gate repair');
+  test('synthetic_incomplete_evidence_preserves_warning_and_exposes_unverified_output', () => {
+    const input = inputFor(json(rows.filter((_, i) => i !== 1)));
+    const after = evaluateUnifiedRecognitionFinalAuthorization(input);
+    checkpoint({ input, after });
     assert.equal(input.decision.mayProceedToGeometryValidation, false);
     assert.deepEqual(getRecognitionAcquisitionIntegrityBlockReasons(input), ['SOURCE_LABELS_NONCONTIGUOUS']);
+    assert.equal(after.mapReady, true);
+    assert.equal(after.kmlReady, true);
+    assert.equal(after.authorized, false);
+    assert.equal(after.outputCapabilities.unverified, true);
+    assert.ok(after.finalAuthorizationReasons.includes('SOURCE_LABELS_NONCONTIGUOUS'));
   });
   for (const [name, text] of [['json', json(rows)], ['plain', table], ['markdown', markdown]]) {
-    test(name + '_complete_review_unchanged', () => {
+    test(name + '_complete_review_exposes_unverified_output', () => {
       const input = inputFor(text), beforeInput = JSON.stringify(input);
-      const before = oldProduct.evaluateUnifiedRecognitionFinalAuthorization(input);
       const after = evaluateUnifiedRecognitionFinalAuthorization(input);
-      checkpoint({ input, before, after });
+      checkpoint({ input, after });
       assert.deepEqual(getRecognitionAcquisitionIntegrityBlockReasons(input), []);
       assert.equal(input.decision.mapStatus, 'CLOSED', 'early closed status is not a final hard block');
       assert.equal(input.decision.mayProceedToGeometryValidation, true);
-      assert.deepEqual(after, before);
       assert.equal(after.mapReady, true); assert.equal(after.kmlReady, true);
       assert.equal(after.authorized, false);
+      assert.equal(after.outputCapabilities.unverified, true);
       assert.equal(JSON.stringify(input), beforeInput, 'identity/version/geometry/source/usage cannot mutate');
     });
   }
@@ -117,52 +101,50 @@ try {
     ['missing_field', json(rows.map((r, i) => i === 1 ? { point: r.point, latitude: r.latitude } : r)), 'MISSING_FIELD'],
     ['direction', json(rows).replace(' N', ' E'), 'FIELD_DIRECTION_CONFLICT']
   ];
-  for (const [name, text, condition] of negatives) test(name + '_cannot_reopen_output', () => {
+  for (const [name, text, condition] of negatives) test(name + '_warning_does_not_hide_valid_output', () => {
     const input = inputFor(text), snapshot = JSON.stringify(input);
     const after = evaluateUnifiedRecognitionFinalAuthorization(input);
     checkpoint({ input, after, hardReasons: getRecognitionAcquisitionIntegrityBlockReasons(input) });
     assert.ok(input.evidence.reviewReasons.includes(condition));
     assert.equal(input.decision.mayProceedToGeometryValidation, false);
     assert.ok(after.finalAuthorizationReasons.includes(condition));
-    assert.equal(after.mapReady, false); assert.equal(after.kmlReady, false); assert.equal(after.authorized, false);
+    assert.equal(after.mapReady, true); assert.equal(after.kmlReady, true); assert.equal(after.authorized, false);
+    assert.equal(after.outputCapabilities.unverified, true);
     assert.equal(JSON.stringify(input), snapshot);
   });
-  test('unbound_source_cannot_reopen_output', () => {
+  test('unbound_source_warning_does_not_hide_valid_output', () => {
     const input = inputFor(json(rows), e => ({ ...e, unboundCandidates: [e.candidateCoordinates[0]],
       reviewReasons: [...e.reviewReasons, 'COORDINATE_ROW_UNBOUND'] }));
     const after = evaluateUnifiedRecognitionFinalAuthorization(input);
     checkpoint({ input, after });
-    assert.equal(after.mapReady, false); assert.equal(after.kmlReady, false);
+    assert.equal(after.mapReady, true); assert.equal(after.kmlReady, true);
+    assert.equal(after.authorized, false);
     assert.ok(after.finalAuthorizationReasons.includes('COORDINATE_ROW_UNBOUND'));
   });
   test('generic_review_is_not_integrity_failure', () => {
     const input = inputFor(json(rows), e => ({ ...e, reviewReasons: ['CRS_EVIDENCE_MISSING'] }));
-    const before = oldProduct.evaluateUnifiedRecognitionFinalAuthorization(input);
     const after = evaluateUnifiedRecognitionFinalAuthorization(input);
-    checkpoint({ input, before, after });
+    checkpoint({ input, after });
     assert.deepEqual(getRecognitionAcquisitionIntegrityBlockReasons(input), []);
-    assert.deepEqual(after, before);
     assert.equal(after.mapReady, true); assert.equal(after.kmlReady, true); assert.equal(after.authorized, false);
   });
-  test('point_downgrade_preserves_identity_geometry_but_honors_block', () => {
-    const saved = JSON.parse(readFileSync(path.join(root,
-      'Temp/recognition-table-phase-d1-historical-baseline-recovery/requests/json_missing-disabled.json')));
+  test('invalid_current_geometry_still_blocks_outputs', () => {
     const input = inputFor(json(rows.filter((_, i) => i !== 1)));
-    const response = { coordinateEngineV2: saved.business.engine, finalizedCoordinateResult: finalized() };
-    const before = runtime.keepRecognizedCoordinatesAsPointReview(response);
-    const after = runtime.keepRecognizedCoordinatesAsPointReview(response, '', {
-      blockMap: getRecognitionAcquisitionIntegrityBlockReasons(input).length > 0
+    const invalid = finalizer.finalizeCoordinateResult({
+      resultId: 'synthetic-invalid-output', resultRevision: 1, currentRevision: 1,
+      sourceAuthority: 'legacy', coordinateType: 'standard_dms_table',
+      crs: finalizer.FINALIZED_COORDINATE_CRS, geometry: null,
+      confirmationStatus: 'pending', qualityGateStatus: 'review_required',
+      technicalKmlReady: false, currentAuthorizedGeometryExportable: false,
+      requiresReview: true, kmlReady: false
     });
-    checkpoint({ input, response, before, after });
-    const a = after.finalizedCoordinateResult, b = before.finalizedCoordinateResult;
-    assert.equal(a.mapReady, false); assert.equal(a.kmlReady, false);
-    assert.deepEqual(plain(a.geometry), saved.business.finalized.geometry);
-    for (const key of ['resultId', 'resultRevision', 'geometryHash', 'confirmationStatus', 'crs', 'geometry'])
-      assert.deepEqual(plain(a[key]), plain(b[key]), key);
-    assert.equal(a.confirmationStatus, 'pending');
-    const late = evaluateUnifiedRecognitionFinalAuthorization({ ...input,
-      body: { ...input.body, finalizedCoordinateResult: b } });
-    assert.equal(late.mapReady, false); assert.equal(late.kmlReady, false);
+    const after = evaluateUnifiedRecognitionFinalAuthorization({ ...input,
+      body: { ...input.body, finalizedCoordinateResult: invalid } });
+    checkpoint({ input, after });
+    assert.equal(after.mapReady, false); assert.equal(after.kmlReady, false);
+    assert.equal(after.outputCapabilities.technicallyGeneratable, false);
+    assert.ok(after.outputCapabilities.blockReasons.includes('RESULT_IDENTITY_MISSING')
+      || after.outputCapabilities.blockReasons.includes('GEOMETRY_INVALID'));
   });
   console.log('Integrity gate ' + records.length + '/' + records.length + ' PASS; REAL_PROVIDER_CALLS=0');
 } finally {

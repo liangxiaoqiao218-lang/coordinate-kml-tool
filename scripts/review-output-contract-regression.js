@@ -129,8 +129,10 @@ assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
 const hardBlockedResults = [
   ["invalid geometry", finalized({ geometry: { type: "Point", coordinates: [181, 5] } })],
   ["invalid CRS", finalized({ crs: { id: "EPSG:0", axisOrder: "longitude_latitude" } })],
+  ["stale revision", Object.freeze({ ...finalized(), currentRevision: 2 })]
+];
+const authorityOnlyBlockedResults = [
   ["invalid source", finalized({ sourceAuthority: "unknown" })],
-  ["stale revision", finalized({ currentRevision: 2 })],
   ["rejected confirmation", finalized({ confirmationStatus: COORDINATE_CONFIRMATION_STATUS.REJECTED })],
   ["invalid confirmation binding", Object.freeze({
     ...review,
@@ -152,6 +154,13 @@ for (const [name, result] of hardBlockedResults) {
     evidence: directionBoundDmsEvidence,
     finalized: result
   }), false, `${name} cannot enter the direction-bound DMS provisional path`);
+}
+for (const [name, result] of authorityOnlyBlockedResults) {
+  const authorization = authorizationFor(result);
+  assert.equal(authorization.authorized, false, `${name} must not authorize export`);
+  assert.equal(authorization.mapReady, true, `${name} still exposes a current finite geometry for inspection`);
+  assert.equal(authorization.provisionalKmlReady, true, `${name} still exposes unverified KML`);
+  assert.equal(authorization.kmlReady, true, `${name} keeps inspection KML available`);
 }
 assert.equal(isDirectionBoundDmsProvisionalReviewEligible({
   decision: directionBoundDmsDecision,
@@ -239,6 +248,7 @@ const browserReview = createBrowserAuthorizationState({
   mapStatus: "ENABLED",
   kmlReady: true,
   kmlStatus: "ENABLED",
+  outputCapabilities: reviewAuthorization.outputCapabilities,
   finalizedCoordinateResult: review,
   candidateCoordinates: evidence.candidateCoordinates,
   candidateCoordinateGroups: evidence.candidateCoordinateGroups,
@@ -257,6 +267,7 @@ const browserBlocked = createBrowserAuthorizationState({
   mapStatus: "ENABLED",
   kmlReady: false,
   kmlStatus: "CLOSED",
+  outputCapabilities: authorizationFor(hardBlockedResults[0][1]).outputCapabilities,
   finalizedCoordinateResult: hardBlockedResults[0][1],
   candidateCoordinates: evidence.candidateCoordinates,
   candidateCoordinateGroups: evidence.candidateCoordinateGroups,

@@ -68,7 +68,6 @@ import {
   extractDmsSourceStructure,
   hasDmsGroupBoundaryContext,
   hasExplicitDmsMultiRegionEvidence,
-  isStage1FullMultisiteConfirmationPending,
   parseDmsSourceCoordinateRow,
   reconstructDmsGroupsFromNormalizedCoordinates,
   resolveDmsEngineGroupNames,
@@ -160,6 +159,7 @@ import {
   getRecognitionAcquisitionJobHttpStatus
 } from "./server/recognition/recognition-acquisition-job-runtime.js";
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
+import { evaluateRecognitionOutputCapability } from "./server/recognition/recognition-output-capability.js";
 import {
   createAgenticCoordinateApi,
   getAgenticCoordinateApiReadiness,
@@ -14427,13 +14427,6 @@ app.post("/api/map-preview", enforceSpatialApiEnabled, (req, res) => {
   if (!current.ok) {
     return res.status(current.httpStatus).json({ success: false, code: current.code });
   }
-  if (isStage1FullMultisiteConfirmationPending(current.result)) {
-    return res.status(422).json({
-      success: false,
-      code: "STAGE1_FULL_MULTISITE_CONFIRMATION_REQUIRED"
-    });
-  }
-
   const mapPreviewObject = mapPreviewAdapter.adapt(current.result, {
     expectedIdentity: identity
   });
@@ -14453,16 +14446,19 @@ app.post("/api/map-preview", enforceSpatialApiEnabled, (req, res) => {
     spatialFactsStatus = "unavailable";
   }
 
+  const outputCapabilities = evaluateRecognitionOutputCapability(current.result);
   return res.json({
     success: true,
     mapPreviewObject,
     spatialFacts,
     spatialFactsStatus,
     kmlEligibility: {
-      allowed: current.result.kmlReady === true,
+      allowed: outputCapabilities.kmlReady,
       decisionState: current.result.decisionState,
-      kmlReady: current.result.kmlReady === true
+      kmlReady: outputCapabilities.kmlReady,
+      unverified: outputCapabilities.unverified
     },
+    outputCapabilities,
     regionalViewCount: null,
     regionalViewWindow: null,
     regionalViewScope: null
@@ -15929,6 +15925,7 @@ async function recognizeCoordinatesHandler(req, res) {
         allowed: finalAuthorization.kmlReady,
         kmlReady: finalAuthorization.kmlReady
       },
+      outputCapabilities: finalAuthorization.outputCapabilities,
       ...(finalizedCoordinateResult ? { finalizedCoordinateResult } : {}),
       candidateCoordinates,
       candidateCoordinateLines,

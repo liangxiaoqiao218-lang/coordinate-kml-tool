@@ -7,6 +7,7 @@ import {
   FINALIZED_COORDINATE_SOURCE_AUTHORITIES
 } from "../coordinate-finalizer/reason-codes.js";
 import { validateFinalizedGeometry } from "../coordinate-finalizer/geometry-finalizer.js";
+import { evaluateRecognitionOutputCapability } from "./recognition-output-capability.js";
 import {
   buildRecognitionAcquisitionLogSummary,
   extractRecognitionCandidateEvidence
@@ -658,31 +659,11 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     && finalizerGatePassed
     && mapGatePassed
     && kmlGatePassed;
-  const provisionalReviewIdentityValid = Boolean(
-    finalized.decisionState === COORDINATE_DECISION_STATE.REVIEW_REQUIRED
-    && finalized.requiresReview === true
-    && finalized.confirmationStatus === "pending"
-    && [
-      COORDINATE_QUALITY_GATE_STATUS.PASSED,
-      COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED
-    ].includes(finalized.qualityGateStatus)
-    && FINALIZED_COORDINATE_SOURCE_AUTHORITIES.includes(finalized.sourceAuthority)
-    && finalized.explicitAuthorityRejected !== true
-    && finalized.crs?.id === "EPSG:4326"
-    && finalized.crs?.axisOrder === "longitude_latitude"
-    && validateFinalizedGeometry(finalized.geometry).ok === true
-  );
-  const provisionalMapReady = Boolean(
-    mapGatePassed
-    && provisionalReviewIdentityValid
-  );
-  const provisionalKmlReady = Boolean(
-    provisionalMapReady
-    && finalized.decisionState === COORDINATE_DECISION_STATE.REVIEW_REQUIRED
-    && finalized.technicalKmlReady === true
-    && finalized.kmlReady === true
-    && finalized.kmlAuthorityBlocked !== true
-  );
+  const outputCapabilities = evaluateRecognitionOutputCapability(finalized, {
+    formalAuthorized: authorized
+  });
+  const provisionalMapReady = outputCapabilities.mapReady;
+  const provisionalKmlReady = outputCapabilities.kmlReady;
   // Already-authorized legacy results may carry the older canonical CRS
   // marker instead of the newer explicit EPSG:4326 id. Their passed finalizer
   // gate remains authoritative; only review-mode previews require the explicit
@@ -719,9 +700,10 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     finalizerGatePassed,
     mapGatePassed,
     kmlGatePassed,
-    // A review state blocks authority/KML, not visual inspection. A finite,
-    // finalized WGS84 geometry remains available as a clearly marked
-    // provisional map so the user can detect swapped axes and wrong location.
+    outputCapabilities,
+    // Accuracy, review and formal authority do not decide inspection
+    // capability. A current finite WGS84 geometry remains available as a
+    // clearly marked provisional map and unverified KML.
     mapReady: finalMapReady,
     provisionalKmlReady,
     kmlReady: finalKmlReady

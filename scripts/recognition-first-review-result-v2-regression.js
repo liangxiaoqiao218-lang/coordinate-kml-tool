@@ -9,6 +9,7 @@ import {
 } from "../server/recognition/recognition-review-result.js";
 import { buildRecognitionAcquisitionEvidence } from "../server/recognition/recognition-first-acquisition.js";
 import { finalizeCoordinateResult } from "../server/coordinate-finalizer/finalized-coordinate-result-v1.js";
+import { FINALIZED_COORDINATE_CRS } from "../server/coordinate-finalizer/reason-codes.js";
 import { MapPreviewAdapter } from "../server/spatial/adapters/map-preview-adapter.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -223,7 +224,7 @@ const reviewOnlyFinalized = finalizeCoordinateResult({
   sourceAuthority: "legacy",
   coordinateType: "dms",
   precisionMode: "provider-dms-candidate-review",
-  crs: { type: "geographic", epsg: 4326, axisOrder: "longitude_latitude" },
+  crs: FINALIZED_COORDINATE_CRS,
   geometry: {
     type: "MultiPoint",
     coordinates: mixed.candidateGroups.flatMap(candidate => candidate.rows)
@@ -240,8 +241,8 @@ const reviewOnlyFinalized = finalizeCoordinateResult({
 assert.equal(reviewOnlyFinalized.kmlReady, false);
 assert.equal(reviewOnlyFinalized.mapReady, false);
 const reviewPreview = new MapPreviewAdapter().adapt(reviewOnlyFinalized);
-assert.equal(reviewPreview.previewEligibility.allowed, false);
-assert.deepEqual(reviewPreview.previewReasonCodes, ["REVIEW_RESULT_NOT_MAP_READY"]);
+assert.equal(reviewPreview.previewEligibility.allowed, true);
+assert.deepEqual(reviewPreview.previewReasonCodes, []);
 
 const selfIntersectingFinalized = finalizeCoordinateResult({
   sourceAuthority: "legacy",

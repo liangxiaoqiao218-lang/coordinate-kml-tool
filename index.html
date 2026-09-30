@@ -7577,24 +7577,21 @@ Au值 = 纯度 × 10 后取整数</div>
     function createRecognitionAuthorizationState(payload = {}) {
       const evidenceComplete = hasCompleteUnifiedRecognitionEvidence(payload);
       const finalized = payload?.finalizedCoordinateResult || {};
+      const outputCapabilities = payload?.outputCapabilities || {};
       const provisionalMapEnabled = payload.mapReady === true
         && String(payload.mapStatus || "").toUpperCase() === "ENABLED"
-        && finalized.decisionState === "REVIEW_REQUIRED"
-        && finalized.requiresReview === true
-        && finalized.confirmationStatus === "pending"
-        && ["passed", "review_required"].includes(finalized.qualityGateStatus)
-        && ["legacy", "manual_input", "coordinate_engine_v2", "coordinate_engine_v3"].includes(finalized.sourceAuthority)
-        && finalized.explicitAuthorityRejected !== true
+        && outputCapabilities.technicallyGeneratable === true
+        && outputCapabilities.mapReady === true
+        && outputCapabilities.resultId === finalized.resultId
+        && outputCapabilities.resultRevision === finalized.resultRevision
+        && outputCapabilities.geometryHash === finalized.geometryHash
         && finalized.crs?.id === "EPSG:4326"
         && finalized.crs?.axisOrder === "longitude_latitude"
         && hasFiniteFinalizedGeometry(finalized.geometry);
       const provisionalKmlEnabled = provisionalMapEnabled
         && payload.kmlReady === true
         && String(payload.kmlStatus || "").toUpperCase() === "ENABLED"
-        && finalized.decisionState === "REVIEW_REQUIRED"
-        && finalized.technicalKmlReady === true
-        && finalized.kmlReady === true
-        && finalized.kmlAuthorityBlocked !== true;
+        && outputCapabilities.kmlReady === true;
       const explicitlyAuthorized = evidenceComplete
         && String(payload.authorizationStatus || "").toUpperCase() === "AUTHORIZED"
         && String(payload.resultStatus || "").toLowerCase() === "authorized"

@@ -15,6 +15,7 @@ import {
   evaluateUnifiedRecognitionFinalAuthorization,
   isDirectionBoundDmsProvisionalReviewEligible
 } from "../server/recognition/recognition-first-acquisition.js";
+import { FINALIZED_COORDINATE_CRS, finalizeCoordinateResult } from "../server/coordinate-finalizer/index.js";
 
 const sha256 = "7".repeat(64);
 const imageIdentity = { image_sha256: sha256 };
@@ -155,7 +156,7 @@ const mixedFormatEvidence = {
   imageEvidence: { sha256: sha256 },
   providerCompletionState: "SUCCEEDED"
 };
-const reviewFinalized = {
+const reviewFinalized = finalizeCoordinateResult({
   resultId: "multi-representation-review",
   resultRevision: 1,
   currentRevision: 1,
@@ -172,9 +173,9 @@ const reviewFinalized = {
   technicalKmlReady: true,
   kmlReady: true,
   kmlAuthorityBlocked: false,
-  crs: { id: "EPSG:4326", axisOrder: "longitude_latitude" },
+  crs: FINALIZED_COORDINATE_CRS,
   geometry: { type: "Polygon", coordinates: [[[119, -2], [120, -2], [120, -3], [119, -2]]] }
-};
+});
 const completeMultiRepresentationSummary = {
   status: "COMPLETE",
   providerMode: "BOTH",

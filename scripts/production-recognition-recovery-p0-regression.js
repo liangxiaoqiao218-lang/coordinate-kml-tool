@@ -2054,9 +2054,12 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
       assert.equal(payload.precisionMode, 'indonesia-utm50s-projected');
       assert.equal(payload.indonesiaUtm50.projectedDmsCrosscheck, 'FAIL');
       assert.equal(payload.finalizedCoordinateResult.requiresReview, true);
-      assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+      assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+      assert.notEqual(payload.finalizedCoordinateResult.decisionState, 'AUTO_EXPORT');
     }
-    assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+    assert.equal(payload.mapReady, true);
+    assert.equal(payload.kmlReady, true);
+    assert.equal(payload.authorizationStatus, 'REVIEW_REQUIRED');
   });
 }
 
@@ -2840,10 +2843,11 @@ for (const [scenario, expectedPrecision] of [
     assert.equal(payload.precisionMode, expectedPrecision);
     assert.equal(payload.finalizedCoordinateResult?.geometry?.type, "Polygon");
     if (payload.authorizationStatus === "REVIEW_REQUIRED") {
-      const expectUnconfirmedKml = expectedPrecision === "preserve-original-decimals-and-parse-dms";
-      assert.equal(payload.finalizedCoordinateResult?.kmlReady, expectUnconfirmedKml, scenario);
-      assert.equal(payload.mapStatus, expectUnconfirmedKml ? "ENABLED" : "CLOSED");
-      assert.equal(payload.kmlStatus, expectUnconfirmedKml ? "ENABLED" : "CLOSED");
+      assert.equal(payload.mapReady, true, scenario);
+      assert.equal(payload.kmlReady, true, scenario);
+      assert.equal(payload.mapStatus, "ENABLED");
+      assert.equal(payload.kmlStatus, "ENABLED");
+      assert.equal(payload.outputCapabilities?.unverified, true);
     } else {
       assert.equal(payload.finalizedCoordinateResult?.kmlReady, true);
     }
@@ -2963,31 +2967,40 @@ test("complete directional DMS rows take precedence over ordinal and projected c
   assert.ok(payload.parserTrace.includes("INDONESIA_UTM50:dms_crosscheck_PASS"));
   assert.doesNotMatch(payload.coordinates.split(/\r?\n/u)[0], /^1,510000/u);
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
-  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
-  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+  assert.equal(payload.mapReady, true);
+  assert.equal(payload.kmlReady, true);
+  assert.equal(payload.outputCapabilities?.unverified, true);
 });
 
 for (const scenario of [
   "generic-projected-utm50-dms-conflict",
   "generic-projected-utm50-self-intersection"
 ]) {
-  test(`${scenario} remains fail-closed`, async () => {
+  test(`${scenario} separates review warnings from technical output capability`, async () => {
     const payload = await runHttpCandidate(scenario);
     assert.equal(payload.providerCallCount, 1);
     assert.equal(payload.precisionMode, "indonesia-utm50s-projected");
     assert.equal(payload.requiresReview, true);
-    assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
     assert.notEqual(payload.finalizedCoordinateResult.decisionState, "AUTO_EXPORT");
     if (scenario.endsWith("dms-conflict")) {
       assert.equal(payload.indonesiaUtm50.projectedDmsCrosscheck, "FAIL");
+      assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+      assert.equal(payload.mapReady, true);
+      assert.equal(payload.kmlReady, true);
+      assert.equal(payload.outputCapabilities?.unverified, true);
     } else {
       assert.equal(payload.indonesiaUtm50.transformStatus, "FAILED");
       assert.equal(payload.finalizedCoordinateResult.geometry, null);
+      assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+      assert.equal(payload.mapReady, false);
+      assert.equal(payload.kmlReady, false);
     }
   });
 }
 
-test("contextual UTM30 site vertices auto-locate while crossed source order remains point review and blocks KML", async () => {
+test("contextual UTM30 site vertices expose a review map and unverified KML from valid MultiPoint geometry", async () => {
   const payload = await runHttpCandidate("generic-projected-contextual-utm30");
   const expectedCoordinates = [
     "A | 727250 | 1219700",
@@ -3014,11 +3027,12 @@ test("contextual UTM30 site vertices auto-locate while crossed source order rema
   assert.match(payload.finalizedCoordinateResult.warnings.join("\n"), /(?:自交|交叉)/u);
   assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "MultiPoint");
   assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
-  assert.equal(payload.kmlStatus, "CLOSED");
+  assert.equal(payload.kmlStatus, "ENABLED");
+  assert.equal(payload.outputCapabilities?.unverified, true);
   assert.equal(payload.providerCallCount, 1);
 });
 
-test("contextual UTM site vertices remain closed when unified evidence is incomplete", async () => {
+test("contextual UTM site vertices remain unverified but inspectable when unified evidence is incomplete", async () => {
   const payload = await runHttpCandidate("generic-projected-contextual-utm30-safe");
   const expectedCoordinates = [
     "A | 727250 | 1219700",
@@ -3033,8 +3047,11 @@ test("contextual UTM site vertices remain closed when unified evidence is incomp
   assert.equal(payload.boundaryBlocked, true);
   assert.equal(payload.authorizationStatus, "REVIEW_REQUIRED");
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "Polygon");
-  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
-  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, false);
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+  assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
+  assert.equal(payload.mapReady, true);
+  assert.equal(payload.kmlReady, true);
+  assert.equal(payload.outputCapabilities?.unverified, true);
   assert.equal(payload.providerCallCount, 1);
 });
 
@@ -3099,7 +3116,7 @@ test("one-shot structured actual HTTP generic projected recovery preserves sourc
   assert.equal(usageAuthority.reason, "PROJECTED_REVIEW_SERVER_AUTHORITY_ESTABLISHED");
 });
 
-test("one-shot structured explicit projected evidence auto-locates without a user CRS choice", async () => {
+test("one-shot structured explicit projected evidence exposes inspectable unverified output without a user CRS choice", async () => {
   const payload = await runHttpCandidate("generic-projected-explicit");
   assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.status, "EXPLICIT");
   assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.zone, 30);
@@ -3115,7 +3132,8 @@ test("one-shot structured explicit projected evidence auto-locates without a use
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, "MultiPoint");
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
   assert.equal(payload.projectedMapPreview.mapPreviewObject.previewEligibility.allowed, true);
-  assert.equal(payload.projectedMapPreview.kmlEligibility.allowed, false);
+  assert.equal(payload.projectedMapPreview.kmlEligibility.allowed, true);
+  assert.equal(payload.projectedMapPreview.kmlEligibility.unverified, true);
 });
 
 test("one-shot structured manual projected entry requires location review and keeps crossed boundary KML blocked", async () => {
