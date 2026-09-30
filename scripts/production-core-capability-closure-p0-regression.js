@@ -46,6 +46,7 @@ const syntheticStage1Thirteen = [
   'SITES2','POINT | LATITUDE | LONGITUDE',...syntheticRecoveryRows.slice(8,12),'',
   'SITES3','POINT | LATITUDE | LONGITUDE',...syntheticRecoveryRows.slice(12).filter((_,index)=>index!==3)
 ].join('\n');
+const onlyMapKmlCoupling = process.argv.includes('--only-map-kml-coupling');
 
 if (process.argv[2] === '--http') {
   const http = await import('node:http');
@@ -520,7 +521,9 @@ test('HTTP incomplete DMS recovery cannot erase technical or authority blockers'
     if(name==='missing'){complete(response.payload.finalizedCoordinateResult);assert.equal(response.payload.finalizedCoordinateResult.resultRevision,2);assert.equal(response.payload.finalizedCoordinateResult.kmlReady,true);}
   }
 }));
-const selectedTests=process.argv.includes('--only-image-ingress')
+const selectedTests=onlyMapKmlCoupling
+  ? tests.filter(({name})=>name==='HTTP mocked acquisition preserves authority boundaries: handwritten')
+  : process.argv.includes('--only-image-ingress')
   ? tests.filter(({name})=>[
     'HTTP sync ingress normalizes generic multipart MIME before recognition',
     'HTTP async ingress normalizes generic multipart MIME before enqueue',

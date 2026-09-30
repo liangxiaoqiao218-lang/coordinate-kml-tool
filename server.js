@@ -48,6 +48,7 @@ import {
   RETRY_OWNER_FAMILY
 } from "./server/recognition/family-retry-policy.js";
 import { CANDIDATE_SELECTION_DECISION, compareCandidateEvidence } from "./server/recognition/candidate-selection.js";
+import { normalizeRecognitionCandidateRowContent } from "./server/recognition/recognition-candidate-evidence.js";
 import { buildHandwrittenCandidateEvidence, materializeHandwrittenDmsRows } from "./server/recognition/handwritten-candidate-evidence.js";
 import {
   IMAGE_DMS_SELECTED_ROUTE,
@@ -137,6 +138,7 @@ import {
   createLocalOcrClassificationImage
 } from "./server/recognition/projected-source-evidence.js";
 import { bindProviderRepresentationsToSource } from "./server/recognition/multi-representation-source-evidence.js";
+import { createRecognitionDiagnosticSession, authorizationDiagnosticBody } from "./server/recognition/recognition-diagnostics.js";
 import {
   buildRecognitionAcquisitionLogSummary,
   buildRecognitionFirstPromptPrefix,
@@ -144,6 +146,8 @@ import {
   createRecognitionImageVariants,
   evaluateUnifiedRecognitionFinalAuthorization,
   evaluateUnifiedRecognitionAcquisition,
+  getRecognitionAcquisitionIntegrityBlockReasons,
+  getRecognitionAcquisitionMapBlockReasons,
   isDirectionBoundDmsProvisionalReviewEligible
 } from "./server/recognition/recognition-first-acquisition.js";
 import {
@@ -3782,27 +3786,6 @@ function parseLooseDmsLine(line) {
   };
 }
 
-function groupEveryFourDmsLinesWhenLikely(text, sourceText = "") {
-  const rawSource = String(sourceText || "");
-
-  if (/\bpoint\b|latitude|longitude|(?:^|\W)n\s*(?:\u00B0|\u00BA|o|掳)/i.test(rawSource)) {
-    return text;
-  }
-
-  const lines = String(text || "")
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
-
-  if (lines.length < 8) {
-    return text;
-  }
-
-  return lines
-    .map((line, index) => (index > 0 && index % 4 === 0 ? `\n${line}` : line))
-    .join("\n");
-}
-
 function cleanCoordinateOutput(text) {
   return String(text || "")
     .split(/\r?\n/)
@@ -3836,14 +3819,6 @@ function looksLikeCoordinateTable(text) {
   return /\b(point|sommets?|sommet|coordonn[eé]es?|latitude|longitude|bftm|itrf|projection|cart[eé]siennes?)\b/i.test(value)
     || /\bn\s*(?:\u00B0|\u00BA|o|掳)\b/i.test(value)
     || /经度|纬度|北纬|东经|西经/.test(String(text || ""))
-    || /\b(liste des coordonnees|coordonnees?|cartesiennes?)\b/i.test(value)
-    || /\bx\s*\(?m?\)?\b[\s\S]{0,80}\by\s*\(?m?\)?\b/i.test(value);
-}
-
-function looksLikeProjectedContext(text) {
-  const value = foldSearchText(text);
-
-  return /\b(bftm|itrf|projection|coordonn[eé]es?\s*(?:en\s*)?(?:bftm|xy|x\/y|projet|cart[eé]siennes?)|sommets?)\b/i.test(value)
     || /\b(liste des coordonnees|coordonnees?|cartesiennes?)\b/i.test(value)
     || /\bx\s*\(?m?\)?\b[\s\S]{0,80}\by\s*\(?m?\)?\b/i.test(value);
 }
@@ -7310,10 +7285,6 @@ function parseProviderDmsPair(line, { latitudeDirection = "", longitudeDirection
   });
 }
 
-function hasCompleteProviderDmsPair(line) {
-  return Boolean(parseProviderDmsPair(line));
-}
-
 function extractProviderDmsReviewEvidence(text, { axisEvidenceText = "" } = {}) {
   const sourceText = String(text || "");
   const sourceLines = sourceText
@@ -8181,34 +8152,6 @@ function extractPointDmsTableCoordinateRows(text) {
   return Array.from(byLabel.values())
     .sort((a, b) => a.order - b.order)
     .map(row => row.outputLine);
-}
-
-function normalizeCommaDmsCoordinateDisplayOrder(text) {
-  const rows = getCoordinateRows(text);
-  const normalizedRows = [];
-  let validDmsRows = 0;
-
-  for (const row of rows) {
-    const parts = getLooseDmsPartsFromLine(row);
-
-    if (parts.length < 2) {
-      normalizedRows.push(row);
-      continue;
-    }
-
-    const latitudePart = parts.find(part => getDmsPartAxis(part) === "lat");
-    const longitudePart = parts.find(part => getDmsPartAxis(part) === "lon");
-
-    if (!latitudePart || !longitudePart) {
-      normalizedRows.push(row);
-      continue;
-    }
-
-    validDmsRows += 1;
-    normalizedRows.push(`${cleanDmsDisplayPart(longitudePart)},${cleanDmsDisplayPart(latitudePart)}`);
-  }
-
-  return validDmsRows >= 8 ? normalizedRows.join("\n") : text;
 }
 
 function extractRecognitionWarning(text) {
@@ -10762,6 +10705,50 @@ function buildCoordinateEngineV2ValidationReport(group = {}, coordinateType = ""
   };
 }
 
+function getAcquisitionDmsConsumerPoints(payload, blocks, coordinateType) {
+  // Consume the selected acquisition evidence only when no existing typed
+  // parser owns this input. Never infer a type from a row count or raw prefix.
+  if (coordinateType || payload.precisionMode !== "one-shot-acquisition-contract-review") return null;
+  const candidates = payload.candidateCoordinates;
+  const groups = payload.candidateCoordinateGroups;
+  if (!Array.isArray(candidates) || !candidates.length || !Array.isArray(groups)
+    || groups.length !== blocks.length) return null;
+  let offset = 0, previousLine = 0;
+  const result = [];
+  for (let groupIndex = 0; groupIndex < blocks.length; groupIndex += 1) {
+    const group = groups[groupIndex], entries = blocks[groupIndex];
+    if (group.sourceLabelState !== "CONTINUOUS" || group.sourceLabelsContinuous !== true
+      || !Array.isArray(group.rows) || group.rows.length !== entries.length) return null;
+    const points = [];
+    for (let index = 0; index < entries.length; index += 1) {
+      const row = candidates[offset++], bound = group.rows[index], line = entries[index].line;
+      if (!row || row.format !== "DMS" || row.sourceLabelInferred !== false
+        || !row.sourceLabel || !Number.isSafeInteger(row.sourceLineNumber)
+        || row.sourceLineNumber <= previousLine || row.sourceText !== line) return null;
+      for (const key of ["format", "sourceLabel", "sourceLineNumber", "sourceText", "latitudeSource", "longitudeSource", "axisOrder"]) {
+        if (row[key] !== bound[key]) return null;
+      }
+      // The raw source stays bound above and on the engine point. Compare
+      // fields after the same table-envelope normalization as acquisition;
+      // Markdown delimiters are serialization, not coordinate evidence.
+      const content = normalizeRecognitionCandidateRowContent(line);
+      const cells = content.split(/[|\t;]/u).map(cell => cell.trim());
+      const parsed = parseDmsSourceCoordinateRow(content);
+      if (!parsed || parsed.label !== row.sourceLabel || parsed.axisOrder !== row.axisOrder) return null;
+      const fields = row.axisOrder === "latitude_longitude"
+        ? [row.latitudeSource, row.longitudeSource] : [row.longitudeSource, row.latitudeSource];
+      const expectedCells = [row.sourceLabel, ...fields];
+      if (cells.length !== expectedCells.length
+        || cells.some((cell, i) => cell !== expectedCells[i])
+        || parsed.tokens.some((token, i) => token !== fields[i])) return null;
+      points.push({ label: row.sourceLabel, lat: parsed.latitude, lon: parsed.longitude });
+      previousLine = row.sourceLineNumber;
+    }
+    result.push(points);
+  }
+  return offset === candidates.length ? result : null;
+}
+
 function buildCoordinateEngineV2Groups(payload = {}, coordinateType = "") {
   if (coordinateType === "madagascar_cadastral_grid") {
     const rows = Array.isArray(payload.cadastralGrid?.rows) ? payload.cadastralGrid.rows : [];
@@ -10805,6 +10792,8 @@ function buildCoordinateEngineV2Groups(payload = {}, coordinateType = "") {
     return [];
   }
 
+  const acquisitionPoints = getAcquisitionDmsConsumerPoints(payload, blocks, coordinateType);
+
   const verifiedDmsGroupNames = resolveDmsEngineGroupNames({
     structureText: payload.rawText || "",
     groupSizes: blocks.map(block => block.length)
@@ -10812,7 +10801,10 @@ function buildCoordinateEngineV2Groups(payload = {}, coordinateType = "") {
 
   return blocks.map((entries, groupIndex) => {
     const points = entries
-      .map((entry, pointIndex) => parseCoordinateEngineV2PointLine(entry.line, coordinateType, pointIndex, entry.label))
+      .map((entry, pointIndex) => {
+        const point = parseCoordinateEngineV2PointLine(entry.line, coordinateType, pointIndex, entry.label);
+        return point && acquisitionPoints ? { ...point, ...acquisitionPoints[groupIndex][pointIndex] } : point;
+      })
       .filter(Boolean);
 
     return {
@@ -14761,11 +14753,13 @@ function buildCoordinateVerificationResponse(payload = {}, coordinateEngineV2 = 
 }
 
 function keepRecognizedCoordinatesAsPointReview(response = {}, warning = "", { blockMap = false } = {}) {
+  const coordinateValue = value => ["number", "string"].includes(typeof value) ? finiteNumberOrNull(value) : null;
   const points = (Array.isArray(response?.coordinateEngineV2?.groups) ? response.coordinateEngineV2.groups : [])
     .flatMap(group => Array.isArray(group?.points) ? group.points : [])
-    .map(point => [Number(point?.lon), Number(point?.lat)])
-    .filter(position => Number.isFinite(position[0]) && Math.abs(position[0]) <= 180
-      && Number.isFinite(position[1]) && Math.abs(position[1]) <= 90);
+    .map(point => [coordinateValue(point?.lon), coordinateValue(point?.lat)]);
+  // Do not fabricate zero coordinates or silently export a surviving subset.
+  if (points.some(position => position[0] === null || position[1] === null
+    || Math.abs(position[0]) > 180 || Math.abs(position[1]) > 90)) return response;
   if (points.length === 0 || !response?.finalizedCoordinateResult?.resultId) return response;
   const prior = response.finalizedCoordinateResult;
   const pointReviewResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
@@ -14990,20 +14984,39 @@ function projectedDmsReferencesMatch(rows = [], points = []) {
   });
 }
 
-function buildExplicitProjectedBoundaryAutoReleaseEngine({ evidence = null } = {}) {
+function buildExplicitProjectedBoundaryAutoReleaseEngine({ evidence = null, diagnostics = null } = {}) {
+  const finish = value => {
+    diagnostics?.operation("buildExplicitProjectedBoundaryAutoReleaseEngine", [{ evidence }], value);
+    return value;
+  };
   const rows = Array.isArray(evidence?.rows) ? evidence.rows : [];
-  if (evidence?.status !== LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE || rows.length < 3) return null;
-  const diagnostics = evidence?.diagnostics || {};
-  if (diagnostics.headerPresent !== true
-    || Number(diagnostics.rejectedProjectedCandidateLineCount || 0) !== 0
-    || Number(diagnostics.parsedProjectedRowCount || 0) !== rows.length
+  if (evidence?.status !== LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE || rows.length < 3) {
+    diagnostics?.check("INPUT_COMPLETENESS", false, { field: "status/rows", status: evidence?.status, rowCount: rows.length });
+    return finish(null);
+  }
+  const rowDiagnostics = evidence?.diagnostics || {};
+  if (rowDiagnostics.headerPresent !== true
+    || Number(rowDiagnostics.rejectedProjectedCandidateLineCount || 0) !== 0
+    || Number(rowDiagnostics.parsedProjectedRowCount || 0) !== rows.length
     || Number(evidence?.rowCount || 0) !== rows.length
-    || !hasContinuousProjectedPointNumbers(rows)) return null;
+    || !hasContinuousProjectedPointNumbers(rows)) {
+    diagnostics?.check("ROW_CONTRACT", false, { field: "header/rowCount/pointOrder", rowDiagnostics,
+      declaredRowCount: evidence?.rowCount, actualRowCount: rows.length, labels: rows.map(row => row?.label) });
+    diagnostics?.observe("row_contract_details", () => ({ checks: rows.map((row, index) => ({
+      rowIndex: index, pointLabel: row?.label, field: "label", condition: "CONTINUOUS_POINT_SEQUENCE",
+      passed: /^\d{1,3}$/u.test(String(row?.label || "").trim()) && Number(row.label) === index + 1,
+      expected: index + 1, actual: row?.label
+    })) }));
+    return finish(null);
+  }
   const sourceCrsSelection = getExplicitProjectedCrsSelection(evidence);
   const axisOrder = ["easting_northing", "northing_easting"].includes(String(evidence?.axisOrder || ""))
     ? String(evidence.axisOrder)
     : null;
-  if (!axisOrder) return null;
+  if (!axisOrder) {
+    diagnostics?.check("SOURCE_AXIS_ORDER", false, { field: "axisOrder", actual: evidence?.axisOrder, sourceCrs: evidence?.crsEvidence });
+    return finish(null);
+  }
   const confirmationRows = rows.map(row => Object.freeze({
     label: String(row?.label || "").trim().toUpperCase(),
     x: finiteNumberOrNull(row?.x),
@@ -15016,17 +15029,44 @@ function buildExplicitProjectedBoundaryAutoReleaseEngine({ evidence = null } = {
     return Number.isFinite(easting) && easting >= 100000 && easting <= 900000
       && Number.isFinite(northing) && northing >= 0 && northing <= 10000000;
   });
-  if (!sourceCrsSelection || !projectedValuesValid || confirmationRows.length !== rows.length) return null;
+  if (!sourceCrsSelection || !projectedValuesValid || confirmationRows.length !== rows.length) {
+    diagnostics?.check(!sourceCrsSelection ? "SOURCE_CRS_SELECTION" : "PROJECTED_VALUE_RANGE", false,
+      { field: !sourceCrsSelection ? "crsEvidence" : "x/y", sourceCrs: evidence?.crsEvidence,
+      sourceCrsSelection, projectedValuesValid, axisOrder, rows: confirmationRows });
+    diagnostics?.observe("projected_value_details", () => ({ checks: confirmationRows.flatMap((row, index) =>
+      ["x", "y"].map(field => {
+        const isEasting = axisOrder === "northing_easting" ? field === "y" : field === "x";
+        const minimum = isEasting ? 100000 : 0, maximum = isEasting ? 900000 : 10000000;
+        return { rowIndex: index, pointLabel: row.label, field, condition: "FINITE_PROJECTED_RANGE",
+          passed: Number.isFinite(row[field]) && row[field] >= minimum && row[field] <= maximum,
+          actual: row[field], minimum, maximum };
+      })) }));
+    return finish(null);
+  }
   try {
     const projectedEngine = buildConfirmedProjectedCoordinateEngine(confirmationRows, sourceCrsSelection, { axisOrder });
     const points = projectedEngine?.groups?.[0]?.points || [];
-    return points.length === rows.length
-      && hasNonDegenerateProjectedBoundary(points)
-      && projectedDmsReferencesMatch(rows, points)
+    const pointCountMatches = points.length === rows.length;
+    const boundaryValid = pointCountMatches && hasNonDegenerateProjectedBoundary(points);
+    const referencesMatch = boundaryValid && projectedDmsReferencesMatch(rows, points);
+    diagnostics?.observe("transform_geometry", () => ({ sourceCrs: evidence?.crsEvidence, sourceCrsSelection, axisOrder,
+      targetCrs: "EPSG:4326", pointCountMatches, boundaryValid,
+      referenceCheckExecuted: boundaryValid, referencesMatch,
+      toleranceDegrees: PROJECTED_DMS_REFERENCE_TOLERANCE_DEGREES,
+      rows: rows.map((row, index) => ({ index, label: row?.label, x: row?.x, y: row?.y,
+        longitude: points[index]?.lon, latitude: points[index]?.lat, referenceDms: row?.referenceDms,
+        latitudeResidual: row?.referenceDms && points[index] ? Number(points[index].lat) - Number(row.referenceDms.latitudeDecimal) : null,
+        longitudeResidual: row?.referenceDms && points[index] ? Number(points[index].lon) - Number(row.referenceDms.longitudeDecimal) : null })) }));
+    diagnostics?.check(!pointCountMatches ? "TRANSFORM_POINT_COUNT" : !boundaryValid ? "GEOMETRY_VALIDITY" : "DMS_REFERENCE_MATCH",
+      referencesMatch, { field: !pointCountMatches ? "points" : !boundaryValid ? "geometry" : "referenceDms" });
+    return finish(pointCountMatches
+      && boundaryValid
+      && referencesMatch
       ? projectedEngine
-      : null;
+      : null);
   } catch {
-    return null;
+    diagnostics?.check("TRANSFORM_EXCEPTION", false, { field: "transform", sourceCrs: evidence?.crsEvidence, axisOrder });
+    return finish(null);
   }
 }
 
@@ -15483,6 +15523,7 @@ app.post(
 );
 
 async function recognizeCoordinatesHandler(req, res) {
+  const recognitionDiagnostic = createRecognitionDiagnosticSession();
   activateRecognitionDeadlineContext(req);
   const recognitionBudget = getRecognitionBudget();
   recognitionBudget?.setIngressMetadata({
@@ -15529,7 +15570,17 @@ async function recognizeCoordinatesHandler(req, res) {
   let unifiedRecognitionAcquisitionContext = null;
   let unifiedRecognitionAcquisitionFinalLogged = false;
   const requestRecognitionAcquisitionEvidenceStore = createRecognitionAcquisitionEvidenceStore();
-  const sendRecognitionJson = res.json.bind(res);
+  const originalSendRecognitionJson = res.json.bind(res);
+  const sendRecognitionJson = body => {
+    recognitionDiagnostic.event("delivered_result", { httpStatus: res.statusCode, resultId: body?.finalizedCoordinateResult?.resultId,
+      resultRevision: body?.finalizedCoordinateResult?.resultRevision, geometryHash: body?.finalizedCoordinateResult?.geometryHash,
+      resultStatus: body?.resultStatus, mapStatus: body?.mapStatus, kmlStatus: body?.kmlStatus,
+      mapReady: body?.mapReady, kmlReady: body?.kmlReady, usageConsumed: body?.usageConsumed,
+      userUsageConsumed: body?.userUsageConsumed, recoveryRequired: body?.recoveryRequired,
+      sourceCrs: body?.coordinateEngineV2?.source_crs, finalCrs: body?.finalizedCoordinateResult?.crs,
+      code: body?.code, reason: body?.reason });
+    return originalSendRecognitionJson(body);
+  };
   const runBudgetedStage = async (stageName, action) => {
     recognitionBudget?.assertCanContinue({ stageName });
     const event = recognitionBudget?.stageStarted(stageName);
@@ -15680,6 +15731,8 @@ async function recognizeCoordinatesHandler(req, res) {
     const context = unifiedRecognitionAcquisitionContext;
     if (!context || !body || typeof body !== "object" || Array.isArray(body)) return body;
     const { evidence, decision } = context;
+    const integrityBlocked = getRecognitionAcquisitionIntegrityBlockReasons({ evidence, decision }).length > 0;
+    const mapIntegrityBlocked = getRecognitionAcquisitionMapBlockReasons({ evidence, decision }).length > 0;
     const originalFinalizedCoordinateResult = body.finalizedCoordinateResult;
     const coordinateEvidenceConflict = String(body.coordinateEvidenceConsistencyStatus || "").toUpperCase() === "CONFLICT";
     const dmsReviewDowngradeEligible = isDirectionBoundDmsProvisionalReviewEligible({
@@ -15689,7 +15742,7 @@ async function recognizeCoordinatesHandler(req, res) {
       finalized: originalFinalizedCoordinateResult,
       multiRepresentationEvidence: body.multiRepresentationEvidence
     });
-    const provisionalDmsReviewResult = !coordinateEvidenceConflict && dmsReviewDowngradeEligible
+    const provisionalDmsReviewResult = !coordinateEvidenceConflict && !integrityBlocked && dmsReviewDowngradeEligible
       ? coordinateConfirmationRuntime.register(finalizeCoordinateResult({
           ...originalFinalizedCoordinateResult,
           currentRevision: originalFinalizedCoordinateResult.resultRevision,
@@ -15715,10 +15768,10 @@ async function recognizeCoordinatesHandler(req, res) {
           ]
         }))
       : null;
-    const authorizationBody = coordinateEvidenceConflict
+    const authorizationBody = coordinateEvidenceConflict || integrityBlocked
       ? {
           ...body,
-          mapReady: false,
+          ...(coordinateEvidenceConflict || mapIntegrityBlocked ? { mapReady: false } : {}),
           kmlReady: false
         }
       : provisionalDmsReviewResult
@@ -15740,6 +15793,10 @@ async function recognizeCoordinatesHandler(req, res) {
       conformance: context.conformance,
       providerCallCount: recognitionBudget?.providerAttemptCount || 0
     });
+    if (recognitionDiagnostic.enabled) recognitionDiagnostic.operation("evaluateUnifiedRecognitionFinalAuthorization", [{
+      body: authorizationDiagnosticBody(authorizationBody), evidence, decision, conformance: context.conformance,
+      providerCallCount: recognitionBudget?.providerAttemptCount || 0
+    }], finalAuthorization);
     const { authorized } = finalAuthorization;
     const providerCompletionState = decision.providerCompletionState || evidence?.providerCompletionState || "UNKNOWN";
     const acquisitionStatus = decision.acquisitionStatus || evidence?.acquisitionStatus || "EMPTY";
@@ -16263,6 +16320,10 @@ async function recognizeCoordinatesHandler(req, res) {
       });
     }
     recognitionBudget?.stageCompleted(imageSafetyStage);
+    recognitionDiagnostic.event("image_identity", { image_sha256: coordinateImageIdentity.image_sha256,
+      width: coordinateImageIdentity.width, height: coordinateImageIdentity.height,
+      page: coordinateImageIdentity.page, regionId: null, tableId: null,
+      regionTableIdentityStatus: "NOT_ESTABLISHED_BY_THIS_CAPTURE" });
 
     const { adminData, user, permissions } = await runBudgetedStage("permissions", async () => {
       const currentAdminData = await readAdminData();
@@ -16415,6 +16476,9 @@ async function recognizeCoordinatesHandler(req, res) {
     projectedTableOcrAcquisition = oneShotFamilyClassification.projectedTableOcrAcquisition === true;
     oneShotStructuredFamilyRoute = oneShotFamilyClassification.route;
     oneShotAcquisitionContract = oneShotFamilyClassification.contract;
+    recognitionDiagnostic.event("local_ocr", { sourceText: oneShotLocalOcrSourceText,
+      sourceContextText: oneShotLocalOcrSourceContextText, axisEvidenceText: oneShotLocalOcrAxisEvidenceText,
+      provenance: oneShotLocalOcrSourceContextProvenance, layoutLines: oneShotLocalOcrLayoutLines });
     console.log("One-shot structured family route:", {
       family: oneShotStructuredFamilyRoute.family,
       matched: oneShotStructuredFamilyRoute.matched,
@@ -17642,6 +17706,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     }
 
     let rawText = extractProviderMessageText(response);
+    if (recognitionDiagnostic.enabled) recognitionDiagnostic.operation("extractProviderMessageText", [{
+      choices: [{ message: { content: response?.choices?.[0]?.message?.content } }]
+    }], rawText);
     const oneShotAcquisitionConformance = validateOneShotAcquisitionContract({
       contract: oneShotAcquisitionContract,
       providerText: rawText
@@ -17651,12 +17718,21 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       axisEvidenceText: oneShotLocalOcrAxisEvidenceText || oneShotLocalOcrSourceText
     });
     const providerGroupedDmsDiagnostic = normalizeProviderDmsReviewResult(rawText);
+    recognitionDiagnostic.operation("extractProviderDmsReviewEvidence", [rawText, {
+      axisEvidenceText: oneShotLocalOcrAxisEvidenceText || oneShotLocalOcrSourceText
+    }], providerDmsDiagnostic);
+    recognitionDiagnostic.operation("normalizeProviderDmsReviewResult", [rawText], providerGroupedDmsDiagnostic);
+    const extractedProjectedDiagnostic = extractProviderProjectedCoordinateEvidence({ sourceText: rawText });
+    recognitionDiagnostic.operation("extractProviderProjectedCoordinateEvidence", [{ sourceText: rawText }], extractedProjectedDiagnostic);
     let providerProjectedDiagnostic = bindProjectedEvidenceToSourceContext({
-      providerEvidence: extractProviderProjectedCoordinateEvidence({ sourceText: rawText }),
+      providerEvidence: extractedProjectedDiagnostic,
       sourceContextText: oneShotLocalOcrSourceContextText,
       sourceContextProvenance: oneShotLocalOcrSourceContextProvenance,
       imageIdentity: coordinateImageIdentity
     });
+    recognitionDiagnostic.operation("bindProjectedEvidenceToSourceContext", [{ providerEvidence: extractedProjectedDiagnostic,
+      sourceContextText: oneShotLocalOcrSourceContextText, sourceContextProvenance: oneShotLocalOcrSourceContextProvenance,
+      imageIdentity: coordinateImageIdentity }], providerProjectedDiagnostic);
     const multiRepresentationBinding = bindProviderRepresentationsToSource({
       providerDmsReviewEvidence: providerGroupedDmsDiagnostic,
       providerProjectedEvidence: providerProjectedDiagnostic,
@@ -17664,6 +17740,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       sourceContextProvenance: oneShotLocalOcrSourceContextProvenance,
       imageIdentity: coordinateImageIdentity
     });
+    recognitionDiagnostic.operation("bindProviderRepresentationsToSource", [{ providerDmsReviewEvidence: providerGroupedDmsDiagnostic,
+      providerProjectedEvidence: providerProjectedDiagnostic, sourceContextText: oneShotLocalOcrSourceContextText,
+      sourceContextProvenance: oneShotLocalOcrSourceContextProvenance, imageIdentity: coordinateImageIdentity }], multiRepresentationBinding);
     if (multiRepresentationBinding.status === "CONFLICT"
       && multiRepresentationBinding.providerMode !== "DMS_ONLY"
       && providerProjectedDiagnostic?.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE) {
@@ -17677,6 +17756,8 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         multiRepresentationBinding
       });
     }
+    recognitionDiagnostic.event("selected_evidence", { projected: providerProjectedDiagnostic,
+      multiRepresentation: multiRepresentationBinding, providerDms: providerDmsDiagnostic });
     console.log("One-shot acquisition conformance:", {
       family: oneShotAcquisitionConformance.family,
       status: oneShotAcquisitionConformance.status,
@@ -17739,13 +17820,17 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       providerResponseId: providerLayoutResponseId,
       sourceContextText: oneShotLocalOcrSourceContextText,
       sourceBoundProjectedEvidence: providerProjectedDiagnostic,
-      sourceBoundDmsEvidence: multiRepresentationBinding
+      sourceBoundDmsEvidence: multiRepresentationBinding,
+      diagnostics: recognitionDiagnostic.enabled ? recognitionDiagnostic : null
     });
     const unifiedAcquisitionDecision = evaluateUnifiedRecognitionAcquisition({
       evidence: unifiedAcquisitionEvidence,
       contractStatus: oneShotAcquisitionConformance.status,
       contractReason: oneShotAcquisitionConformance.reason
     });
+    recognitionDiagnostic.event("unified_candidates", { evidence: unifiedAcquisitionEvidence });
+    recognitionDiagnostic.operation("evaluateUnifiedRecognitionAcquisition", [{ evidence: unifiedAcquisitionEvidence,
+      contractStatus: oneShotAcquisitionConformance.status, contractReason: oneShotAcquisitionConformance.reason }], unifiedAcquisitionDecision);
     const unifiedFormatRequiresReview = unifiedAcquisitionDecision.contractReasons
       .includes("COORDINATE_FORMAT_REQUIRES_VALIDATION");
     const conformantWouldBypassReview = oneShotAcquisitionConformance.status
@@ -17995,7 +18080,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       const completeProviderDmsSupersedesProjected = providerDmsDiagnostic.status === "COMPLETE"
         && (getIndonesiaUtm50Info(rawText, { transform: utmToWgs84 }).projectedDmsCrosscheck === "PASS"
           || Boolean(buildExplicitProjectedBoundaryAutoReleaseEngine({
-            evidence: trustedProviderProjectedEvidence
+            evidence: trustedProviderProjectedEvidence, diagnostics: recognitionDiagnostic.enabled ? recognitionDiagnostic : null
           })));
       if (trustedProviderProjectedEvidence.status === LOCAL_OCR_STRUCTURE_NORMALIZATION_STATUS.COMPLETE
         && !completeProviderDmsSupersedesProjected) {
@@ -18114,7 +18199,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ));
         }
         const projectedBoundaryEngine = buildExplicitProjectedBoundaryAutoReleaseEngine({
-          evidence: trustedProviderProjectedEvidence
+          evidence: trustedProviderProjectedEvidence, diagnostics: recognitionDiagnostic.enabled ? recognitionDiagnostic : null
         });
         if (projectedBoundaryEngine) {
           const projectedBoundaryResponse = buildExplicitProjectedBoundaryResponse({
@@ -18259,6 +18344,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           || groupedProviderDmsEvidence.rejectedRows.length > 0
           || groupedProviderDmsEvidence.reviewReasons.some(reason => reason.startsWith("SOURCE_LABELS_")));
       if (groupedProviderReviewApplies) {
+        const groupedIntegrityBlocked = getRecognitionAcquisitionIntegrityBlockReasons({
+          evidence: unifiedAcquisitionEvidence, decision: unifiedAcquisitionDecision
+        }).length > 0;
+        const groupedMapIntegrityBlocked = getRecognitionAcquisitionMapBlockReasons({
+          evidence: unifiedAcquisitionEvidence, decision: unifiedAcquisitionDecision
+        }).length > 0;
         const authorizeForGeometryValidation = groupedProviderDmsEvidence.status
           === ACQUISITION_REVIEW_STATUS.AUTHORIZATION_CANDIDATE;
         const groupedAcquisitionEvidence = unifiedAcquisitionEvidence;
@@ -18331,7 +18422,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           ? providerReviewResponse
           : keepRecognizedCoordinatesAsPointReview(
             providerReviewResponse,
-            "识别采集已完成；候选点可在地图中核对，但不代表已确认边界，正式 KML 保持关闭。"
+            groupedMapIntegrityBlocked
+              ? "已保留候选坐标；坐标表完整性检查未通过，地图和 KML 暂不开放。"
+              : "识别采集已完成；候选点可在地图中核对，但不代表已确认边界，正式 KML 保持关闭。",
+            { blockMap: groupedMapIntegrityBlocked }
           ));
       }
       if (["COMPLETE", "PROVISIONAL"].includes(trustedProviderDmsEvidence.status)) {
@@ -20165,7 +20259,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     if (bftmAccepted) {
       const projectedBoundaryEvidence = extractProviderProjectedCoordinateEvidence({ sourceText: rawText });
       const projectedBoundaryEngine = buildExplicitProjectedBoundaryAutoReleaseEngine({
-        evidence: projectedBoundaryEvidence
+        evidence: projectedBoundaryEvidence, diagnostics: recognitionDiagnostic.enabled ? recognitionDiagnostic : null
       });
       if (projectedBoundaryEngine) {
         const projectedBoundaryResponse = buildExplicitProjectedBoundaryResponse({

@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { adaptRecognitionTableInput } from "./recognition-table-input.js";
 import {
   COORDINATE_CONFIRMATION_STATUS,
   COORDINATE_DECISION_STATE,
@@ -349,14 +350,24 @@ function buildLegacyRecognitionAcquisitionEvidence({ rawText, acquisition, provi
   });
 }
 
-export function buildRecognitionAcquisitionEvidence({
+// Exact pre-D1 input path is retained for offline differences and explicit rollback.
+export function buildPreD1RecognitionAcquisitionEvidence(input = {}) {
+  return buildAcquisitionEvidence(input, false);
+}
+
+export function buildRecognitionAcquisitionEvidence(input = {}) {
+  return buildAcquisitionEvidence(input, true);
+}
+
+function buildAcquisitionEvidence({
   rawText,
   acquisition,
   providerResponseId = null,
   sourceContextText = "",
   sourceBoundProjectedEvidence = null,
-  sourceBoundDmsEvidence = null
-} = {}) {
+  sourceBoundDmsEvidence = null,
+  diagnostics = null
+} = {}, adaptTableInput = false) {
   const exactRawText = String(rawText || "");
   const visibleCrsEvidence = extractVisibleCrsEvidence(`${exactRawText}\n${String(sourceContextText || "")}`);
   const sourceBoundProjectedCandidateText = sourceBoundProjectedEvidence?.sourceContextBinding?.bound === true
@@ -377,10 +388,23 @@ export function buildRecognitionAcquisitionEvidence({
     ? String(sourceBoundDmsEvidence.candidateDmsText)
     : "";
   const candidateEvidenceText = sourceBoundProjectedCandidateText || sourceBoundDmsCandidateText || exactRawText;
-  const candidates = extractRecognitionCandidateEvidence({
-    rawText: candidateEvidenceText,
-    visibleCrsEvidence
+  const adapted = adaptTableInput ? adaptRecognitionTableInput({
+    rawText: candidateEvidenceText, visibleCrsEvidence
+  }) : null;
+  const candidates = adapted?.candidates || extractRecognitionCandidateEvidence({
+    rawText: candidateEvidenceText, visibleCrsEvidence
   });
+  diagnostics?.event("candidate_input_selection", { rawProviderText: exactRawText, candidateEvidenceText,
+    selectedSource: sourceBoundProjectedCandidateText ? "SOURCE_BOUND_PROJECTED_HEADER"
+      : sourceBoundDmsCandidateText ? "SOURCE_BOUND_MULTI_REPRESENTATION_DMS" : "PROVIDER_OUTPUT",
+    visibleCrsEvidence });
+  if (adapted) diagnostics?.event("table_input_adapter", { ...adapted.evidence,
+    rawResponse: exactRawText, adapterInputText: candidateEvidenceText,
+    selectedInputSource: sourceBoundProjectedCandidateText ? "SOURCE_BOUND_PROJECTED_HEADER"
+      : sourceBoundDmsCandidateText ? "SOURCE_BOUND_MULTI_REPRESENTATION_DMS" : "PROVIDER_OUTPUT" });
+  diagnostics?.operation(adapted?.evidence?.serialization === "JSON"
+    ? "adaptRecognitionTableCandidates" : "extractRecognitionCandidateEvidence",
+    [{ rawText: candidateEvidenceText, visibleCrsEvidence }], candidates);
   const projectedCoordinateEvidence = candidates.candidateCoordinates.some(candidate => candidate?.format === "PROJECTED_XY")
     ? (sourceBoundProjectedEvidence
       || extractProviderProjectedCoordinateEvidence({ sourceText: exactRawText, minimumRows: 1 }))
@@ -525,6 +549,40 @@ export function createRecognitionAcquisitionEvidenceStore({
   });
 }
 
+// Carry observed row-integrity failures through review fallbacks. A generic
+// review state or a not-yet-open acquisition map is not itself a hard failure.
+export function getRecognitionAcquisitionIntegrityBlockReasons({ evidence, decision } = {}) {
+  const hardConditions = new Set([
+    "SOURCE_LABELS_MISSING", "SOURCE_LABELS_MIXED", "SOURCE_LABELS_DUPLICATE", "SOURCE_LABELS_NONCONTIGUOUS",
+    "GROUP_BOUNDARY_AMBIGUOUS", "COORDINATE_ROW_UNBOUND", "MULTIPLE_COORDINATES_PER_SOURCE_ROW",
+    "COORDINATE_ROW_NOT_FULLY_CONSUMED", "CANDIDATE_NORMALIZATION_PARTIAL",
+    "EXTRA_ROW_FIELD", "MISSING_FIELD", "COORDINATE_PAIR_MISSING", "DUPLICATE_JSON_KEY",
+    "DUPLICATE_FIELD_ROLE", "FIELD_DIRECTION_CONFLICT", "COLUMN_ORDER_CONFLICT",
+    "UNSAFE_OR_NONSCALAR_FIELD", "DMS_VALUE_NOT_VALIDATED", "ROW_NOT_OBJECT",
+    "TABLE_BOUNDARY_UNRESOLVED", "COORDINATES_OUTSIDE_JSON_TABLE", "UNCONSUMED_ENVELOPE_FIELD"
+  ]);
+  const reasons = new Set([
+    ...(Array.isArray(evidence?.reviewReasons) ? evidence.reviewReasons : []),
+    ...(Array.isArray(decision?.contractReasons) ? decision.contractReasons : [])
+  ].filter(reason => hardConditions.has(reason)));
+  for (const row of Array.isArray(evidence?.rejectedRows) ? evidence.rejectedRows : []) {
+    reasons.add(String(row?.reason || "COORDINATE_ROW_NOT_FULLY_CONSUMED"));
+  }
+  if (Array.isArray(evidence?.unboundCandidates) && evidence.unboundCandidates.length > 0) {
+    reasons.add("COORDINATE_ROW_UNBOUND");
+  }
+  return Object.freeze([...reasons]);
+}
+
+// Missing labels prevent authoritative row/point identity and therefore keep
+// KML closed, but they do not make an otherwise valid WGS84 point geometry
+// unsafe to inspect. Value, order, direction, grouping and source-binding
+// conflicts remain map blockers.
+export function getRecognitionAcquisitionMapBlockReasons({ evidence, decision } = {}) {
+  return Object.freeze(getRecognitionAcquisitionIntegrityBlockReasons({ evidence, decision })
+    .filter(reason => reason !== "SOURCE_LABELS_MISSING"));
+}
+
 export function evaluateUnifiedRecognitionFinalAuthorization({
   body = {},
   evidence = body?.recognitionAcquisition,
@@ -533,6 +591,10 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
   providerCallCount = body?.providerCallCount
 } = {}) {
   const finalized = body?.finalizedCoordinateResult || {};
+  const integrityBlockReasons = getRecognitionAcquisitionIntegrityBlockReasons({ evidence, decision });
+  const integrityBlocked = integrityBlockReasons.length > 0;
+  const mapIntegrityBlockReasons = getRecognitionAcquisitionMapBlockReasons({ evidence, decision });
+  const mapIntegrityBlocked = mapIntegrityBlockReasons.length > 0;
   const finalizedIdentity = [finalized.coordinateType, finalized.family, finalized.precisionMode]
     .map(value => String(value || "").toLowerCase());
   const finalizedUsesGeographicDms = finalizedIdentity.some(value => value.includes("dms"))
@@ -590,8 +652,8 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     && finalized.kmlReady === true
     && Boolean(finalized.geometry)
     && Boolean(finalized.crs);
-  const mapGatePassed = body?.mapReady !== false && finalized.mapReady !== false;
-  const kmlGatePassed = body?.kmlReady !== false && finalized.kmlReady === true;
+  const mapGatePassed = !mapIntegrityBlocked && body?.mapReady !== false && finalized.mapReady !== false;
+  const kmlGatePassed = !integrityBlocked && body?.kmlReady !== false && finalized.kmlReady === true;
   const authorized = !finalRequiresReview
     && finalizerGatePassed
     && mapGatePassed
@@ -606,7 +668,6 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
     ].includes(finalized.qualityGateStatus)
     && FINALIZED_COORDINATE_SOURCE_AUTHORITIES.includes(finalized.sourceAuthority)
     && finalized.explicitAuthorityRejected !== true
-    && finalized.kmlAuthorityBlocked !== true
     && finalized.crs?.id === "EPSG:4326"
     && finalized.crs?.axisOrder === "longitude_latitude"
     && validateFinalizedGeometry(finalized.geometry).ok === true
@@ -629,6 +690,7 @@ export function evaluateUnifiedRecognitionFinalAuthorization({
   const finalMapReady = authorized ? mapGatePassed : provisionalMapReady;
   const finalKmlReady = authorized ? kmlGatePassed : provisionalKmlReady;
   const finalAuthorizationReasons = [...new Set([
+    ...integrityBlockReasons,
     ...(projectedEvidenceAppliesToSelectedResult ? projectedEvidenceAuthorization.reasons : []),
     ...(projectedEvidenceAppliesToSelectedResult && Number(providerCallCount || 0) !== 1
       ? ["PROJECTED_PROVIDER_CALL_COUNT_INVALID"] : []),
