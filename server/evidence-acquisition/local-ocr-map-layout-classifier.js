@@ -811,7 +811,10 @@ function collapseExactRepeatedProjectedProviderSequence(rows = []) {
   return Object.freeze({ rows: candidate.rows, collapsed: true, repetitions: candidate.repetitions });
 }
 
-function parseProviderProjectedRow(line, { labelColumnVisible = false } = {}) {
+// Shared lexical row form; it grants neither CRS evidence nor output authority.
+// Keep the existing Provider grammar so acquisition does not invent a second
+// interpretation of the same labelled comma-pair row.
+export function parseProviderProjectedCommaPair(line) {
   const raw = text(line).replace(/[｜]/gu, "|");
   if (!raw) return null;
   const labelledCommaPair = raw.match(
@@ -824,6 +827,14 @@ function parseProviderProjectedRow(line, { labelColumnVisible = false } = {}) {
       ? Object.freeze({ label: labelledCommaPair[1], x, y, sourceText: raw })
       : null;
   }
+  return null;
+}
+
+function parseProviderProjectedRow(line, { labelColumnVisible = false } = {}) {
+  const raw = text(line).replace(/[｜]/gu, "|");
+  if (!raw) return null;
+  const commaPair = parseProviderProjectedCommaPair(raw);
+  if (commaPair) return commaPair;
   const pipeParts = raw.includes("|") ? splitProviderPipeFields(raw) : [];
   if (raw.includes("|") && !pipeParts) return null;
   if (pipeParts.length === 4 && /^POINT$/iu.test(pipeParts[0])) {

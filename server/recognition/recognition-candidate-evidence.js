@@ -1,3 +1,5 @@
+import { parseProviderProjectedCommaPair } from "../evidence-acquisition/local-ocr-map-layout-classifier.js";
+
 export const RECOGNITION_CANDIDATE_EVIDENCE_VERSION = "recognition_candidate_evidence_v3";
 
 const NUMBER_SOURCE = String.raw`[+-]?\d+(?:[.,]\d+)?`;
@@ -294,9 +296,22 @@ function parseNumericCoordinateRow(line, lineNumber, { header = null, crsEvidenc
     }
   }
   const delimited = /[|\t;]/u.test(text);
-  const fields = (delimited ? text.split(/[|\t;]/u) : text.split(/\s+/u)).map(value => value.trim()).filter(Boolean);
+  let fields = (delimited ? text.split(/[|\t;]/u) : text.split(/\s+/u)).map(value => value.trim()).filter(Boolean);
   if (header?.columnLayout) {
     const layout = header.columnLayout;
+    // An explicit label/X/Y header may serialize its two numeric cells as
+    // "label | first,second". Reuse the Provider's fully consumed lexical
+    // form, only for that exact row structure. Never discard empty/extra
+    // cells, infer an axis, or select rows by count to repair this mismatch.
+    const rawFields = text.split(/[|\t;]/u).map(value => value.trim());
+    fields = rawFields;
+    if (layout.fieldCount === 3 && layout.labelIndex === 0
+      && rawFields.length === 2 && rawFields.every(Boolean)) {
+      const pair = parseProviderProjectedCommaPair(text);
+      if (pair && pair.label === sourceLabelFromField(rawFields[0])) {
+        fields = [rawFields[0], pair.x, pair.y];
+      }
+    }
     if (!delimited || fields.length !== layout.fieldCount) return null;
     const sourceLabel = sourceLabelFromField(fields[layout.labelIndex]);
     const x = normalizeCoordinateNumber(fields[layout.xIndex]);
@@ -351,12 +366,33 @@ function parseNumericCoordinateRow(line, lineNumber, { header = null, crsEvidenc
   return candidates;
 }
 
+export function normalizeRecognitionCandidateRowContent(line) {
+  // Strip only the existing optional table envelope. Inner cells, including
+  // empty or extra cells, remain evidence and must not be silently discarded.
+  return String(line).trim().replace(/^\|\s*/u, "").replace(/\s*\|$/u, "");
+}
+
 function parseCoordinateCandidates(line, lineNumber, options = {}) {
-  const content = String(line).trim().replace(/^\|\s*/u, "").replace(/\s*\|$/u, "");
+  const content = normalizeRecognitionCandidateRowContent(line);
   const candidates = parseDmsCoordinateRow(content, lineNumber, options)
     || parseMgrsCoordinateRow(content, lineNumber)
     || parseNumericCoordinateRow(content, lineNumber, options);
   return candidates?.map(candidate => Object.freeze({ ...candidate, sourceText: String(line).trim() })) || null;
+}
+
+function projectedRowSerializationShape(line, header, candidates = []) {
+  const layout = header?.columnLayout;
+  if (!layout || layout.fieldCount !== 3 || layout.labelIndex !== 0
+    || candidates.length !== 1 || candidates[0]?.format !== "PROJECTED_XY") return null;
+  const content = normalizeRecognitionCandidateRowContent(line);
+  const fields = content.split(/[|\t;]/u).map(value => value.trim());
+  if (fields.length === 2 && fields.every(Boolean) && parseProviderProjectedCommaPair(content)) {
+    return "LABEL_COMMA_PAIR";
+  }
+  if (fields.length !== 3 || !fields.every(Boolean)) return null;
+  const firstAxisIndex = Math.min(layout.xIndex, layout.yIndex);
+  const nestedPair = parseProviderProjectedCommaPair(`${fields[layout.labelIndex]} | ${fields[firstAxisIndex]}`);
+  return nestedPair ? "NESTED_COMMA_PAIR_WITH_THIRD_CELL" : "LABEL_X_Y";
 }
 
 function isPlainStructuralHeading(line) {
@@ -416,7 +452,32 @@ export function extractRecognitionCandidateEvidence({ rawText = "", visibleCrsEv
   let currentGroup = null;
   let nextBoundaryEvidence = "document_start";
   const closeGroup = () => {
-    if (currentGroup?.rows.length) provisionalGroups.push(currentGroup);
+    if (currentGroup?.rows.length) {
+      const hasCommaPairRows = currentGroup.serializationShapes.some(row => row.shape === "LABEL_COMMA_PAIR");
+      const rejectedLineNumbers = new Set(hasCommaPairRows
+        ? currentGroup.serializationShapes
+          .filter(row => row.shape === "NESTED_COMMA_PAIR_WITH_THIRD_CELL")
+          .map(row => row.lineNumber)
+        : []);
+      if (rejectedLineNumbers.size > 0) {
+        currentGroup.rows = currentGroup.rows.filter(row => !rejectedLineNumbers.has(row.sourceLineNumber));
+        for (let index = allCandidates.length - 1; index >= 0; index -= 1) {
+          if (rejectedLineNumbers.has(allCandidates[index].sourceLineNumber)) allCandidates.splice(index, 1);
+        }
+        for (let index = candidateLines.length - 1; index >= 0; index -= 1) {
+          if (rejectedLineNumbers.has(candidateLines[index].lineNumber)) candidateLines.splice(index, 1);
+        }
+        for (const row of currentGroup.serializationShapes) {
+          if (rejectedLineNumbers.has(row.lineNumber)) rejectedRows.push(Object.freeze({
+            lineNumber: row.lineNumber,
+            text: row.sourceLine,
+            reason: "COORDINATE_ROW_NOT_FULLY_CONSUMED"
+          }));
+        }
+      }
+      delete currentGroup.serializationShapes;
+      if (currentGroup.rows.length) provisionalGroups.push(currentGroup);
+    }
     currentGroup = null;
   };
 
@@ -473,13 +534,19 @@ export function extractRecognitionCandidateEvidence({ rawText = "", visibleCrsEv
         currentGroup = {
           titlePath: pendingHeadings.slice(-4),
           boundaryEvidence: nextBoundaryEvidence,
-          rows: []
+          rows: [],
+          serializationShapes: []
         };
         pendingHeadings = [];
         nextBoundaryEvidence = "row_sequence";
       }
       candidateLines.push(Object.freeze({ lineNumber, text: sourceLine }));
       currentGroup.rows.push(...candidates);
+      currentGroup.serializationShapes.push(Object.freeze({
+        lineNumber,
+        sourceLine,
+        shape: projectedRowSerializationShape(text, activeHeader, candidates)
+      }));
       allCandidates.push(...candidates);
       return;
     }

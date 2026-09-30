@@ -87,7 +87,7 @@ function pointCoordinate(point = {}) {
 }
 
 function parseDecimalCoordinateLine(line, axisOrder) {
-  const match = String(line || "").match(/^\s*(?:(\d{1,4}|[A-Z]{1,4}\d{0,3})\s*[\).:\-]?\s+)?(-?\d+(?:\.\d+)?)\s*[,|\s]\s*(-?\d+(?:\.\d+)?)/i);
+  const match = String(line || "").match(/^\s*(?:(\d{1,4}|[A-Z]{1,4}\d{0,3})\s*[\).:\-]?\s+)?(-?\d+(?:\.\d+)?)\s*[,|\s]\s*(-?\d+(?:\.\d+)?)\s*$/i);
   if (!match) return null;
   const first = Number(match[2]);
   const second = Number(match[3]);
@@ -438,7 +438,6 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
   const coordinateDisplayText = sourceText.trim() ? sourceText.replace(/\r\n/g, "\n") : "";
   const rawDmsStructure = extractDmsSourceStructure(effectiveRecognitionResult?.rawText || coordinateDisplayText);
   const axisOrder = sourceAxisOrder(coordinateEngineV2, family, format);
-  const coordinateAlreadyPreservesDms = extractDmsSourceStructure(coordinateDisplayText).rowCount > 0;
   const engineGroups = groupsFromEngine(coordinateEngineV2, coordinateDisplayText, axisOrder || "latitude_longitude");
   const rawDmsEquivalence = rawDmsSemanticallyMatchesResult(rawDmsStructure, engineGroups, axisOrder);
   const rawDecimalStructure = extractRawDecimalCoordinateStructure(
@@ -452,12 +451,11 @@ export function buildSourceCoordinateRepresentation(recognitionResult = {}, coor
   const useRawDms = rawDmsEquivalence.verified === true;
   const useRawDecimal = rawDecimalEquivalence.verified === true;
   const rawDmsAxisOrder = useRawDms ? sourceDmsAxisOrder(rawDmsStructure) : null;
-  const canonicalEngineDisplay = renderCanonicalEngineGroups(engineGroups, axisOrder);
   const displayText = useRawDms
     ? rawDmsStructure.displayText
     : useRawDecimal
       ? rawDecimalStructure.displayText
-      : (coordinateAlreadyPreservesDms && canonicalEngineDisplay ? canonicalEngineDisplay : coordinateDisplayText);
+      : coordinateDisplayText;
   const groups = useRawDms
     ? rawDmsStructure.groups.map(group => [...group.rows])
     : useRawDecimal
