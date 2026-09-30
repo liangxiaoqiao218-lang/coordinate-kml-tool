@@ -55,6 +55,27 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const structuredFamilyOnly = process.argv.includes("--structured-family-only");
+const localOcrFixtureOnly = process.argv.includes("--local-ocr-fixture-only");
+const OFFLINE_ENG_TESSDATA_SHA256 = "45b4cb346724ac1774f1c36f42f182b887bcdb28ebe63e6fff90ac41f3fcff91";
+
+async function createOfflineEnglishWorker() {
+  const tessdataPath = String(process.env.RECOGNITION_TEST_TESSDATA_PATH || "").trim();
+  assert.ok(tessdataPath, "RECOGNITION_TEST_TESSDATA_PATH is required for offline OCR regression");
+  const languageDataPath = path.join(tessdataPath, "eng.traineddata.gz");
+  const languageData = await readFile(languageDataPath);
+  assert.equal(
+    createHash("sha256").update(languageData).digest("hex"),
+    OFFLINE_ENG_TESSDATA_SHA256,
+    "offline Tesseract English language data must match the approved SHA256"
+  );
+  return createWorker("eng", 1, {
+    langPath: tessdataPath,
+    gzip: true,
+    cacheMethod: "none",
+    logger: () => {},
+    errorHandler: () => {}
+  });
+}
 const goldenPath = path.join(root, "regression-samples", "production-recognition-recovery-p0", "golden-records.json");
 // The structured-family-only path is synthetic and must not read historical
 // recovery fixtures, replay manifests, or production qualification records.
@@ -2726,10 +2747,7 @@ test("hash-bound Kyrgyz image still reaches the generic projected-table acquisit
     "94522774b1311a48f44b8c52370639add50cb8eb7734bbd812cad2fb6f954235"
   );
   const localOcr = await runCancellableOcrJob({
-    createWorker: () => createWorker("eng", 1, {
-      logger: () => {},
-      errorHandler: () => {}
-    }),
+    createWorker: createOfflineEnglishWorker,
     image: fixture,
     recognizeOutput: { text: true },
     timeoutMs: 20_000
@@ -3759,6 +3777,8 @@ let passed = 0;
 const noServiceMode = process.argv.includes("--no-service");
 const selectedCases = structuredFamilyOnly
   ? cases.filter(entry => entry.name.startsWith("one-shot structured"))
+  : localOcrFixtureOnly
+    ? cases.filter(entry => entry.name === "hash-bound Kyrgyz image still reaches the generic projected-table acquisition route")
   : noServiceMode
     ? cases.filter(entry => !entry.name.startsWith("actual HTTP "))
     : cases;

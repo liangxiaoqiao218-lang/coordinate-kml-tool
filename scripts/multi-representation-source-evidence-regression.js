@@ -16,6 +16,7 @@ import {
   isDirectionBoundDmsProvisionalReviewEligible
 } from "../server/recognition/recognition-first-acquisition.js";
 import { FINALIZED_COORDINATE_CRS, finalizeCoordinateResult } from "../server/coordinate-finalizer/index.js";
+import { evaluateRecognitionOutputCapability } from "../server/recognition/recognition-output-capability.js";
 
 const sha256 = "7".repeat(64);
 const imageIdentity = { image_sha256: sha256 };
@@ -335,29 +336,48 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(`${functionSource("createRecognitionAuthorizationState")}; this.createRecognitionAuthorizationState = createRecognitionAuthorizationState;`, context);
+const browserCapabilities = evaluateRecognitionOutputCapability(reviewFinalized, { formalAuthorized: false });
 const browserState = context.createRecognitionAuthorizationState({
-  mapReady: true,
-  mapStatus: "ENABLED",
-  kmlReady: false,
-  kmlStatus: "CLOSED",
+  mapReady: browserCapabilities.mapReady,
+  mapStatus: browserCapabilities.mapReady ? "ENABLED" : "CLOSED",
+  kmlReady: browserCapabilities.kmlReady,
+  kmlStatus: browserCapabilities.kmlReady ? "ENABLED" : "CLOSED",
   authorizationStatus: "REVIEW_REQUIRED",
   resultStatus: "needs_review",
   requiresReview: true,
-  finalizedCoordinateResult: {
-    mapReady: false,
-    decisionState: "REVIEW_REQUIRED",
-    requiresReview: true,
-    confirmationStatus: "pending",
-    qualityGateStatus: "review_required",
-    sourceAuthority: "legacy",
-    explicitAuthorityRejected: false,
-    kmlAuthorityBlocked: true,
-    crs: { id: "EPSG:4326", axisOrder: "longitude_latitude" },
-    geometry: { type: "Polygon", coordinates: [[[119, -2], [120, -2], [120, -3], [119, -2]]] }
-  }
+  outputCapabilities: browserCapabilities,
+  finalizedCoordinateResult: reviewFinalized
 });
 assert.equal(browserState.mapStatus, "ENABLED");
-assert.equal(browserState.kmlStatus, "CLOSED");
+assert.equal(browserState.kmlStatus, "ENABLED");
+assert.equal(browserState.kmlReady, true);
+assert.equal(browserState.authorizationStatus, "REVIEW_REQUIRED");
+assert.equal(browserState.resultStatus, "needs_review");
+
+for (const finalized of [
+  Object.freeze({ ...reviewFinalized, geometry: null }),
+  Object.freeze({ ...reviewFinalized, crs: { id: "EPSG:3857", axisOrder: "easting_northing" } }),
+  Object.freeze({ ...reviewFinalized, currentRevision: reviewFinalized.resultRevision + 1 }),
+  Object.freeze({ ...reviewFinalized, geometryHash: "0".repeat(64) })
+]) {
+  const outputCapabilities = evaluateRecognitionOutputCapability(finalized, { formalAuthorized: false });
+  const blockedState = context.createRecognitionAuthorizationState({
+    mapReady: outputCapabilities.mapReady,
+    mapStatus: outputCapabilities.mapReady ? "ENABLED" : "CLOSED",
+    kmlReady: outputCapabilities.kmlReady,
+    kmlStatus: outputCapabilities.kmlReady ? "ENABLED" : "CLOSED",
+    authorizationStatus: "REVIEW_REQUIRED",
+    resultStatus: "needs_review",
+    requiresReview: true,
+    outputCapabilities,
+    finalizedCoordinateResult: finalized
+  });
+  assert.equal(outputCapabilities.technicallyGeneratable, false);
+  assert.equal(blockedState.mapStatus, "CLOSED");
+  assert.equal(blockedState.kmlStatus, "CLOSED");
+  assert.equal(blockedState.kmlReady, false);
+  assert.equal(blockedState.authorizationStatus, "REVIEW_REQUIRED");
+}
 
 Object.assign(context, {
   activeFinalizedCoordinateResult: {

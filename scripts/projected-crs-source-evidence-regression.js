@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Tesseract from "tesseract.js";
@@ -22,6 +22,9 @@ import { extractProviderProjectedCoordinateEvidence } from "../server/evidence-a
 import { FINALIZED_COORDINATE_CRS, finalizeCoordinateResult } from "../server/coordinate-finalizer/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const tessdataPath = String(process.env.RECOGNITION_TEST_TESSDATA_PATH || "").trim();
+assert.ok(tessdataPath, "RECOGNITION_TEST_TESSDATA_PATH is required for offline OCR regression");
+await access(path.join(tessdataPath, "eng.traineddata.gz"));
 const fixturePath = path.join(root, "regression-samples", "production-recognition-recovery-p0", "indonesia-utm50s-real-002.jpg");
 const fixture = await readFile(fixturePath);
 const fixtureSha256 = createHash("sha256").update(fixture).digest("hex");
@@ -81,7 +84,13 @@ const classificationImage = await createLocalOcrClassificationImage({ imageBuffe
 assert.equal(classificationImage.layoutSafe, false);
 assert.equal(classificationImage.provenance.mode, "overview_footer_composite");
 assert.equal(classificationImage.provenance.image_sha256, fixtureSha256);
-const worker = await Tesseract.createWorker("eng", 1, { logger: () => {}, errorHandler: () => {} });
+const worker = await Tesseract.createWorker("eng", 1, {
+  langPath: tessdataPath,
+  gzip: true,
+  cacheMethod: "none",
+  logger: () => {},
+  errorHandler: () => {}
+});
 let localContextText = "";
 try {
   const result = await worker.recognize(classificationImage.image, {}, { text: true });

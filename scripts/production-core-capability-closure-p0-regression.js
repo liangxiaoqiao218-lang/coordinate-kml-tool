@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
@@ -47,10 +47,13 @@ const syntheticStage1Thirteen = [
   'SITES3','POINT | LATITUDE | LONGITUDE',...syntheticRecoveryRows.slice(12).filter((_,index)=>index!==3)
 ].join('\n');
 const onlyMapKmlCoupling = process.argv.includes('--only-map-kml-coupling');
+const onlyAsyncIngress = process.argv.includes('--only-async-ingress');
+let asyncIngressDiagnostic = null;
 
 if (process.argv[2] === '--http') {
   const http = await import('node:http');
   let calls = 0;
+  const providerEvents = [];
   const scenario = process.argv[3];
   if (scenario === 'manual') {
     for (const [name, patch] of Object.entries({missing:{}, authority:{explicitAuthorityRejected:true}, crs:{crs:null}, transform:{kmlAuthorityBlocked:true}, rejected:{confirmationStatus:'rejected'}, v3:{sourceAuthority:'coordinate_engine_v3'}})) {
@@ -99,6 +102,7 @@ if (process.argv[2] === '--http') {
     }
     assert.equal(String(url), 'http://127.0.0.1:1/v1/chat/completions');
     assert.ok(++calls <= 3, 'unexpected retry expansion');
+    providerEvents.push({event:'mock_provider_started',call:calls,at:Date.now()});
     const request = JSON.parse(String(options.body || '{}'));
     const prompt = request.messages?.[0]?.content?.find(item => item?.type === 'text')?.text || '';
     providerPromptKinds.push(prompt.startsWith('Read ONLY the separate coordinate tables or coordinate sections')?'DMS_GROUPED':'STAGE_1');
@@ -120,6 +124,7 @@ if (process.argv[2] === '--http') {
         : scenario === 'jpeg-grouped-reread'
           ? (calls === 1 ? syntheticStage1Thirteen : syntheticGroupedMultisite)
           : handwritten;
+    providerEvents.push({event:'mock_provider_completed',call:calls,at:Date.now()});
     return new Response(JSON.stringify({choices:[{message:{content}}]}), {status:200,headers:{'content-type':'application/json'}});
   };
   const listen = http.Server.prototype.listen;
@@ -140,6 +145,7 @@ if (process.argv[2] === '--http') {
     lastProviderImageCanonical,
     providerImageChecks,
     providerPromptKinds,
+    providerEvents,
     structureProbeCalls,
     structureImageCanonical
   });});
@@ -302,14 +308,25 @@ registerHooks({load(url,context,nextLoad){
 }});`:null;
   const child=spawn(process.execPath,[...(consumerProbePreload?['--import',`data:text/javascript,${encodeURIComponent(consumerProbePreload)}`]:[]),fileURLToPath(import.meta.url),'--http',scenario],{cwd:fileURLToPath(new URL('..',import.meta.url)),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],
     env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,NODE_ENV:'test',PORT:String(reservedPort),ENABLE_REGRESSION_TEST_MODE:'true',ALIYUN_API_KEY:'local-mock-only',ALIYUN_BASE_URL:'http://127.0.0.1:1/v1',DOTENV_CONFIG_PATH:'__no_core_test_env__'}});
-  child.stdout.resume();child.stderr.resume();const signal=AbortSignal.timeout(25000);
+  const childStartedAt=Date.now();const childStdout=[];const childStderr=[];
+  child.stdout.on('data',chunk=>childStdout.push(String(chunk)));
+  child.stderr.on('data',chunk=>childStderr.push(String(chunk)));
+  const signal=AbortSignal.timeout(25000);
   try{const [{port}]=await once(child,'message',{signal});
     const post=async(route,body,form=false)=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,{method:'POST',headers:form?{'x-regression-test':'1',...(scenario==='post-provider-failure'?{'x-coordinate-regression-failure':'POST_PROVIDER_INTERNAL_FAILURE'}:{})}:{'content-type':'application/json'},body:form?body:JSON.stringify(body),signal});return {status:response.status,payload:await response.json()};};
     post.get=async route=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,{signal});return {status:response.status,payload:await response.json()};};
     post.getJob=async(route,token)=>{const response=await fetch(`http://127.0.0.1:${port}${route}`,{headers:{'x-recognition-job-token':token},signal});return {status:response.status,payload:await response.json()};};
     post.stats=async()=>{const pending=once(child,'message',{signal});child.send('stats');const [value]=await pending;return value;};
+    post.childDiagnostics=()=>({reservedPort,port,childStartedAt,stdout:childStdout.join(''),stderr:childStderr.join('')});
     await run(post);
-  }finally{const ended=once(child,'exit');child.kill();await ended;}
+  }finally{const ended=once(child,'exit');child.kill();const [exitCode,exitSignal]=await ended;
+    if(asyncIngressDiagnostic&&onlyAsyncIngress){
+      asyncIngressDiagnostic.child={...asyncIngressDiagnostic.child,exitCode,exitSignal,endedAt:Date.now(),stdout:childStdout.join(''),stderr:childStderr.join('')};
+      const receiptPath=String(process.env.CORE_ASYNC_DIAGNOSTIC_RECEIPT||'').trim();
+      assert.ok(receiptPath,'CORE_ASYNC_DIAGNOSTIC_RECEIPT is required for directed async ingress diagnostics');
+      await writeFile(receiptPath,JSON.stringify(asyncIngressDiagnostic,null,2)+'\n','utf8');
+    }
+  }
 }
 for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked acquisition preserves authority boundaries: '+scenario,()=>httpScenario(scenario,async post=>{
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'image/png'}),'synthetic.png');
@@ -378,19 +395,33 @@ test('HTTP sync ingress normalizes generic multipart MIME before recognition',()
   const stats=await post.stats();assert.equal(stats.calls,1);
 }));
 test('HTTP async ingress normalizes generic multipart MIME before enqueue',()=>httpScenario('handwritten',async post=>{
+  const startedAt=Date.now();
   const form=new FormData();form.set('visitorId','coordinate-regression-core-p0');form.set('image',new Blob([syntheticPng],{type:'application/octet-stream'}),'coordinate-upload.bin');
   const accepted=await post('/api/recognize-coordinates/jobs',form,true);
+  const acceptedAt=Date.now();
   assert.equal(accepted.status,202,JSON.stringify(accepted.payload));
-  let terminal;
-  for(let attempt=0;attempt<100;attempt+=1){
+  let terminal;const polls=[];const terminalWaitLimitMs=15_000;const terminalDeadline=acceptedAt+terminalWaitLimitMs;
+  for(let attempt=0;Date.now()<terminalDeadline;attempt+=1){
     terminal=await post.getJob(accepted.payload.jobStatusUrl||`/api/recognize-coordinates/jobs/${accepted.payload.jobId}`,accepted.payload.jobAccessToken);
+    polls.push({attempt:attempt+1,at:Date.now(),elapsedMs:Date.now()-acceptedAt,httpStatus:terminal.status,status:terminal.payload?.status||null});
     if(['SUCCEEDED','FAILED'].includes(terminal.payload?.status))break;
     await new Promise(resolve=>setTimeout(resolve,10));
   }
+  const stats=await post.stats();
+  if(onlyAsyncIngress){asyncIngressDiagnostic={
+    scenario:'HTTP async ingress normalizes generic multipart MIME before enqueue',
+    jobId:accepted.payload.jobId,
+    startedAt,acceptedAt,completedObservationAt:Date.now(),
+    acceptedElapsedMs:acceptedAt-startedAt,
+    terminalWaitLimitMs,
+    originalWindowExceeded:polls.length>100,
+    polls,terminal:{httpStatus:terminal?.status??null,status:terminal?.payload?.status??null,resultSuccess:terminal?.payload?.result?.success??null},
+    stats,child:post.childDiagnostics()
+  };}
   assert.equal(terminal.status,200,JSON.stringify(terminal.payload));
   assert.equal(terminal.payload.status,'SUCCEEDED');
   assert.equal(terminal.payload.result?.success,true);
-  const stats=await post.stats();assert.equal(stats.calls,1);
+  assert.equal(stats.calls,1);
 }));
 test('HTTP malformed image fails closed before Provider and service remains alive',()=>httpScenario('malformed',async post=>{
   const truncatedPng=Buffer.alloc(24);Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]).copy(truncatedPng);truncatedPng.write('IHDR',12,'ascii');truncatedPng.writeUInt32BE(1,16);truncatedPng.writeUInt32BE(1,20);
@@ -523,6 +554,8 @@ test('HTTP incomplete DMS recovery cannot erase technical or authority blockers'
 }));
 const selectedTests=onlyMapKmlCoupling
   ? tests.filter(({name})=>name==='HTTP mocked acquisition preserves authority boundaries: handwritten')
+  : onlyAsyncIngress
+  ? tests.filter(({name})=>name==='HTTP async ingress normalizes generic multipart MIME before enqueue')
   : process.argv.includes('--only-image-ingress')
   ? tests.filter(({name})=>[
     'HTTP sync ingress normalizes generic multipart MIME before recognition',

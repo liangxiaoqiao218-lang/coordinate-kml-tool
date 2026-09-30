@@ -169,15 +169,18 @@ try {
     await request('captured');
     console.log('DIAGNOSTIC_CAPTURE_ONLY_NOT_PASS; REAL_PROVIDER_CALLS=0');
   } else {
-    const before = JSON.parse(readFileSync(path.join(root,'Temp/recognition-table-phase-d1-projected-diagnostic/captured-evidence.json')));
+    // Build the comparison baseline from this run's existing synthetic fixture
+    // through the real local HTTP handler. A clean checkout must not depend on
+    // an untracked Temp receipt from an earlier diagnostic run.
+    const before = await request('captured', negativeOnly ? 'baseline' : 'complete');
+    common(before);
     const original = stage(before,'candidate_input_selection').rawProviderText;
     const expected = stage(before,'extractProviderProjectedCoordinateEvidence').result;
     const pointsBefore = before.payload.coordinateEngineV2.groups.flatMap(g => g.points);
     if (!negativeOnly) {
       const disabled = await request('disabled','complete');
       common(disabled);
-      const captured = await request('captured','complete');
-      common(captured);
+      const captured = before;
       assert.deepEqual(business(captured),business(disabled),'diagnostics on/off business equivalence');
       const p = captured.payload, f = p.finalizedCoordinateResult;
       assert.equal(p.success,true); assert.equal(captured.httpStatus,200);
