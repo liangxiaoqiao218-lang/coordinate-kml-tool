@@ -8661,6 +8661,8 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function setRecognitionStatus(text = "", type = "") {
       clearTimeout(recognitionProgressHideTimer);
+      if ((type === "warning" && handwrittenDmsReviewPanel?.style.display === "flex")
+        || (type === "error" && uploadMessage?.style.display === "block")) text = "";
       if (!text) {
         recognitionProgress.style.display = "none";
         recognitionProgress.textContent = "";
@@ -8757,6 +8759,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function showUploadSupportMessage(text) {
+      setRecognitionStatus("", "");
       uploadMessage.style.display = "block";
       const source = String(text || "").trim();
       const isUnchargedFailure = /本次识别未完成|未扣除使用次数/.test(source);
