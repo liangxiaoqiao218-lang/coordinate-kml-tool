@@ -120,7 +120,7 @@ try {
     const response = await request("/api/admin/coordinate-cases", { method: "POST", body: JSON.stringify({
       recognitionRequestId: currentId, resultId: currentResultId, resultRevision: 2, geometryHash: currentGeometryHash,
       issueType: "coordinate_correction", issueSummary: "坐标解释需纠正", crsEvidenceStatus: "WORKING_ASSUMPTION",
-      geometryRepresentation: "MULTIPOINT", deliveryStatus: "PASS", evidenceScope: "自交点位合同", sampleCount: 2
+      geometryRepresentation: "MULTIPOINT", deliveryStatus: "PASS", productionStatus: "PASS", evidenceScope: "自交点位合同", sampleCount: 2
     }) });
     assert.equal(response.status, 201);
     assert.equal((await response.json()).case.resultIdentityStatus, "CURRENT");
@@ -147,7 +147,7 @@ try {
   });
   await check("evidence reference is stored without source material", async () => {
     const response = await request("/api/admin/coordinate-cases/case-2/evidence", { method: "POST", body: JSON.stringify({
-      evidenceType: "SELF_INTERSECTION_POINTS", status: "PASS", evidenceScope: "不同同类与正常对照", sampleCount: 3,
+      evidenceType: "DELIVERY_SELF_INTERSECTION_POINTS", status: "PASS", evidenceScope: "不同同类与正常对照", sampleCount: 3,
       referenceType: "RECEIPT", referenceValue: "Temp/admin-coordinate-case-v1-targeted/results.json"
     }) });
     assert.equal(response.status, 201);
@@ -167,6 +167,54 @@ try {
     assert.equal(payload.coverage.stages.production.PASS, 0);
     assert.ok(payload.coverage.stages.production.UNKNOWN >= 1);
     assert.equal(payload.coverage.stages.delivery.PASS, 1);
+    assert.equal(payload.coverage.stages.production.PASS, 0);
+    assert.ok(payload.coverage.stages.production.UNKNOWN >= 2);
+  });
+  await check("one stage evidence cannot prove another stage", async () => {
+    const payload = await (await request("/api/admin/coordinate-cases")).json();
+    assert.equal(payload.coverage.stages.delivery.PASS, 1);
+    assert.equal(payload.coverage.stages.production.PASS, 0);
+  });
+  await check("explicit direct references support only their assigned stages", async () => {
+    const direct = publicCoordinateCase(rowFor(normalizeCoordinateCaseInput({
+      recognitionRequestId: "55555555-5555-4555-8555-555555555555", issueType: "coordinate_correction", issueSummary: "证据引用",
+      deliveryStatus: "PASS", problemResolutionStatus: "PASS", peerValidationStatus: "PASS", productionStatus: "PASS",
+      evidenceScope: "明确引用", sampleCount: 2, receiptRef: "Temp/delivery/results.json",
+      commitSha: "b".repeat(40), goldenRef: "golden/self-intersection"
+    })), []);
+    const coverage = buildCoverageSummary([direct]);
+    assert.equal(coverage.stages.delivery.PASS, 1);
+    assert.equal(coverage.stages.problemResolution.PASS, 1);
+    assert.equal(coverage.stages.peerValidation.PASS, 1);
+    assert.equal(coverage.stages.production.PASS, 0);
+  });
+  await check("forbidden content is rejected without echo", async () => {
+    const forbiddenValues = [
+      "1 | 778984.492 | 9721476.737\n2 | 779099.680 | 9721476.848",
+      JSON.stringify({ choices: [{ message: { content: "raw" } }], usage: { total_tokens: 1 } }),
+      "Authorization: Bearer abcdefghijklmnop",
+      "Cookie: session=abcdef",
+      "API_KEY=abcdefghijklmnop",
+      "password: do-not-store-this",
+      "data:image/png;base64,AAAA",
+      "SUPABASE_URL=https://example.invalid\nSUPABASE_SERVICE_ROLE_KEY=do-not-store"
+    ];
+    for (const issueSummary of forbiddenValues) {
+      const response = await request("/api/admin/coordinate-cases", { method: "POST", body: JSON.stringify({
+        recognitionRequestId: requestOnlyId, issueType: "recognition_failed", issueSummary
+      }) });
+      assert.equal(response.status, 400);
+      const payload = JSON.stringify(await response.json());
+      assert.equal(payload.includes(issueSummary), false);
+    }
+  });
+  await check("redacted text and short evidence references remain allowed", async () => {
+    const response = await request("/api/admin/coordinate-cases", { method: "POST", body: JSON.stringify({
+      recognitionRequestId: "66666666-6666-4666-8666-666666666666", issueType: "recognition_failed",
+      issueSummary: "坐标区域未形成可检查结果，已移除原始材料。", blocker: "等待同类脱敏证据",
+      evidenceScope: "两份脱敏对照", sampleCount: 2, receiptRef: "Temp/redacted-case/results.json"
+    }) });
+    assert.equal(response.status, 201);
   });
   await check("four stages remain separate", async () => {
     const payload = await (await request("/api/admin/coordinate-cases")).json();
@@ -219,6 +267,10 @@ try {
     assert.match(html, /id="judgeCaseSection" hidden/u);
     assert.match(html, /本次交付/u);
     assert.match(html, /生产生效/u);
+    assert.match(html, /FAIL \$\{Number\(stage\.FAIL/u);
+    assert.match(html, /BLOCKED \$\{Number\(stage\.BLOCKED/u);
+    assert.match(html, /UNKNOWN \$\{Number\(stage\.UNKNOWN/u);
+    assert.match(html, /N\/A \$\{Number\(stage\.NOT_APPLICABLE/u);
   });
   await check("response exposes no sealed result or coordinates", async () => {
     const payload = JSON.stringify(await (await request("/api/admin/coordinate-cases")).json());

@@ -8,6 +8,12 @@ const IDENTITY_STATUSES = new Set(["REQUEST_ONLY", "CURRENT", "UNKNOWN"]);
 const FORBIDDEN_KEYS = /(?:image|provider|cookie|authorization|auth_header|secret|password|api_key|coordinates?|raw_response|environment|env_config)/iu;
 const RESULT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
+const STAGE_EVIDENCE_PREFIX = Object.freeze({
+  delivery: "DELIVERY",
+  problemResolution: "PROBLEM_RESOLUTION",
+  peerValidation: "PEER_VALIDATION",
+  production: "PRODUCTION"
+});
 
 function text(value, max = 500) {
   return String(value ?? "").trim().slice(0, max);
@@ -26,6 +32,44 @@ function assertNoForbiddenMaterial(value, path = "payload") {
     }
     assertNoForbiddenMaterial(nested, `${path}.${key}`);
   }
+}
+
+function assertSafeTextValue(value, path) {
+  const source = String(value ?? "");
+  if (!source) return;
+  const coordinateRows = source.split(/\r?\n/u).filter(line =>
+    /^\s*(?:[A-Za-z0-9_-]+\s*[|,;\t]\s*)?[-+]?\d{1,10}(?:\.\d+)?\s*[|,;\t]\s*[-+]?\d{1,10}(?:\.\d+)?(?:\s*[|,;\t].*)?\s*$/u.test(line)
+    || (/\d+\s*[°º].*[NSEWO].*\d+\s*[°º].*[NSEWO]/iu.test(line))
+  );
+  const environmentRows = source.split(/\r?\n/u).filter(line => /^\s*[A-Z][A-Z0-9_]{2,}\s*=\s*\S+/u.test(line));
+  let providerObject = false;
+  if (/^\s*[\[{]/u.test(source)) {
+    try {
+      const parsed = JSON.parse(source);
+      const serialized = JSON.stringify(parsed);
+      providerObject = /"(?:choices|usage|provider|message|content|raw_response)"\s*:/iu.test(serialized);
+    } catch {
+      providerObject = false;
+    }
+  }
+  const forbidden = coordinateRows.length >= 2
+    || environmentRows.length >= 2
+    || providerObject
+    || /data:[^;,\s]+(?:;[^,\s]+)*;base64,/iu.test(source)
+    || /\bBearer\s+[A-Za-z0-9._~+\/-]{8,}/iu.test(source)
+    || /\b(?:Cookie|Set-Cookie)\s*[:=]/iu.test(source)
+    || /\b(?:api[_ -]?key|secret|password|authorization|auth[_ -]?header|access[_ -]?token|refresh[_ -]?token)\s*[:=]\s*\S+/iu.test(source)
+    || /\bsk-[A-Za-z0-9_-]{12,}\b/u.test(source)
+    || /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/u.test(source)
+    || /[?&](?:api[_-]?key|secret|token|authorization)=[^&\s]+/iu.test(source);
+  if (forbidden) {
+    throw Object.assign(new Error(`COORDINATE_CASE_FORBIDDEN_CONTENT:${path}`), { code: "COORDINATE_CASE_FORBIDDEN_CONTENT" });
+  }
+}
+
+function safeText(value, max, path) {
+  assertSafeTextValue(value, path);
+  return text(value, max);
 }
 
 function normalizeResultIdentity(raw = {}) {
@@ -55,7 +99,7 @@ export function normalizeCoordinateCaseInput(raw = {}) {
     throw Object.assign(new Error("COORDINATE_CASE_ISSUE_TYPE_INVALID"), { code: "COORDINATE_CASE_ISSUE_TYPE_INVALID" });
   }
   const identity = normalizeResultIdentity(raw);
-  const issueSummary = text(raw.issueSummary ?? raw.issue_summary, 1200);
+  const issueSummary = safeText(raw.issueSummary ?? raw.issue_summary, 1200, "issueSummary");
   if (!issueSummary) {
     throw Object.assign(new Error("COORDINATE_CASE_ISSUE_SUMMARY_REQUIRED"), { code: "COORDINATE_CASE_ISSUE_SUMMARY_REQUIRED" });
   }
@@ -66,34 +110,34 @@ export function normalizeCoordinateCaseInput(raw = {}) {
   }
   return {
     recognition_request_id: recognitionRequestId,
-    job_id: text(raw.jobId ?? raw.job_id, 160) || null,
+    job_id: safeText(raw.jobId ?? raw.job_id, 160, "jobId") || null,
     ...identity,
     issue_type: issueType,
     issue_summary: issueSummary,
-    resolution_summary: text(raw.resolutionSummary ?? raw.resolution_summary, 1200) || null,
-    owner: text(raw.owner, 120) || null,
+    resolution_summary: safeText(raw.resolutionSummary ?? raw.resolution_summary, 1200, "resolutionSummary") || null,
+    owner: safeText(raw.owner, 120, "owner") || null,
     progress_status: enumValue(raw.progressStatus ?? raw.progress_status, CASE_STATUSES, "NEW"),
-    blocker: text(raw.blocker, 800) || null,
+    blocker: safeText(raw.blocker, 800, "blocker") || null,
     delivery_status: enumValue(raw.deliveryStatus ?? raw.delivery_status, STAGE_STATUSES, "UNKNOWN"),
     problem_resolution_status: enumValue(raw.problemResolutionStatus ?? raw.problem_resolution_status, STAGE_STATUSES, "UNKNOWN"),
     peer_validation_status: enumValue(raw.peerValidationStatus ?? raw.peer_validation_status, STAGE_STATUSES, "UNKNOWN"),
     production_status: enumValue(raw.productionStatus ?? raw.production_status, STAGE_STATUSES, "UNKNOWN"),
-    evidence_scope: text(raw.evidenceScope ?? raw.evidence_scope, 800) || null,
+    evidence_scope: safeText(raw.evidenceScope ?? raw.evidence_scope, 800, "evidenceScope") || null,
     sample_count: Number.isInteger(sampleCount) && sampleCount >= 0 ? sampleCount : 0,
     crs_evidence_status: enumValue(raw.crsEvidenceStatus ?? raw.crs_evidence_status, CRS_STATUSES, "UNKNOWN"),
     geometry_representation: enumValue(raw.geometryRepresentation ?? raw.geometry_representation, GEOMETRY_REPRESENTATIONS, "UNKNOWN"),
     original_artifact_status: enumValue(raw.originalArtifactStatus ?? raw.original_artifact_status, ARTIFACT_STATUSES, "NOT_SAVED"),
-    golden_ref: text(raw.goldenRef ?? raw.golden_ref, 240) || null,
+    golden_ref: safeText(raw.goldenRef ?? raw.golden_ref, 240, "goldenRef") || null,
     commit_sha: commitSha || null,
-    receipt_ref: text(raw.receiptRef ?? raw.receipt_ref, 500) || null
+    receipt_ref: safeText(raw.receiptRef ?? raw.receipt_ref, 500, "receiptRef") || null
   };
 }
 
 export function normalizeCoordinateCaseEvidenceInput(raw = {}) {
   assertNoForbiddenMaterial(raw);
   const referenceType = enumValue(raw.referenceType ?? raw.reference_type, new Set(["GOLDEN", "COMMIT", "RECEIPT", "REQUEST", "RESULT"]), "");
-  const referenceValue = text(raw.referenceValue ?? raw.reference_value, 500);
-  const evidenceType = text(raw.evidenceType ?? raw.evidence_type, 120).toUpperCase();
+  const referenceValue = safeText(raw.referenceValue ?? raw.reference_value, 500, "referenceValue");
+  const evidenceType = safeText(raw.evidenceType ?? raw.evidence_type, 120, "evidenceType").toUpperCase();
   const sampleCount = Number(raw.sampleCount ?? raw.sample_count ?? 0);
   if (!referenceType || !referenceValue || !evidenceType) {
     throw Object.assign(new Error("COORDINATE_CASE_EVIDENCE_INVALID"), { code: "COORDINATE_CASE_EVIDENCE_INVALID" });
@@ -101,7 +145,7 @@ export function normalizeCoordinateCaseEvidenceInput(raw = {}) {
   return {
     evidence_type: evidenceType,
     status: enumValue(raw.status, STAGE_STATUSES, "UNKNOWN"),
-    evidence_scope: text(raw.evidenceScope ?? raw.evidence_scope, 800) || null,
+    evidence_scope: safeText(raw.evidenceScope ?? raw.evidence_scope, 800, "evidenceScope") || null,
     sample_count: Number.isInteger(sampleCount) && sampleCount >= 0 ? sampleCount : 0,
     reference_type: referenceType,
     reference_value: referenceValue
@@ -159,7 +203,27 @@ export function buildCoverageSummary(cases = []) {
   for (const item of cases) {
     for (const key of stageKeys) {
       const status = STAGE_STATUSES.has(item?.stages?.[key]) ? item.stages[key] : "UNKNOWN";
-      const evidenceBackedPass = status !== "PASS" || (Number(item.sampleCount || 0) > 0 && Boolean(text(item.evidenceScope, 800)));
+      const prefix = STAGE_EVIDENCE_PREFIX[key];
+      const stageEvidence = (item.evidence || []).some(evidence =>
+        String(evidence?.evidenceType || "").toUpperCase().startsWith(`${prefix}_`)
+        && evidence?.status === "PASS"
+        && Number(evidence?.sampleCount || 0) > 0
+        && Boolean(text(evidence?.scope, 800))
+        && Boolean(text(evidence?.referenceType, 80))
+        && Boolean(text(evidence?.referenceValue, 500))
+      );
+      const directReference = key === "delivery"
+        ? Boolean(text(item.receiptRef, 500))
+        : key === "problemResolution"
+          ? Boolean(text(item.commitSha, 40))
+          : key === "peerValidation"
+            ? Boolean(text(item.goldenRef, 240))
+            : false;
+      const evidenceBackedPass = status !== "PASS" || (
+        Number(item.sampleCount || 0) > 0
+        && Boolean(text(item.evidenceScope, 800))
+        && (stageEvidence || directReference)
+      );
       const effectiveStatus = evidenceBackedPass ? status : "UNKNOWN";
       summary[key][effectiveStatus] += 1;
       if (effectiveStatus === "PASS") {
