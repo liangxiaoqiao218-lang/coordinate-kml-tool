@@ -60,7 +60,7 @@ grant select, insert, update, delete on table public.coordinate_cases to service
 grant select, insert, update, delete on table public.coordinate_case_evidence to service_role;
 grant usage, select on sequence public.coordinate_cases_case_number_seq to service_role;
 
-create or replace function public.admin_validate_coordinate_case_identity(
+create or replace function private.admin_validate_coordinate_case_identity(
   p_recognition_request_id uuid,
   p_result_id text,
   p_result_revision integer,
@@ -85,6 +85,29 @@ as $$
     ) then 'CURRENT'
     else 'CONFLICT'
   end;
+$$;
+
+revoke all on function private.admin_validate_coordinate_case_identity(uuid, text, integer, text) from public, anon, authenticated;
+grant usage on schema private to service_role;
+grant execute on function private.admin_validate_coordinate_case_identity(uuid, text, integer, text) to service_role;
+
+create or replace function public.admin_validate_coordinate_case_identity(
+  p_recognition_request_id uuid,
+  p_result_id text,
+  p_result_revision integer,
+  p_geometry_hash text
+) returns text
+language sql
+security invoker
+set search_path = ''
+stable
+as $$
+  select private.admin_validate_coordinate_case_identity(
+    p_recognition_request_id,
+    p_result_id,
+    p_result_revision,
+    p_geometry_hash
+  );
 $$;
 
 revoke all on function public.admin_validate_coordinate_case_identity(uuid, text, integer, text) from public, anon, authenticated;
