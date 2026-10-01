@@ -3421,7 +3421,7 @@
       const labels = { delivery: "本次交付", problemResolution: "问题解决", peerValidation: "同类验证", production: "生产生效" };
       target.innerHTML = Object.entries(labels).map(([key, label]) => {
         const stage = coverage?.stages?.[key] || {};
-        return `<div class="status-item"><span>${label}</span><strong>PASS ${Number(stage.PASS || 0)} / UNKNOWN ${Number(stage.UNKNOWN || 0)}</strong><small>样本 ${Number(stage.sampleCount || 0)} · ${escapeHtml((stage.evidenceScopes || []).join("；") || "无有效证据范围")}</small></div>`;
+        return `<div class="status-item"><span>${label}</span><strong>PASS ${Number(stage.PASS || 0)} / FAIL ${Number(stage.FAIL || 0)} / BLOCKED ${Number(stage.BLOCKED || 0)} / UNKNOWN ${Number(stage.UNKNOWN || 0)} / N/A ${Number(stage.NOT_APPLICABLE || 0)}</strong><small>PASS样本 ${Number(stage.sampleCount || 0)} · ${escapeHtml((stage.evidenceScopes || []).join("；") || "无有效PASS证据范围")}</small></div>`;
       }).join("");
     }
 
