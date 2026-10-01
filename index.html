@@ -3686,6 +3686,8 @@
     }
 
     .currency-input input {
+      width: auto;
+      min-width: 0;
       border: 0 !important;
       border-radius: 0 !important;
       min-height: 48px;
@@ -4593,7 +4595,6 @@
     html,
     body {
       max-width: 100%;
-      overflow-x: hidden;
     }
 
     body {
@@ -4675,24 +4676,24 @@
       min-height: 76px;
     }
 
-    .coordinate-paste-panel,
     .coordinate-example,
     .formula-box,
-    .quote-placeholder,
-    .footer-details {
+    .quote-placeholder {
       border: 1px solid #dbe5ef;
       border-radius: 12px;
       background: #fff;
     }
 
-    .coordinate-paste-panel {
+    .coordinate-input-area {
       margin-top: 12px;
     }
 
-    .coordinate-paste-panel > summary,
+    .coordinate-input-area + .coordinate-upload-card {
+      margin-top: 12px;
+    }
+
     .formula-box > summary,
-    .quote-placeholder > summary,
-    .footer-details > summary {
+    .quote-placeholder > summary {
       display: flex;
       align-items: center;
       cursor: pointer;
@@ -4701,18 +4702,17 @@
       font-weight: 750;
     }
 
-    .coordinate-paste-panel[open] > summary,
     .formula-box[open] > summary,
-    .quote-placeholder[open] > summary,
-    .footer-details[open] > summary {
+    .quote-placeholder[open] > summary {
       border-bottom: 1px solid #e7edf4;
     }
 
     .coordinate-input-shell {
       margin: 0;
-      border: 0;
-      border-radius: 0;
+      border: 1px solid #dbe5ef;
+      border-radius: 12px;
       box-shadow: none;
+      background: #fff;
     }
 
     #coordinateInput {
@@ -4723,7 +4723,7 @@
     }
 
     .coordinate-example {
-      margin: 0 12px 12px;
+      margin: 10px 0 0;
       overflow: hidden;
       background: #f8fafc;
     }
@@ -4763,6 +4763,7 @@
 
     .gold-panel {
       padding: 20px;
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .gold-result-main {
@@ -4772,11 +4773,19 @@
 
     .quote-placeholder {
       margin-top: 12px;
-      overflow: hidden;
+      min-width: 0;
     }
 
-    .quote-placeholder-body {
-      padding: 0 14px 14px;
+    .quote-grid {
+      grid-template-columns: minmax(0, 1fr);
+      min-width: 0;
+    }
+
+    .quote-grid > *,
+    .quote-result,
+    .quote-reference {
+      min-width: 0;
+      max-width: 100%;
     }
 
     .gold-actions {
@@ -4795,18 +4804,37 @@
     }
 
     .footer-quick-links {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 22px;
     }
 
     .footer-details {
-      overflow: hidden;
-      background: rgba(255, 255, 255, 0.76);
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .footer-details > summary {
+      display: flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 8px 0;
+      color: #475569;
+      cursor: pointer;
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .footer-details[open] > summary {
+      border: 0;
     }
 
     .footer-details p {
-      padding-inline: 12px;
+      max-width: 680px;
+      padding: 0;
     }
 
     .footer-details p:last-child {
@@ -4908,6 +4936,19 @@
       .gold-input-grid {
         grid-template-columns: 1fr;
         gap: 12px;
+        width: 100%;
+        min-width: 0;
+      }
+
+      .gold-input-grid > div,
+      .gold-input-grid .field-label-row,
+      .gold-input-grid .gold-input-shell,
+      .gold-input-grid input {
+        min-width: 0;
+      }
+
+      .gold-input-grid .field-label-row {
+        flex-wrap: wrap;
       }
 
       .gold-result-main {
@@ -4920,10 +4961,6 @@
       }
 
       .site-footer-inner {
-        grid-template-columns: 1fr;
-      }
-
-      .footer-quick-links {
         grid-template-columns: 1fr;
       }
 
@@ -5012,7 +5049,7 @@
         <div class="workspace-head">
           <div class="workspace-heading-copy">
             <h1>坐标与 KML</h1>
-            <p class="workspace-subtitle">上传坐标图片，或直接粘贴坐标</p>
+            <p class="workspace-subtitle">直接粘贴坐标，或上传图片识别</p>
           </div>
           <div class="quota-entry-row">
             <div id="convertQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
@@ -5020,18 +5057,7 @@
           </div>
           <span id="cadastralGridBadge" class="cadastral-grid-badge">&#30719;&#26435;&#32593;&#26684;&#27169;&#24335;</span>
         </div>
-        <div id="coordinateUploadPanel" class="upload-box compact-upload-box coordinate-upload-card">
-          <label for="imageInput" class="coordinate-upload-trigger">
-            <span class="coordinate-upload-icon" aria-hidden="true">&#9635;</span>
-            <span class="coordinate-upload-title">上传坐标图片</span>
-            <span class="coordinate-upload-subtitle">识别后可核对地图并下载符合条件的 KML</span>
-          </label>
-          <input id="imageInput" class="coordinate-file-input" type="file" accept="image/*" />
-          <div id="imagePreview" class="image-preview"></div>
-          <div id="uploadMessage" class="upload-message"></div>
-        </div>
-        <details class="coordinate-paste-panel">
-          <summary>粘贴坐标文本</summary>
+        <div class="coordinate-input-area">
           <div class="textarea-wrap coordinate-input-shell">
             <textarea id="coordinateInput" placeholder="每行一个坐标点"></textarea>
             <div class="workspace-tools">
@@ -5042,7 +5068,17 @@
             </div>
           </div>
           <details class="coordinate-example"><summary>查看输入示例</summary><code>116.391245, 39.907654<br>31°15′30.12″N, 121°28′15.45″E</code></details>
-        </details>
+        </div>
+        <div id="coordinateUploadPanel" class="upload-box compact-upload-box coordinate-upload-card">
+          <label for="imageInput" class="coordinate-upload-trigger">
+            <span class="coordinate-upload-icon" aria-hidden="true">&#9635;</span>
+            <span class="coordinate-upload-title">上传坐标图片</span>
+            <span class="coordinate-upload-subtitle">识别结果会显示在上方输入框，可继续编辑</span>
+          </label>
+          <input id="imageInput" class="coordinate-file-input" type="file" accept="image/*" />
+          <div id="imagePreview" class="image-preview"></div>
+          <div id="uploadMessage" class="upload-message"></div>
+        </div>
       </section>
 
       <div id="recognitionSummary" class="recognition-status" aria-live="polite" hidden></div>
@@ -5237,8 +5273,8 @@
         <label id="judgeQuickUpload" for="judgeImageInput" class="judge-quick-upload" hidden>上传图片</label>
         <label id="judgeUploadCard" for="judgeImageInput" class="judge-upload-card">
           <span class="judge-upload-icon" aria-hidden="true">+</span>
-          <span class="judge-upload-title">上传图片开始快判</span>
-          <span class="judge-upload-subtitle">上传后立即分析并计入使用次数</span>
+          <span class="judge-upload-title">上传矿石 / 河道 / 卫星图开始快判</span>
+          <span class="judge-upload-subtitle">选择图片后开始分析</span>
         </label>
         <input id="judgeImageInput" class="judge-file-input" type="file" accept="image/*" />
         <div id="judgeImagePreview" class="image-preview"></div>
@@ -5316,7 +5352,7 @@
           </div>
         </div>
 
-        <div id="goldResultCard" class="gold-result-card" hidden>
+        <div id="goldResultCard" class="gold-result-card">
           <div class="gold-result-main">
             <div class="gold-metric">
               <span>成色</span>
@@ -5335,7 +5371,7 @@
               <strong id="goldDensityResult">--</strong>
             </div>
           </div>
-          <div id="goldGradeResult" class="gold-grade"></div>
+          <div id="goldGradeResult" class="gold-grade">输入数据后自动判断成色等级。</div>
         </div>
 
         <details class="formula-box">
@@ -5353,9 +5389,7 @@ K值 = 纯度 ÷ 100 × 24
 Au值 = 纯度 × 10 后取整数</div>
         </details>
 
-        <details class="quote-placeholder">
-          <summary>报价对比（可选）</summary>
-          <div class="quote-placeholder-body">
+        <div class="quote-placeholder">
           <div class="quote-header">
             <strong>报价对比</strong>
             <button type="button" class="ghost-action" onclick="clearGoldCalculator()">清空全部</button>
@@ -5379,10 +5413,9 @@ Au值 = 纯度 × 10 后取整数</div>
             </div>
             <div id="quoteResult" class="quote-result">输入成色数据和金店报价后，辅助判断当前报价区间是否合理。</div>
           </div>
-          </div>
-        </details>
+        </div>
 
-        <div id="goldActions" class="gold-actions" hidden>
+        <div id="goldActions" class="gold-actions">
           <button id="copyGoldButton" type="button" class="primary-action" onclick="copyGoldResult()">复制结果</button>
         </div>
 
@@ -11483,8 +11516,6 @@ Au值 = 纯度 × 10 后取整数</div>
     function calculateGoldPurity() {
       updateGoldInputLabels();
       const result = getGoldCalculation();
-      const resultCard = document.getElementById("goldResultCard");
-      const actionsEl = document.getElementById("goldActions");
       const purityEl = document.getElementById("goldPurityResult");
       const kEl = document.getElementById("goldKResult");
       const auEl = document.getElementById("goldAuResult");
@@ -11494,8 +11525,6 @@ Au值 = 纯度 × 10 后取整数</div>
       const messageEl = document.getElementById("goldMessage");
 
       if (result?.error) {
-        resultCard.hidden = true;
-        actionsEl.hidden = true;
         purityEl.textContent = "--";
         kEl.textContent = "--";
         auEl.textContent = "--";
@@ -11510,8 +11539,6 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       if (!result) {
-        resultCard.hidden = true;
-        actionsEl.hidden = true;
         purityEl.textContent = "--";
         kEl.textContent = "--";
         auEl.textContent = "--";
@@ -11535,8 +11562,6 @@ Au值 = 纯度 × 10 后取整数`;
       }
 
       purityEl.textContent = `${formatGoldNumber(result.purity)}%`;
-      resultCard.hidden = false;
-      actionsEl.hidden = false;
       kEl.textContent = `${formatGoldNumber(result.kValue)}K`;
       auEl.textContent = `Au${result.auValue}`;
       densityEl.textContent = formatGoldNumber(result.density, 3);
@@ -15725,6 +15750,17 @@ ${placemarks}
       }
     }
 
+    function focusCoordinateInputAfterRecognition() {
+      const activeElement = document.activeElement;
+      const activeElementIsEditing = activeElement instanceof HTMLElement
+        && activeElement !== input
+        && activeElement !== imageInput
+        && activeElement.matches("input, textarea, select, [contenteditable='true']");
+      if (!activeElementIsEditing) {
+        input.focus({ preventScroll: true });
+      }
+    }
+
     async function recognizeImage() {
       const file = imageInput.files[0];
       const currentVisitorId = ensureVisitorId();
@@ -16261,7 +16297,7 @@ ${placemarks}
           isDmsGrouped,
           isKyrgyzGk
         });
-        input.focus();
+        focusCoordinateInputAfterRecognition();
         coordinateUploadPanel?.classList.add("is-complete");
         if (acquisitionReviewOnly) setRecognitionStatus("", "");
         trackEvent("image_recognize_success", {
