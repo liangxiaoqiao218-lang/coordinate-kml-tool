@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 import {
   COORDINATE_REPRESENTATION_ROLE,
   buildCoordinateRepresentationContract,
-  createCoordinateRepresentation
+  createCoordinateRepresentation,
+  validateRepresentationSourceBinding
 } from "../server/recognition/coordinate-representation-contract.js";
+import { LineGeometryIntentReviewRuntime } from "../server/recognition/line-geometry-intent-review.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const receiptDirectory = String(process.env.SELF_INTERSECTION_OUTPUT_RECEIPT_DIR || "").trim();
@@ -17,47 +19,83 @@ const check = (name, action) => { action(); checks.push(name); console.log(`PASS
 
 const crossed = [[-3, 10], [-2.99, 10.01], [-3, 10.01], [-2.99, 10]];
 const normal = [[-3, 10], [-2.99, 10], [-2.99, 10.01], [-3, 10.01]];
+const explicitSource = Object.freeze({ status: "EXPLICIT", crsId: "EPSG:4326",
+  axisOrder: "longitude_latitude", evidenceRefs: ["synthetic-source-evidence:v1"] });
 
 check("self-intersecting Polygon is independently blocked while source-order points remain inspectable", () => {
   const polygon = createCoordinateRepresentation({ role: COORDINATE_REPRESENTATION_ROLE.BOUNDARY,
-    positions: crossed, boundaryBlocked: true });
+    positions: crossed, boundaryBlocked: true, sourceReference: explicitSource });
   const points = createCoordinateRepresentation({ role: COORDINATE_REPRESENTATION_ROLE.REVIEW_POINTS,
-    positions: crossed });
+    positions: crossed, sourceReference: explicitSource });
   const contract = buildCoordinateRepresentationContract([polygon, points]);
   assert.equal(contract.representations[0].result.geometry.type, "Polygon");
   assert.deepEqual(contract.representations[0].result.geometry.coordinates[0].slice(0, -1), crossed);
   assert.equal(contract.representations[0].outputCapabilities.mapReady, false);
   assert.equal(contract.representations[0].outputCapabilities.kmlReady, false);
   assert.ok(contract.representations[0].outputCapabilities.blockReasons.includes("GEOMETRY_SELF_INTERSECTION"));
+  assert.ok(contract.representations[0].result.reasonCodes.includes("GEOMETRY_SELF_INTERSECTION"),
+    "structured self-intersection reason must not depend on warning copy");
   assert.equal(contract.representations[1].result.geometry.type, "MultiPoint");
   assert.deepEqual(contract.representations[1].result.geometry.coordinates, crossed);
   assert.equal(contract.representations[1].outputCapabilities.mapReady, true);
   assert.equal(contract.representations[1].outputCapabilities.kmlReady, true);
   assert.notEqual(contract.representations[0].result.resultId, contract.representations[1].result.resultId);
   assert.notEqual(contract.representations[0].result.geometryHash, contract.representations[1].result.geometryHash);
+  assert.equal(validateRepresentationSourceBinding(contract.representations[0]), true);
+  assert.equal(validateRepresentationSourceBinding(contract.representations[1]), true);
+  assert.throws(() => buildCoordinateRepresentationContract([{ ...contract.representations[1],
+    result: { ...contract.representations[1].result, resultRevision: 2 } }]),
+  /REPRESENTATION_SOURCE_BINDING_INVALID/u);
+  assert.throws(() => buildCoordinateRepresentationContract([{ ...contract.representations[1],
+    result: { ...contract.representations[1].result, geometryHash: "sha256:forged" } }]),
+  /REPRESENTATION_SOURCE_BINDING_INVALID/u);
+  assert.throws(() => createCoordinateRepresentation({
+    role: COORDINATE_REPRESENTATION_ROLE.REVIEW_POINTS, positions: crossed
+  }), /REPRESENTATION_SOURCE_REFERENCE_INVALID/u);
 });
 
 check("normal Polygon remains independently inspectable", () => {
   const polygon = createCoordinateRepresentation({ role: COORDINATE_REPRESENTATION_ROLE.BOUNDARY,
-    positions: normal });
+    positions: normal, sourceReference: explicitSource });
   assert.equal(polygon.outputCapabilities.mapReady, true);
   assert.equal(polygon.outputCapabilities.kmlReady, true);
 });
 
 check("independent samples produce MultiPoint without a boundary claim", () => {
   const points = createCoordinateRepresentation({ role: COORDINATE_REPRESENTATION_ROLE.REVIEW_POINTS,
-    positions: normal });
+    positions: normal, sourceReference: explicitSource });
   assert.equal(points.result.geometry.type, "MultiPoint");
   assert.equal(points.boundarySemantics, false);
 });
 
 check("LineString requires explicit source line intent", () => {
   assert.throws(() => createCoordinateRepresentation({ role: COORDINATE_REPRESENTATION_ROLE.REVIEW_LINE,
-    positions: normal }), /EXPLICIT_LINE_INTENT_REQUIRED/u);
+    positions: normal, sourceReference: explicitSource }), /EXPLICIT_LINE_INTENT_REQUIRED/u);
   const line = createCoordinateRepresentation({ role: COORDINATE_REPRESENTATION_ROLE.REVIEW_LINE,
-    positions: normal, explicitLineIntent: true });
+    positions: normal, explicitLineIntent: true, sourceReference: explicitSource });
   assert.equal(line.result.geometry.type, "LineString");
   assert.equal(line.outputCapabilities.kmlReady, true);
+});
+
+check("expired line intent confirmation cannot upgrade geometry", () => {
+  let now = 1_000;
+  const runtime = new LineGeometryIntentReviewRuntime({ ttlMs: 10, now: () => now });
+  const review = runtime.issue({
+    result: { resultId: "pending-line", resultRevision: 1, geometryHash: null },
+    sourceCrs: "utm30n",
+    coordinateText: "1 | 500000 | 1000000\n2 | 501000 | 1001000"
+  });
+  now += 11;
+  const outcome = runtime.accept({
+    reviewId: review.reviewId,
+    reviewBindingSha256: review.reviewBindingSha256,
+    result: { resultId: "pending-line", resultRevision: 1, geometryHash: null },
+    sourceCrs: "utm30n",
+    coordinateText: "1 | 500000 | 1000000\n2 | 501000 | 1001000",
+    action: "accept_line"
+  });
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.code, "LINE_GEOMETRY_INTENT_REVIEW_EXPIRED");
 });
 
 const golden = JSON.parse(readFileSync(path.join(root, "release-governance", "sr08d5-golden-policy.json"), "utf8"));
@@ -117,12 +155,38 @@ async function finalizeProjected(coordinateText, geometryIntent = "polygon") {
   const pending = await pendingResponse.json();
   assert.equal(pendingResponse.status, 200, JSON.stringify(pending));
   const result = pending.finalizedCoordinateResult;
-  const confirmedResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-projection-confirmation`, {
+  const confirmationUrl = `http://127.0.0.1:${port}/api/coordinate-projection-confirmation`;
+  const confirmationBody = { resultId: result.resultId, resultRevision: result.resultRevision,
+    geometryHash: result.geometryHash, sourceCrs: "utm30n", coordinateText, geometryIntent };
+  let confirmedResponse = await fetch(confirmationUrl, {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ resultId: result.resultId, resultRevision: result.resultRevision,
-      sourceCrs: "utm30n", coordinateText, geometryIntent })
+    body: JSON.stringify(confirmationBody)
   });
-  const confirmed = await confirmedResponse.json();
+  let confirmed = await confirmedResponse.json();
+  if (geometryIntent === "line") {
+    assert.equal(confirmedResponse.status, 409);
+    assert.equal(confirmed.code, "LINE_GEOMETRY_INTENT_CONFIRMATION_REQUIRED");
+    const review = confirmed.lineIntentReview;
+    const forgedResponse = await fetch(confirmationUrl, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...confirmationBody,
+        lineIntentReview: { ...review, action: "accept_line", reviewBindingSha256: "forged" } })
+    });
+    assert.equal(forgedResponse.status, 409);
+    assert.equal((await forgedResponse.json()).code, "LINE_GEOMETRY_INTENT_REVIEW_IDENTITY_MISMATCH");
+    const staleResponse = await fetch(confirmationUrl, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...confirmationBody, resultRevision: result.resultRevision + 1,
+        lineIntentReview: { ...review, action: "accept_line" } })
+    });
+    assert.equal(staleResponse.status, 409);
+    assert.equal((await staleResponse.json()).code, "STALE_CONFIRMATION_REVISION");
+    confirmedResponse = await fetch(confirmationUrl, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...confirmationBody, lineIntentReview: { ...review, action: "accept_line" } })
+    });
+    confirmed = await confirmedResponse.json();
+  }
   assert.equal(confirmedResponse.status, 200, JSON.stringify(confirmed));
   return { pending, confirmed };
 }
@@ -175,6 +239,10 @@ try {
     assert.equal(line.confirmed.boundaryBlocked, false);
     assert.equal(line.confirmed.finalizedCoordinateResult.geometry.type, "LineString");
     assert.equal(line.confirmed.finalizedCoordinateResult.kmlReady, true);
+    assert.equal(line.confirmed.coordinateRepresentationContract.representations[0]
+      .sourceReferenceBinding.sourceReference.status, "CONFIRMED");
+    assert.ok(line.confirmed.coordinateRepresentationContract.representations[0]
+      .sourceReferenceBinding.sourceReference.evidenceRefs.some(value => value.startsWith("line-intent-review:")));
   });
   const missingCrsPendingResponse = await fetch(`http://127.0.0.1:${port}/api/coordinate-manual-finalize`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ coordinateText: crossedText })

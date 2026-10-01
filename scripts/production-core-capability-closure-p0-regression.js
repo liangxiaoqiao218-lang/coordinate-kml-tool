@@ -203,6 +203,8 @@ function makeHandwrittenPointReview() {
     sourceAuthority:'legacy',
     coordinateType:'handwritten_dms_experimental',
     precisionMode:'handwritten-dms-coordinates',
+    sourceReference:{status:'EXPLICIT',crsId:'EPSG:4326',axisOrder:'latitude_longitude',
+      evidenceRefs:['handwritten-source-rows:16']},
     warnings:['Review warning'],
     limitations:['当前 MultiPoint 结果不代表矿区边界、面积或点位连接顺序。']
   });
