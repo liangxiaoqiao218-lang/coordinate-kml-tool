@@ -161,6 +161,11 @@ import {
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
 import { evaluateRecognitionOutputCapability } from "./server/recognition/recognition-output-capability.js";
 import {
+  COORDINATE_REPRESENTATION_ROLE,
+  buildCoordinateRepresentationContract,
+  createCoordinateRepresentation
+} from "./server/recognition/coordinate-representation-contract.js";
+import {
   createAgenticCoordinateApi,
   getAgenticCoordinateApiReadiness,
   requireAgenticCoordinateApiEnabled
@@ -8927,7 +8932,10 @@ function buildPendingManualProjectedCoordinateEngine(rows) {
   }, { forceRequiresReview: true });
 }
 
-function buildConfirmedProjectedCoordinateEngine(rows, selection, { axisOrder = "easting_northing" } = {}) {
+function buildConfirmedProjectedCoordinateEngine(rows, selection, {
+  axisOrder = "easting_northing",
+  geometryIntent = "polygon"
+} = {}) {
   const definition = getProjectedCrsDefinition(selection);
   const normalizedAxisOrder = String(axisOrder || "").toLowerCase();
   if (!definition || !Array.isArray(rows) || rows.length < 3
@@ -8963,6 +8971,11 @@ function buildConfirmedProjectedCoordinateEngine(rows, selection, { axisOrder = 
     });
   });
   if (points.some(point => point === null)) return null;
+  const explicitGeometry = geometryIntent === "line"
+    ? "line"
+    : geometryIntent === "point" && points.length === 1
+      ? "point"
+      : "polygon";
   return normalizeCoordinateEngineV2Result({
     schema_version: "coordinate_engine_v2",
     coordinate_type: "projected_xy",
@@ -8974,7 +8987,7 @@ function buildConfirmedProjectedCoordinateEngine(rows, selection, { axisOrder = 
     groups: [{
       group_id: "group_1",
       group_name: "矿地1",
-      geometry: getCoordinateEngineV2Geometry(points),
+      geometry: explicitGeometry,
       confidence: 1,
       requires_review: false,
       kml_ready: true,
@@ -14311,6 +14324,12 @@ app.post("/api/coordinate-projection-confirmation", (req, res) => {
   const resultRevision = Number(req.body?.resultRevision);
   const sourceCrsSelection = String(req.body?.sourceCrs || "").toLowerCase();
   const coordinateText = String(req.body?.coordinateText || "").trim();
+  const requestedGeometryIntent = String(req.body?.geometryIntent || "polygon").trim().toLowerCase();
+  const geometryIntent = requestedGeometryIntent === "line"
+    ? "line"
+    : requestedGeometryIntent === "points"
+      ? "points"
+      : "polygon";
   const definition = getProjectedCrsDefinition(sourceCrsSelection);
   if (!definition) {
     return res.status(400).json({ success: false, code: "PROJECTED_CRS_SELECTION_REQUIRED" });
@@ -14333,7 +14352,9 @@ app.post("/api/coordinate-projection-confirmation", (req, res) => {
   }
   let coordinateEngineV2 = null;
   try {
-    coordinateEngineV2 = buildConfirmedProjectedCoordinateEngine(rows, sourceCrsSelection);
+    coordinateEngineV2 = buildConfirmedProjectedCoordinateEngine(rows, sourceCrsSelection, {
+      geometryIntent: geometryIntent === "line" ? "line" : "polygon"
+    });
   } catch (_) {
     coordinateEngineV2 = null;
   }
@@ -14361,7 +14382,7 @@ app.post("/api/coordinate-projection-confirmation", (req, res) => {
     sourceAuthority: "manual_input",
     revision: projectedPayload.finalizerRevision
   });
-  const polygonSelfIntersection = response.verification?.status === "BLOCK"
+  const polygonSelfIntersection = geometryIntent === "polygon" && response.verification?.status === "BLOCK"
     && (response.verification?.warnings || []).some(warning => /自交|self-intersection/i.test(String(warning || "")));
   const positions = coordinateEngineV2.groups[0].points.map(point => [Number(point.lon), Number(point.lat)]);
   const pointGeometryValid = positions.length === rows.length && positions.every(position => (
@@ -14375,45 +14396,73 @@ app.post("/api/coordinate-projection-confirmation", (req, res) => {
       verificationStatus: response.verification?.status || "UNKNOWN"
     });
   }
-  const pointReviewResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
-      resultId: current.resultId,
-      resultRevision: current.resultRevision + 1,
-      currentRevision: current.resultRevision + 1,
-      confirmedRevision: current.resultRevision + 1,
-      sourceAuthority: "manual_input",
-      coordinateType: "projected_xy",
+  const representations = [];
+  let selectedRepresentation = null;
+  if (geometryIntent === "line") {
+    selectedRepresentation = createCoordinateRepresentation({
+      role: COORDINATE_REPRESENTATION_ROLE.REVIEW_LINE,
+      positions,
+      explicitLineIntent: true,
+      precisionMode: "projected-x-y-confirmed-review-line",
+      warnings: ["已按来源中明确的线意图形成核对线；该线不代表矿区边界。"],
+      limitations: ["当前 LineString 仅用于核对来源明确表达的线关系，不代表矿区面。"]
+    });
+    representations.push(selectedRepresentation);
+  } else if (geometryIntent === "points" || polygonSelfIntersection) {
+    if (polygonSelfIntersection) {
+      representations.push(createCoordinateRepresentation({
+        role: COORDINATE_REPRESENTATION_ROLE.BOUNDARY,
+        positions,
+        boundaryBlocked: true,
+        precisionMode: "projected-x-y-confirmed-boundary-blocked",
+        warnings: ["原始点序形成自交；该 Polygon 不是有效矿区边界。"],
+        limitations: ["不得静默重排点、修改数字或把自交 Polygon 描述为有效矿区面。"]
+      }));
+    }
+    selectedRepresentation = createCoordinateRepresentation({
+      role: COORDINATE_REPRESENTATION_ROLE.REVIEW_POINTS,
+      positions,
       precisionMode: "projected-x-y-confirmed-points-only",
-      family: "projected_xy",
-      crs: FINALIZED_COORDINATE_CRS,
-      geometry: { type: "MultiPoint", coordinates: positions },
-      confirmationStatus: "accepted",
-      qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
-      technicalKmlReady: false,
-      currentAuthorizedGeometryExportable: false,
-      requiresReview: true,
-      kmlReady: false,
-      kmlAuthorityBlocked: false,
-      groups: [{ groupId: "group_1", requiresReview: true, kmlReady: false }],
-      warnings: [
-        polygonSelfIntersection
-          ? "已定位各坐标点；原始点序形成自交，当前地图仅供点位核对，不代表矿区边界。"
-          : "已定位各坐标点；原图未提供可核验的边界连接说明，当前地图仅供点位核对。",
-        ...(response.verification?.warnings || [])
-      ],
-      limitations: [
-        "当前 MultiPoint 结果不代表矿区边界、面积或点位连接顺序。",
-        "取得可核验的边界连接说明前，不得输出 Polygon 边界或 KML。"
-      ]
-  }));
+      warnings: [polygonSelfIntersection
+        ? "已保留各原始点；当前 MultiPoint 仅供点位核对，不代表矿区边界。"
+        : "已按明确的独立采样点意图形成 MultiPoint 核对结果。"],
+      limitations: ["当前 MultiPoint 结果不代表矿区边界、面积或点位连接顺序。"]
+    });
+    representations.push(selectedRepresentation);
+  } else {
+    const boundaryResult = coordinateConfirmationRuntime.register(response.finalizedCoordinateResult);
+    selectedRepresentation = Object.freeze({
+      role: COORDINATE_REPRESENTATION_ROLE.BOUNDARY,
+      boundarySemantics: true,
+      explicitLineIntent: false,
+      result: boundaryResult,
+      outputCapabilities: evaluateRecognitionOutputCapability(boundaryResult, { formalAuthorized: false })
+    });
+    representations.push(selectedRepresentation);
+  }
+  const representationContract = buildCoordinateRepresentationContract(representations);
+  representationContract.representations.forEach(representation => {
+    coordinateConfirmationRuntime.register(representation.result);
+  });
+  const selectedResult = selectedRepresentation.result;
+  const selectedCapabilities = selectedRepresentation.outputCapabilities;
+  const boundaryBlocked = polygonSelfIntersection;
   return res.json({
     success: true,
-    precisionMode: pointReviewResult.precisionMode,
+    precisionMode: selectedResult.precisionMode,
     selectedCrs: definition.id,
     sourceRowCount: rows.length,
-    geometryMode: "points_only",
-    boundaryBlocked: true,
+    geometryMode: geometryIntent === "line" ? "review_line"
+      : selectedResult.geometry?.type === "Polygon" ? "boundary" : "points_only",
+    boundaryBlocked,
     coordinateEngineV2,
-    finalizedCoordinateResult: pointReviewResult
+    coordinateRepresentationContract: representationContract,
+    outputCapabilities: selectedCapabilities,
+    mapReady: selectedCapabilities.mapReady,
+    mapStatus: selectedCapabilities.mapReady ? "ENABLED" : "CLOSED",
+    kmlReady: selectedCapabilities.kmlReady,
+    kmlStatus: selectedCapabilities.kmlReady ? "ENABLED" : "CLOSED",
+    finalizedCoordinateResult: selectedResult
   });
 });
 
@@ -14758,6 +14807,50 @@ function keepRecognizedCoordinatesAsPointReview(response = {}, warning = "", { b
     || Math.abs(position[0]) > 180 || Math.abs(position[1]) > 90)) return response;
   if (points.length === 0 || !response?.finalizedCoordinateResult?.resultId) return response;
   const prior = response.finalizedCoordinateResult;
+  if (!blockMap) {
+    const representations = [];
+    if (points.length >= 3 && /(?:自交|self-intersection|交叉)/iu.test(String(warning || ""))) {
+      representations.push(createCoordinateRepresentation({
+        role: COORDINATE_REPRESENTATION_ROLE.BOUNDARY,
+        positions: points,
+        sourceAuthority: prior.sourceAuthority || "legacy",
+        coordinateType: prior.coordinateType,
+        precisionMode: `${prior.precisionMode || "coordinate"}-boundary-blocked`,
+        boundaryBlocked: true,
+        warnings: [warning || "原始点序形成自交；该 Polygon 不是有效矿区边界。"],
+        limitations: ["不得静默重排点、修改数字或把自交 Polygon 描述为有效矿区面。"]
+      }));
+    }
+    const pointRepresentation = createCoordinateRepresentation({
+      role: COORDINATE_REPRESENTATION_ROLE.REVIEW_POINTS,
+      positions: points,
+      sourceAuthority: prior.sourceAuthority || "legacy",
+      coordinateType: prior.coordinateType,
+      precisionMode: `${prior.precisionMode || "coordinate"}-points-only`,
+      warnings: [
+        warning || "已定位坐标点；当前地图和未确认点 KML 仅供核对，不代表矿区边界。",
+        ...(Array.isArray(prior.warnings) ? prior.warnings : [])
+      ],
+      limitations: ["当前点位结果不代表矿区边界、面积或点位连接顺序。"]
+    });
+    representations.push(pointRepresentation);
+    const representationContract = buildCoordinateRepresentationContract(representations);
+    representationContract.representations.forEach(representation => {
+      coordinateConfirmationRuntime.register(representation.result);
+    });
+    return {
+      ...response,
+      geometryMode: "points_only",
+      boundaryBlocked: true,
+      coordinateRepresentationContract: representationContract,
+      outputCapabilities: pointRepresentation.outputCapabilities,
+      mapReady: true,
+      mapStatus: "ENABLED",
+      kmlReady: true,
+      kmlStatus: "ENABLED",
+      finalizedCoordinateResult: pointRepresentation.result
+    };
+  }
   const pointReviewResult = coordinateConfirmationRuntime.register(finalizeCoordinateResult({
     resultId: prior.resultId,
     resultRevision: prior.resultRevision,

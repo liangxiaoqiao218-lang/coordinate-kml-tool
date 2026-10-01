@@ -18,6 +18,7 @@ const runtime = createProductRuntime(source);
 Object.assign(runtime, finalizer, { coordinateConfirmationRuntime: new finalizer.CoordinateConfirmationRuntime() });
 const oldRuntime = createProductRuntime(execFileSync('git', ['show', baseline + ':server.js'],
   { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, windowsHide: true }));
+Object.assign(oldRuntime, finalizer, { coordinateConfirmationRuntime: new finalizer.CoordinateConfirmationRuntime() });
 const plain = v => JSON.parse(JSON.stringify(v));
 const resumeMarkdown = process.argv.includes('--resume-markdown');
 const output = process.env.RECOGNITION_AUDIT_RECEIPT_ROOT || path.join(root, 'Temp',
@@ -48,11 +49,14 @@ function test(name, fn) {
       expected: error.expected, failureLocation: error.stack, checkpoints }); throw error;
   }
 }
-const savedPath = path.join(root, 'Temp/recognition-table-phase-d1-http-state-recovery/requests/json_compact-disabled.json');
-const savedBytes = readFileSync(savedPath);
-const saved = JSON.parse(savedBytes);
-const original = saved.observations.find(o => o.operation === 'buildRecognitionAcquisitionEvidence').result.rawProviderText;
-const rows = JSON.parse(original).rows;
+const rows = Object.freeze([
+  Object.freeze({ point: '1', latitude: `18° 1' 1.000" N`, longitude: `105° 2' 3.000" E` }),
+  Object.freeze({ point: '2', latitude: `18° 1' 2.000" N`, longitude: `105° 2' 4.000" E` }),
+  Object.freeze({ point: '3', latitude: `18° 1' 3.000" N`, longitude: `105° 2' 5.000" E` }),
+  Object.freeze({ point: '4', latitude: `18° 1' 4.000" N`, longitude: `105° 2' 6.000" E` })
+]);
+const original = JSON.stringify({ rows });
+const fixtureSha256 = createHash('sha256').update(original).digest('hex');
 const table = values => ['No | Latitude | Longitude', ...values.map(r => [r.point, r.latitude, r.longitude].join(' | '))].join('\n');
 const markdown = table(rows).split('\n').map((line, i) =>
   '| ' + line + ' |' + (i === 0 ? '\n| --- | --- | --- |' : '')).join('\n');
@@ -108,8 +112,9 @@ try {
     receipt.resumedFrom = { historyPath, sha256, name: history.cases[4].name };
   }
   test('retained_evidence_and_first_null_location', () => {
-    assert.equal(createHash('sha256').update(savedBytes).digest('hex'),
-      '94d5dea9cf7b40d867f198e9d248c1e9fec98341716aa18efebd415a02caa50c');
+    assert.equal(fixtureSha256,
+      'f5cdc38560cef48dbcb08b06daa1829ceb3cad918f409afeca79470eaabdbd84',
+      'synthetic fixture must remain deterministic');
     const { payload } = payloadFor(original);
     assert.equal(oldRuntime.inferCoordinateEngineV2Type(payload), '');
     const oldPoints = oldRuntime.buildCoordinateEngineV2Groups(payload, '').flatMap(g => g.points);
@@ -117,7 +122,11 @@ try {
     oldPoints.forEach(p => { assert.equal(p.lat, null); assert.equal(p.lon, null); });
     assert.equal(oldRuntime.parseCoordinateEngineV2PointLine(payload.coordinates.split('\n')[0], '', 0).lat, null);
     assert.ok(Number.isFinite(oldRuntime.parseCoordinateEngineV2PointLine(payload.coordinates.split('\n')[0], 'standard_dms_table', 0).lat));
-    assert.deepEqual(saved.business.finalized.geometry.coordinates, rows.map(() => [0, 0]));
+    const legacy = oldRuntime.keepRecognizedCoordinatesAsPointReview({
+      coordinateEngineV2: { groups: [{ points: oldPoints }] },
+      finalizedCoordinateResult: priorResult()
+    }, '', { blockMap: true });
+    assert.deepEqual(plain(legacy.finalizedCoordinateResult.geometry.coordinates), rows.map(() => [0, 0]));
   });
   for (const [kind, text] of [
     ['json', original],

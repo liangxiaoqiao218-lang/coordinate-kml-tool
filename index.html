@@ -7462,7 +7462,7 @@ Au值 = 纯度 × 10 后取整数</div>
       if (confirmed) {
         projectedCrsReviewTitle.textContent = pointsOnly ? "只能核对点位，暂不能确认矿区边界" : "地图位置已确认";
         projectedCrsReviewHint.textContent = pointsOnly
-          ? "已定位各坐标点，但按原图顺序连接会交叉。为避免生成错误矿区，地图只用于点位核对，矿区边界和 KML 保持关闭。"
+          ? "原 Polygon 仍因自交而关闭；已保留的点位可在地图核对，并可下载明确标注为非矿区边界的未确认点 KML。"
           : "地图和 KML 已使用同一份核对结果；工作区继续保留原图中的坐标数字。";
         if (projectedCrsReviewHelp) projectedCrsReviewHelp.hidden = !pointsOnly;
       } else {
@@ -7506,7 +7506,7 @@ Au值 = 纯度 × 10 后取整数</div>
         const payload = await response.json().catch(() => ({}));
         const pointsOnly = payload.geometryMode === "points_only" && payload.boundaryBlocked === true;
         if (!response.ok || !getFinalizedCoordinateIdentity(payload.finalizedCoordinateResult)
-          || (!pointsOnly && payload.finalizedCoordinateResult?.kmlReady !== true)) {
+          || payload.finalizedCoordinateResult?.kmlReady !== true) {
           const messages = {
             PROJECTED_CRS_SELECTION_REQUIRED: "图片缺少完整定位信息，暂时无法显示地图。",
             PROJECTED_COORDINATE_ROWS_INVALID: "坐标行已被修改或格式不完整，请核对点号和数字。",
@@ -7531,7 +7531,7 @@ Au值 = 纯度 × 10 后取整数</div>
         renderProjectedCrsReviewPanel({ confirmed: true, selectedCrs: sourceCrs, pointsOnly });
         refreshMapPreviewAction();
         showMessage(pointsOnly
-          ? `已定位 ${pointCount} 个坐标点，但这些点无法组成可靠的矿区边界；地图将明确标为点位核对，KML 保持关闭。`
+          ? `已定位 ${pointCount} 个坐标点；原矿区边界仍关闭，地图和未确认点 KML 仅用于核对，不代表矿区边界。`
           : "地图位置已确认，原图坐标数字保持不变。", pointsOnly, 9000);
         return true;
       } catch (error) {
@@ -14557,7 +14557,8 @@ ${placemarks}
         return;
       }
 
-      if (activeProjectedBoundaryBlocked) {
+      if (activeProjectedBoundaryBlocked
+        && activeFinalizedCoordinateResult?.geometry?.type === "Polygon") {
         showKmlFailure({
           code: "KML_PROJECTED_BOUNDARY_UNRESOLVED",
           title: "暂时无法生成矿区边界 KML",

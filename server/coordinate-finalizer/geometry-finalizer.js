@@ -31,6 +31,67 @@ function validateRing(ring) {
     && new Set(ring.slice(0, -1).map(position => `${position[0]}:${position[1]}`)).size >= 3;
 }
 
+function orientation(a, b, c) {
+  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+}
+
+function orientationSign(value, tolerance = 1e-12) {
+  if (Math.abs(value) <= tolerance) return 0;
+  return value > 0 ? 1 : -1;
+}
+
+function pointOnSegment(a, b, point, tolerance = 1e-12) {
+  return point[0] >= Math.min(a[0], b[0]) - tolerance
+    && point[0] <= Math.max(a[0], b[0]) + tolerance
+    && point[1] >= Math.min(a[1], b[1]) - tolerance
+    && point[1] <= Math.max(a[1], b[1]) + tolerance;
+}
+
+function segmentsIntersect(a, b, c, d) {
+  const o1 = orientation(a, b, c);
+  const o2 = orientation(a, b, d);
+  const o3 = orientation(c, d, a);
+  const o4 = orientation(c, d, b);
+  const s1 = orientationSign(o1);
+  const s2 = orientationSign(o2);
+  const s3 = orientationSign(o3);
+  const s4 = orientationSign(o4);
+  if (s1 * s2 < 0 && s3 * s4 < 0) return true;
+  if (s1 === 0 && pointOnSegment(a, b, c)) return true;
+  if (s2 === 0 && pointOnSegment(a, b, d)) return true;
+  if (s3 === 0 && pointOnSegment(c, d, a)) return true;
+  if (s4 === 0 && pointOnSegment(c, d, b)) return true;
+  return false;
+}
+
+export function ringHasSelfIntersection(ring = []) {
+  if (!validateRing(ring)) return false;
+  const points = positionsEqual(ring[0], ring[ring.length - 1]) ? ring.slice(0, -1) : ring;
+  if (points.length < 4) return false;
+  for (let first = 0; first < points.length; first += 1) {
+    const a = points[first];
+    const b = points[(first + 1) % points.length];
+    for (let second = first + 1; second < points.length; second += 1) {
+      if (Math.abs(first - second) <= 1 || (first === 0 && second === points.length - 1)) continue;
+      const c = points[second];
+      const d = points[(second + 1) % points.length];
+      if (segmentsIntersect(a, b, c, d)) return true;
+    }
+  }
+  return false;
+}
+
+export function geometryHasSelfIntersection(geometry) {
+  if (geometry?.type === "Polygon") {
+    return Array.isArray(geometry.coordinates) && geometry.coordinates.some(ringHasSelfIntersection);
+  }
+  if (geometry?.type === "MultiPolygon") {
+    return Array.isArray(geometry.coordinates)
+      && geometry.coordinates.some(polygon => Array.isArray(polygon) && polygon.some(ringHasSelfIntersection));
+  }
+  return false;
+}
+
 export function validateFinalizedGeometry(geometry) {
   if (!geometry || typeof geometry !== "object" || !SUPPORTED_TYPES.has(geometry.type)) {
     return { ok: false, reasonCode: COORDINATE_GATE_REASON.GEOMETRY_INVALID };
@@ -46,9 +107,11 @@ export function validateFinalizedGeometry(geometry) {
         ? Array.isArray(coordinates) && coordinates.length > 0 && coordinates.every(validateRing)
         : Array.isArray(coordinates) && coordinates.length > 0
           && coordinates.every(polygon => Array.isArray(polygon) && polygon.length > 0 && polygon.every(validateRing));
-  return valid
-    ? { ok: true, geometry: structuredClone(geometry) }
-    : { ok: false, reasonCode: COORDINATE_GATE_REASON.GEOMETRY_INVALID };
+  if (!valid) return { ok: false, reasonCode: COORDINATE_GATE_REASON.GEOMETRY_INVALID };
+  if (geometryHasSelfIntersection(geometry)) {
+    return { ok: false, reasonCode: COORDINATE_GATE_REASON.GEOMETRY_SELF_INTERSECTION };
+  }
+  return { ok: true, geometry: structuredClone(geometry) };
 }
 
 function pointFromStructuredPoint(point) {

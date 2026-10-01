@@ -15,6 +15,7 @@ const REASON = Object.freeze({
   RESULT_REVISION_STALE: "RESULT_REVISION_STALE",
   CRS_NOT_WGS84: "CRS_NOT_WGS84",
   GEOMETRY_INVALID: "GEOMETRY_INVALID",
+  GEOMETRY_SELF_INTERSECTION: "GEOMETRY_SELF_INTERSECTION",
   GEOMETRY_HASH_MISMATCH: "GEOMETRY_HASH_MISMATCH"
 });
 
@@ -48,7 +49,9 @@ export function evaluateRecognitionOutputCapability(result = null, { formalAutho
     if (!validateFinalizedCrs(result.crs).ok) blockers.push(REASON.CRS_NOT_WGS84);
     const geometry = validateFinalizedGeometry(result.geometry);
     if (!geometry.ok) {
-      blockers.push(REASON.GEOMETRY_INVALID);
+      blockers.push(geometry.reasonCode === "GEOMETRY_SELF_INTERSECTION"
+        ? REASON.GEOMETRY_SELF_INTERSECTION
+        : REASON.GEOMETRY_INVALID);
     } else if (String(result.geometryHash || "") !== createGeometryHash(geometry.geometry)) {
       blockers.push(REASON.GEOMETRY_HASH_MISMATCH);
     }

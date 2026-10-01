@@ -12,6 +12,10 @@ import * as dmsSourceStructure from '../server/recognition/dms-source-structure.
 import * as imageSafety from '../server/recognition/coordinate-image-safety.js';
 import * as boundary from '../server/structured-coordinate-boundary.js';
 import * as finalizer from '../server/coordinate-finalizer/index.js';
+import {
+  COORDINATE_REPRESENTATION_ROLE,
+  createCoordinateRepresentation
+} from '../server/recognition/coordinate-representation-contract.js';
 import {convertKyrgyzGkToWgs84} from '../server/projection/kyrgyz-gk.js';
 import {FinalizedResultSpatialGeometryAdapter} from '../server/spatial/adapters/finalized-result-adapter.js';
 import {MapPreviewAdapter} from '../server/spatial/adapters/map-preview-adapter.js';
@@ -192,6 +196,17 @@ function make({structured=engine(),recognition={},verification={status:'REVIEW',
     revision:{resultId:'core-'+tests.length+'-'+Math.random(),resultRevision:1,currentRevision:1,...revision},familyAvailability:availability});
   return finalizer.registerFinalizedCoordinateResult(finalizer.finalizeCoordinateResult(input));
 }
+function makeHandwrittenPointReview() {
+  return createCoordinateRepresentation({
+    role:COORDINATE_REPRESENTATION_ROLE.REVIEW_POINTS,
+    positions:points.map(point=>[point.lon,point.lat]),
+    sourceAuthority:'legacy',
+    coordinateType:'handwritten_dms_experimental',
+    precisionMode:'handwritten-dms-coordinates',
+    warnings:['Review warning'],
+    limitations:['当前 MultiPoint 结果不代表矿区边界、面积或点位连接顺序。']
+  });
+}
 function complete(result) {
   assert.ok(result.resultId && result.geometryHash && result.geometry);
   assert.ok(Number.isSafeInteger(result.resultRevision) && result.resultRevision>0);
@@ -207,15 +222,35 @@ function allowed(result) {
 test('handwritten 16 rows produce server lat/lon and canonical identity',()=>{
   assert.equal(points.length,16); assert.ok(points.every(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon)));
   assert.ok(Math.abs(points[15].lat-(11+27/60+45.09/3600))<1e-12);
-  const result=make(); complete(result); assert.equal(result.geometry.coordinates[0].length,17);
+  const {result,outputCapabilities}=makeHandwrittenPointReview();
+  complete(result);
+  assert.equal(result.geometry.type,'MultiPoint');
+  assert.equal(result.geometry.coordinates.length,16);
+  assert.equal(outputCapabilities.mapReady,true);
+  assert.equal(outputCapabilities.kmlReady,true);
+  assert.equal(outputCapabilities.unverified,true);
+  assert.equal(result.decisionState,'REVIEW_REQUIRED');
+  assert.match(result.limitations.join('\n'),/不代表矿区边界/u);
+  assert.equal(adapter.adapt(result).ok,false);
+  assert.equal(new MapPreviewAdapter().adapt(result,{expectedIdentity:result}).previewEligibility.allowed,true);
 });
-test('handwritten review warning permits map/KML without AUTO_EXPORT',()=>{const r=make();allowed(r);assert.equal(r.decisionState,'REVIEW_REQUIRED');assert.ok(adapter.adapt(r).geometry.warnings.length);});
+test('handwritten review warning permits unverified point map/KML without boundary authorization',()=>{
+  const {result,outputCapabilities}=makeHandwrittenPointReview();
+  complete(result);
+  assert.equal(result.kmlReady,true);
+  assert.equal(outputCapabilities.mapReady,true);
+  assert.equal(outputCapabilities.kmlReady,true);
+  assert.equal(outputCapabilities.unverified,true);
+  assert.equal(result.decisionState,'REVIEW_REQUIRED');
+  assert.ok(result.warnings.length);
+  assert.equal(adapter.adapt(result).ok,false);
+});
 test('truthy incomplete frontend identity fails every mandatory field',()=>{
-  const result=make(); for(const key of ['resultId','resultRevision','geometryHash','geometry']) assert.equal(browser.getFinalizedCoordinateIdentity({...result,[key]:null}),null);
+  const {result}=makeHandwrittenPointReview(); for(const key of ['resultId','resultRevision','geometryHash','geometry']) assert.equal(browser.getFinalizedCoordinateIdentity({...result,[key]:null}),null);
   assert.match(extract(html,'ensureManualInputFinalized'),/if \(getFinalizedCoordinateIdentity\(\)\)/);
   assert.match(extract(html,'ensureManualInputFinalized'),/recoveryIdentity/);
 });
-test('canonical displayed coordinates are derived from the server geometry',()=>{const r=make();assert.equal(browser.getCanonicalCoordinateDisplayText(r).split('\n').length,16);assert.match(html,/getCanonicalCoordinateDisplayText\(data.finalizedCoordinateResult\)/);});
+test('canonical displayed coordinates are derived from the server point-review geometry',()=>{const {result}=makeHandwrittenPointReview();assert.equal(browser.getCanonicalCoordinateDisplayText(result).split('\n').length,16);assert.match(html,/getCanonicalCoordinateDisplayText\(data.finalizedCoordinateResult\)/);});
 const gkRows=runtime.getKyrgyzGkInfo(kyrgyz).rows;
 const gkPoints=gkRows.map((r,i)=>boundary.parseStructuredBoundaryPoint(`${r.point} | ${r.x} | ${r.y}`,'kyrgyzstan_gk',i));
 test('Kyrgyz historical specialized parser retains order and server projection',()=>{
@@ -259,8 +294,14 @@ test('adapter rejects missing identity, hash mismatch and forged authority',()=>
   const r=make(); for(const patch of [{resultId:null},{resultRevision:null},{geometryHash:null},{geometry:null},{geometryHash:'sha256:wrong'},{sourceAuthority:'coordinate_engine_v3'},{decisionState:'AUTO_EXPORT'},{geometry:{type:'Point',coordinates:[1,2]}}]) assert.equal(adapter.adapt({...r,...patch}).ok,false);
 });
 test('edit complete identity allows warning; stale old revision and incomplete edit do not',()=>{
-  const r=make({revision:{resultId:'core-edit'}});allowed(r);
-  const edited=make({structured:engine('standard_dms_table',[{lat:41,lon:75}]),revision:{resultId:r.resultId,resultRevision:2,currentRevision:2,confirmationStatus:'pending'}});
+  const simpleBoundary=engine('standard_dms_table',[
+    {lat:10,lon:20},{lat:10,lon:21},{lat:11,lon:21},{lat:11,lon:20}
+  ]);
+  const editedBoundary=engine('standard_dms_table',[
+    {lat:10,lon:20},{lat:10,lon:21.25},{lat:11,lon:21},{lat:11,lon:20}
+  ]);
+  const r=make({structured:simpleBoundary,revision:{resultId:'core-edit'}});allowed(r);
+  const edited=make({structured:editedBoundary,revision:{resultId:r.resultId,resultRevision:2,currentRevision:2,confirmationStatus:'pending'}});
   allowed(edited);assert.equal(edited.decisionState,'REVIEW_REQUIRED');assert.notEqual(edited.geometryHash,r.geometryHash);
   assert.equal(adapter.adapt(r).ok,false);assert.equal(adapter.adapt({...edited,geometryHash:null}).ok,false);
 });
@@ -343,7 +384,12 @@ for(const scenario of ['handwritten','kyrgyz','unresolved']) test('HTTP mocked a
     assert.equal(result.geometry.type,'MultiPoint');
     assert.equal(result.geometry.coordinates.length,16);
     assert.equal(result.decisionState,'REVIEW_REQUIRED');
-    assert.equal(result.kmlReady,false);
+    assert.equal(result.kmlReady,true);
+    assert.equal(payload.outputCapabilities.mapReady,true);
+    assert.equal(payload.outputCapabilities.kmlReady,true);
+    assert.equal(payload.outputCapabilities.unverified,true);
+    assert.equal(payload.boundaryBlocked,true);
+    assert.match(result.limitations.join('\n'),/不代表矿区边界/u);
     assert.equal(payload.sourceCoordinateRepresentation.displayText,cleanPrinted);
     assert.equal(payload.sourceCoordinateRepresentation.sourceEquivalence,'pointwise_dms_semantic_match');
     assert.equal(adapter.adapt(result).ok,false);

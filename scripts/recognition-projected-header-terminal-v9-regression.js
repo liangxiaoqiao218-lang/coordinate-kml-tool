@@ -137,7 +137,12 @@ const loadingStatusRule = indexSource.match(/\.recognition-status\.loading::befo
 assert.match(baseStatusRule, /animation:\s*none/u);
 assert.doesNotMatch(baseStatusRule, /infinite/u);
 assert.match(loadingStatusRule, /animation:\s*spin\s+0\.8s\s+linear\s+infinite/u);
-assert.match(indexSource, /setRecognitionStatus\(\s*"识别完成，建议通过地图核对位置和形状。"\s*,\s*"warning"\s*\)/u);
+assert.match(indexSource, /reviewMapReady\s*&&\s*reviewKmlReady[\s\S]*?"坐标已识别。您可以查看地图或下载未确认 KML，核对位置和形状。"/u);
+assert.match(indexSource, /reviewMapReady[\s\S]*?"坐标已识别。您可以查看地图核对位置和形状，未确认 KML 暂不可用。"/u);
+assert.match(indexSource, /"坐标已识别，但地图和 KML 暂未开放，请根据提示继续核对。"/u);
+assert.match(indexSource, /原 Polygon 仍因自交而关闭；已保留的点位可在地图核对，并可下载明确标注为非矿区边界的未确认点 KML。/u);
+assert.match(indexSource, /原矿区边界仍关闭，地图和未确认点 KML 仅用于核对，不代表矿区边界。/u);
+assert.doesNotMatch(indexSource, /reviewMessage\s*=\s*[^;]*正式授权/u);
 assert.match(indexSource, /setRecognitionStatus\("暂时未能完成识别。",\s*"warning"\)/u);
 
 console.log("recognition projected header terminal v9: PASS");
