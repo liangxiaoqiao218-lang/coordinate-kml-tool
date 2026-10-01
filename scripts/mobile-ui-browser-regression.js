@@ -176,6 +176,16 @@ try {
       await navigate(cdp, sessionId, `${baseUrl}${pagePath}?browser-regression=${head.slice(0, 8)}-${width}`);
       const layout = await evaluate(cdp, sessionId, `(() => {
         const clientWidth = document.documentElement.clientWidth;
+        const navButtons = [...document.querySelectorAll('.view.active .page-nav .back-button')];
+        const navLabels = navButtons.map(button => button.textContent.trim());
+        const navRows = [...new Set(navButtons.map(button => Math.round(button.getBoundingClientRect().top)))];
+        const coordinateInput = document.querySelector('#coordinateInput');
+        const formatSelect = document.querySelector('#coordinateFormat');
+        const visibleRect = element => {
+          if (!element || !element.getClientRects().length) return null;
+          const rect = element.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, width: rect.width, height: rect.height };
+        };
         const offenders = [...document.querySelectorAll('main *, header *, footer *')]
           .filter(element => {
             const style = getComputedStyle(element);
@@ -184,10 +194,30 @@ try {
             return rect.width > 0 && (rect.left < -1 || rect.right > clientWidth + 1);
           })
           .map(element => ({ tag: element.tagName, id: element.id, className: String(element.className).slice(0, 80) }));
-        return { clientWidth, scrollWidth: document.documentElement.scrollWidth, offenders };
+        return {
+          clientWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+          offenders,
+          navLabels,
+          navRows: navRows.length,
+          coordinateInput: visibleRect(coordinateInput),
+          coordinatePlaceholder: coordinateInput?.getAttribute('placeholder') || '',
+          coordinateExampleLinkVisible: Boolean([...document.querySelectorAll('summary,button,a')].find(item => item.textContent.trim() === '查看输入示例' && item.getClientRects().length)),
+          formatSelect: visibleRect(formatSelect)
+        };
       })()`);
       assert.equal(layout.scrollWidth, layout.clientWidth, `${name} ${width}px must not scroll horizontally`);
       assert.deepEqual(layout.offenders, [], `${name} ${width}px must not clip visible content`);
+      if (name !== "home") {
+        assert.deepEqual(layout.navLabels, ["首页", "坐标识别", "矿地快判", "黄金成色计算器"], `${name} ${width}px keeps complete navigation labels`);
+        assert.equal(layout.navRows, width < 720 ? 2 : 1, `${name} ${width}px navigation uses the expected row count`);
+      }
+      if (name === "coordinate") {
+        assert.ok(layout.coordinateInput?.height >= (width < 720 ? 215 : 250), `coordinate ${width}px restores the accepted input height`);
+        assert.match(layout.coordinatePlaceholder, /粘贴坐标[\s\S]*116\.391245,39\.907654[\s\S]*31°15'30\.12"N,121°28'15\.45"E/u);
+        assert.equal(layout.coordinateExampleLinkVisible, false, `coordinate ${width}px has no extra example disclosure`);
+        assert.ok(layout.formatSelect?.left >= -1 && layout.formatSelect?.right <= layout.clientWidth + 1, `coordinate ${width}px format control is visible and unclipped`);
+      }
       results.push({ page: name, width, result: "PASS", ...layout });
       if (width === 390) await screenshot(cdp, sessionId, path.join(receiptRoot, "390", `${name}.png`));
     }
@@ -218,6 +248,7 @@ try {
   assert.equal(directPaste.editable, true);
   assert.equal(directPaste.copyVisible, true);
   assert.equal(directPaste.focusPreserved, true);
+  assert.match(directPaste.value, /116\.391245/u);
   results.push({ state: "coordinate-direct-paste", result: "PASS", ...directPaste });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-direct-paste.png"));
 
