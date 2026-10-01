@@ -48,11 +48,16 @@ function test(name, fn) {
       expected: error.expected, failureLocation: error.stack, checkpoints }); throw error;
   }
 }
-const savedPath = path.join(root, 'Temp/recognition-table-phase-d1-http-state-recovery/requests/json_compact-disabled.json');
-const savedBytes = readFileSync(savedPath);
-const saved = JSON.parse(savedBytes);
-const original = saved.observations.find(o => o.operation === 'buildRecognitionAcquisitionEvidence').result.rawProviderText;
-const rows = JSON.parse(original).rows;
+// Permanent synthetic source fixture. A clean checkout must not depend on an
+// untracked Temp receipt produced by an earlier HTTP diagnostic run.
+const rows = [
+  { point: '1', latitude: '18° 01\' 1.000" N', longitude: '72° 02\' 2.000" E' },
+  { point: '2', latitude: '18° 01\' 3.000" N', longitude: '72° 02\' 4.000" E' },
+  { point: '3', latitude: '18° 01\' 5.000" N', longitude: '72° 02\' 6.000" E' },
+  { point: '4', latitude: '18° 01\' 7.000" N', longitude: '72° 02\' 8.000" E' }
+];
+const original = JSON.stringify({ rows });
+const syntheticFixtureSha256 = 'eacfe2a1e1d8422cdfffca016b51702469e167fb59c391c56068672ecd841131';
 const table = values => ['No | Latitude | Longitude', ...values.map(r => [r.point, r.latitude, r.longitude].join(' | '))].join('\n');
 const markdown = table(rows).split('\n').map((line, i) =>
   '| ' + line + ' |' + (i === 0 ? '\n| --- | --- | --- |' : '')).join('\n');
@@ -108,8 +113,8 @@ try {
     receipt.resumedFrom = { historyPath, sha256, name: history.cases[4].name };
   }
   test('retained_evidence_and_first_null_location', () => {
-    assert.equal(createHash('sha256').update(savedBytes).digest('hex'),
-      '94d5dea9cf7b40d867f198e9d248c1e9fec98341716aa18efebd415a02caa50c');
+    assert.equal(createHash('sha256').update(original).digest('hex'), syntheticFixtureSha256,
+      'synthetic input identity must remain stable');
     const { payload } = payloadFor(original);
     assert.equal(oldRuntime.inferCoordinateEngineV2Type(payload), '');
     const oldPoints = oldRuntime.buildCoordinateEngineV2Groups(payload, '').flatMap(g => g.points);
@@ -117,7 +122,8 @@ try {
     oldPoints.forEach(p => { assert.equal(p.lat, null); assert.equal(p.lon, null); });
     assert.equal(oldRuntime.parseCoordinateEngineV2PointLine(payload.coordinates.split('\n')[0], '', 0).lat, null);
     assert.ok(Number.isFinite(oldRuntime.parseCoordinateEngineV2PointLine(payload.coordinates.split('\n')[0], 'standard_dms_table', 0).lat));
-    assert.deepEqual(saved.business.finalized.geometry.coordinates, rows.map(() => [0, 0]));
+    assert.deepEqual(oldPoints.map(point => [Number(point.lon), Number(point.lat)]), rows.map(() => [0, 0]),
+      'historical null coercion would produce zero coordinates');
   });
   for (const [kind, text] of [
     ['json', original],

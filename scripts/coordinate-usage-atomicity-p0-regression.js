@@ -383,7 +383,12 @@ test("inspectable acquisition review refresh drops stale closed-output authority
       geometryHash: finalized.geometryHash
     }
   };
-  assert.equal(evaluateCoordinateUsageAuthority({ httpStatus: 200, body: inspectableBody }).eligible, false);
+  const directFinalizedEvaluation = evaluateCoordinateUsageAuthority({ httpStatus: 200, body: inspectableBody });
+  assert.equal(directFinalizedEvaluation.eligible, true);
+  assert.equal(directFinalizedEvaluation.reason, "FINAL_SERVER_AUTHORITY_ESTABLISHED");
+  assert.equal(directFinalizedEvaluation.identity.resultId, finalized.resultId);
+  assert.equal(directFinalizedEvaluation.identity.resultRevision, finalized.resultRevision);
+  assert.equal(directFinalizedEvaluation.identity.geometryHash, finalized.geometryHash);
   const refreshed = attachRecognitionAcquisitionReviewUsageAuthority({
     recognitionRequestId: requestId,
     body: inspectableBody
@@ -528,7 +533,7 @@ test("uncharged responses are fixed-field failures and cannot disclose Provider-
     }
   });
   assert.deepEqual(Object.keys(request).sort(), [
-    "authorityReason", "candidateEvidenceStatus", "candidatePointCount", "code", "coordinates", "error", "failureState", "providerCallCount", "providerCompletionState", "quota", "rawText", "reason", "recoveryRequired", "recoveryTerminal", "requestId", "retryAllowed", "success", "usageConsumed", "userUsageConsumed"
+    "authorityReason", "candidateEvidenceStatus", "candidatePointCount", "code", "coordinates", "error", "failureState", "kmlEligibility", "kmlReady", "kmlStatus", "mapReady", "mapStatus", "previewEligibility", "providerCallCount", "providerCompletionState", "quota", "rawText", "reason", "recoveryRequired", "recoveryTerminal", "requestId", "retryAllowed", "success", "usageConsumed", "userUsageConsumed"
   ].sort());
   assert.equal(request.success, false);
   assert.equal(request.reason, "coordinate_no_candidate_evidence");
@@ -537,6 +542,12 @@ test("uncharged responses are fixed-field failures and cannot disclose Provider-
   assert.equal(request.candidatePointCount, 0);
   assert.equal(request.rawText, "");
   assert.equal(request.coordinates, "");
+  assert.equal(request.mapReady, false);
+  assert.equal(request.kmlReady, false);
+  assert.equal(request.mapStatus, "CLOSED");
+  assert.equal(request.kmlStatus, "CLOSED");
+  assert.equal(request.previewEligibility.allowed, false);
+  assert.equal(request.kmlEligibility.allowed, false);
   assert.equal(request.recoveryRequired, false);
   assert.equal(request.recoveryTerminal, true);
   assert.equal(request.providerCompletionState, "NOT_STARTED");
@@ -548,20 +559,54 @@ test("uncharged responses are fixed-field failures and cannot disclose Provider-
 });
 
 test("uncharged classification distinguishes retained candidates and valid geometry authority failures", () => {
+  const retainedCandidates = Array.from({ length: 16 }, (_, index) => Object.freeze({
+    format: "PROJECTED_XY",
+    sourceLineNumber: index + 3,
+    sourceText: `${index + 1} | ${500000 + index}.125 | ${9000000 + index}.750`,
+    sourceLabel: String(index + 1),
+    sourceLabelInferred: false,
+    sourceRowCandidateIndex: 1,
+    x: 500000 + index + 0.125,
+    y: 9000000 + index + 0.75,
+    axisOrder: "x_y"
+  }));
   const candidateFailure = buildUnchargedCoordinateFailureResponse({
     recognitionRequestId: requestId,
     authorityReason: "ACQUISITION_REVIEW_AUTHORITY_MISSING",
     body: {
       success: true,
-      candidateCoordinates: [{ sourceLabel: "1", x: 10, y: 20 }],
-      recognitionAcquisition: { diagnostics: { candidatePointCount: 1 } }
+      rawText: `private Provider narrative\n${retainedCandidates.map(row => row.sourceText).join("\n")}`,
+      candidateCoordinates: retainedCandidates,
+      candidateCoordinateGroups: [{ groupId: "candidate_group_1", rows: retainedCandidates }],
+      recognitionAcquisition: { diagnostics: { candidatePointCount: retainedCandidates.length } }
     }
   });
   assert.equal(candidateFailure.failureState, "CANDIDATES_RETAINED_OUTPUT_BLOCKED");
   assert.equal(candidateFailure.reason, "coordinate_candidates_retained_output_blocked");
   assert.equal(candidateFailure.candidateEvidenceStatus, "PRESENT");
-  assert.equal(candidateFailure.candidatePointCount, 1);
+  assert.equal(candidateFailure.candidatePointCount, 16);
   assert.equal(candidateFailure.authorityReason, "ACQUISITION_REVIEW_AUTHORITY_MISSING");
+  assert.equal(candidateFailure.rawText, "");
+  assert.equal(candidateFailure.candidateCoordinates.length, 16);
+  assert.equal(candidateFailure.candidateCoordinateLines.length, 16);
+  assert.equal(candidateFailure.candidateCoordinateGroups.length, 1);
+  assert.equal(candidateFailure.candidateCoordinateGroups[0].rows.length, 16);
+  assert.equal(candidateFailure.coordinates, retainedCandidates.map(row => row.sourceText).join("\n"));
+  assert.equal(candidateFailure.mapReady, false);
+  assert.equal(candidateFailure.kmlReady, false);
+  assert.equal(candidateFailure.mapStatus, "CLOSED");
+  assert.equal(candidateFailure.kmlStatus, "CLOSED");
+  assert.equal(candidateFailure.previewEligibility.allowed, false);
+  assert.equal(candidateFailure.kmlEligibility.allowed, false);
+  candidateFailure.candidateCoordinates.forEach((candidate, index) => {
+    assert.equal(candidate.sourceLabel, String(index + 1));
+    assert.equal(candidate.sourceLineNumber, index + 3);
+    assert.equal(candidate.sourceText, retainedCandidates[index].sourceText);
+    assert.equal(candidate.x, retainedCandidates[index].x);
+    assert.equal(candidate.y, retainedCandidates[index].y);
+    assert.equal(candidate.axisOrder, "x_y");
+  });
+  assert.equal(JSON.stringify(candidateFailure).includes("private Provider narrative"), false);
 
   const geometryFailure = buildUnchargedCoordinateFailureResponse({
     recognitionRequestId: requestId,
@@ -740,6 +785,10 @@ test("frontend and server bind one request ID to recovery without Provider repla
   assert.match(index, /recoverCommittedCoordinateResult\(recognitionRequestId, currentVisitorId\)/);
   assert.match(index, /sessionStorage\.setItem\(PENDING_COORDINATE_COMMIT_REQUEST_KEY, String\(value\)\.toLowerCase\(\)\)/);
   assert.match(index, /shouldRecoverCoordinateUsageOutcome\(\{[\s\S]*terminalJobSnapshot: terminalRecognitionJobSnapshot/);
+  assert.match(index, /const retainedCandidateFailure = data\?\.candidateEvidenceStatus === "PRESENT"/);
+  assert.match(index, /data\?\.failureState !== "FAILED_NO_COORDINATE_EVIDENCE"/);
+  assert.match(index, /if \(asyncTerminalMustStop && !retainedCandidateFailure\)/);
+  assert.match(index, /if \(!response\.ok && !retainedCandidateFailure\)/);
   assert.match(index, /let responseWasRecovery = usageRecoveryOnly/);
   assert.match(index, /await agenticCoordinateInitializationPromise/);
   assert.match(index, /agenticCoordinateController\?\.enabled[\s\S]*agenticCoordinateController\.recoverPending\(\)[\s\S]*resumePendingCoordinateWorkOnPageShow\(\)/);

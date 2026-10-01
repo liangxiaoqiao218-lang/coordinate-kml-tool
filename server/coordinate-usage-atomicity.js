@@ -115,6 +115,121 @@ function sanitizeQuota(quota) {
   return Object.keys(safe).length > 0 ? Object.freeze(safe) : null;
 }
 
+const SAFE_CANDIDATE_FORMATS = new Set(["DMS", "WGS84_DECIMAL", "PROJECTED_XY", "MGRS"]);
+const SAFE_CANDIDATE_AXIS_ORDERS = new Set([
+  "latitude_longitude", "longitude_latitude", "x_y", "y_x",
+  "easting_northing", "northing_easting"
+]);
+const MAX_UNCHARGED_CANDIDATES = 2000;
+const MAX_UNCHARGED_COORDINATE_TEXT = 262144;
+
+function boundedCoordinateLiteral(value, maximum = 512) {
+  const text = String(value ?? "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "").trim();
+  return text && text.length <= maximum ? text : null;
+}
+
+function sanitizeRetainedCandidate(candidate) {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const format = String(candidate.format || "").toUpperCase();
+  const sourceLineNumber = Number(candidate.sourceLineNumber);
+  const sourceRowCandidateIndex = Number(candidate.sourceRowCandidateIndex);
+  if (!SAFE_CANDIDATE_FORMATS.has(format)
+    || !Number.isSafeInteger(sourceLineNumber) || sourceLineNumber < 1
+    || !Number.isSafeInteger(sourceRowCandidateIndex) || sourceRowCandidateIndex < 1) return null;
+  const safe = {
+    format,
+    sourceLineNumber,
+    sourceRowCandidateIndex,
+    sourceLabelInferred: candidate.sourceLabelInferred === true
+  };
+  const sourceText = boundedCoordinateLiteral(candidate.sourceText);
+  const sourceLabel = boundedCoordinateLiteral(candidate.sourceLabel, 64);
+  const axisOrder = String(candidate.axisOrder || "");
+  if (!sourceText || !SAFE_CANDIDATE_AXIS_ORDERS.has(axisOrder)) return null;
+  safe.sourceText = sourceText;
+  safe.sourceLabel = sourceLabel;
+  safe.axisOrder = axisOrder;
+  for (const key of ["latitude", "longitude", "x", "y"]) {
+    if (candidate[key] == null) continue;
+    const numeric = Number(candidate[key]);
+    if (!Number.isFinite(numeric)) return null;
+    safe[key] = numeric;
+  }
+  for (const key of ["latitudeSource", "longitudeSource", "mgrs"]) {
+    if (candidate[key] == null) continue;
+    const literal = boundedCoordinateLiteral(candidate[key], 160);
+    if (!literal) return null;
+    safe[key] = literal;
+  }
+  const coordinateComplete = format === "DMS"
+    ? Boolean(safe.latitudeSource && safe.longitudeSource)
+    : format === "WGS84_DECIMAL"
+      ? Number.isFinite(safe.latitude) && Number.isFinite(safe.longitude)
+      : format === "PROJECTED_XY"
+        ? Number.isFinite(safe.x) && Number.isFinite(safe.y)
+        : Boolean(safe.mgrs);
+  return coordinateComplete ? Object.freeze(safe) : null;
+}
+
+function sanitizeRetainedCandidateEvidence(body = null) {
+  const sourceCandidates = Array.isArray(body?.candidateCoordinates) && body.candidateCoordinates.length > 0
+    ? body.candidateCoordinates
+    : Array.isArray(body?.recognitionAcquisition?.candidateCoordinates)
+      ? body.recognitionAcquisition.candidateCoordinates
+      : [];
+  const candidates = sourceCandidates.slice(0, MAX_UNCHARGED_CANDIDATES)
+    .map(sanitizeRetainedCandidate).filter(Boolean);
+  const candidateByIdentity = new Map(candidates.map(candidate => [
+    `${candidate.sourceLineNumber}:${candidate.sourceRowCandidateIndex}`, candidate
+  ]));
+  const sourceGroups = Array.isArray(body?.candidateCoordinateGroups) && body.candidateCoordinateGroups.length > 0
+    ? body.candidateCoordinateGroups
+    : Array.isArray(body?.recognitionAcquisition?.candidateCoordinateGroups)
+      ? body.recognitionAcquisition.candidateCoordinateGroups
+      : [];
+  const groups = sourceGroups.slice(0, MAX_UNCHARGED_CANDIDATES).map((group, index) => {
+    const rows = (Array.isArray(group?.rows) ? group.rows : []).map(row => candidateByIdentity.get(
+      `${Number(row?.sourceLineNumber)}:${Number(row?.sourceRowCandidateIndex)}`
+    )).filter(Boolean);
+    if (rows.length === 0) return null;
+    const groupId = boundedCoordinateLiteral(group?.groupId, 80) || `candidate_group_${index + 1}`;
+    return Object.freeze({
+      groupId,
+      sourceStartLine: rows[0].sourceLineNumber,
+      sourceEndLine: rows.at(-1).sourceLineNumber,
+      rows: Object.freeze(rows)
+    });
+  }).filter(Boolean);
+  const orderedRows = [...new Map(candidates.map(candidate => [candidate.sourceLineNumber, Object.freeze({
+    lineNumber: candidate.sourceLineNumber,
+    text: candidate.sourceText
+  })])).values()];
+  const coordinates = orderedRows.map(row => row.text).join("\n");
+  if (coordinates.length > MAX_UNCHARGED_COORDINATE_TEXT) {
+    return Object.freeze({ candidates: Object.freeze([]), groups: Object.freeze([]), lines: Object.freeze([]), coordinates: "" });
+  }
+  const lines = orderedRows;
+  return Object.freeze({
+    candidates: Object.freeze(candidates),
+    groups: Object.freeze(groups),
+    lines: Object.freeze(lines),
+    coordinates
+  });
+}
+
+function hasValidFinalizedGeometryIdentity(finalized) {
+  return Boolean(finalized
+    && finalized.schemaVersion === FINALIZED_COORDINATE_SCHEMA_VERSION
+    && safeIdentifier(finalized.resultId)
+    && Number.isSafeInteger(finalized.resultRevision)
+    && finalized.resultRevision > 0
+    && (finalized.currentRevision == null || finalized.currentRevision === finalized.resultRevision)
+    && validateFinalizedGeometry(finalized.geometry).ok === true
+    && finalized.crs?.id === FINALIZED_COORDINATE_CRS.id
+    && finalized.crs?.axisOrder === FINALIZED_COORDINATE_CRS.axisOrder
+    && constantTimeEqual(createGeometryHash(finalized.geometry, finalized.schemaVersion), finalized.geometryHash));
+}
+
 export function buildUnchargedCoordinateFailureResponse({
   body = null,
   recognitionRequestId = null,
@@ -123,7 +238,8 @@ export function buildUnchargedCoordinateFailureResponse({
   const explicitFailure = body?.success === false;
   const originalReason = String(body?.reason || "");
   const originalCode = String(body?.code || "");
-  const candidates = Array.isArray(body?.candidateCoordinates) ? body.candidateCoordinates : [];
+  const retained = sanitizeRetainedCandidateEvidence(body);
+  const candidates = retained.candidates;
   const acquisitionCandidateCount = Number(body?.recognitionAcquisition?.diagnostics?.candidatePointCount);
   const candidatePointCount = Math.max(
     candidates.length,
@@ -132,12 +248,7 @@ export function buildUnchargedCoordinateFailureResponse({
       : 0
   );
   const finalized = body?.finalizedCoordinateResult;
-  const finalizedGeometryValid = finalized
-    && finalized.schemaVersion === FINALIZED_COORDINATE_SCHEMA_VERSION
-    && validateFinalizedGeometry(finalized.geometry).ok === true
-    && finalized.crs?.id === FINALIZED_COORDINATE_CRS.id
-    && finalized.crs?.axisOrder === FINALIZED_COORDINATE_CRS.axisOrder
-    && constantTimeEqual(createGeometryHash(finalized.geometry, finalized.schemaVersion), finalized.geometryHash);
+  const finalizedGeometryValid = hasValidFinalizedGeometryIdentity(finalized);
   const safeAuthorityReason = /^[A-Z0-9_]{1,120}$/.test(String(authorityReason || ""))
     ? String(authorityReason)
     : null;
@@ -184,8 +295,19 @@ export function buildUnchargedCoordinateFailureResponse({
     authorityReason: safeAuthorityReason,
     candidateEvidenceStatus: candidatePointCount > 0 ? "PRESENT" : "ABSENT",
     candidatePointCount,
+    mapReady: false,
+    kmlReady: false,
+    mapStatus: "CLOSED",
+    kmlStatus: "CLOSED",
+    previewEligibility: Object.freeze({ allowed: false, reason: safeAuthorityReason || failureState }),
+    kmlEligibility: Object.freeze({ allowed: false, reason: safeAuthorityReason || failureState }),
+    ...(candidatePointCount > 0 ? {
+      candidateCoordinates: retained.candidates,
+      candidateCoordinateLines: retained.lines,
+      candidateCoordinateGroups: retained.groups
+    } : {}),
     rawText: "",
-    coordinates: ""
+    coordinates: candidatePointCount > 0 ? retained.coordinates : ""
   });
 }
 
@@ -636,6 +758,7 @@ export function attachRecognitionAcquisitionReviewUsageAuthority({ recognitionRe
   // through to the finalized-result authority evaluated by the same usage gate.
   const { recognitionAcquisitionReviewAuthority: _staleAuthority, ...bodyWithoutAuthority } = body;
   const candidate = { ...bodyWithoutAuthority, requestId };
+  if (hasValidFinalizedGeometryIdentity(candidate.finalizedCoordinateResult)) return candidate;
   try {
     return Object.freeze({
       ...candidate,
@@ -689,13 +812,14 @@ export function evaluateCoordinateUsageAuthority({ httpStatus = 200, body = null
   if (body?.agenticCoordinateAuthority) {
     return evaluateAgenticCoordinateUsageAuthority({ httpStatus, body });
   }
-  if (body?.recognitionAcquisitionReviewAuthority) {
+  const result = body?.finalizedCoordinateResult;
+  const finalizedGeometryIdentityPresent = hasValidFinalizedGeometryIdentity(result);
+  if (!finalizedGeometryIdentityPresent && body?.recognitionAcquisitionReviewAuthority) {
     return evaluateRecognitionAcquisitionReviewUsageAuthority({ httpStatus, body });
   }
-  if (body?.projectedCoordinateReviewAuthority) {
+  if (!finalizedGeometryIdentityPresent && body?.projectedCoordinateReviewAuthority) {
     return evaluateProjectedCoordinateReviewUsageAuthority({ httpStatus, body });
   }
-  const result = body?.finalizedCoordinateResult;
   const reject = reason => Object.freeze({ eligible: false, reason, identity: null });
   if (!Number.isInteger(Number(httpStatus)) || Number(httpStatus) < 200 || Number(httpStatus) >= 300 || body?.success !== true) {
     return reject("HTTP_OR_BODY_NOT_SUCCESSFUL");

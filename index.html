@@ -15571,6 +15571,12 @@ ${placemarks}
           && data?.code !== "USAGE_COMMIT_OUTCOME_UNKNOWN"
           && data?.usageConsumed === false
           && data?.recoveryRequired !== true) clearPendingCoordinateCommitRequestId();
+        const retainedCandidateFailure = data?.candidateEvidenceStatus === "PRESENT"
+          && data?.failureState !== "FAILED_NO_COORDINATE_EVIDENCE"
+          && data?.usageConsumed === false
+          && Array.isArray(data?.candidateCoordinates)
+          && data.candidateCoordinates.length > 0
+          && Boolean(String(data?.coordinates || "").trim());
         const recoveryFailureMustStop = responseWasRecovery
           && data?.success !== true
           && data?.code !== "USAGE_COMMIT_OUTCOME_UNKNOWN"
@@ -15582,7 +15588,7 @@ ${placemarks}
           ))
           || recoveryFailureMustStop
         );
-        if (asyncTerminalMustStop) {
+        if (asyncTerminalMustStop && !retainedCandidateFailure) {
           appendDebug("识别未完成，可以重新尝试或使用人工协助");
           const terminalNoCharge = data?.usageConsumed === false;
           const terminalMessage = terminalNoCharge
@@ -15789,7 +15795,7 @@ ${placemarks}
           appendDebug(`已识别 ${data.bftmLongTable.recognizedRows || 0}/${data.bftmLongTable.expectedRows || 0} 行`);
         }
 
-        if (!response.ok) {
+        if (!response.ok && !retainedCandidateFailure) {
           setRecognitionStatus("", "");
           throw new Error(data.error || data.detail || "识别失败");
         }

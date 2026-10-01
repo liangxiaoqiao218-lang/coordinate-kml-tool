@@ -137,7 +137,13 @@ const loadingStatusRule = indexSource.match(/\.recognition-status\.loading::befo
 assert.match(baseStatusRule, /animation:\s*none/u);
 assert.doesNotMatch(baseStatusRule, /infinite/u);
 assert.match(loadingStatusRule, /animation:\s*spin\s+0\.8s\s+linear\s+infinite/u);
-assert.match(indexSource, /setRecognitionStatus\(\s*"识别完成，建议通过地图核对位置和形状。"\s*,\s*"warning"\s*\)/u);
+assert.match(indexSource, /const reviewMapReady = activeRecognitionAcquisitionResult\?\.mapStatus === "ENABLED"/u);
+assert.match(indexSource, /const reviewKmlReady = activeRecognitionAcquisitionResult\?\.kmlStatus === "ENABLED"[\s\S]*activeRecognitionAcquisitionResult\?\.kmlReady === true/u);
+assert.match(indexSource, /"坐标已识别。您可以查看地图或下载未确认 KML，核对位置和形状。"/u);
+assert.match(indexSource, /"坐标已识别。您可以查看地图核对位置和形状，未确认 KML 暂不可用。"/u);
+assert.match(indexSource, /"坐标已识别，但地图和 KML 暂未开放，请根据提示继续核对。"/u);
+assert.match(indexSource, /if \(reviewMapReady\) \{[\s\S]*showMessage\(reviewMessage, false, COORDINATE_RECOGNITION_MESSAGE_MS\);[\s\S]*\} else \{[\s\S]*showRecognitionProgress\(recognitionAuthorizationReasonMessage\("map"\), "error", 0\);/u);
+assert.doesNotMatch(indexSource, /识别完成，建议通过地图核对位置和形状。/u);
 assert.match(indexSource, /setRecognitionStatus\("暂时未能完成识别。",\s*"warning"\)/u);
 
 console.log("recognition projected header terminal v9: PASS");

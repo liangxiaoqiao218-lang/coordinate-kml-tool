@@ -15574,7 +15574,8 @@ async function recognizeCoordinatesHandler(req, res) {
       mapReady: body?.mapReady, kmlReady: body?.kmlReady, usageConsumed: body?.usageConsumed,
       userUsageConsumed: body?.userUsageConsumed, recoveryRequired: body?.recoveryRequired,
       sourceCrs: body?.coordinateEngineV2?.source_crs, finalCrs: body?.finalizedCoordinateResult?.crs,
-      code: body?.code, reason: body?.reason });
+      code: body?.code, reason: body?.reason, failureState: body?.failureState,
+      authorityReason: body?.authorityReason, candidatePointCount: body?.candidatePointCount });
     return originalSendRecognitionJson(body);
   };
   const runBudgetedStage = async (stageName, action) => {
@@ -18321,7 +18322,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
             sourceLabels: multiRepresentationBinding.labels,
             multiRepresentationBinding
           })
-        : ["CONFLICT", "INCOMPLETE"].includes(multiRepresentationBinding.status)
+        : multiRepresentationBinding.status === "CONFLICT"
           && ["DMS_ONLY", "BOTH"].includes(multiRepresentationBinding.providerMode)
           ? Object.freeze({
               ...extractedTrustedProviderDmsEvidence,
