@@ -14,9 +14,13 @@ const head = git("rev-parse", "HEAD");
 const statusBefore = git("status", "--porcelain=v1");
 if (statusBefore) throw new Error(`PR76_WORKTREE_NOT_CLEAN_BEFORE_TESTS\n${statusBefore}`);
 
-const tessdataPath = String(process.env.RECOGNITION_TEST_TESSDATA_PATH || "").trim();
-if (!tessdataPath || !existsSync(tessdataPath)) throw new Error("PR76_VERIFIED_TESSDATA_REQUIRED");
-const tessdataSha256 = createHash("sha256").update(readFileSync(tessdataPath)).digest("hex").toUpperCase();
+const suppliedTessdataPath = String(process.env.RECOGNITION_TEST_TESSDATA_PATH || "").trim();
+const tessdataDirectory = suppliedTessdataPath.toLowerCase().endsWith(".traineddata.gz")
+  ? path.dirname(suppliedTessdataPath)
+  : suppliedTessdataPath;
+const tessdataFile = path.join(tessdataDirectory, "eng.traineddata.gz");
+if (!tessdataDirectory || !existsSync(tessdataFile)) throw new Error("PR76_VERIFIED_TESSDATA_REQUIRED");
+const tessdataSha256 = createHash("sha256").update(readFileSync(tessdataFile)).digest("hex").toUpperCase();
 if (tessdataSha256 !== "45B4CB346724AC1774F1C36F42F182B887BCDB28EBE63E6FFF90AC41F3FCFF91") {
   throw new Error("PR76_TESSDATA_SHA256_MISMATCH");
 }
@@ -57,7 +61,7 @@ Object.assign(baseEnv, {
   NODE_ENV: "test",
   DOTENV_CONFIG_PATH: path.join(root, "__no_pr76_environment__"),
   NODE_OPTIONS: `--require=${path.join(root, "scripts", "recognition-audit-offline-guard.cjs")}`,
-  RECOGNITION_TEST_TESSDATA_PATH: tessdataPath
+  RECOGNITION_TEST_TESSDATA_PATH: tessdataDirectory
 });
 
 const results = [];
@@ -102,7 +106,8 @@ for (const [name, script] of steps) {
     schemaVersion: "pr76_final_acceptance_v1",
     head,
     statusBefore,
-    tessdataPath,
+    tessdataDirectory,
+    tessdataFile,
     tessdataSha256,
     offlineGuard: true,
     results
