@@ -13,6 +13,7 @@ This first version keeps coordinate-recognition cases separate from `judge_cases
 
 - The sealed recognition result remains the single coordinate authority. The case library stores references only and validates a complete identity against `private.coordinate_recognition_commits`.
 - Browser roles have no direct table privileges. Access is through the existing Node `requireAdmin` route and server-side `service_role` client.
+- The privileged identity lookup is implemented only as `private.admin_validate_coordinate_case_identity` with `SECURITY DEFINER`, an empty `search_path`, schema-qualified relations, and execution restricted to `service_role`. The stable public RPC name is a `SECURITY INVOKER` wrapper with default `PUBLIC`, `anon`, and `authenticated` execution revoked.
 - `judge_cases` remains unchanged and continues to serve historical mining-judgement cases.
 - `UNKNOWN`, missing evidence scope, zero samples, and unrun evidence never count as PASS coverage.
 - PASS coverage also requires a verifiable, stage-owned reference. Delivery may use a receipt, problem resolution a commit, peer validation a Golden record, and production requires explicit `PRODUCTION_*` evidence. Evidence for one stage never proves another stage.

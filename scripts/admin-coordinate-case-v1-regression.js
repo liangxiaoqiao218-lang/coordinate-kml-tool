@@ -261,6 +261,27 @@ try {
     assert.match(sql, /revoke all on table public\.coordinate_cases from anon, authenticated/iu);
     assert.doesNotMatch(sql, /insert into public\.judge_cases/iu);
   });
+  await check("migration keeps privileged identity lookup outside exposed schemas", async () => {
+    const sql = fs.readFileSync(path.resolve("supabase/migrations/20261001063000_admin_coordinate_case_v1.sql"), "utf8");
+    const privateStart = sql.indexOf("create or replace function private.admin_validate_coordinate_case_identity");
+    const publicStart = sql.indexOf("create or replace function public.admin_validate_coordinate_case_identity");
+    assert.ok(privateStart >= 0 && publicStart > privateStart);
+    const privateFunction = sql.slice(privateStart, publicStart);
+    const publicFunction = sql.slice(publicStart);
+    assert.match(privateFunction, /security definer\s+set search_path = ''/iu);
+    assert.match(privateFunction, /from private\.coordinate_recognition_commits/iu);
+    assert.match(privateFunction, /then 'NOT_FOUND'/u);
+    assert.match(privateFunction, /then 'CURRENT'/u);
+    assert.match(privateFunction, /else 'CONFLICT'/u);
+    assert.match(sql, /revoke all on function private\.admin_validate_coordinate_case_identity\(uuid, text, integer, text\) from public, anon, authenticated/iu);
+    assert.match(sql, /grant usage on schema private to service_role/iu);
+    assert.match(sql, /grant execute on function private\.admin_validate_coordinate_case_identity\(uuid, text, integer, text\) to service_role/iu);
+    assert.match(publicFunction, /security invoker\s+set search_path = ''/iu);
+    assert.doesNotMatch(publicFunction, /security definer/iu);
+    assert.match(publicFunction, /select private\.admin_validate_coordinate_case_identity/iu);
+    assert.match(publicFunction, /revoke all on function public\.admin_validate_coordinate_case_identity\(uuid, text, integer, text\) from public, anon, authenticated/iu);
+    assert.match(publicFunction, /grant execute on function public\.admin_validate_coordinate_case_identity\(uuid, text, integer, text\) to service_role/iu);
+  });
   await check("admin UI defaults to coordinate section", async () => {
     const html = fs.readFileSync(path.resolve("admin.html"), "utf8");
     assert.match(html, /id="coordinateCaseSection"/u);
