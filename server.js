@@ -2,6 +2,9 @@
 import express from "express";
 import multer from "multer";
 import { createClient } from "@supabase/supabase-js";
+import { CoordinateCaseStore } from "./server/admin/coordinate-case-store.js";
+import { buildAdminModelStatus, coordinateCaseContract } from "./server/admin/coordinate-case-contract.js";
+import { registerAdminCoordinateCaseRoutes } from "./server/admin/coordinate-case-routes.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
@@ -242,6 +245,8 @@ const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "
 const supabase = supabaseUrl && supabaseServiceRoleKey
   ? createClient(supabaseUrl, supabaseServiceRoleKey)
   : null;
+const coordinateCaseStore = new CoordinateCaseStore({ supabase });
+let latestProviderModelObservation = null;
 const coordinateUsageSealKey = parseCoordinateUsageSealKey(process.env.COORDINATE_USAGE_SEAL_KEY);
 const coordinateUsageAtomicity = new CoordinateUsageAtomicityService({
   supabase,
@@ -8428,6 +8433,12 @@ async function callAliyunVision({
     throw error;
   }
 
+  latestProviderModelObservation = Object.freeze({
+    model: String(data?.model || modelName || "").trim(),
+    observedAt: new Date().toISOString(),
+    evidenceType: "PROVIDER_RESPONSE_MODEL"
+  });
+
   return data;
 }
 
@@ -12150,6 +12161,18 @@ app.get("/api/admin/judge-cases", requireAdmin, async (req, res) => {
       error: error.message || "读取快判案例失败"
     });
   }
+});
+
+registerAdminCoordinateCaseRoutes(app, {
+  requireAdmin,
+  requireStore: requireSupabase,
+  store: coordinateCaseStore,
+  contract: coordinateCaseContract,
+  getModelStatus: () => buildAdminModelStatus({
+    configuredVisionModel: aliyunVisionModel,
+    configuredOcrModel: aliyunOcrModel,
+    runtimeObservation: latestProviderModelObservation
+  })
 });
 
 app.patch("/api/admin/judge-cases/:caseId/review", requireAdmin, async (req, res) => {

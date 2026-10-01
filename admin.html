@@ -1410,7 +1410,7 @@
       <button type="button" class="active" data-module-tab="dashboard" onclick="showAdminModule('dashboard')">总览</button>
       <button type="button" data-module-tab="user" onclick="showAdminModule('user')">用户</button>
       <button type="button" data-module-tab="usage" onclick="showAdminModule('usage')">使用分析</button>
-      <button type="button" data-module-tab="cases" onclick="showAdminModule('cases')">快判案例库</button>
+      <button type="button" data-module-tab="cases" onclick="showAdminModule('cases')">案例库</button>
       <button type="button" data-module-tab="system" onclick="showAdminModule('system')">系统</button>
       <button type="button" data-module-tab="config" onclick="showAdminModule('config')">系统配置</button>
     </nav>
@@ -1591,12 +1591,20 @@
           <strong>Supabase users 表</strong>
         </div>
         <div class="status-item">
-          <span>坐标识别</span>
-          <strong>阿里云视觉模型</strong>
+          <span>实际配置视觉模型</span>
+          <strong id="configuredVisionModel">UNKNOWN</strong>
         </div>
         <div class="status-item">
-          <span>矿地快判</span>
-          <strong>阿里云模型</strong>
+          <span>实际配置OCR模型</span>
+          <strong id="configuredOcrModel">UNKNOWN</strong>
+        </div>
+        <div class="status-item">
+          <span>最近可观测运行模型</span>
+          <strong id="observedRuntimeModel">UNKNOWN</strong>
+        </div>
+        <div class="status-item">
+          <span>运行模型证据</span>
+          <strong id="observedRuntimeEvidence">UNKNOWN</strong>
         </div>
         <div class="status-item">
           <span>收费方式</span>
@@ -1830,7 +1838,45 @@
     </section>
 
     <section class="panel" id="judgeCasesPanel">
-      <h2>快判案例库</h2>
+      <h2>案例库</h2>
+      <p class="muted">坐标案例与矿地快判分别管理；坐标案例默认优先，且不保存原图、完整坐标或 Provider 原文。</p>
+      <div class="table-tools">
+        <button type="button" id="coordinateCaseTab" onclick="showCaseLibrary('coordinate')">坐标案例</button>
+        <button type="button" id="judgeCaseTab" class="button-secondary" onclick="showCaseLibrary('judge')">快判历史</button>
+      </div>
+      <div id="coordinateCaseSection">
+        <div class="table-tools">
+          <select id="coordinateIssueTypeFilter" onchange="loadCoordinateCases()">
+            <option value="">全部问题</option>
+            <option value="recognition_failed">识别失败</option>
+            <option value="coordinate_correction">坐标纠正</option>
+            <option value="kml_failed">KML失败</option>
+          </select>
+          <select id="coordinateProgressFilter" onchange="loadCoordinateCases()">
+            <option value="">全部进度</option>
+            <option value="NEW">新建</option>
+            <option value="TRIAGED">已分诊</option>
+            <option value="IN_PROGRESS">处理中</option>
+            <option value="BLOCKED">阻塞</option>
+            <option value="VERIFIED">已验证</option>
+            <option value="CLOSED">已关闭</option>
+          </select>
+          <button type="button" onclick="loadCoordinateCases()">刷新坐标案例</button>
+        </div>
+        <div class="status-grid" id="coordinateCoverageSummary"></div>
+        <div class="table-scroll judge-cases-table-scroll">
+          <table>
+            <thead><tr>
+              <th>编号</th><th>问题</th><th>负责人/进度</th><th>处理方法/阻塞</th>
+              <th>本次交付</th><th>问题解决</th><th>同类验证</th><th>生产生效</th>
+              <th>样本/证据范围</th><th>结果身份</th><th>CRS/表示</th><th>原件</th>
+            </tr></thead>
+            <tbody id="coordinateCasesBody"></tbody>
+          </table>
+        </div>
+        <div id="coordinateCasesMessage" class="message"></div>
+      </div>
+      <div id="judgeCaseSection" hidden>
       <p class="muted">矿地快判成功后自动沉淀到这里，用于观察地域、来源、用户反馈和 AI 判断摘要。</p>
       <div class="table-tools">
         <select id="caseImageTypeFilter" onchange="loadJudgeCases()">
@@ -1871,6 +1917,7 @@
         </table>
       </div>
       <div id="judgeCasesMessage" class="message"></div>
+      </div>
     </section>
 
     <div id="supabaseQuotaModal" class="modal" role="dialog" aria-modal="true">
@@ -1990,6 +2037,7 @@
     let selectedSupabaseUser = null;
     let usageLogs = [];
     let judgeCases = [];
+    let coordinateCases = [];
     let userUsageCounts = {};
     let supabaseUserFilter = "all";
     let dashboardStats = null;
@@ -2330,7 +2378,9 @@
         await loadFeatureFlags();
         await loadDashboardStats(false);
         await loadUsageLogs(false);
+        await loadCoordinateCases(false);
         await loadJudgeCases(false);
+        await loadAdminModelStatus();
         await loadSupabaseUsers(false);
         setMessage(`后台数据已刷新：${new Date().toLocaleTimeString()}`);
       } catch (error) {
@@ -3336,6 +3386,106 @@
       if (!element) return;
       element.textContent = message || "";
       element.classList.toggle("error", Boolean(isError));
+    }
+
+    function showCaseLibrary(kind = "coordinate") {
+      const coordinateActive = kind !== "judge";
+      document.getElementById("coordinateCaseSection").hidden = !coordinateActive;
+      document.getElementById("judgeCaseSection").hidden = coordinateActive;
+      document.getElementById("coordinateCaseTab").classList.toggle("button-secondary", !coordinateActive);
+      document.getElementById("judgeCaseTab").classList.toggle("button-secondary", coordinateActive);
+    }
+
+    function setCoordinateCaseMessage(message, isError = false) {
+      const element = document.getElementById("coordinateCasesMessage");
+      if (!element) return;
+      element.textContent = message || "";
+      element.classList.toggle("error", Boolean(isError));
+    }
+
+    function coordinateCaseLabel(value = "") {
+      const labels = {
+        recognition_failed: "识别失败", coordinate_correction: "坐标纠正", kml_failed: "KML失败",
+        NEW: "新建", TRIAGED: "已分诊", IN_PROGRESS: "处理中", BLOCKED: "阻塞", VERIFIED: "已验证", CLOSED: "已关闭",
+        UNKNOWN: "待验证", PASS: "通过", FAIL: "失败", NOT_APPLICABLE: "不适用",
+        WORKING_ASSUMPTION: "工作假设", CONFIRMED: "已确认",
+        POLYGON: "Polygon", MULTIPOINT: "MultiPoint", LINESTRING: "LineString",
+        NOT_SAVED: "未保存", AUTHORIZED_REFERENCE: "已授权引用", REQUEST_ONLY: "仅请求", CURRENT: "当前版本"
+      };
+      return labels[value] || value || "-";
+    }
+
+    function renderCoordinateCoverage(coverage = {}) {
+      const target = document.getElementById("coordinateCoverageSummary");
+      if (!target) return;
+      const labels = { delivery: "本次交付", problemResolution: "问题解决", peerValidation: "同类验证", production: "生产生效" };
+      target.innerHTML = Object.entries(labels).map(([key, label]) => {
+        const stage = coverage?.stages?.[key] || {};
+        return `<div class="status-item"><span>${label}</span><strong>PASS ${Number(stage.PASS || 0)} / UNKNOWN ${Number(stage.UNKNOWN || 0)}</strong><small>样本 ${Number(stage.sampleCount || 0)} · ${escapeHtml((stage.evidenceScopes || []).join("；") || "无有效证据范围")}</small></div>`;
+      }).join("");
+    }
+
+    function renderCoordinateCases(cases = [], setupRequired = false) {
+      const body = document.getElementById("coordinateCasesBody");
+      if (!body) return;
+      if (setupRequired) {
+        body.innerHTML = `<tr><td colspan="12" class="muted">坐标案例表尚未迁移；本页不会回退写入快判案例表。</td></tr>`;
+        return;
+      }
+      if (!cases.length) {
+        body.innerHTML = `<tr><td colspan="12" class="muted">暂无坐标案例。</td></tr>`;
+        return;
+      }
+      body.innerHTML = cases.map(item => {
+        const identity = item.resultId
+          ? `${escapeHtml(item.resultId)} / r${Number(item.resultRevision || 0)}<br><span class="muted">${escapeHtml(item.resultIdentityStatus || "UNKNOWN")}</span>`
+          : `${escapeHtml(item.recognitionRequestId || "-")}<br><span class="muted">仅请求编号</span>`;
+        return `<tr>
+          <td>#${escapeHtml(item.caseNumber || item.caseId || "-")}</td>
+          <td><strong>${escapeHtml(coordinateCaseLabel(item.issueType))}</strong><br>${escapeHtml(item.issueSummary || "-")}</td>
+          <td>${escapeHtml(item.owner || "未指定")}<br>${escapeHtml(coordinateCaseLabel(item.progressStatus))}</td>
+          <td>${escapeHtml(item.resolutionSummary || "待补充")}<br><span class="muted">${escapeHtml(item.blocker || "无")}</span></td>
+          <td>${escapeHtml(coordinateCaseLabel(item.stages?.delivery))}</td>
+          <td>${escapeHtml(coordinateCaseLabel(item.stages?.problemResolution))}</td>
+          <td>${escapeHtml(coordinateCaseLabel(item.stages?.peerValidation))}</td>
+          <td>${escapeHtml(coordinateCaseLabel(item.stages?.production))}</td>
+          <td>${Number(item.sampleCount || 0)}<br><span class="muted">${escapeHtml(item.evidenceScope || "待验证")}</span><br><small>${escapeHtml(item.goldenRef || item.receiptRef || item.commitSha || "无证据引用")}</small></td>
+          <td>${identity}</td>
+          <td>${escapeHtml(coordinateCaseLabel(item.crsEvidenceStatus))}<br>${escapeHtml(coordinateCaseLabel(item.geometryRepresentation))}</td>
+          <td>${escapeHtml(coordinateCaseLabel(item.originalArtifactStatus))}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    async function loadCoordinateCases(showMessage = true) {
+      try {
+        if (showMessage) setCoordinateCaseMessage("正在读取坐标案例...");
+        const params = new URLSearchParams({ limit: "200" });
+        const issueType = document.getElementById("coordinateIssueTypeFilter")?.value || "";
+        const progress = document.getElementById("coordinateProgressFilter")?.value || "";
+        if (issueType) params.set("issue_type", issueType);
+        if (progress) params.set("progress_status", progress);
+        const result = await adminFetch(`/api/admin/coordinate-cases?${params.toString()}`);
+        coordinateCases = result.cases || [];
+        renderCoordinateCases(coordinateCases, result.setupRequired);
+        renderCoordinateCoverage(result.coverage || {});
+        if (showMessage) setCoordinateCaseMessage(result.setupRequired ? "坐标案例迁移尚未应用。" : `坐标案例已刷新：${new Date().toLocaleTimeString()}`, Boolean(result.setupRequired));
+      } catch (error) {
+        coordinateCases = [];
+        renderCoordinateCases([]);
+        setCoordinateCaseMessage(error.message, true);
+      }
+    }
+
+    async function loadAdminModelStatus() {
+      const result = await adminFetch("/api/admin/model-status");
+      document.getElementById("configuredVisionModel").textContent = result.configured?.visionModel || "UNKNOWN";
+      document.getElementById("configuredOcrModel").textContent = result.configured?.ocrModel || "UNKNOWN";
+      document.getElementById("observedRuntimeModel").textContent = result.observedRuntime?.model || "UNKNOWN";
+      const evidence = result.observedRuntime?.evidenceType === "UNKNOWN"
+        ? "UNKNOWN"
+        : `${result.observedRuntime.evidenceType} · ${formatTime(result.observedRuntime.observedAt) || "UNKNOWN"}`;
+      document.getElementById("observedRuntimeEvidence").textContent = evidence;
     }
 
     function handleJudgeCaseSearchKey(event) {
