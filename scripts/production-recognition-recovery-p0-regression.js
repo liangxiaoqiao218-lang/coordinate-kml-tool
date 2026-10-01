@@ -489,8 +489,13 @@ async function runHttpCandidate(scenario) {
       assert.equal(confirmation.geometryMode, 'points_only');
       assert.equal(confirmation.boundaryBlocked, true);
       assert.equal(confirmation.finalizedCoordinateResult?.geometry?.type, 'MultiPoint');
-      assert.equal(confirmation.finalizedCoordinateResult?.kmlReady, false);
+      assert.equal(confirmation.finalizedCoordinateResult?.kmlReady, true);
       assert.notEqual(confirmation.finalizedCoordinateResult?.kmlAuthorityBlocked, true);
+      assert.notEqual(confirmation.finalizedCoordinateResult?.resultId, pending.resultId);
+      assert.equal(confirmation.coordinateRepresentationContract?.representations?.length, 2);
+      assert.equal(confirmation.coordinateRepresentationContract.representations[0].result.geometry.type, 'Polygon');
+      assert.equal(confirmation.coordinateRepresentationContract.representations[0].outputCapabilities.kmlReady, false);
+      assert.equal(confirmation.coordinateRepresentationContract.representations[1].outputCapabilities.kmlReady, true);
       const confirmed = confirmation.finalizedCoordinateResult;
       const mapResponse = await fetch(`http://127.0.0.1:${port}/api/map-preview`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal,
@@ -2061,7 +2066,13 @@ for (const scenario of ['observed', 'structured', 'mismatch']) {
       assert.equal(payload.finalizedCoordinateResult.decisionState, 'REVIEW_REQUIRED');
       assert.equal(payload.finalizedCoordinateResult.geometry.type, 'MultiPoint');
       assert.equal(payload.finalizedCoordinateResult.geometry.coordinates.length, 4);
-      assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+      assert.notEqual(payload.finalizedCoordinateResult.mapReady, false);
+      assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
+      assert.equal(payload.outputCapabilities.mapReady, true);
+      assert.equal(payload.outputCapabilities.kmlReady, true);
+      assert.equal(payload.outputCapabilities.unverified, true);
+      assert.match(payload.finalizedCoordinateResult.limitations.join('\n'), /不代表矿区边界/u);
+      assert.equal(consumeFinalizedGeometry(payload.finalizedCoordinateResult, geometry => geometry).consumed, false);
     } else if (scenario === 'structured') {
       assert.equal(payload.coordinateEngineV2.coordinate_type, 'indonesia_utm50_projected');
       assert.equal(payload.precisionMode, 'indonesia-utm50s-projected');
@@ -3041,12 +3052,16 @@ test("contextual UTM30 site vertices expose a review map and unverified KML from
   assert.equal(payload.geometryMode, "points_only");
   assert.equal(payload.boundaryBlocked, true);
   assert.equal(payload.finalizedCoordinateResult.geometry.type, "MultiPoint");
-  assert.equal(payload.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.finalizedCoordinateResult.kmlReady, true);
   assert.match(payload.finalizedCoordinateResult.warnings.join("\n"), /(?:自交|交叉)/u);
+  assert.match(payload.finalizedCoordinateResult.limitations.join("\n"), /不代表矿区边界/u);
   assert.equal(payload.mapPreview.mapPreviewObject.geometry.type, "MultiPoint");
   assert.equal(payload.mapPreview.mapPreviewObject.previewEligibility.allowed, true);
   assert.equal(payload.kmlStatus, "ENABLED");
+  assert.equal(payload.outputCapabilities?.mapReady, true);
+  assert.equal(payload.outputCapabilities?.kmlReady, true);
   assert.equal(payload.outputCapabilities?.unverified, true);
+  assert.equal(consumeFinalizedGeometry(payload.finalizedCoordinateResult, geometry => geometry).consumed, false);
   assert.equal(payload.providerCallCount, 1);
 });
 
@@ -3141,14 +3156,13 @@ test("one-shot structured explicit projected evidence exposes inspectable unveri
   assert.equal(payload.providerProjectedReviewEvidence.crsEvidence.hemisphere, "N");
   assert.equal(payload.projectedConfirmation.selectedCrs, "EPSG:32630");
   assert.equal(payload.projectedConfirmation.sourceRowCount, 8);
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.resultId,
+  assert.notEqual(payload.projectedConfirmation.finalizedCoordinateResult.resultId,
     payload.finalizedCoordinateResult.resultId);
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.resultRevision,
-    payload.finalizedCoordinateResult.resultRevision + 1);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.resultRevision, 1);
   assert.equal(payload.projectedConfirmation.geometryMode, "points_only");
   assert.equal(payload.projectedConfirmation.boundaryBlocked, true);
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, "MultiPoint");
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, true);
   assert.equal(payload.projectedMapPreview.mapPreviewObject.previewEligibility.allowed, true);
   assert.equal(payload.projectedMapPreview.kmlEligibility.allowed, true);
   assert.equal(payload.projectedMapPreview.kmlEligibility.unverified, true);
@@ -3163,7 +3177,7 @@ test("one-shot structured manual projected entry requires location review and ke
   assert.equal(payload.providerCallCount, 0);
   assert.equal(payload.projectedConfirmation.geometryMode, "points_only");
   assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.geometry.type, "MultiPoint");
-  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, false);
+  assert.equal(payload.projectedConfirmation.finalizedCoordinateResult.kmlReady, true);
   assert.notEqual(payload.projectedConfirmation.finalizedCoordinateResult.kmlAuthorityBlocked, true);
   assert.equal(payload.projectedMapPreview.mapPreviewObject.geometry.type, "MultiPoint");
 });
