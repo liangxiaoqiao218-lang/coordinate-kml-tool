@@ -4,6 +4,7 @@ import {
   finalizeCoordinateResult
 } from "../coordinate-finalizer/index.js";
 import { evaluateRecognitionOutputCapability } from "./recognition-output-capability.js";
+import { createHash } from "node:crypto";
 
 export const COORDINATE_REPRESENTATION_CONTRACT_VERSION = "coordinate_representation_contract_v1";
 
@@ -17,6 +18,93 @@ function finitePosition(position) {
   return Array.isArray(position) && position.length === 2
     && Number.isFinite(position[0]) && position[0] >= -180 && position[0] <= 180
     && Number.isFinite(position[1]) && position[1] >= -90 && position[1] <= 90;
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function digest(value) {
+  return createHash("sha256").update(canonicalize(value)).digest("hex");
+}
+
+function normalizeSourceReference(value = {}) {
+  const status = String(value.status || "").trim().toUpperCase();
+  const crsId = String(value.crsId || "").trim().toUpperCase();
+  const axisOrder = String(value.axisOrder || "").trim().toLowerCase();
+  const evidenceRefs = [...new Set((Array.isArray(value.evidenceRefs) ? value.evidenceRefs : [])
+    .map(item => String(item || "").trim()).filter(Boolean))];
+  if (!["EXPLICIT", "CONFIRMED", "ASSUMED", "UNKNOWN"].includes(status)
+    || !crsId || !axisOrder || evidenceRefs.length === 0) {
+    throw new TypeError("REPRESENTATION_SOURCE_REFERENCE_INVALID");
+  }
+  return Object.freeze({ status, crsId, axisOrder, evidenceRefs: Object.freeze(evidenceRefs) });
+}
+
+function sourceBindingPayload({ result, role, sourceReference }) {
+  return {
+    resultId: result.resultId,
+    resultRevision: result.resultRevision,
+    geometryHash: result.geometryHash,
+    role,
+    sourceReference
+  };
+}
+
+function representationFor({ role, result, sourceReference, explicitLineIntent = false }) {
+  const normalizedSourceReference = normalizeSourceReference(sourceReference);
+  const sourceReferenceBinding = Object.freeze({
+    resultId: result.resultId,
+    resultRevision: result.resultRevision,
+    geometryHash: result.geometryHash,
+    sourceReference: normalizedSourceReference,
+    bindingSha256: digest(sourceBindingPayload({ result, role, sourceReference: normalizedSourceReference }))
+  });
+  return Object.freeze({
+    role,
+    boundarySemantics: role === COORDINATE_REPRESENTATION_ROLE.BOUNDARY,
+    explicitLineIntent: role === COORDINATE_REPRESENTATION_ROLE.REVIEW_LINE && explicitLineIntent === true,
+    result,
+    sourceReferenceBinding,
+    outputCapabilities: evaluateRecognitionOutputCapability(result, { formalAuthorized: false })
+  });
+}
+
+export function bindCoordinateRepresentationResult({ role, result, sourceReference, explicitLineIntent = false } = {}) {
+  if (!result?.resultId || !Number.isSafeInteger(result?.resultRevision)) {
+    throw new TypeError("REPRESENTATION_RESULT_IDENTITY_INVALID");
+  }
+  if (role === COORDINATE_REPRESENTATION_ROLE.REVIEW_LINE
+    && (explicitLineIntent !== true || result.geometry?.type !== "LineString")) {
+    throw new TypeError("EXPLICIT_LINE_INTENT_REQUIRED");
+  }
+  if (role === COORDINATE_REPRESENTATION_ROLE.REVIEW_POINTS
+    && !["Point", "MultiPoint"].includes(result.geometry?.type)) {
+    throw new TypeError("REPRESENTATION_POINT_GEOMETRY_INVALID");
+  }
+  if (role === COORDINATE_REPRESENTATION_ROLE.BOUNDARY
+    && !["Polygon", "MultiPolygon"].includes(result.geometry?.type)) {
+    throw new TypeError("REPRESENTATION_BOUNDARY_GEOMETRY_INVALID");
+  }
+  return representationFor({ role, result, sourceReference, explicitLineIntent });
+}
+
+export function validateRepresentationSourceBinding(representation = {}) {
+  const binding = representation.sourceReferenceBinding;
+  if (!binding || !representation.result) return false;
+  const payload = sourceBindingPayload({
+    result: representation.result,
+    role: representation.role,
+    sourceReference: binding.sourceReference
+  });
+  return binding.resultId === representation.result.resultId
+    && binding.resultRevision === representation.result.resultRevision
+    && binding.geometryHash === representation.result.geometryHash
+    && binding.bindingSha256 === digest(payload);
 }
 
 function geometryFor({ role, positions, explicitLineIntent }) {
@@ -47,9 +135,11 @@ export function createCoordinateRepresentation({
   precisionMode = null,
   explicitLineIntent = false,
   boundaryBlocked = false,
+  sourceReference,
   warnings = [],
   limitations = []
 } = {}) {
+  normalizeSourceReference(sourceReference);
   const geometry = geometryFor({ role, positions, explicitLineIntent });
   const blockedBoundary = role === COORDINATE_REPRESENTATION_ROLE.BOUNDARY && boundaryBlocked === true;
   const result = finalizeCoordinateResult({
@@ -75,13 +165,7 @@ export function createCoordinateRepresentation({
     warnings,
     limitations
   });
-  return Object.freeze({
-    role,
-    boundarySemantics: role === COORDINATE_REPRESENTATION_ROLE.BOUNDARY,
-    explicitLineIntent: role === COORDINATE_REPRESENTATION_ROLE.REVIEW_LINE,
-    result,
-    outputCapabilities: evaluateRecognitionOutputCapability(result, { formalAuthorized: false })
-  });
+  return representationFor({ role, result, sourceReference, explicitLineIntent });
 }
 
 export function buildCoordinateRepresentationContract(representations = []) {
@@ -89,6 +173,9 @@ export function buildCoordinateRepresentationContract(representations = []) {
   const identities = values.map(item => item?.result?.resultId).filter(Boolean);
   if (identities.length !== values.length || new Set(identities).size !== identities.length) {
     throw new TypeError("REPRESENTATION_IDENTITIES_NOT_DISTINCT");
+  }
+  if (values.some(value => !validateRepresentationSourceBinding(value))) {
+    throw new TypeError("REPRESENTATION_SOURCE_BINDING_INVALID");
   }
   return Object.freeze({
     schemaVersion: COORDINATE_REPRESENTATION_CONTRACT_VERSION,
