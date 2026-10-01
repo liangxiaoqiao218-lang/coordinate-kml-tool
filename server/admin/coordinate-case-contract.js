@@ -1,6 +1,7 @@
 const ISSUE_TYPES = new Set(["recognition_failed", "coordinate_correction", "kml_failed"]);
 const CASE_STATUSES = new Set(["NEW", "TRIAGED", "IN_PROGRESS", "BLOCKED", "VERIFIED", "CLOSED"]);
 const STAGE_STATUSES = new Set(["UNKNOWN", "PASS", "FAIL", "BLOCKED", "NOT_APPLICABLE"]);
+const STAGE_KEYS = ["delivery", "problemResolution", "peerValidation", "production"];
 const CRS_STATUSES = new Set(["UNKNOWN", "WORKING_ASSUMPTION", "CONFIRMED"]);
 const GEOMETRY_REPRESENTATIONS = new Set(["UNKNOWN", "POLYGON", "MULTIPOINT", "LINESTRING"]);
 const ARTIFACT_STATUSES = new Set(["NOT_SAVED", "AUTHORIZED_REFERENCE", "UNKNOWN"]);
@@ -153,7 +154,7 @@ export function normalizeCoordinateCaseEvidenceInput(raw = {}) {
 }
 
 export function publicCoordinateCase(row = {}, evidence = []) {
-  return {
+  const publicCase = {
     caseId: row.case_id,
     caseNumber: row.case_number,
     recognitionRequestId: row.recognition_request_id,
@@ -195,36 +196,42 @@ export function publicCoordinateCase(row = {}, evidence = []) {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+  return { ...publicCase, stages: buildEffectiveCoordinateCaseStages(publicCase) };
+}
+
+export function buildEffectiveCoordinateCaseStages(item = {}) {
+  return Object.fromEntries(STAGE_KEYS.map(key => {
+    const status = STAGE_STATUSES.has(item?.stages?.[key]) ? item.stages[key] : "UNKNOWN";
+    if (status !== "PASS") return [key, status];
+    const prefix = STAGE_EVIDENCE_PREFIX[key];
+    const stageEvidence = (item.evidence || []).some(evidence =>
+      String(evidence?.evidenceType || "").toUpperCase().startsWith(`${prefix}_`)
+      && evidence?.status === "PASS"
+      && Number(evidence?.sampleCount || 0) > 0
+      && Boolean(text(evidence?.scope, 800))
+      && Boolean(text(evidence?.referenceType, 80))
+      && Boolean(text(evidence?.referenceValue, 500))
+    );
+    const directReference = key === "delivery"
+      ? Boolean(text(item.receiptRef, 500))
+      : key === "problemResolution"
+        ? Boolean(text(item.commitSha, 40))
+        : key === "peerValidation"
+          ? Boolean(text(item.goldenRef, 240))
+          : false;
+    const evidenceBackedPass = Number(item.sampleCount || 0) > 0
+      && Boolean(text(item.evidenceScope, 800))
+      && (stageEvidence || directReference);
+    return [key, evidenceBackedPass ? "PASS" : "UNKNOWN"];
+  }));
 }
 
 export function buildCoverageSummary(cases = []) {
-  const stageKeys = ["delivery", "problemResolution", "peerValidation", "production"];
-  const summary = Object.fromEntries(stageKeys.map(key => [key, { PASS: 0, FAIL: 0, BLOCKED: 0, UNKNOWN: 0, NOT_APPLICABLE: 0, sampleCount: 0, evidenceScopes: [] }]));
+  const summary = Object.fromEntries(STAGE_KEYS.map(key => [key, { PASS: 0, FAIL: 0, BLOCKED: 0, UNKNOWN: 0, NOT_APPLICABLE: 0, sampleCount: 0, evidenceScopes: [] }]));
   for (const item of cases) {
-    for (const key of stageKeys) {
-      const status = STAGE_STATUSES.has(item?.stages?.[key]) ? item.stages[key] : "UNKNOWN";
-      const prefix = STAGE_EVIDENCE_PREFIX[key];
-      const stageEvidence = (item.evidence || []).some(evidence =>
-        String(evidence?.evidenceType || "").toUpperCase().startsWith(`${prefix}_`)
-        && evidence?.status === "PASS"
-        && Number(evidence?.sampleCount || 0) > 0
-        && Boolean(text(evidence?.scope, 800))
-        && Boolean(text(evidence?.referenceType, 80))
-        && Boolean(text(evidence?.referenceValue, 500))
-      );
-      const directReference = key === "delivery"
-        ? Boolean(text(item.receiptRef, 500))
-        : key === "problemResolution"
-          ? Boolean(text(item.commitSha, 40))
-          : key === "peerValidation"
-            ? Boolean(text(item.goldenRef, 240))
-            : false;
-      const evidenceBackedPass = status !== "PASS" || (
-        Number(item.sampleCount || 0) > 0
-        && Boolean(text(item.evidenceScope, 800))
-        && (stageEvidence || directReference)
-      );
-      const effectiveStatus = evidenceBackedPass ? status : "UNKNOWN";
+    const effectiveStages = buildEffectiveCoordinateCaseStages(item);
+    for (const key of STAGE_KEYS) {
+      const effectiveStatus = effectiveStages[key];
       summary[key][effectiveStatus] += 1;
       if (effectiveStatus === "PASS") {
         summary[key].sampleCount += Number(item.sampleCount || 0);

@@ -5,6 +5,7 @@ import express from "express";
 import {
   buildAdminModelStatus,
   buildCoverageSummary,
+  buildEffectiveCoordinateCaseStages,
   coordinateCaseContract,
   normalizeCoordinateCaseEvidenceInput,
   normalizeCoordinateCaseInput,
@@ -123,7 +124,10 @@ try {
       geometryRepresentation: "MULTIPOINT", deliveryStatus: "PASS", productionStatus: "PASS", evidenceScope: "自交点位合同", sampleCount: 2
     }) });
     assert.equal(response.status, 201);
-    assert.equal((await response.json()).case.resultIdentityStatus, "CURRENT");
+    const payload = await response.json();
+    assert.equal(payload.case.resultIdentityStatus, "CURRENT");
+    assert.equal(payload.case.stages.delivery, "UNKNOWN");
+    assert.equal(payload.case.stages.production, "UNKNOWN");
   });
   await check("stale result identity is blocked", async () => {
     const response = await request("/api/admin/coordinate-cases", { method: "POST", body: JSON.stringify({
@@ -169,6 +173,11 @@ try {
     assert.equal(payload.coverage.stages.delivery.PASS, 1);
     assert.equal(payload.coverage.stages.production.PASS, 0);
     assert.ok(payload.coverage.stages.production.UNKNOWN >= 2);
+    const current = payload.cases.find(item => item.resultId === currentResultId);
+    const unsupported = payload.cases.find(item => item.recognitionRequestId === "33333333-3333-4333-8333-333333333333");
+    assert.equal(current.stages.delivery, "PASS");
+    assert.equal(current.stages.production, "UNKNOWN");
+    assert.equal(unsupported.stages.production, "UNKNOWN");
   });
   await check("one stage evidence cannot prove another stage", async () => {
     const payload = await (await request("/api/admin/coordinate-cases")).json();
@@ -187,6 +196,24 @@ try {
     assert.equal(coverage.stages.problemResolution.PASS, 1);
     assert.equal(coverage.stages.peerValidation.PASS, 1);
     assert.equal(coverage.stages.production.PASS, 0);
+    assert.deepEqual(direct.stages, {
+      delivery: "PASS",
+      problemResolution: "PASS",
+      peerValidation: "PASS",
+      production: "UNKNOWN"
+    });
+  });
+  await check("non-PASS stage statuses remain unchanged in detail and summary", async () => {
+    const item = {
+      stages: { delivery: "FAIL", problemResolution: "BLOCKED", peerValidation: "UNKNOWN", production: "NOT_APPLICABLE" },
+      evidence: [], evidenceScope: null, sampleCount: 0
+    };
+    assert.deepEqual(buildEffectiveCoordinateCaseStages(item), item.stages);
+    const coverage = buildCoverageSummary([item]);
+    assert.equal(coverage.stages.delivery.FAIL, 1);
+    assert.equal(coverage.stages.problemResolution.BLOCKED, 1);
+    assert.equal(coverage.stages.peerValidation.UNKNOWN, 1);
+    assert.equal(coverage.stages.production.NOT_APPLICABLE, 1);
   });
   await check("forbidden content is rejected without echo", async () => {
     const forbiddenValues = [
@@ -292,6 +319,7 @@ try {
     assert.match(html, /BLOCKED \$\{Number\(stage\.BLOCKED/u);
     assert.match(html, /UNKNOWN \$\{Number\(stage\.UNKNOWN/u);
     assert.match(html, /N\/A \$\{Number\(stage\.NOT_APPLICABLE/u);
+    assert.match(html, /coordinateCaseLabel\(item\.stages\?\.delivery\)/u);
   });
   await check("response exposes no sealed result or coordinates", async () => {
     const payload = JSON.stringify(await (await request("/api/admin/coordinate-cases")).json());
