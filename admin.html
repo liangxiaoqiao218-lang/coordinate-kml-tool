@@ -3445,10 +3445,10 @@
           <td><strong>${escapeHtml(coordinateCaseLabel(item.issueType))}</strong><br>${escapeHtml(item.issueSummary || "-")}</td>
           <td>${escapeHtml(item.owner || "未指定")}<br>${escapeHtml(coordinateCaseLabel(item.progressStatus))}</td>
           <td>${escapeHtml(item.resolutionSummary || "待补充")}<br><span class="muted">${escapeHtml(item.blocker || "无")}</span></td>
-          <td>${escapeHtml(coordinateCaseLabel(item.stages?.delivery))}</td>
-          <td>${escapeHtml(coordinateCaseLabel(item.stages?.problemResolution))}</td>
-          <td>${escapeHtml(coordinateCaseLabel(item.stages?.peerValidation))}</td>
-          <td>${escapeHtml(coordinateCaseLabel(item.stages?.production))}</td>
+          <td title="证据支持后的状态">${escapeHtml(coordinateCaseLabel(item.stages?.delivery))}</td>
+          <td title="证据支持后的状态">${escapeHtml(coordinateCaseLabel(item.stages?.problemResolution))}</td>
+          <td title="证据支持后的状态">${escapeHtml(coordinateCaseLabel(item.stages?.peerValidation))}</td>
+          <td title="证据支持后的状态">${escapeHtml(coordinateCaseLabel(item.stages?.production))}</td>
           <td>${Number(item.sampleCount || 0)}<br><span class="muted">${escapeHtml(item.evidenceScope || "待验证")}</span><br><small>${escapeHtml(item.goldenRef || item.receiptRef || item.commitSha || "无证据引用")}</small></td>
           <td>${identity}</td>
           <td>${escapeHtml(coordinateCaseLabel(item.crsEvidenceStatus))}<br>${escapeHtml(coordinateCaseLabel(item.geometryRepresentation))}</td>

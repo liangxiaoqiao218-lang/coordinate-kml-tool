@@ -17,6 +17,7 @@ This first version keeps coordinate-recognition cases separate from `judge_cases
 - `judge_cases` remains unchanged and continues to serve historical mining-judgement cases.
 - `UNKNOWN`, missing evidence scope, zero samples, and unrun evidence never count as PASS coverage.
 - PASS coverage also requires a verifiable, stage-owned reference. Delivery may use a receipt, problem resolution a commit, peer validation a Golden record, and production requires explicit `PRODUCTION_*` evidence. Evidence for one stage never proves another stage.
+- The API and admin case detail table expose the same evidence-backed effective stage status used by coverage totals. A stored PASS declaration that lacks its stage-owned evidence remains internal and is displayed as `UNKNOWN`, never as a successful detail state.
 - Allowed text fields reject obvious coordinate tables, complete Provider JSON, data URLs, authorization or cookie material, credential assignments, token-shaped secrets, and environment snapshots without logging the rejected content.
 
 ## Model status
