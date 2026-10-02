@@ -66,6 +66,8 @@ assert.match(html, /if \(activeElement === input\) return;/u, "recognition compl
 assert.match(html, /function hasCoordinateInputChangedSince\(revision\)[\s\S]*?coordinateInputEditRevision !== Number\(revision\)/u, "recognition results are revision-guarded against later edits");
 assert.match(html, /本轮结果未覆盖当前输入/u, "stale recognition completion is explained without overwriting input");
 assert.match(html, /label\.textContent = "结果概览"/u);
+assert.match(html, /meta\.previousResult === true \? "上次结果" : reviewSummary\.text/u, "retained coordinates are explicitly marked as the previous result after a newer recognition failure");
+assert.match(html, /function restorePreviousRecognitionSummary\(meta, coordinateText\)[\s\S]*?setRecognitionSummary\(\{ \.\.\.meta, previousResult: true \}\)/u);
 assert.match(html, /`坐标点：\$\{count\}`/u);
 assert.match(html, /区域面积：不适用/u);
 assert.match(html, /区域面积：待核对/u);
@@ -74,6 +76,12 @@ assert.match(html, /focusCoordinateInputAfterRecognition\(\);[\s\S]*?coordinateU
 assert.match(coordinate, /<section class="format-conversion" aria-label="格式转换">[\s\S]*?id="coordinateFormat"/u);
 assert.doesNotMatch(coordinate, /<summary>坐标说明<\/summary>|一行就是一个点/u);
 assert.match(html, /\.home-hero h1\s*\{[\s\S]*?font-size:\s*15px;[\s\S]*?font-weight:\s*600;/u);
+assert.match(html, /body:has\(#judgePage\.active\) \.site-footer\s*\{\s*margin-top:\s*auto;/u, "short judge pages keep the footer at the viewport bottom without fixed spacer content");
+assert.match(html, /\.recognition-status\.summary\.warning\s*\{[\s\S]*?border-color:\s*transparent;[\s\S]*?background:\s*#f0fdf4;/u);
+assert.match(html, /\.recognition-status\.summary::before\s*\{\s*display:\s*none;/u, "overview has no repeated warning dot");
+assert.match(html, /\.recognition-summary-pill\.is-review-target\s*\{[\s\S]*?border:\s*0;[\s\S]*?background:\s*transparent;/u, "review details remain available without an orange warning badge");
+assert.match(html, /const detail = isFailure[\s\S]*?"本次图片识别未完成，请重试。"/u);
+assert.doesNotMatch(html, /class="upload-message-title"/u, "recognition failure message does not repeat a large title and body");
 
-console.log("Mobile UI simplification regression: 57/57 PASS");
+console.log("Mobile UI simplification regression: 64/64 PASS");
 console.log("PROVIDER_CALLS=0");

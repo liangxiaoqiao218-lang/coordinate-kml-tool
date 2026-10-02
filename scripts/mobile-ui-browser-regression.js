@@ -181,6 +181,8 @@ try {
         const navRows = [...new Set(navButtons.map(button => Math.round(button.getBoundingClientRect().top)))];
         const coordinateInput = document.querySelector('#coordinateInput');
         const formatSelect = document.querySelector('#coordinateFormat');
+        const footer = document.querySelector('.site-footer');
+        const versionStamp = document.querySelector('.version-stamp');
         const visibleRect = element => {
           if (!element || !element.getClientRects().length) return null;
           const rect = element.getBoundingClientRect();
@@ -206,7 +208,10 @@ try {
           coordinateInput: visibleRect(coordinateInput),
           coordinatePlaceholder: coordinateInput?.getAttribute('placeholder') || '',
           coordinateExampleLinkVisible: Boolean([...document.querySelectorAll('summary,button,a')].find(item => item.textContent.trim() === '查看输入示例' && item.getClientRects().length)),
-          formatSelect: visibleRect(formatSelect)
+          formatSelect: visibleRect(formatSelect),
+          footerMarginTop: footer ? getComputedStyle(footer).marginTop : '',
+          footerBottomGap: footer?.getClientRects().length ? Math.round(innerHeight - footer.getBoundingClientRect().bottom) : null,
+          versionBottomGap: versionStamp?.getClientRects().length ? Math.round(innerHeight - versionStamp.getBoundingClientRect().bottom) : null
         };
       })()`);
       assert.equal(layout.scrollWidth, layout.clientWidth, `${name} ${width}px must not scroll horizontally`);
@@ -222,6 +227,7 @@ try {
         assert.equal(layout.coordinateExampleLinkVisible, false, `coordinate ${width}px has no extra example disclosure`);
         assert.ok(layout.formatSelect?.left >= -1 && layout.formatSelect?.right <= layout.clientWidth + 1, `coordinate ${width}px format control is visible and unclipped`);
       }
+      assert.notEqual(layout.footerMarginTop, "18px", `${name} ${width}px must not pin the footer in the middle with a fixed top margin`);
       results.push({ page: name, width, result: "PASS", ...layout });
       if (width === 390) await screenshot(cdp, sessionId, path.join(receiptRoot, "390", `${name}.png`));
     }
@@ -278,6 +284,8 @@ try {
   assert.equal(statusStates.edited, true);
   assert.match(statusStates.partial, /部分坐标/u);
   assert.match(statusStates.failed, /人工协助/u);
+  assert.match(statusStates.failed, /本次图片识别未完成，请重试/u);
+  assert.doesNotMatch(statusStates.failed, /图片识别未完成图片识别未完成/u);
   assert.equal(statusStates.editable, true);
   results.push({ state: "coordinate-lifecycle", result: "PASS", ...statusStates });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-failure-with-results.png"));
@@ -285,6 +293,7 @@ try {
   const feedbackContract = await evaluate(cdp, sessionId, `(() => {
     const input = document.querySelector('#coordinateInput');
     const debugPanel = document.querySelector('#debugPanel');
+    clearUploadMessage();
     setDebug('上一轮详情');
     debugPanel.open = false;
     setDebugRunning(true);
@@ -322,7 +331,20 @@ try {
       resultIdentity: identity
     });
     const selfIntersectingText = document.querySelector('#recognitionSummary').textContent;
-    return { reopened, staleDetected, lineText, polygonText, selfIntersectingText, identityBound };
+    const summary = document.querySelector('#recognitionSummary');
+    const summaryStyle = getComputedStyle(summary);
+    const summaryMarkerStyle = getComputedStyle(summary, '::before');
+    return {
+      reopened,
+      staleDetected,
+      lineText,
+      polygonText,
+      selfIntersectingText,
+      identityBound,
+      summaryBackground: summaryStyle.backgroundColor,
+      summaryBorderWidth: summaryStyle.borderTopWidth,
+      summaryMarkerDisplay: summaryMarkerStyle.display
+    };
   })()`);
   assert.equal(feedbackContract.reopened, true);
   assert.equal(feedbackContract.staleDetected, true);
@@ -331,9 +353,26 @@ try {
   assert.match(feedbackContract.lineText, /国家／地区：未知/u);
   assert.match(feedbackContract.polygonText, /区域面积：12\.5 ha/u);
   assert.match(feedbackContract.selfIntersectingText, /区域面积：待核对/u);
+  assert.equal(feedbackContract.summaryBackground, "rgb(240, 253, 244)");
+  assert.equal(feedbackContract.summaryBorderWidth, "0px");
+  assert.equal(feedbackContract.summaryMarkerDisplay, "none");
   assert.deepEqual(feedbackContract.identityBound, { resultId: "result-ui-1", resultRevision: "3", geometryHash: "sha256:ui-1" });
   results.push({ state: "coordinate-feedback-contract", result: "PASS", ...feedbackContract });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-result-overview.png"));
+  const previousResult = await evaluate(cdp, sessionId, `(() => {
+    const previousMeta = activeRecognitionSummaryMeta;
+    const previousText = document.querySelector('#coordinateInput').value;
+    clearRecognitionSummary();
+    showUploadSupportMessage('本次图片识别未完成，请重试。');
+    const restored = restorePreviousRecognitionSummary(previousMeta, previousText);
+    const summary = document.querySelector('#recognitionSummary');
+    return { restored, text: summary.textContent, identity: { ...summary.dataset } };
+  })()`);
+  assert.equal(previousResult.restored, true);
+  assert.match(previousResult.text, /上次结果/u);
+  assert.deepEqual(previousResult.identity, { resultId: "result-ui-1", resultRevision: "3", geometryHash: "sha256:ui-1" });
+  results.push({ state: "coordinate-previous-result", result: "PASS", ...previousResult });
+  await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-previous-result.png"));
   const overviewCleared = await evaluate(cdp, sessionId, `(() => {
     clearRecognitionSummary();
     const summary = document.querySelector('#recognitionSummary');
