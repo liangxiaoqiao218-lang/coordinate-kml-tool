@@ -383,10 +383,15 @@ test("MESSAGE-01", "ordinary UI maps internal gate enums to natural language", (
   assert.doesNotMatch(html, /reason:\s*\([^\n]*reasonCodes[^\n]*join/);
   assert.doesNotMatch(html, /throw new Error\([^\n]*reasonCodes[^\n]*join/);
 });
-test("MESSAGE-02", "diagnostic detail retains raw gate codes", () => {
+test("MESSAGE-02", "map failure diagnostics expose only a short reason code and allowlisted structured fields", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  assert.match(html, /appendDebug\(`KML Gate codes：\$\{reasonCodes\.join/);
-  assert.match(html, /appendDebug\(`坐标确认 Gate codes：/);
+  const product = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
+  const controller = fs.readFileSync(path.join(root, "assets/spatial-map/map-product-controller.js"), "utf8");
+  assert.doesNotMatch(html, /appendDebug\(`KML Gate codes：\$\{reasonCodes\.join/);
+  assert.doesNotMatch(html, /appendDebug\(`坐标确认 Gate codes：/);
+  assert.match(product, /无底图核对结果 · 原因编号：/);
+  assert.match(controller, /Object\.freeze\(\{[\s\S]*providerState[\s\S]*reasonCode[\s\S]*stage[\s\S]*resourceCategory[\s\S]*httpStatus/);
+  assert.doesNotMatch(controller, /responseBody|responseText|request\.url|queryParameters|authorization|cookie|environmentSnapshot/i);
 });
 test("MOBILE-01", "390px product surface guards against horizontal overflow", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
@@ -395,14 +400,15 @@ test("MOBILE-01", "390px product surface guards against horizontal overflow", ()
   assert.match(css, /@media \(width: 390px\)/);
   assert.match(css, /touch-action: none/);
 });
-test("FALLBACK-01", "provider failure never presents the local geometry sketch as a real map", () => {
+test("FALLBACK-01", "provider failure presents local geometry as an explicitly no-basemap review result", () => {
   const product = fs.readFileSync(path.join(root, "assets/spatial-map/spatial-map-product.js"), "utf8");
   const controller = fs.readFileSync(path.join(root, "assets/spatial-map/map-product-controller.js"), "utf8");
   assert.match(product, /fallbackRenderer = new LocalSvgRenderer/);
   assert.match(controller, /await this\.fallbackRenderer\.render\(this\.preview\.geometry\)/);
-  assert.match(product, /elements\.local\.hidden = true/);
-  assert.doesNotMatch(product, /elements\.local\.hidden = false/);
-  assert.match(product, /if \(providerFit\) return true;[\s\S]*return false/);
+  assert.match(product, /elements\.local\.hidden = !fallback/);
+  assert.match(product, /本地几何 · 无底图核对结果/);
+  assert.match(product, /无底图核对结果 · 原因编号：/);
+  assert.match(controller, /this\.state === PROVIDER_STATE\.FALLBACK_LOCAL_SVG[\s\S]*fallbackRenderer\?\.fitBounds/);
 });
 test("DUPLICATE-01", "the old inline SVG geometry renderer is no longer a display authority", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");

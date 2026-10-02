@@ -1,4 +1,5 @@
 import * as maplibregl from "/vendor/maplibre-gl/maplibre-gl.mjs";
+import { createMapFailureDiagnostic } from "./map-product-controller.js";
 import { PROVIDER_STATE } from "./providers.js";
 
 const SOURCE_ID = "geokit-coordinate-result";
@@ -7,8 +8,26 @@ const LINE_LAYER_ID = "geokit-coordinate-line";
 const FILL_LAYER_ID = "geokit-coordinate-fill";
 const OUTLINE_LAYER_ID = "geokit-coordinate-outline";
 
-function status(state, detail = null) {
-  return Object.freeze({ state, detail, provider: "OPENFREEMAP" });
+function status(state, detail = null, diagnostic = null) {
+  return Object.freeze({ state, detail, provider: "OPENFREEMAP", diagnostic });
+}
+
+function diagnostic(reasonCode, stage, resourceCategory, event = null) {
+  const error = event?.error || event || {};
+  return createMapFailureDiagnostic({
+    providerState: reasonCode.includes("TIMEOUT") ? PROVIDER_STATE.TIMEOUT : PROVIDER_STATE.PROVIDER_ERROR,
+    reasonCode,
+    stage,
+    resourceCategory,
+    httpStatus: error?.status ?? error?.statusCode
+  });
+}
+
+function providerError(reasonCode, stage, resourceCategory, event = null) {
+  return Object.assign(new Error(reasonCode), {
+    code: reasonCode,
+    diagnostic: diagnostic(reasonCode, stage, resourceCategory, event)
+  });
 }
 
 function positions(value, result = []) {
@@ -26,7 +45,7 @@ function waitForMapLoad(map, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
-      reject(Object.assign(new Error("OPENFREEMAP_LOAD_TIMEOUT"), { code: "OPENFREEMAP_LOAD_TIMEOUT" }));
+      reject(providerError("OPENFREEMAP_STYLE_TIMEOUT", "STYLE", "STYLE"));
     }, timeoutMs);
     const cleanup = () => {
       clearTimeout(timer);
@@ -39,10 +58,7 @@ function waitForMapLoad(map, timeoutMs = 8000) {
     };
     const onError = event => {
       cleanup();
-      reject(Object.assign(new Error("OPENFREEMAP_LOAD_FAILED"), {
-        code: "OPENFREEMAP_LOAD_FAILED",
-        cause: event?.error
-      }));
+      reject(providerError("OPENFREEMAP_STYLE_FAILED", "STYLE", "STYLE", event));
     };
     map.once("load", onLoad);
     map.once("error", onError);
@@ -54,7 +70,7 @@ function waitForVisibleTiles(map, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
-      reject(Object.assign(new Error("OPENFREEMAP_TILES_TIMEOUT"), { code: "OPENFREEMAP_TILES_TIMEOUT" }));
+      reject(providerError("OPENFREEMAP_TILES_TIMEOUT", "TILE", "TILE"));
     }, timeoutMs);
     const cleanup = () => {
       clearTimeout(timer);
@@ -68,10 +84,7 @@ function waitForVisibleTiles(map, timeoutMs = 8000) {
     };
     const onError = event => {
       cleanup();
-      reject(Object.assign(new Error("OPENFREEMAP_TILES_FAILED"), {
-        code: "OPENFREEMAP_TILES_FAILED",
-        cause: event?.error
-      }));
+      reject(providerError("OPENFREEMAP_TILES_FAILED", "TILE", "TILE", event));
     };
     map.on("idle", onIdle);
     map.once("error", onError);
@@ -94,11 +107,23 @@ export class OpenFreeMapProviderAdapter {
     const styleUrl = String(publicConfig.openFreeMapStyleUrl || "").trim();
     if (publicConfig.openFreeMapEnabled !== true || !styleUrl) {
       this.destroy();
-      this.providerStatus = status(PROVIDER_STATE.CONFIGURATION_BLOCKED, "OPENFREEMAP_CONFIGURATION_MISSING");
+      const failure = createMapFailureDiagnostic({
+        providerState: PROVIDER_STATE.CONFIGURATION_BLOCKED,
+        reasonCode: "OPENFREEMAP_CONFIGURATION_MISSING",
+        stage: "CONFIGURATION",
+        resourceCategory: "CONFIG"
+      });
+      this.providerStatus = status(PROVIDER_STATE.CONFIGURATION_BLOCKED, failure.reasonCode, failure);
       return this.providerStatus;
     }
     if (!container) {
-      this.providerStatus = status(PROVIDER_STATE.PROVIDER_ERROR, "MAP_CONTAINER_MISSING");
+      const failure = createMapFailureDiagnostic({
+        providerState: PROVIDER_STATE.PROVIDER_ERROR,
+        reasonCode: "MAP_CONTAINER_MISSING",
+        stage: "INITIALIZATION",
+        resourceCategory: "MAP_RUNTIME"
+      });
+      this.providerStatus = status(PROVIDER_STATE.PROVIDER_ERROR, failure.reasonCode, failure);
       return this.providerStatus;
     }
     if (this.map && this.providerStatus.state === PROVIDER_STATE.READY) return this.providerStatus;
@@ -120,7 +145,13 @@ export class OpenFreeMapProviderAdapter {
       this.providerStatus = status(PROVIDER_STATE.READY);
     } catch (error) {
       this.destroy();
-      this.providerStatus = status(PROVIDER_STATE.PROVIDER_ERROR, error?.code || "OPENFREEMAP_INITIALIZATION_FAILED");
+      const failure = createMapFailureDiagnostic(error?.diagnostic || error, {
+        providerState: PROVIDER_STATE.PROVIDER_ERROR,
+        reasonCode: error?.code || "OPENFREEMAP_INITIALIZATION_FAILED",
+        stage: "INITIALIZATION",
+        resourceCategory: "MAP_RUNTIME"
+      });
+      this.providerStatus = status(PROVIDER_STATE.PROVIDER_ERROR, failure.reasonCode, failure);
     }
     return this.providerStatus;
   }
@@ -138,13 +169,14 @@ export class OpenFreeMapProviderAdapter {
       throw Object.assign(new Error("PROVIDER_NOT_READY"), { code: "PROVIDER_NOT_READY" });
     }
     const geometry = structuredClone(renderPlan.canonicalGeometry);
-    this.removeGeometryLayers();
-    this.map.addSource(SOURCE_ID, {
-      type: "geojson",
-      data: { type: "Feature", properties: {}, geometry }
-    });
-    if (geometry.type === "Point" || geometry.type === "MultiPoint") {
-      this.map.addLayer({
+    try {
+      this.removeGeometryLayers();
+      this.map.addSource(SOURCE_ID, {
+        type: "geojson",
+        data: { type: "Feature", properties: {}, geometry }
+      });
+      if (geometry.type === "Point" || geometry.type === "MultiPoint") {
+        this.map.addLayer({
         id: POINT_LAYER_ID,
         type: "circle",
         source: SOURCE_ID,
@@ -154,27 +186,30 @@ export class OpenFreeMapProviderAdapter {
           "circle-stroke-color": "#e53935",
           "circle-stroke-width": 3
         }
-      });
-    } else if (geometry.type === "LineString" || geometry.type === "MultiLineString") {
-      this.map.addLayer({
+        });
+      } else if (geometry.type === "LineString" || geometry.type === "MultiLineString") {
+        this.map.addLayer({
         id: LINE_LAYER_ID,
         type: "line",
         source: SOURCE_ID,
         paint: { "line-color": "#e53935", "line-width": 4 }
-      });
-    } else {
-      this.map.addLayer({
+        });
+      } else {
+        this.map.addLayer({
         id: FILL_LAYER_ID,
         type: "fill",
         source: SOURCE_ID,
         paint: { "fill-color": "#1976d2", "fill-opacity": 0.16 }
-      });
-      this.map.addLayer({
+        });
+        this.map.addLayer({
         id: OUTLINE_LAYER_ID,
         type: "line",
         source: SOURCE_ID,
         paint: { "line-color": "#e53935", "line-width": 4 }
-      });
+        });
+      }
+    } catch (error) {
+      throw providerError("OPENFREEMAP_RENDER_FAILED", "RENDER", "MAP_RUNTIME", error);
     }
     this.lastGeometry = geometry;
     return Object.freeze({
@@ -193,14 +228,19 @@ export class OpenFreeMapProviderAdapter {
     }
     const points = positions(this.lastGeometry.coordinates);
     if (points.length === 0) throw Object.assign(new Error("GEOMETRY_EMPTY"), { code: "GEOMETRY_EMPTY" });
-    if (points.length === 1) {
-      this.map.flyTo({ center: points[0], zoom: 15, essential: false });
+    try {
+      if (points.length === 1) {
+        this.map.flyTo({ center: points[0], zoom: 15, essential: false });
+        await waitForVisibleTiles(this.map, this.timeoutMs);
+        return true;
+      }
+      const bounds = points.reduce((value, point) => value.extend(point), new maplibregl.LngLatBounds(points[0], points[0]));
+      this.map.fitBounds(bounds, { padding: 72, maxZoom: 17, duration: 0 });
       await waitForVisibleTiles(this.map, this.timeoutMs);
-      return true;
+    } catch (error) {
+      if (error?.diagnostic) throw error;
+      throw providerError("OPENFREEMAP_TILES_FAILED", "TILE", "TILE", error);
     }
-    const bounds = points.reduce((value, point) => value.extend(point), new maplibregl.LngLatBounds(points[0], points[0]));
-    this.map.fitBounds(bounds, { padding: 72, maxZoom: 17, duration: 0 });
-    await waitForVisibleTiles(this.map, this.timeoutMs);
     return true;
   }
 
