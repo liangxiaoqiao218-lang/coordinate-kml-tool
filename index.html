@@ -882,7 +882,24 @@
     }
 
     .workspace-tools .icon-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      min-height: 40px;
+      padding: 0;
+      border: 1px solid #d8e1ee;
+      border-radius: 8px;
       box-shadow: none;
+    }
+
+    .workspace-tools .icon-button:active {
+      transform: translateY(1px);
+    }
+
+    .workspace-tools .icon-button:focus-visible {
+      outline: 2px solid #0f766e;
+      outline-offset: 2px;
     }
 
     .workspace-tools .icon-button:not(.clear-input-button):not(.undo-button):not(.swap-order-button) {
@@ -894,16 +911,14 @@
     }
 
     .clear-input-button {
-      width: 34px;
-      min-height: 34px;
-      border: 0;
-      background: transparent;
+      background: #f8fafc;
       color: #64748b;
       font-size: 18px;
     }
 
     .clear-input-button:hover {
-      background: #f1f5f9;
+      border-color: #cbd5e1;
+      background: #eef2f7;
       color: #0f766e;
     }
 
@@ -5137,7 +5152,7 @@
 31°15'30.12&quot;N,121°28'15.45&quot;E"></textarea>
           <div class="workspace-tools">
             <button type="button" class="icon-button undo-button" onclick="undoLastChange()" title="&#25764;&#38144;&#19978;&#19968;&#27493;" aria-label="&#25764;&#38144;&#19978;&#19968;&#27493;">&#8630;</button>
-            <button type="button" class="icon-button clear-input-button" onclick="confirmClearContent()" title="&#28165;&#31354;&#20869;&#23481;" aria-label="&#28165;&#31354;&#20869;&#23481;">&#9003;</button>
+            <button type="button" class="icon-button clear-input-button" onclick="confirmClearContent()" title="清空坐标" aria-label="清空坐标">&#9003;</button>
             <button type="button" class="icon-button swap-order-button" onclick="swapLongitudeLatitude()" title="&#20132;&#25442;&#32463;&#32428;&#24230;" aria-label="&#20132;&#25442;&#32463;&#32428;&#24230;">&#8644;</button>
             <button type="button" class="icon-button" onclick="copyContent()" title="&#22797;&#21046;&#20869;&#23481;" aria-label="&#22797;&#21046;&#20869;&#23481;">&#10697;</button>
           </div>

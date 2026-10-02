@@ -273,12 +273,30 @@ try {
     const focusPreserved = document.activeElement === focusProbe;
     focusProbe.remove();
     coordinateInput.focus();
+    const toolButtons = [...document.querySelectorAll('.workspace-tools .icon-button')]
+      .filter(button => getComputedStyle(button).display !== 'none');
+    const toolMetrics = toolButtons.map(button => {
+      const style = getComputedStyle(button);
+      const rect = button.getBoundingClientRect();
+      return {
+        className: button.className,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        borderWidth: style.borderWidth,
+        borderRadius: style.borderRadius,
+        padding: style.padding,
+        alignItems: style.alignItems,
+        justifyContent: style.justifyContent,
+        ariaLabel: button.getAttribute('aria-label')
+      };
+    });
     return {
       visible: Boolean(coordinateInput.getClientRects().length),
       editable: !coordinateInput.readOnly && !coordinateInput.disabled,
       value: coordinateInput.value,
       copyVisible: !document.querySelector('#coordinateCopyAction').hidden,
-      focusPreserved
+      focusPreserved,
+      toolMetrics
     };
   })()`);
   assert.equal(directPaste.visible, true);
@@ -286,8 +304,14 @@ try {
   assert.equal(directPaste.copyVisible, true);
   assert.equal(directPaste.focusPreserved, true);
   assert.match(directPaste.value, /116\.391245/u);
+  assert.equal(directPaste.toolMetrics.length, 3);
+  assert.ok(directPaste.toolMetrics.every(metric => metric.width === 40 && metric.height === 40));
+  assert.ok(directPaste.toolMetrics.every(metric => metric.borderWidth === '1px' && metric.borderRadius === '8px'));
+  assert.ok(directPaste.toolMetrics.every(metric => metric.padding === '0px' && metric.alignItems === 'center' && metric.justifyContent === 'center'));
+  assert.equal(directPaste.toolMetrics.find(metric => metric.className.includes('clear-input-button'))?.ariaLabel, '清空坐标');
   results.push({ state: "coordinate-direct-paste", result: "PASS", ...directPaste });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-direct-paste.png"));
+  await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-tools.png"));
 
   const detailSizing = await evaluate(cdp, sessionId, `(() => {
     setDebug('正在查找坐标区域…');
