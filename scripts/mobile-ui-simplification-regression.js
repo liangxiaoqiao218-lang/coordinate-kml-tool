@@ -53,10 +53,16 @@ assert.match(gold, /<p id="goldPriceInfo" hidden><\/p>/u, "realtime reference go
 assert.match(html, /\.formula-box > summary::after\s*\{[\s\S]*?content:\s*"⌄";/u, "formula disclosure has a visible state arrow");
 assert.doesNotMatch(html, /renderJudgeRecent\(\);\s*if \(!document\.querySelector\("\.quote-placeholder"\)/u, "manual quote restoration does not request a reference price");
 assert.doesNotMatch(html, /resultCard\.hidden\s*=|actionsEl\.hidden\s*=/u);
-assert.match(html, /<details class="footer-details">[\s\S]*<summary>帮助<\/summary>/u);
-assert.match(html, /<details class="footer-details">[\s\S]*<summary>关于与联系<\/summary>/u);
+assert.match(html, /<details class="footer-details page-help page-help-home">[\s\S]*<summary>帮助<\/summary>/u);
+assert.match(html, /<details class="footer-details page-help page-help-coordinate">[\s\S]*<summary>帮助<\/summary>/u);
+assert.match(html, /<details class="footer-details page-help page-help-judge">[\s\S]*<summary>帮助<\/summary>/u);
+assert.match(html, /<details class="footer-details page-help page-help-gold">[\s\S]*<summary>帮助<\/summary>/u);
+assert.match(html, /<summary>关于我们<\/summary>[\s\S]*<summary>联系我们<\/summary>/u);
+assert.doesNotMatch(html, /<summary>关于与联系<\/summary>/u);
+assert.match(html, /class="footer-text-link"[\s\S]*>人工识别协助<\/button>/u);
 assert.match(html, /\.footer-details\s*\{[\s\S]*?border:\s*0;[\s\S]*?background:\s*transparent;/u, "footer help and contact remain lightweight links");
-assert.match(judge, /上传矿石 \/ 河道 \/ 卫星图开始快判/u);
+assert.match(judge, /上传矿石、河道或卫星图进行快判/u);
+assert.doesNotMatch(judge, />上传区</u);
 assert.doesNotMatch(judge, /上传后立即分析并计入使用次数/u);
 assert.match(html, /粤ICP备2026099318号-1/u);
 assert.match(html, /粤公网安备44030002015944号/u);
@@ -89,8 +95,8 @@ assert.doesNotMatch(html, /class="upload-message-title"/u, "recognition failure 
 assert.match(html, /\.debug-panel textarea\s*\{[\s\S]*?min-height:\s*48px;[\s\S]*?max-height:\s*240px;[\s\S]*?background:\s*#0f172a;[\s\S]*?color:\s*#e5e7eb;/u, "recognition detail keeps the original dark console while remaining content-sized");
 assert.match(html, /function resizeDebugTextToContent\(\)[\s\S]*?Math\.min\(contentHeight, 240\)/u);
 assert.match(html, /@media \(max-width:\s*720px\)[\s\S]*?\.page-nav\s*\{[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none;/u, "mobile navigation has no outer white tray");
-assert.match(html, /\.coordinate-workspace \.workspace-head\s*\{\s*flex-wrap:\s*nowrap;/u, "mobile quota stays beside the coordinate title instead of taking a separate row");
-assert.match(html, /\.coordinate-workspace \.workspace-heading-copy\s*\{\s*flex:\s*1 1 auto;/u);
+assert.match(html, /\.workspace-title-row\s*\{[\s\S]*?display:\s*flex;[\s\S]*?align-items:\s*center;/u, "mobile quota stays beside the coordinate title instead of taking a separate row");
+assert.match(html, /\.workspace-title-row h1\s*\{[\s\S]*?min-width:\s*0;/u);
 assert.match(gold, /id="copyGoldButton"[^>]*aria-disabled="true"[^>]*disabled/u, "gold copy starts disabled without a valid result");
 assert.match(html, /function setGoldCopyAvailability\(result\)[\s\S]*?Number\.isFinite\(result\.density\)[\s\S]*?copyButton\.disabled = !valid/u, "gold copy follows the actual calculation result state");
 assert.match(html, /#copyGoldButton:disabled[\s\S]*?cursor:\s*not-allowed;/u);
@@ -102,5 +108,5 @@ assert.match(html, /\.workspace-tools \.icon-button:focus-visible\s*\{[\s\S]*?ou
 assert.match(coordinate, /class="icon-button clear-input-button"[^>]*title="清空坐标"[^>]*aria-label="清空坐标"/u, "clear coordinate control has an explicit accessible name");
 assert.match(html, /\.clear-input-button\s*\{\s*background:\s*#f8fafc;[\s\S]*?color:\s*#64748b;/u, "clear coordinate control stays visually low emphasis");
 
-console.log("Mobile UI simplification regression: 83/83 PASS");
+console.log("Mobile UI simplification regression: 89/89 PASS");
 console.log("PROVIDER_CALLS=0");

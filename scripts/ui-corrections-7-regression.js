@@ -15,9 +15,15 @@ check("result overview has independent status, point, area and region cells",
 check("result overview has valid warning and neutral tones",
   ["is-valid", "is-warning", "is-neutral"].every(name => source.includes(name)));
 check("coordinate quota remains in workspace title row",
-  /class="workspace-head"[\s\S]*?id="convertQuotaStatus"/.test(source));
+  /class="workspace-title-row"[\s\S]*?<h1>坐标与 KML<\/h1>[\s\S]*?id="convertQuotaStatus"/.test(source));
 check("judge quota is inside judge title row",
   /class="page-title-row judge-title-row"[\s\S]*?id="judgeQuotaStatus"[\s\S]*?<\/div>\s*<p class="intro">/.test(source));
+check("coordinate and judge usage share the grey-blue treatment",
+  /\.workspace-title-row \.quota-status[\s\S]*?background:\s*#f1f5f9;[\s\S]*?color:\s*#64748b;/.test(source)
+  && /\.page-title-row\.judge-title-row \.quota-status[\s\S]*?background:\s*#f1f5f9;[\s\S]*?color:\s*#64748b;/.test(source));
+check("judge upload removes the redundant layer label and outer frame",
+  !source.includes('id="judgeUploadLayerTitle"')
+  && /\.judge-panel \.judge-upload-layer\s*\{[\s\S]*?padding:\s*0;[\s\S]*?border:\s*0;[\s\S]*?background:\s*transparent;/.test(source));
 check("ordinary review acknowledgement is not rendered as an action",
   source.includes("if (!isConfirmed && !ordinaryReviewOnly)")
   && !source.includes('confirmButton.addEventListener("click", ordinaryReviewOnly'));
@@ -38,5 +44,11 @@ check("realtime gold price line is hidden", source.includes('<p id="goldPriceInf
 check("gold price endpoint is not called on page load", !/renderJudgeRecent\(\);\s*if \(!document\.querySelector\("\.quote-placeholder"\)/.test(source));
 check("gold settlement keeps original formula", source.includes("goldWeight * shopQuote * (purity / 100)"));
 check("gold copy preserves manual quote and estimated settlement", source.includes("金店报价币种") && source.includes("预计可卖金额"));
+check("help is page-specific", ["page-help-home", "page-help-coordinate", "page-help-judge", "page-help-gold"].every(name => source.includes(name)));
+check("footer separates about contact and manual recognition assistance",
+  source.includes("<summary>关于我们</summary>")
+  && source.includes("<summary>联系我们</summary>")
+  && source.includes('class="footer-text-link"')
+  && !source.includes("<summary>关于与联系</summary>"));
 
 console.log(JSON.stringify({ status: "PASS", passed: checks.length, failed: 0, checks }, null, 2));
