@@ -96,6 +96,10 @@ assert.match(html, /#copyGoldButton:disabled[\s\S]*?cursor:\s*not-allowed;/u);
 assert.match(html, /\.gold-metric strong\s*\{[\s\S]*?font-size:\s*24px;[\s\S]*?font-weight:\s*600;/u, "mobile gold result numerals use the restrained 24px hierarchy");
 assert.match(html, /\.gold-metric-affix\s*\{[\s\S]*?font-size:\s*15px;/u, "mobile percent K and Au affixes remain visually subordinate");
 assert.match(html, /function renderGoldMetricValue\(element, numberText,[\s\S]*?gold-metric-affix[\s\S]*?gold-metric-number/u);
+assert.match(html, /\.workspace-tools \.icon-button\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?width:\s*40px;[\s\S]*?min-height:\s*40px;[\s\S]*?border:\s*1px solid #d8e1ee;[\s\S]*?border-radius:\s*8px;/u, "coordinate input tools share one visible button geometry");
+assert.match(html, /\.workspace-tools \.icon-button:focus-visible\s*\{[\s\S]*?outline:\s*2px solid #0f766e;/u, "coordinate input tools retain a visible keyboard focus state");
+assert.match(coordinate, /class="icon-button clear-input-button"[^>]*title="清空坐标"[^>]*aria-label="清空坐标"/u, "clear coordinate control has an explicit accessible name");
+assert.match(html, /\.clear-input-button\s*\{\s*background:\s*#f8fafc;[\s\S]*?color:\s*#64748b;/u, "clear coordinate control stays visually low emphasis");
 
-console.log("Mobile UI simplification regression: 79/79 PASS");
+console.log("Mobile UI simplification regression: 83/83 PASS");
 console.log("PROVIDER_CALLS=0");
