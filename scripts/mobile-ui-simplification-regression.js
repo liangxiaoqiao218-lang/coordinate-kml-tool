@@ -85,13 +85,17 @@ assert.match(html, /\.recognition-status\.summary::before\s*\{\s*display:\s*none
 assert.match(html, /\.recognition-summary-pill\.is-review-target\s*\{[\s\S]*?border:\s*0;[\s\S]*?background:\s*transparent;/u, "review details remain available without an orange warning badge");
 assert.match(html, /const detail = isFailure[\s\S]*?"本次图片识别未完成，请重试。"/u);
 assert.doesNotMatch(html, /class="upload-message-title"/u, "recognition failure message does not repeat a large title and body");
-assert.match(html, /\.debug-panel textarea\s*\{[\s\S]*?min-height:\s*48px;[\s\S]*?max-height:\s*240px;[\s\S]*?background:\s*#f8fafc;/u, "recognition detail is light and content-sized");
+assert.match(html, /\.debug-panel textarea\s*\{[\s\S]*?min-height:\s*48px;[\s\S]*?max-height:\s*240px;[\s\S]*?background:\s*#0f172a;[\s\S]*?color:\s*#e5e7eb;/u, "recognition detail keeps the original dark console while remaining content-sized");
 assert.match(html, /function resizeDebugTextToContent\(\)[\s\S]*?Math\.min\(contentHeight, 240\)/u);
+assert.match(html, /@media \(max-width:\s*720px\)[\s\S]*?\.page-nav\s*\{[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none;/u, "mobile navigation has no outer white tray");
 assert.match(html, /\.coordinate-workspace \.workspace-head\s*\{\s*flex-wrap:\s*wrap;/u, "mobile result badges cannot squeeze the coordinate title into a vertical column");
 assert.match(html, /\.coordinate-workspace \.workspace-heading-copy\s*\{\s*flex:\s*1 1 100%;/u);
 assert.match(gold, /id="copyGoldButton"[^>]*aria-disabled="true"[^>]*disabled/u, "gold copy starts disabled without a valid result");
 assert.match(html, /function setGoldCopyAvailability\(result\)[\s\S]*?Number\.isFinite\(result\.density\)[\s\S]*?copyButton\.disabled = !valid/u, "gold copy follows the actual calculation result state");
 assert.match(html, /#copyGoldButton:disabled[\s\S]*?cursor:\s*not-allowed;/u);
+assert.match(html, /\.gold-metric strong\s*\{[\s\S]*?font-size:\s*24px;[\s\S]*?font-weight:\s*600;/u, "mobile gold result numerals use the restrained 24px hierarchy");
+assert.match(html, /\.gold-metric-affix\s*\{[\s\S]*?font-size:\s*15px;/u, "mobile percent K and Au affixes remain visually subordinate");
+assert.match(html, /function renderGoldMetricValue\(element, numberText,[\s\S]*?gold-metric-affix[\s\S]*?gold-metric-number/u);
 
-console.log("Mobile UI simplification regression: 75/75 PASS");
+console.log("Mobile UI simplification regression: 79/79 PASS");
 console.log("PROVIDER_CALLS=0");
