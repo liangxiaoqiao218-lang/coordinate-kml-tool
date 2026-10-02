@@ -342,6 +342,9 @@ try {
     setDebugRunning(false);
     setDebug(Array.from({ length: 30 }, (_, index) => '技术细节 ' + (index + 1)).join('\\n'));
     const longHeight = Math.round(detail.getBoundingClientRect().height);
+    const longScrollHeight = Math.round(detail.scrollHeight);
+    const longClientHeight = Math.round(detail.clientHeight);
+    const resizeMode = getComputedStyle(detail).resize;
     setDebug('正在查找坐标区域…');
     setDebugRunning(true);
     const heading = document.querySelector('.workspace-title-row h1');
@@ -350,6 +353,9 @@ try {
       shortHeight,
       shortOpen,
       longHeight,
+      longScrollHeight,
+      longClientHeight,
+      resizeMode,
       maxHeight: getComputedStyle(detail).maxHeight,
       backgroundColor: getComputedStyle(detail).backgroundColor,
       color: getComputedStyle(detail).color,
@@ -362,8 +368,10 @@ try {
     };
   })()`);
   assert.equal(detailSizing.shortOpen, true);
-  assert.ok(detailSizing.shortHeight >= 48 && detailSizing.shortHeight <= 90);
-  assert.ok(detailSizing.longHeight > detailSizing.shortHeight && detailSizing.longHeight <= 240);
+  assert.ok(detailSizing.shortHeight >= 200 && detailSizing.shortHeight <= 240);
+  assert.ok(detailSizing.longHeight >= 200 && detailSizing.longHeight <= 240);
+  assert.ok(detailSizing.longScrollHeight > detailSizing.longClientHeight);
+  assert.equal(detailSizing.resizeMode, 'none');
   assert.equal(detailSizing.backgroundColor, 'rgb(15, 23, 42)');
   assert.equal(detailSizing.color, 'rgb(229, 231, 235)');
   assert.ok(detailSizing.headingWidth > 100);
@@ -371,6 +379,8 @@ try {
   assert.ok(Math.abs(detailSizing.quotaTop - detailSizing.headingTop) <= 20);
   assert.ok(detailSizing.headingRight + 8 <= detailSizing.quotaLeft);
   results.push({ state: "coordinate-detail-sizing", result: "PASS", ...detailSizing });
+  await markSyntheticState(cdp, sessionId, "加高识别详情");
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-detail-tall-full.png"), 390);
   await markSyntheticState(cdp, sessionId, "坐标识别中");
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-processing.png"));
   await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-processing-full.png"), 390);
@@ -451,6 +461,8 @@ try {
     const summary = document.querySelector('#recognitionSummary');
     const summaryStyle = getComputedStyle(summary);
     const summaryMarkerStyle = getComputedStyle(summary, '::before');
+    const summaryLabelMarkerStyle = getComputedStyle(summary.querySelector('.recognition-summary-label'), '::before');
+    const summaryMetaStyle = getComputedStyle(summary.querySelector('.recognition-summary-meta'));
     const summaryCells = [...summary.querySelectorAll('.recognition-summary-pill')].map(cell => ({
       key: cell.dataset.summaryKey,
       value: cell.querySelector('.recognition-summary-value')?.textContent || '',
@@ -466,7 +478,10 @@ try {
       identityBound,
       summaryBackground: summaryStyle.backgroundColor,
       summaryBorderWidth: summaryStyle.borderTopWidth,
-      summaryMarkerDisplay: summaryMarkerStyle.display
+      summaryMarkerDisplay: summaryMarkerStyle.display,
+      summaryLabelMarkerBackground: summaryLabelMarkerStyle.backgroundColor,
+      summaryMetaDisplay: summaryMetaStyle.display,
+      summaryMetaWrap: summaryMetaStyle.flexWrap
     };
   })()`);
   assert.equal(feedbackContract.reopened, true);
@@ -483,12 +498,30 @@ try {
     { key: "国家／地区", value: "未知", tone: "is-neutral" }
   ]);
   assert.equal(feedbackContract.summaryBackground, "rgb(240, 253, 244)");
-  assert.equal(feedbackContract.summaryBorderWidth, "0px");
+  assert.equal(feedbackContract.summaryBorderWidth, "1px");
   assert.equal(feedbackContract.summaryMarkerDisplay, "none");
+  assert.equal(feedbackContract.summaryLabelMarkerBackground, "rgb(22, 163, 74)");
+  assert.equal(feedbackContract.summaryMetaDisplay, "flex");
+  assert.equal(feedbackContract.summaryMetaWrap, "wrap");
   assert.deepEqual(feedbackContract.identityBound, { resultId: "result-ui-1", resultRevision: "3", geometryHash: "sha256:ui-1" });
   results.push({ state: "coordinate-feedback-contract", result: "PASS", ...feedbackContract });
-  await markSyntheticState(cdp, sessionId, "坐标结果待核对");
+  await markSyntheticState(cdp, sessionId, "新版区域概览");
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-result-overview.png"));
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-overview-new-full.png"), 390);
+  await evaluate(cdp, sessionId, `(() => {
+    const style = document.createElement('style');
+    style.id = 'synthetic-legacy-overview-style';
+    style.textContent = '#recognitionSummary .recognition-summary-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}#recognitionSummary .recognition-summary-pill{display:grid;min-height:54px;border-radius:10px;background:#fff}';
+    document.head.appendChild(style);
+    document.querySelector('#recognitionSummary .recognition-summary-label').textContent = '结果概览（旧版 2×2 对照）';
+  })()`);
+  await markSyntheticState(cdp, sessionId, "旧版2×2概览对照");
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-overview-old-grid-comparison-full.png"), 390);
+  await evaluate(cdp, sessionId, `(() => {
+    document.querySelector('#synthetic-legacy-overview-style')?.remove();
+    document.querySelector('#recognitionSummary .recognition-summary-label').textContent = '区域概览';
+  })()`);
+  await markSyntheticState(cdp, sessionId, "坐标结果待核对");
   await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-review-full.png"), 390);
   const successOverview = await evaluate(cdp, sessionId, `(() => {
     setRecognitionSummary({
@@ -554,6 +587,7 @@ try {
     const toggle = spatialResultSheetToggle.getBoundingClientRect();
     return {
       expanded: spatialResultSheetToggle.getAttribute('aria-expanded'),
+      detailsHidden: spatialResultDetails.hidden,
       pointCount: spatialPointCount.textContent,
       centroidHidden: spatialCentroidFact.hidden,
       shareVisible: Boolean(spatialShareCardAction.getClientRects().length),
@@ -564,11 +598,42 @@ try {
   await markSyntheticState(cdp, sessionId, "地图面板展开");
   await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "map-expanded-full.png"), 390);
   assert.equal(mapExpanded.expanded, "true");
+  assert.equal(mapExpanded.detailsHidden, false);
   assert.equal(mapExpanded.pointCount, "3 个");
   assert.equal(mapExpanded.centroidHidden, true);
   assert.equal(mapExpanded.shareVisible, true);
   assert.match(mapExpanded.sheetBackground, /linear-gradient/u);
   results.push({ state: "map-expanded", result: "PASS", ...mapExpanded });
+  const mapCollapsed = await evaluate(cdp, sessionId, `(() => {
+    const beforeSummary = spatialCollapsedSummary.textContent;
+    const shareWasHidden = spatialShareCardAction.hidden;
+    setSpatialSheetExpanded(false);
+    const collapsed = {
+      expanded: spatialResultSheetToggle.getAttribute('aria-expanded'),
+      detailsHidden: spatialResultDetails.hidden,
+      summary: spatialCollapsedSummary.textContent,
+      shareHidden: spatialShareCardAction.hidden
+    };
+    setSpatialSheetExpanded(true);
+    return {
+      ...collapsed,
+      restoredExpanded: spatialResultSheetToggle.getAttribute('aria-expanded'),
+      restoredDetailsHidden: spatialResultDetails.hidden,
+      resultPreserved: spatialCollapsedSummary.textContent === beforeSummary,
+      sharePreserved: spatialShareCardAction.hidden === shareWasHidden
+    };
+  })()`);
+  assert.equal(mapCollapsed.expanded, "false");
+  assert.equal(mapCollapsed.detailsHidden, true);
+  assert.equal(mapCollapsed.restoredExpanded, "true");
+  assert.equal(mapCollapsed.restoredDetailsHidden, false);
+  assert.equal(mapCollapsed.resultPreserved, true);
+  assert.equal(mapCollapsed.sharePreserved, true);
+  await evaluate(cdp, sessionId, `setSpatialSheetExpanded(false)`);
+  await markSyntheticState(cdp, sessionId, "地图面板收起");
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "map-collapsed-full.png"), 390);
+  await evaluate(cdp, sessionId, `setSpatialSheetExpanded(true)`);
+  results.push({ state: "map-collapse-expand-cycle", result: "PASS", ...mapCollapsed });
 
   await navigate(cdp, sessionId, `${baseUrl}/judge?browser-state=synthetic-result`);
   const judgeResultState = await evaluate(cdp, sessionId, `(() => {
