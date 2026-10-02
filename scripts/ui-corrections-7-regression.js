@@ -14,6 +14,16 @@ check("result overview has independent status, point, area and region cells",
   ["状态", "点数", "面积", "国家／地区"].every(label => source.includes(`key: "${label}"`)));
 check("result overview has valid warning and neutral tones",
   ["is-valid", "is-warning", "is-neutral"].every(name => source.includes(name)));
+check("area overview restores title dot framed panel and wrapping pills",
+  source.includes('label.textContent = "区域概览"')
+  && /\.recognition-status\.summary\s*\{[\s\S]*?border:\s*1px solid #bbf7d0;/.test(source)
+  && /\.recognition-summary-label::before\s*\{[\s\S]*?background:\s*#16a34a;/.test(source)
+  && /\.recognition-summary-meta\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-wrap:\s*wrap;/.test(source)
+  && /\.recognition-summary-pill\s*\{[\s\S]*?border-radius:\s*999px;[\s\S]*?background:\s*#dcfce7;/.test(source));
+check("area overview preserves warning and unknown semantics",
+  /\.recognition-summary-pill\.is-warning\s*\{[\s\S]*?background:\s*#fff7ed;/.test(source)
+  && /\.recognition-summary-pill\.is-neutral\s*\{[\s\S]*?background:\s*#f8fafc;/.test(source)
+  && source.includes('tone: /待核对/.test(areaValue) ? "warning"'));
 check("coordinate quota remains in workspace title row",
   /class="workspace-title-row"[\s\S]*?<h1>坐标与 KML<\/h1>[\s\S]*?id="convertQuotaStatus"/.test(source));
 check("judge quota is inside judge title row",
@@ -32,8 +42,12 @@ check("real point and server confirmation actions remain",
 check("map share uses a line icon", /id="spatialShareCardAction"[\s\S]*?<svg[\s\S]*?<circle/.test(source));
 check("map sheet toggle uses a line icon", /class="spatial-sheet-chevron"[\s\S]*?<svg[\s\S]*?<path/.test(source));
 check("map sheet uses emerald blue treatment", source.includes("linear-gradient(135deg, rgba(236, 253, 245"));
+check("map sheet toggle controls the actual detail visibility", source.includes("spatialResultDetails.hidden = !next"));
 check("map point count falls back to actual geometry positions", source.includes("getSpatialPositions(preview?.geometry).length"));
 check("empty center fact is hidden", source.includes('spatialCentroidFact.hidden = !centroid'));
+check("recognition detail starts tall and scrolls internally",
+  /\.debug-panel textarea\s*\{[\s\S]*?min-height:\s*220px;[\s\S]*?max-height:\s*240px;[\s\S]*?resize:\s*none;/.test(source)
+  && source.includes("Math.max(220, Number(debugText.scrollHeight) || 220)"));
 check("judge has upload summary and detail layers",
   ["judge-upload-layer", "judge-summary-layer", "judge-detail-layer"].every(name => source.includes(name)));
 check("judge metrics exclude recommendation", /judge-official-main[\s\S]*?可信度[\s\S]*?<\/div>\s*<div class="judge-decision-recommendation"/.test(source));

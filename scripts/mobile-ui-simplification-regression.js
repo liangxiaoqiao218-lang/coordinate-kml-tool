@@ -72,7 +72,7 @@ assert.match(html, /function focusCoordinateInputAfterRecognition\(\)[\s\S]*?con
 assert.match(html, /if \(activeElement === input\) return;/u, "recognition completion never steals focus from the coordinate editor");
 assert.match(html, /function hasCoordinateInputChangedSince\(revision\)[\s\S]*?coordinateInputEditRevision !== Number\(revision\)/u, "recognition results are revision-guarded against later edits");
 assert.match(html, /本轮结果未覆盖当前输入/u, "stale recognition completion is explained without overwriting input");
-assert.match(html, /label\.textContent = "结果概览"/u);
+assert.match(html, /label\.textContent = "区域概览"/u);
 assert.match(html, /meta\.previousResult === true \? "上次结果" : \(reviewSummary\.text \|\| "有效"\)/u, "retained coordinates are explicitly marked as the previous result after a newer recognition failure");
 assert.match(html, /function restorePreviousRecognitionSummary\(meta, coordinateText\)[\s\S]*?setRecognitionSummary\(\{ \.\.\.meta, previousResult: true \}\)/u);
 assert.match(html, /\{ key: "点数", value: String\(count\)/u);
@@ -87,13 +87,16 @@ assert.match(html, /\.site-footer\s*\{[\s\S]*?margin-top:\s*40px;/u, "footer fol
 assert.match(html, /body:has\(#homePage\.active\) \.site-footer\s*\{\s*margin-top:\s*40px;/u);
 assert.match(html, /body:has\(#judgePage\.active\) \.site-footer\s*\{\s*margin-top:\s*40px;/u);
 assert.match(html, /\.home-view\s*\{\s*min-height:\s*auto;/u, "home content no longer creates a forced blank viewport filler");
-assert.match(html, /\.recognition-status\.summary\.warning\s*\{[\s\S]*?border-color:\s*transparent;[\s\S]*?background:\s*#f0fdf4;/u);
-assert.match(html, /\.recognition-status\.summary::before\s*\{\s*display:\s*none;/u, "overview has no repeated warning dot");
+assert.match(html, /\.recognition-status\.summary\s*\{[\s\S]*?border:\s*1px solid #bbf7d0;[\s\S]*?background:\s*#f0fdf4;/u, "area overview restores the light green framed panel");
+assert.match(html, /\.recognition-summary-label::before\s*\{[\s\S]*?background:\s*#16a34a;/u, "area overview title restores the green status dot");
+assert.match(html, /\.recognition-summary-meta\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-wrap:\s*wrap;/u, "area overview metrics wrap naturally instead of using a 2 by 2 grid");
+assert.match(html, /\.recognition-summary-pill\s*\{[\s\S]*?border-radius:\s*999px;[\s\S]*?background:\s*#dcfce7;[\s\S]*?color:\s*#166534;/u, "normal area metrics use light green pills and deep green text");
 assert.match(html, /\.recognition-summary-pill\.is-review-target\s*\{[\s\S]*?cursor:\s*pointer;/u, "review details remain directly actionable from the warning cell");
 assert.match(html, /const detail = isFailure[\s\S]*?"本次图片识别未完成，请重试。"/u);
 assert.doesNotMatch(html, /class="upload-message-title"/u, "recognition failure message does not repeat a large title and body");
-assert.match(html, /\.debug-panel textarea\s*\{[\s\S]*?min-height:\s*48px;[\s\S]*?max-height:\s*240px;[\s\S]*?background:\s*#0f172a;[\s\S]*?color:\s*#e5e7eb;/u, "recognition detail keeps the original dark console while remaining content-sized");
-assert.match(html, /function resizeDebugTextToContent\(\)[\s\S]*?Math\.min\(contentHeight, 240\)/u);
+assert.match(html, /\.debug-panel textarea\s*\{[\s\S]*?min-height:\s*220px;[\s\S]*?max-height:\s*240px;[\s\S]*?resize:\s*none;[\s\S]*?background:\s*#0f172a;[\s\S]*?color:\s*#e5e7eb;/u, "recognition detail keeps the original dark console with a readable fixed starting height");
+assert.match(html, /function resizeDebugTextToContent\(\)[\s\S]*?Math\.max\(220,[\s\S]*?Math\.min\(contentHeight, 240\)/u);
+assert.match(html, /function setSpatialSheetExpanded\(expanded\)[\s\S]*?spatialResultDetails\.hidden = !next/u, "map detail sheet actually collapses and expands");
 assert.match(html, /@media \(max-width:\s*720px\)[\s\S]*?\.page-nav\s*\{[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none;/u, "mobile navigation has no outer white tray");
 assert.match(html, /\.workspace-title-row\s*\{[\s\S]*?display:\s*flex;[\s\S]*?align-items:\s*center;/u, "mobile quota stays beside the coordinate title instead of taking a separate row");
 assert.match(html, /\.workspace-title-row h1\s*\{[\s\S]*?min-width:\s*0;/u);
@@ -108,5 +111,5 @@ assert.match(html, /\.workspace-tools \.icon-button:focus-visible\s*\{[\s\S]*?ou
 assert.match(coordinate, /class="icon-button clear-input-button"[^>]*title="清空坐标"[^>]*aria-label="清空坐标"/u, "clear coordinate control has an explicit accessible name");
 assert.match(html, /\.clear-input-button\s*\{\s*background:\s*#f8fafc;[\s\S]*?color:\s*#64748b;/u, "clear coordinate control stays visually low emphasis");
 
-console.log("Mobile UI simplification regression: 89/89 PASS");
+console.log("Mobile UI simplification regression: 92/92 PASS");
 console.log("PROVIDER_CALLS=0");
