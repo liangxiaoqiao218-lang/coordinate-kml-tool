@@ -12,6 +12,7 @@ if (!process.env.MOBILE_UI_BROWSER_RECEIPT_DIR || existsSync(receiptRoot)) {
 }
 mkdirSync(receiptRoot, { recursive: false });
 mkdirSync(path.join(receiptRoot, "390"));
+mkdirSync(path.join(receiptRoot, "full-390"));
 mkdirSync(path.join(receiptRoot, "states"));
 
 const chromePath = String(process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe");
@@ -120,6 +121,18 @@ async function screenshot(cdp, sessionId, outputFile) {
   writeFileSync(outputFile, Buffer.from(capture.data, "base64"), { flag: "wx" });
 }
 
+async function fullScreenshot(cdp, sessionId, outputFile, width) {
+  await evaluate(cdp, sessionId, "new Promise(resolve => { window.scrollTo(0, 0); requestAnimationFrame(() => requestAnimationFrame(resolve)); })");
+  const height = await evaluate(cdp, sessionId, "Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)");
+  const capture = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+    captureBeyondViewport: true,
+    clip: { x: 0, y: 0, width, height, scale: 1 }
+  }, sessionId);
+  writeFileSync(outputFile, Buffer.from(capture.data, "base64"), { flag: "wx" });
+}
+
 let server;
 let chrome;
 let cdp;
@@ -183,6 +196,7 @@ try {
         const formatSelect = document.querySelector('#coordinateFormat');
         const footer = document.querySelector('.site-footer');
         const versionStamp = document.querySelector('.version-stamp');
+        const main = document.querySelector('main.page');
         const visibleRect = element => {
           if (!element || !element.getClientRects().length) return null;
           const rect = element.getBoundingClientRect();
@@ -211,7 +225,10 @@ try {
           formatSelect: visibleRect(formatSelect),
           footerMarginTop: footer ? getComputedStyle(footer).marginTop : '',
           footerBottomGap: footer?.getClientRects().length ? Math.round(innerHeight - footer.getBoundingClientRect().bottom) : null,
-          versionBottomGap: versionStamp?.getClientRects().length ? Math.round(innerHeight - versionStamp.getBoundingClientRect().bottom) : null
+          versionBottomGap: versionStamp?.getClientRects().length ? Math.round(innerHeight - versionStamp.getBoundingClientRect().bottom) : null,
+          contentToFooterGap: footer?.getClientRects().length && main?.getClientRects().length
+            ? Math.round(footer.getBoundingClientRect().top - main.getBoundingClientRect().bottom)
+            : null
         };
       })()`);
       assert.equal(layout.scrollWidth, layout.clientWidth, `${name} ${width}px must not scroll horizontally`);
@@ -227,9 +244,12 @@ try {
         assert.equal(layout.coordinateExampleLinkVisible, false, `coordinate ${width}px has no extra example disclosure`);
         assert.ok(layout.formatSelect?.left >= -1 && layout.formatSelect?.right <= layout.clientWidth + 1, `coordinate ${width}px format control is visible and unclipped`);
       }
-      assert.notEqual(layout.footerMarginTop, "18px", `${name} ${width}px must not pin the footer in the middle with a fixed top margin`);
+      assert.ok(layout.contentToFooterGap >= 32 && layout.contentToFooterGap <= 48, `${name} ${width}px keeps a natural 32-48px content-to-footer gap`);
       results.push({ page: name, width, result: "PASS", ...layout });
-      if (width === 390) await screenshot(cdp, sessionId, path.join(receiptRoot, "390", `${name}.png`));
+      if (width === 390) {
+        await screenshot(cdp, sessionId, path.join(receiptRoot, "390", `${name}.png`));
+        await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "full-390", `${name}.png`), width);
+      }
     }
   }
 
@@ -261,6 +281,37 @@ try {
   assert.match(directPaste.value, /116\.391245/u);
   results.push({ state: "coordinate-direct-paste", result: "PASS", ...directPaste });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-direct-paste.png"));
+
+  const detailSizing = await evaluate(cdp, sessionId, `(() => {
+    setDebug('正在查找坐标区域…');
+    setDebugRunning(true);
+    const panel = document.querySelector('#debugPanel');
+    const detail = document.querySelector('#debugText');
+    const shortHeight = Math.round(detail.getBoundingClientRect().height);
+    const shortOpen = panel.open && !panel.hidden;
+    setDebugRunning(false);
+    setDebug(Array.from({ length: 30 }, (_, index) => '技术细节 ' + (index + 1)).join('\\n'));
+    const longHeight = Math.round(detail.getBoundingClientRect().height);
+    setDebug('正在查找坐标区域…');
+    setDebugRunning(true);
+    const heading = document.querySelector('.workspace-heading-copy h1');
+    return {
+      shortHeight,
+      shortOpen,
+      longHeight,
+      maxHeight: getComputedStyle(detail).maxHeight,
+      headingWidth: Math.round(heading.getBoundingClientRect().width),
+      headingWritingMode: getComputedStyle(heading).writingMode
+    };
+  })()`);
+  assert.equal(detailSizing.shortOpen, true);
+  assert.ok(detailSizing.shortHeight >= 48 && detailSizing.shortHeight <= 90);
+  assert.ok(detailSizing.longHeight > detailSizing.shortHeight && detailSizing.longHeight <= 240);
+  assert.ok(detailSizing.headingWidth > 180);
+  assert.equal(detailSizing.headingWritingMode, 'horizontal-tb');
+  results.push({ state: "coordinate-detail-sizing", result: "PASS", ...detailSizing });
+  await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-processing.png"));
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-processing-full.png"), 390);
 
   const statusStates = await evaluate(cdp, sessionId, `(() => {
     const input = document.querySelector('#coordinateInput');
@@ -294,7 +345,7 @@ try {
     const input = document.querySelector('#coordinateInput');
     const debugPanel = document.querySelector('#debugPanel');
     clearUploadMessage();
-    setDebug('上一轮详情');
+    setDebug('识别完成\\n已识别 4 个坐标点\\n当前坐标需要核对');
     debugPanel.open = false;
     setDebugRunning(true);
     const reopened = debugPanel.open && !debugPanel.hidden;
@@ -359,6 +410,7 @@ try {
   assert.deepEqual(feedbackContract.identityBound, { resultId: "result-ui-1", resultRevision: "3", geometryHash: "sha256:ui-1" });
   results.push({ state: "coordinate-feedback-contract", result: "PASS", ...feedbackContract });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-result-overview.png"));
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-result-overview-full.png"), 390);
   const previousResult = await evaluate(cdp, sessionId, `(() => {
     const previousMeta = activeRecognitionSummaryMeta;
     const previousText = document.querySelector('#coordinateInput').value;
@@ -373,6 +425,7 @@ try {
   assert.deepEqual(previousResult.identity, { resultId: "result-ui-1", resultRevision: "3", geometryHash: "sha256:ui-1" });
   results.push({ state: "coordinate-previous-result", result: "PASS", ...previousResult });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-previous-result.png"));
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-previous-result-full.png"), 390);
   const overviewCleared = await evaluate(cdp, sessionId, `(() => {
     clearRecognitionSummary();
     const summary = document.querySelector('#recognitionSummary');
@@ -384,15 +437,26 @@ try {
   const gold = await evaluate(cdp, sessionId, `(() => {
     const weight = document.querySelector('#goldWeight');
     const water = document.querySelector('#waterDiff');
+    const copy = document.querySelector('#copyGoldButton');
+    const initiallyDisabled = copy.disabled && copy.dataset.resultState !== 'valid';
     weight.value = '10';
     water.value = '0.6';
     weight.dispatchEvent(new Event('input', { bubbles: true }));
+    water.dispatchEvent(new Event('input', { bubbles: true }));
+    const validEnabled = !copy.disabled && copy.dataset.resultState === 'valid';
+    water.value = '';
+    water.dispatchEvent(new Event('input', { bubbles: true }));
+    const staleDisabled = copy.disabled && copy.dataset.resultState === 'invalid';
+    water.value = '0.6';
     water.dispatchEvent(new Event('input', { bubbles: true }));
     return {
       resultVisible: Boolean(document.querySelector('#goldResultCard').getClientRects().length),
       quoteVisible: Boolean(document.querySelector('.quote-placeholder').getClientRects().length),
       formulaArrow: getComputedStyle(document.querySelector('.formula-box > summary'), '::after').content,
       copyVisible: Boolean(document.querySelector('#goldActions').getClientRects().length),
+      initiallyDisabled,
+      validEnabled,
+      staleDisabled,
       purity: document.querySelector('#goldPurityResult').textContent.trim()
     };
   })()`);
@@ -400,9 +464,13 @@ try {
   assert.equal(gold.quoteVisible, false);
   assert.match(gold.formulaArrow, /⌄/u);
   assert.equal(gold.copyVisible, true);
+  assert.equal(gold.initiallyDisabled, true);
+  assert.equal(gold.validEnabled, true);
+  assert.equal(gold.staleDisabled, true);
   assert.notEqual(gold.purity, "--");
   results.push({ state: "gold-calculator", result: "PASS", ...gold });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "gold-calculated.png"));
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "gold-calculated-full.png"), 390);
 
   await cdp.send("Browser.close");
   const receipt = {
