@@ -5081,6 +5081,39 @@
         padding: 12px;
       }
     }
+
+    .rc-async-focus-simulation {
+      display: none;
+      margin: 12px 0;
+      padding: 12px;
+      border: 1px dashed #7aa8a2;
+      border-radius: 12px;
+      background: #f3fbfa;
+      color: #233b39;
+    }
+
+    .rc-async-focus-simulation.is-enabled {
+      display: grid;
+      gap: 8px;
+    }
+
+    .rc-async-focus-simulation p {
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    .rc-async-focus-simulation button {
+      min-height: 44px;
+      justify-self: start;
+    }
+
+    .rc-async-focus-simulation-status[data-status="pass"] {
+      color: #087a68;
+    }
+
+    .rc-async-focus-simulation-status[data-status="fail"] {
+      color: #a33a2b;
+    }
   </style>
   <script src="pricing-config.js"></script>
   <link rel="stylesheet" href="/assets/spatial-map/spatial-map.css" />
@@ -5173,6 +5206,12 @@
 
       <div id="recognitionSummary" class="recognition-status" aria-live="polite" hidden></div>
       <div id="recognitionProgress" class="recognition-status" aria-live="polite"></div>
+      <section id="rcAsyncFocusSimulation" class="rc-async-focus-simulation" aria-label="RC异步输入保护测试" hidden>
+        <strong>RC 异步输入保护测试</strong>
+        <p>点击开始后请继续编辑坐标并保持光标在输入框内。6 秒后只检查旧结果是否被阻断，不会发起识别、扣次或写入结果。</p>
+        <button id="rcAsyncFocusSimulationStart" type="button" class="secondary">开始 6 秒模拟</button>
+        <p id="rcAsyncFocusSimulationStatus" class="rc-async-focus-simulation-status" aria-live="polite"></p>
+      </section>
 
       <section id="projectedCrsReviewPanel" class="projected-crs-review-panel" aria-live="polite" hidden>
         <p id="projectedCrsReviewTitle" class="projected-crs-review-title">图片缺少完整定位信息，暂时无法显示地图</p>
@@ -5659,6 +5698,9 @@ Au值 = 纯度 × 10 后取整数</div>
     const uploadMessage = document.getElementById("uploadMessage");
     const recognitionSummary = document.getElementById("recognitionSummary");
     const recognitionProgress = document.getElementById("recognitionProgress");
+    const rcAsyncFocusSimulation = document.getElementById("rcAsyncFocusSimulation");
+    const rcAsyncFocusSimulationStart = document.getElementById("rcAsyncFocusSimulationStart");
+    const rcAsyncFocusSimulationStatus = document.getElementById("rcAsyncFocusSimulationStatus");
     const projectedCrsReviewPanel = document.getElementById("projectedCrsReviewPanel");
     const projectedCrsReviewTitle = document.getElementById("projectedCrsReviewTitle");
     const projectedCrsReviewHint = document.getElementById("projectedCrsReviewHint");
@@ -5830,6 +5872,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let kmlGenerationInProgress = false;
     let spatialResultEnabled = false;
     let spatialRegressionTestMode = false;
+    let rcAsyncFocusSimulationTimer = null;
     let activeMapPreviewResponse = null;
     let activeMapPreviewCacheKey = "";
     let agenticCoordinateController = null;
@@ -5966,7 +6009,7 @@ Au值 = 纯度 × 10 后取整数</div>
         const payload = await agenticCoordinateController.recognize(file);
         if (!payload) return;
         const result = payload.result;
-        if (hasCoordinateInputChangedSince(recognitionInputRevisionAtStart)) {
+        if (!shouldApplyCoordinateRecognitionResult(recognitionInputRevisionAtStart)) {
           appendDebug("识别已完成；检测到你在处理中修改了坐标，结果未覆盖当前输入。");
           setRecognitionStatus("识别已完成；当前输入已有修改，未自动覆盖。", "warning");
           showUploadSupportMessage("本轮识别结果未覆盖你正在编辑的坐标。需要时可重新识别。", "warning");
@@ -6055,6 +6098,7 @@ Au值 = 纯度 × 10 后取整数</div>
       markCoordinateTextChanged();
       updateCadastralGridPanel();
     });
+    rcAsyncFocusSimulationStart.addEventListener("click", startRcAsyncFocusSimulation);
     hydrateSharedRecipientWorkingCopy();
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
@@ -8709,14 +8753,91 @@ Au值 = 纯度 × 10 后取整数</div>
         const payload = await response.json().catch(() => ({}));
         spatialResultEnabled = response.ok && payload?.runtimeIdentity?.spatialResultEnabled === true;
         spatialRegressionTestMode = response.ok && payload?.runtimeIdentity?.regressionTestMode === true;
+        configureRcAsyncFocusSimulation(
+          response.ok && payload?.runtimeIdentity?.rcAsyncFocusSimulationEnabled === true
+        );
       } catch (error) {
         spatialResultEnabled = false;
         spatialRegressionTestMode = false;
+        configureRcAsyncFocusSimulation(false);
       }
       refreshMapPreviewAction();
       if (pages.spatialResult?.classList.contains("active") && (!spatialResultEnabled || !activeMapPreviewResponse)) {
         showPage("coordinate", "", true);
       }
+    }
+
+    function getCurrentFinalizedCoordinateIdentitySnapshot() {
+      const result = activeFinalizedCoordinateResult;
+      if (!result?.resultId || !Number.isSafeInteger(result?.resultRevision) || !result?.geometryHash) {
+        return null;
+      }
+      return {
+        resultId: String(result.resultId),
+        resultRevision: result.resultRevision,
+        geometryHash: String(result.geometryHash)
+      };
+    }
+
+    function coordinateResultIdentityMatches(candidate, expected) {
+      return Boolean(candidate && expected
+        && String(candidate.resultId || "") === expected.resultId
+        && Number(candidate.resultRevision) === expected.resultRevision
+        && String(candidate.geometryHash || "") === expected.geometryHash);
+    }
+
+    function configureRcAsyncFocusSimulation(runtimeEnabled) {
+      const requested = new URLSearchParams(window.location.search).get("rc-async-focus-test") === "1";
+      const enabled = runtimeEnabled === true && requested;
+      rcAsyncFocusSimulation.hidden = !enabled;
+      rcAsyncFocusSimulation.classList.toggle("is-enabled", enabled);
+      rcAsyncFocusSimulation.dataset.enabled = enabled ? "true" : "false";
+      if (!enabled && rcAsyncFocusSimulationTimer) {
+        clearTimeout(rcAsyncFocusSimulationTimer);
+        rcAsyncFocusSimulationTimer = null;
+      }
+    }
+
+    function startRcAsyncFocusSimulation() {
+      if (rcAsyncFocusSimulation.dataset.enabled !== "true" || rcAsyncFocusSimulationTimer) return;
+      const startedRevision = coordinateInputEditRevision;
+      const startedText = String(input.value || "");
+      const startedIdentity = getCurrentFinalizedCoordinateIdentitySnapshot();
+      const simulatedStaleIdentity = {
+        resultId: `${startedIdentity?.resultId || "rc-session"}-stale`,
+        resultRevision: Number(startedIdentity?.resultRevision || 0) + 1,
+        geometryHash: `${startedIdentity?.geometryHash || "rc-session"}-stale`
+      };
+      rcAsyncFocusSimulationStart.disabled = true;
+      rcAsyncFocusSimulationStatus.dataset.status = "running";
+      rcAsyncFocusSimulationStatus.textContent = "模拟已开始。请继续编辑坐标并保持光标在输入框内。";
+      rcAsyncFocusSimulation.dataset.startedRevision = String(startedRevision);
+
+      rcAsyncFocusSimulationTimer = setTimeout(() => {
+        rcAsyncFocusSimulationTimer = null;
+        const editDetected = hasCoordinateInputChangedSince(startedRevision);
+        const staleResultBlocked = !shouldApplyCoordinateRecognitionResult(startedRevision);
+        const textPreserved = String(input.value || "") !== startedText;
+        const focusPreserved = document.activeElement === input;
+        const identityUnchanged = JSON.stringify(getCurrentFinalizedCoordinateIdentitySnapshot())
+          === JSON.stringify(startedIdentity);
+        const identityConflictBlocked = !coordinateResultIdentityMatches(simulatedStaleIdentity, startedIdentity);
+        const passed = editDetected && staleResultBlocked && textPreserved && focusPreserved
+          && identityUnchanged && identityConflictBlocked;
+
+        rcAsyncFocusSimulation.dataset.editDetected = String(editDetected);
+        rcAsyncFocusSimulation.dataset.staleResultBlocked = String(staleResultBlocked);
+        rcAsyncFocusSimulation.dataset.textPreserved = String(textPreserved);
+        rcAsyncFocusSimulation.dataset.focusPreserved = String(focusPreserved);
+        rcAsyncFocusSimulation.dataset.identityUnchanged = String(identityUnchanged);
+        rcAsyncFocusSimulation.dataset.identityConflictBlocked = String(identityConflictBlocked);
+        rcAsyncFocusSimulation.dataset.result = passed ? "pass" : "fail";
+        rcAsyncFocusSimulationStatus.dataset.status = passed ? "pass" : "fail";
+        rcAsyncFocusSimulationStatus.textContent = passed
+          ? "通过：旧结果已阻断，当前输入、焦点和结果身份均保持不变。"
+          : "未通过：请保留当前页面并反馈本区状态；不会应用模拟结果。";
+        rcAsyncFocusSimulationStart.disabled = false;
+      }, 6000);
     }
 
     function getCoordinateFlowUserMessage(code, fallback) {
@@ -8957,6 +9078,10 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function hasCoordinateInputChangedSince(revision) {
       return coordinateInputEditRevision !== Number(revision);
+    }
+
+    function shouldApplyCoordinateRecognitionResult(revision) {
+      return !hasCoordinateInputChangedSince(revision);
     }
 
     function shouldBlockHandwrittenDmsKml() {
@@ -16421,7 +16546,7 @@ ${placemarks}
           || existingFamilySourceText
           || finalCoordinates
           || getCanonicalCoordinateDisplayText(data.finalizedCoordinateResult);
-        if (hasCoordinateInputChangedSince(recognitionInputRevisionAtStart)) {
+        if (!shouldApplyCoordinateRecognitionResult(recognitionInputRevisionAtStart)) {
           appendDebug(`识别已完成；检测到你在处理中修改了坐标，本轮结果未覆盖当前输入。\n请求编号：${recognitionRequestId}`);
           setRecognitionStatus("识别已完成；当前输入已有修改，未自动覆盖。", "warning");
           showUploadSupportMessage("本轮识别结果已保留在请求记录中，但未覆盖你正在编辑的坐标。需要时可重新识别。", "warning");
