@@ -73,12 +73,13 @@ assert.match(html, /if \(activeElement === input\) return;/u, "recognition compl
 assert.match(html, /function hasCoordinateInputChangedSince\(revision\)[\s\S]*?coordinateInputEditRevision !== Number\(revision\)/u, "recognition results are revision-guarded against later edits");
 assert.match(html, /本轮结果未覆盖当前输入/u, "stale recognition completion is explained without overwriting input");
 assert.match(html, /label\.textContent = "区域概览"/u);
-assert.match(html, /meta\.previousResult === true \? "上次结果" : \(reviewSummary\.text \|\| "有效"\)/u, "retained coordinates are explicitly marked as the previous result after a newer recognition failure");
+assert.match(html, /meta\.previousResult === true[\s\S]*?`\$\{geometry\}（上次结果）`/u, "retained coordinates are explicitly marked as the previous result after a newer recognition failure");
 assert.match(html, /function restorePreviousRecognitionSummary\(meta, coordinateText\)[\s\S]*?setRecognitionSummary\(\{ \.\.\.meta, previousResult: true \}\)/u);
-assert.match(html, /\{ key: "点数", value: String\(count\)/u);
-assert.match(html, /区域面积：不适用/u);
-assert.match(html, /区域面积：待核对/u);
-assert.match(html, /\{ key: "国家／地区", value: country \|\| "未知"/u);
+assert.match(html, /key: "区域类型"[\s\S]*?value: geometryState/u);
+assert.match(html, /\{ key: "所属国家\/地区", value: country \|\| "未知"/u);
+assert.match(html, /\{ key: "坐标数量", value: String\(count\)/u);
+assert.match(html, /\{ key: "坐标类型", value: coordinateType \|\| "未知"/u);
+assert.match(html, /if \(area\) \{[\s\S]*?chips\.push\(\{ key: "面积", value: area, tone: "valid" \}\);/u, "area is appended only after the existing legality gate returns a valid value");
 assert.match(html, /focusCoordinateInputAfterRecognition\(\);[\s\S]*?coordinateUploadPanel\?\.classList\.add\("is-complete"\)/u, "recognition completion uses the guarded focus helper");
 assert.match(coordinate, /<section class="format-conversion" aria-label="格式转换">[\s\S]*?id="coordinateFormat"/u);
 assert.doesNotMatch(coordinate, /<summary>坐标说明<\/summary>|一行就是一个点/u);

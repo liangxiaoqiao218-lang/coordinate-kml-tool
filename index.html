@@ -9508,28 +9508,45 @@ Au值 = 纯度 × 10 后取整数</div>
       return area ? `区域面积：${area}` : "区域面积：待核对";
     }
 
+    function getRecognitionSummaryGeometry(meta = {}) {
+      const count = Number(meta.count) || 0;
+      const geometry = String(meta.geometry || meta.engine?.groups?.[0]?.geometry || inferGeometry(count) || "").toLowerCase();
+      const labels = {
+        point: "点",
+        multipoint: "多点",
+        linestring: "线",
+        line: "线",
+        polygon: "多边形",
+        multipolygon: "多区域"
+      };
+      return labels[geometry] || "未知";
+    }
+
     function setRecognitionSummary(meta = {}) {
       const count = Number(meta.count) || 0;
       const review = getRecognitionSummaryReviewState(meta);
       const country = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryRegion(meta);
-      const area = getRecognitionSummaryAreaLabel(meta);
+      const coordinateType = getRecognitionSummaryType(meta);
+      const geometry = getRecognitionSummaryGeometry(meta);
+      const area = getRecognitionSummaryArea(meta);
       const reviewSummary = getCoordinateReviewSummary(meta, review);
-      const areaValue = area.replace(/^区域面积：/, "");
+      const geometryState = meta.previousResult === true
+        ? `${geometry}（上次结果）`
+        : review.requiresReview ? `${geometry}（${reviewSummary.text || "待核对"}）` : geometry;
       const chips = [
         {
-          key: "状态",
-          value: meta.previousResult === true ? "上次结果" : (reviewSummary.text || "有效"),
+          key: "区域类型",
+          value: geometryState,
           tone: meta.previousResult === true ? "neutral" : review.requiresReview ? "warning" : "valid",
           reviewTarget: reviewSummary.targetGroupIndex > 0
         },
-        { key: "点数", value: String(count), tone: count > 0 ? "valid" : "neutral" },
-        {
-          key: "面积",
-          value: areaValue,
-          tone: /待核对/.test(areaValue) ? "warning" : /不适用|未知/.test(areaValue) ? "neutral" : "valid"
-        },
-        { key: "国家／地区", value: country || "未知", tone: country ? "valid" : "neutral" }
+        { key: "所属国家/地区", value: country || "未知", tone: country ? "valid" : "neutral" },
+        { key: "坐标数量", value: String(count), tone: count > 0 ? "valid" : "neutral" },
+        { key: "坐标类型", value: coordinateType || "未知", tone: coordinateType ? "valid" : "neutral" }
       ];
+      if (area) {
+        chips.push({ key: "面积", value: area, tone: "valid" });
+      }
 
       recognitionSummary.style.display = "flex";
       recognitionSummary.className = `recognition-status summary${review.requiresReview ? " warning" : ""}`;
