@@ -158,6 +158,11 @@ async function runBrowserQualification(baseUrl) {
       const input = document.querySelector('#coordinateInput');
       input.value = '116.391245,39.907654';
       input.dispatchEvent(new Event('input', { bubbles: true }));
+      activeFinalizedCoordinateResult = {
+        resultId: 'rc-current-point',
+        resultRevision: 1,
+        geometryHash: 'rc-current-point-hash'
+      };
       input.focus();
       document.querySelector('#rcAsyncFocusSimulationStart').click();
       return {
@@ -173,6 +178,11 @@ async function runBrowserQualification(baseUrl) {
       const input = document.querySelector('#coordinateInput');
       input.value = ${JSON.stringify(editedValue)};
       input.dispatchEvent(new Event('input', { bubbles: true }));
+      activeFinalizedCoordinateResult = {
+        resultId: 'rc-current-line',
+        resultRevision: 2,
+        geometryHash: 'rc-current-line-hash'
+      };
       input.focus();
     })()`);
     await waitUntil(
@@ -190,21 +200,81 @@ async function runBrowserQualification(baseUrl) {
         staleResultBlocked: panel.dataset.staleResultBlocked,
         textPreserved: panel.dataset.textPreserved,
         focusPreserved: panel.dataset.focusPreserved,
-        identityUnchanged: panel.dataset.identityUnchanged,
+        currentIdentityPreservedAtCallback: panel.dataset.currentIdentityPreservedAtCallback,
         identityConflictBlocked: panel.dataset.identityConflictBlocked,
         result: panel.dataset.result,
-        status: document.querySelector('#rcAsyncFocusSimulationStatus').textContent.trim()
+        status: document.querySelector('#rcAsyncFocusSimulationStatus').textContent.trim(),
+        visibleChecks: Array.from(document.querySelectorAll('#rcAsyncFocusSimulationChecks output')).map(output => ({
+          key: output.dataset.check,
+          result: output.dataset.result,
+          text: output.textContent.trim()
+        }))
       };
     })()`);
     assert.equal(outcome.value, editedValue);
     assert.equal(outcome.focused, true);
-    for (const key of ["editDetected", "staleResultBlocked", "textPreserved", "focusPreserved", "identityUnchanged", "identityConflictBlocked"]) {
+    for (const key of ["editDetected", "staleResultBlocked", "textPreserved", "focusPreserved", "currentIdentityPreservedAtCallback", "identityConflictBlocked"]) {
       assert.equal(outcome[key], "true", key);
+    }
+    assert.deepEqual(outcome.visibleChecks.map(item => item.key), [
+      "editDetected",
+      "staleResultBlocked",
+      "textPreserved",
+      "focusPreserved",
+      "currentIdentityPreservedAtCallback",
+      "identityConflictBlocked"
+    ]);
+    for (const item of outcome.visibleChecks) {
+      assert.equal(item.result, "pass", `${item.key}:visible-result`);
+      assert.equal(item.text, "通过", `${item.key}:visible-text`);
     }
     assert.equal(outcome.result, "pass");
     results.push({ test: "bounded-delayed-stale-result", result: "PASS", ...outcome });
     const capture = await cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true }, sessionId);
     writeFileSync(path.join(receiptRoot, "async-focus-pass.png"), Buffer.from(capture.data, "base64"), { flag: "wx" });
+
+    const diagnosticEditedValue = `${editedValue}\n116.393245,39.909654`;
+    await evaluate(cdp, sessionId, `(() => {
+      const input = document.querySelector('#coordinateInput');
+      document.querySelector('#rcAsyncFocusSimulationStart').click();
+      input.value = ${JSON.stringify(diagnosticEditedValue)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.blur();
+    })()`);
+    await waitUntil(
+      () => evaluate(cdp, sessionId, "document.querySelector('#rcAsyncFocusSimulation')?.dataset.result === 'fail'"),
+      8000,
+      "ASYNC_FAILURE_DIAGNOSTIC"
+    );
+    const failureDiagnostic = await evaluate(cdp, sessionId, `(() => {
+      const panel = document.querySelector('#rcAsyncFocusSimulation');
+      return {
+        editDetected: panel.dataset.editDetected,
+        staleResultBlocked: panel.dataset.staleResultBlocked,
+        textPreserved: panel.dataset.textPreserved,
+        focusPreserved: panel.dataset.focusPreserved,
+        currentIdentityPreservedAtCallback: panel.dataset.currentIdentityPreservedAtCallback,
+        identityConflictBlocked: panel.dataset.identityConflictBlocked,
+        result: panel.dataset.result,
+        panelText: panel.textContent.trim(),
+        visibleChecks: Array.from(document.querySelectorAll('#rcAsyncFocusSimulationChecks output')).map(output => ({
+          key: output.dataset.check,
+          result: output.dataset.result,
+          text: output.textContent.trim()
+        }))
+      };
+    })()`);
+    assert.equal(failureDiagnostic.focusPreserved, "false");
+    assert.equal(failureDiagnostic.result, "fail");
+    for (const key of ["editDetected", "staleResultBlocked", "textPreserved", "currentIdentityPreservedAtCallback", "identityConflictBlocked"]) {
+      assert.equal(failureDiagnostic[key], "true", `${key}:failure-diagnostic`);
+    }
+    assert.equal(failureDiagnostic.visibleChecks.find(item => item.key === "focusPreserved")?.result, "fail");
+    assert.equal(failureDiagnostic.visibleChecks.find(item => item.key === "focusPreserved")?.text, "未通过");
+    assert.doesNotMatch(failureDiagnostic.panelText, /116\.|39\.|rc-current|hash/u);
+    results.push({ test: "visible-failure-diagnostics", result: "PASS", ...failureDiagnostic });
+    const failureCapture = await cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true }, sessionId);
+    writeFileSync(path.join(receiptRoot, "async-focus-failure-diagnostic.png"), Buffer.from(failureCapture.data, "base64"), { flag: "wx" });
 
     await cdp.send("Page.navigate", { url: `${baseUrl}/coordinate` }, sessionId);
     await waitUntil(() => evaluate(cdp, sessionId, "document.readyState === 'complete'"), 5000, "DEFAULT_PAGE");

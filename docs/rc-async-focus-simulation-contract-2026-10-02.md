@@ -15,12 +15,14 @@ The browser additionally requires the current URL to contain `rc-async-focus-tes
 
 ## Test behavior
 
-Starting the test captures the current coordinate-input revision and current finalized-result identity, then waits six seconds. During the wait the tester edits the coordinate input and keeps it focused. When the delayed event arrives, the test checks that:
+Starting the test captures the current coordinate-input revision, then waits six seconds. During the wait the tester edits the coordinate input and keeps it focused. When the delayed event arrives, the test checks that:
 
 - the input revision changed and the stale result was rejected by the same revision gate used by recognition;
 - the tester's new input and focus remain unchanged;
-- the active finalized `resultId`, `resultRevision`, and `geometryHash` remain unchanged;
+- the active finalized `resultId`, `resultRevision`, and `geometryHash` are unchanged across the stale-event callback itself; a legitimate identity update caused by the tester's newer input is not compared with the identity from before that edit;
 - a deliberately conflicting simulated identity is rejected.
+
+The panel displays only the boolean outcomes for `editDetected`, `staleResultBlocked`, `textPreserved`, `focusPreserved`, `currentIdentityPreservedAtCallback`, and `identityConflictBlocked`. These values contain no coordinate content, URLs, credentials, environment configuration, or result identities.
 
 The delayed event never writes input or result data. It does not upload a file, call a Provider or map service, create a recognition job, consume usage, write a database, or persist test data.
 
