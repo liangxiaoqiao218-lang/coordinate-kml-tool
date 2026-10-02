@@ -5114,6 +5114,41 @@
     .rc-async-focus-simulation-status[data-status="fail"] {
       color: #a33a2b;
     }
+
+    .rc-async-focus-simulation-checks {
+      display: grid;
+      gap: 6px;
+      margin: 10px 0 0;
+      padding: 0;
+      list-style: none;
+      font-size: 13px;
+      color: #475467;
+    }
+
+    .rc-async-focus-simulation-checks li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .rc-async-focus-simulation-checks span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .rc-async-focus-simulation-checks output {
+      font-weight: 600;
+      color: #667085;
+    }
+
+    .rc-async-focus-simulation-checks output[data-result="pass"] {
+      color: #067647;
+    }
+
+    .rc-async-focus-simulation-checks output[data-result="fail"] {
+      color: #b42318;
+    }
   </style>
   <script src="pricing-config.js"></script>
   <link rel="stylesheet" href="/assets/spatial-map/spatial-map.css" />
@@ -5211,6 +5246,14 @@
         <p>点击开始后请继续编辑坐标并保持光标在输入框内。6 秒后只检查旧结果是否被阻断，不会发起识别、扣次或写入结果。</p>
         <button id="rcAsyncFocusSimulationStart" type="button" class="secondary">开始 6 秒模拟</button>
         <p id="rcAsyncFocusSimulationStatus" class="rc-async-focus-simulation-status" aria-live="polite"></p>
+        <ul id="rcAsyncFocusSimulationChecks" class="rc-async-focus-simulation-checks" aria-label="模拟检查明细" hidden>
+          <li><span>editDetected</span><output data-check="editDetected">待检查</output></li>
+          <li><span>staleResultBlocked</span><output data-check="staleResultBlocked">待检查</output></li>
+          <li><span>textPreserved</span><output data-check="textPreserved">待检查</output></li>
+          <li><span>focusPreserved</span><output data-check="focusPreserved">待检查</output></li>
+          <li><span>currentIdentityPreservedAtCallback</span><output data-check="currentIdentityPreservedAtCallback">待检查</output></li>
+          <li><span>identityConflictBlocked</span><output data-check="identityConflictBlocked">待检查</output></li>
+        </ul>
       </section>
 
       <section id="projectedCrsReviewPanel" class="projected-crs-review-panel" aria-live="polite" hidden>
@@ -5701,6 +5744,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const rcAsyncFocusSimulation = document.getElementById("rcAsyncFocusSimulation");
     const rcAsyncFocusSimulationStart = document.getElementById("rcAsyncFocusSimulationStart");
     const rcAsyncFocusSimulationStatus = document.getElementById("rcAsyncFocusSimulationStatus");
+    const rcAsyncFocusSimulationChecks = document.getElementById("rcAsyncFocusSimulationChecks");
     const projectedCrsReviewPanel = document.getElementById("projectedCrsReviewPanel");
     const projectedCrsReviewTitle = document.getElementById("projectedCrsReviewTitle");
     const projectedCrsReviewHint = document.getElementById("projectedCrsReviewHint");
@@ -8786,6 +8830,22 @@ Au值 = 纯度 × 10 后取整数</div>
         && String(candidate.geometryHash || "") === expected.geometryHash);
     }
 
+    function coordinateResultIdentitySnapshotsMatch(left, right) {
+      return JSON.stringify(left) === JSON.stringify(right);
+    }
+
+    function renderRcAsyncFocusSimulationChecks(checks = null) {
+      const outputs = rcAsyncFocusSimulationChecks.querySelectorAll("output[data-check]");
+      rcAsyncFocusSimulationChecks.hidden = checks === null;
+      outputs.forEach(output => {
+        const hasResult = checks !== null
+          && Object.prototype.hasOwnProperty.call(checks, output.dataset.check);
+        const result = hasResult ? checks[output.dataset.check] === true : null;
+        output.textContent = result === null ? "待检查" : (result ? "通过" : "未通过");
+        output.dataset.result = result === null ? "pending" : (result ? "pass" : "fail");
+      });
+    }
+
     function configureRcAsyncFocusSimulation(runtimeEnabled) {
       const requested = new URLSearchParams(window.location.search).get("rc-async-focus-test") === "1";
       const enabled = runtimeEnabled === true && requested;
@@ -8796,46 +8856,62 @@ Au值 = 纯度 × 10 后取整数</div>
         clearTimeout(rcAsyncFocusSimulationTimer);
         rcAsyncFocusSimulationTimer = null;
       }
+      if (!enabled) renderRcAsyncFocusSimulationChecks(null);
     }
 
     function startRcAsyncFocusSimulation() {
       if (rcAsyncFocusSimulation.dataset.enabled !== "true" || rcAsyncFocusSimulationTimer) return;
       const startedRevision = coordinateInputEditRevision;
       const startedText = String(input.value || "");
-      const startedIdentity = getCurrentFinalizedCoordinateIdentitySnapshot();
+      const identityAtStart = getCurrentFinalizedCoordinateIdentitySnapshot();
       const simulatedStaleIdentity = {
-        resultId: `${startedIdentity?.resultId || "rc-session"}-stale`,
-        resultRevision: Number(startedIdentity?.resultRevision || 0) + 1,
-        geometryHash: `${startedIdentity?.geometryHash || "rc-session"}-stale`
+        resultId: `${identityAtStart?.resultId || "rc-session"}-stale`,
+        resultRevision: Number(identityAtStart?.resultRevision || 0) + 1,
+        geometryHash: `${identityAtStart?.geometryHash || "rc-session"}-stale`
       };
       rcAsyncFocusSimulationStart.disabled = true;
       rcAsyncFocusSimulationStatus.dataset.status = "running";
       rcAsyncFocusSimulationStatus.textContent = "模拟已开始。请继续编辑坐标并保持光标在输入框内。";
       rcAsyncFocusSimulation.dataset.startedRevision = String(startedRevision);
+      renderRcAsyncFocusSimulationChecks({});
 
       rcAsyncFocusSimulationTimer = setTimeout(() => {
         rcAsyncFocusSimulationTimer = null;
+        const currentIdentityBeforeStaleCallback = getCurrentFinalizedCoordinateIdentitySnapshot();
         const editDetected = hasCoordinateInputChangedSince(startedRevision);
         const staleResultBlocked = !shouldApplyCoordinateRecognitionResult(startedRevision);
         const textPreserved = String(input.value || "") !== startedText;
         const focusPreserved = document.activeElement === input;
-        const identityUnchanged = JSON.stringify(getCurrentFinalizedCoordinateIdentitySnapshot())
-          === JSON.stringify(startedIdentity);
-        const identityConflictBlocked = !coordinateResultIdentityMatches(simulatedStaleIdentity, startedIdentity);
+        const identityConflictBlocked = !coordinateResultIdentityMatches(
+          simulatedStaleIdentity,
+          currentIdentityBeforeStaleCallback
+        );
+        const currentIdentityAfterStaleCallback = getCurrentFinalizedCoordinateIdentitySnapshot();
+        const currentIdentityPreservedAtCallback = coordinateResultIdentitySnapshotsMatch(
+          currentIdentityBeforeStaleCallback,
+          currentIdentityAfterStaleCallback
+        );
+        const checks = {
+          editDetected,
+          staleResultBlocked,
+          textPreserved,
+          focusPreserved,
+          currentIdentityPreservedAtCallback,
+          identityConflictBlocked
+        };
         const passed = editDetected && staleResultBlocked && textPreserved && focusPreserved
-          && identityUnchanged && identityConflictBlocked;
+          && currentIdentityPreservedAtCallback && identityConflictBlocked;
 
-        rcAsyncFocusSimulation.dataset.editDetected = String(editDetected);
-        rcAsyncFocusSimulation.dataset.staleResultBlocked = String(staleResultBlocked);
-        rcAsyncFocusSimulation.dataset.textPreserved = String(textPreserved);
-        rcAsyncFocusSimulation.dataset.focusPreserved = String(focusPreserved);
-        rcAsyncFocusSimulation.dataset.identityUnchanged = String(identityUnchanged);
-        rcAsyncFocusSimulation.dataset.identityConflictBlocked = String(identityConflictBlocked);
+        Object.entries(checks).forEach(([key, value]) => {
+          rcAsyncFocusSimulation.dataset[key] = String(value);
+        });
+        delete rcAsyncFocusSimulation.dataset.identityUnchanged;
         rcAsyncFocusSimulation.dataset.result = passed ? "pass" : "fail";
         rcAsyncFocusSimulationStatus.dataset.status = passed ? "pass" : "fail";
         rcAsyncFocusSimulationStatus.textContent = passed
           ? "通过：旧结果已阻断，当前输入、焦点和结果身份均保持不变。"
           : "未通过：请保留当前页面并反馈本区状态；不会应用模拟结果。";
+        renderRcAsyncFocusSimulationChecks(checks);
         rcAsyncFocusSimulationStart.disabled = false;
       }, 6000);
     }
