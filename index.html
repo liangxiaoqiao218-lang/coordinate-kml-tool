@@ -2353,34 +2353,29 @@
     .upload-message {
       display: none;
       margin-top: 8px;
-      padding: 10px 12px;
-      border: 1px solid #fed7aa;
-      border-radius: 10px;
-      background: #fff7ed;
-      color: #7c2d12;
+      padding: 6px 2px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: #64748b;
       line-height: 1.4;
       font-size: 13px;
     }
 
     .upload-message-content {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 8px 12px;
+      flex-wrap: wrap;
     }
 
     .upload-message-copy {
       min-width: 0;
     }
 
-    .upload-message-title {
-      color: #b91c1c;
-      font-weight: 700;
-      margin-bottom: 2px;
-    }
-
     .upload-message-detail {
-      color: #9a3412;
+      color: #64748b;
       overflow-wrap: anywhere;
     }
 
@@ -2431,9 +2426,9 @@
 
     .recognition-status.success,
     .recognition-status.summary {
-      border-color: #bbf7d0;
-      background: #f8fff9;
-      color: #166534;
+      border-color: transparent;
+      background: #f0fdf4;
+      color: #334155;
     }
 
     .recognition-status.success::before,
@@ -2443,14 +2438,23 @@
       animation: none;
     }
 
+    .recognition-status.summary::before {
+      display: none;
+    }
+
     .recognition-status.summary.warning {
-      border-color: #dbe3ea;
-      background: #ffffff;
+      border-color: transparent;
+      background: #f0fdf4;
       color: #334155;
     }
 
+    .recognition-status.summary {
+      border: 0;
+      box-shadow: none;
+    }
+
     .recognition-status.summary.warning::before {
-      background: #f59e0b;
+      display: none;
     }
 
     .recognition-status.warning {
@@ -2504,7 +2508,7 @@
     }
 
     .recognition-status.summary.warning .recognition-summary-label {
-      color: #334155;
+      color: #15803d;
     }
 
     .recognition-summary-meta {
@@ -2519,30 +2523,33 @@
     .recognition-summary-pill {
       display: inline-flex;
       align-items: center;
-      min-height: 26px;
-      padding: 0 9px;
-      border-radius: 999px;
-      background: rgba(22, 163, 74, 0.08);
-      color: #166534;
+      min-height: 22px;
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      color: #475569;
       font-size: 13px;
-      font-weight: 800;
+      font-weight: 600;
       white-space: nowrap;
     }
 
     .recognition-status.summary.warning .recognition-summary-pill {
-      background: #f8fafc;
+      background: transparent;
       color: #475569;
     }
 
     .recognition-summary-pill.is-review-target {
-      border: 1px solid #fde68a;
-      background: #fffbeb;
-      color: #92400e;
+      border: 0;
+      background: transparent;
+      color: #475569;
       cursor: pointer;
+      text-decoration: underline;
+      text-decoration-color: rgba(71, 85, 105, 0.45);
+      text-underline-offset: 3px;
     }
 
     .recognition-summary-pill.is-review-target:hover {
-      background: #fef3c7;
+      color: #166534;
     }
 
     .handwritten-dms-review-panel {
@@ -4794,7 +4801,7 @@
     }
 
     body:has(#judgePage.active) .site-footer {
-      margin-top: 18px;
+      margin-top: auto;
     }
 
     .site-footer-inner {
@@ -5739,6 +5746,7 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeFinalizedCoordinateResult = null;
     let activeRecognitionAcquisitionResult = null;
     let activePointGeometryIntentReview = null;
+    let activeRecognitionSummaryMeta = null;
     let finalizedCoordinateTextSnapshot = "";
     let finalizedCoordinateDirty = false;
     let lastValidIdentityBoundSnapshot = null;
@@ -5867,6 +5875,8 @@ Au值 = 纯度 × 10 后取整数</div>
       supportPanel.style.display = "none";
       clearUploadMessage();
       resetHandwrittenDmsReviewState();
+      const previousSummaryMeta = activeRecognitionSummaryMeta;
+      const previousCoordinateText = String(input.value || "");
       clearRecognitionSummary();
       setCoordinateOrderReviewVisible(false);
       showSelectedImage(file);
@@ -5905,6 +5915,7 @@ Au值 = 纯度 × 10 后取整数</div>
       } catch (error) {
         setRecognitionStatus("识别失败", "error");
         showUploadSupportMessage(error?.message || "未能可靠识别坐标，请重新上传更清晰的坐标区域截图。");
+        restorePreviousRecognitionSummary(previousSummaryMeta, previousCoordinateText);
       } finally {
         setDebugRunning(false);
         imageInput.disabled = false;
@@ -7219,6 +7230,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function clearUploadMessage() {
       uploadMessage.style.display = "none";
       uploadMessage.innerHTML = "";
+      delete uploadMessage.dataset.messageKind;
     }
 
     function formatRecognitionSummaryArea(value) {
@@ -8916,12 +8928,12 @@ Au值 = 纯度 × 10 后取整数</div>
 
       if (targetGroupIndex > 0) {
         return groupCount > 1
-          ? { text: `⚠ 第${targetGroupIndex}组需要核对`, targetGroupIndex }
-          : { text: "⚠ 当前坐标需要核对", targetGroupIndex: 0 };
+          ? { text: `第${targetGroupIndex}组待核对`, targetGroupIndex }
+          : { text: "坐标待核对", targetGroupIndex: 0 };
       }
 
       if (review.requiresReview) {
-        return { text: "⚠ 当前坐标需要核对", targetGroupIndex: 0 };
+        return { text: "坐标待核对", targetGroupIndex: 0 };
       }
 
       return { text: "", targetGroupIndex: 0 };
@@ -8980,7 +8992,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const area = getRecognitionSummaryAreaLabel(meta);
       const reviewSummary = getCoordinateReviewSummary(meta, review);
       const chips = [
-        reviewSummary.text,
+        meta.previousResult === true ? "上次结果" : reviewSummary.text,
         `坐标点：${count}`,
         area,
         `国家／地区：${country || "未知"}`
@@ -9020,10 +9032,19 @@ Au值 = 纯度 × 10 后取整数</div>
       recognitionSummary.dataset.resultId = String(identity.resultId || "");
       recognitionSummary.dataset.resultRevision = String(identity.resultRevision || "");
       recognitionSummary.dataset.geometryHash = String(identity.geometryHash || "");
+      activeRecognitionSummaryMeta = meta;
       recognitionSummary.hidden = false;
     }
 
+    function restorePreviousRecognitionSummary(meta, coordinateText) {
+      if (!meta || !String(coordinateText || "").trim()) return false;
+      if (String(input.value || "") !== String(coordinateText || "")) return false;
+      setRecognitionSummary({ ...meta, previousResult: true });
+      return true;
+    }
+
     function clearRecognitionSummary() {
+      activeRecognitionSummaryMeta = null;
       recognitionSummary.hidden = true;
       recognitionSummary.style.display = "none";
       recognitionSummary.textContent = "";
@@ -9136,15 +9157,12 @@ Au值 = 纯度 × 10 后取整数</div>
       setRecognitionStatus("", "");
       uploadMessage.style.display = "block";
       const source = String(text || "").trim();
-      const isUnchargedFailure = /本次识别未完成|未扣除使用次数/.test(source);
-      let title = "图片识别未完成";
-      let detail = "未扣除使用次数。你可以重新识别，或使用人工协助。";
-      if (!isUnchargedFailure) {
-        const splitAt = source.search(/[：:]/);
-        title = splitAt > 0 ? source.slice(0, splitAt).trim() : "图片识别未完成";
-        detail = splitAt > 0 ? source.slice(splitAt + 1).trim() : source;
-      }
-      uploadMessage.innerHTML = `<div class="upload-message-content"><div class="upload-message-copy"><div class="upload-message-title">${escapeHtml(title)}</div><div class="upload-message-detail">${escapeHtml(detail || "请重新选择图片后再试。")}</div></div><div class="upload-message-actions"><button type="button" class="inline-link" onclick="openManualSupport()">人工协助</button></div></div>`;
+      const isFailure = /识别未完成|识别失败|未能|未识别|没有.*坐标|暂时|超时|已停止|上传失败|坐标未提取|已保留当前图片|当前图片已保留/i.test(source);
+      const detail = isFailure
+        ? "本次图片识别未完成，请重试。"
+        : (source || "需要时可重新识别。");
+      uploadMessage.dataset.messageKind = isFailure ? "failure" : "notice";
+      uploadMessage.innerHTML = `<div class="upload-message-content"><div class="upload-message-copy"><div class="upload-message-detail">${escapeHtml(detail)}</div></div><div class="upload-message-actions"><button type="button" class="inline-link" onclick="openManualSupport()">人工协助</button></div></div>`;
     }
 
     function getRecognitionFailureMessage(errorMessage, responseStatus) {
