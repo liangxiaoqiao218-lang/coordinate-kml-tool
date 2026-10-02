@@ -1268,21 +1268,45 @@
     .spatial-share-card-action {
       position: absolute;
       z-index: 2;
-      top: 7px;
-      right: 42px;
-      width: 36px;
-      min-width: 36px;
-      min-height: 36px;
+      top: 8px;
+      right: 54px;
+      width: 38px;
+      min-width: 38px;
+      min-height: 38px;
       padding: 0;
-      border: 0;
-      border-radius: 50%;
-      background: #eef6f4;
+      border: 1px solid rgba(13, 148, 136, .24);
+      border-radius: 10px;
+      background: #ecfdf5;
       color: #0f766e;
       box-shadow: none;
-      font-size: 18px;
+      font-size: 0;
     }
 
-    .spatial-result-card .spatial-sheet-toggle { padding-right: 84px; }
+    .spatial-share-card-action svg,
+    .spatial-sheet-chevron svg {
+      width: 19px;
+      height: 19px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .spatial-result-card .spatial-sheet-toggle { padding-right: 104px; }
+
+    .spatial-result-card {
+      background: rgba(240, 253, 250, .97);
+    }
+
+    .spatial-result-card .spatial-sheet-toggle {
+      background: linear-gradient(135deg, rgba(236, 253, 245, .92), rgba(239, 246, 255, .92));
+      color: #115e59;
+    }
+
+    .spatial-result-card .spatial-sheet-chevron {
+      color: #0f766e;
+    }
 
     .spatial-share-dialog {
       width: min(420px, calc(100vw - 32px));
@@ -2465,6 +2489,11 @@
 
     .recognition-status.summary {
       border: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      padding: 12px;
+      background: #f8fafc;
       box-shadow: none;
     }
 
@@ -2527,40 +2556,62 @@
     }
 
     .recognition-summary-meta {
-      display: inline-flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
       min-width: 0;
-      flex: 1 1 auto;
     }
 
     .recognition-summary-pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 22px;
-      padding: 0;
-      border-radius: 0;
-      background: transparent;
-      color: #475569;
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+      min-height: 54px;
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #334155;
       font-size: 13px;
-      font-weight: 600;
-      white-space: nowrap;
+      font-weight: 800;
+    }
+
+    .recognition-summary-key {
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .recognition-summary-value {
+      overflow-wrap: anywhere;
+      font-size: 13px;
+      line-height: 1.3;
+    }
+
+    .recognition-summary-pill.is-valid {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+      color: #166534;
+    }
+
+    .recognition-summary-pill.is-warning {
+      border-color: #fed7aa;
+      background: #fff7ed;
+      color: #9a3412;
+    }
+
+    .recognition-summary-pill.is-neutral {
+      border-color: #e2e8f0;
+      background: #f8fafc;
+      color: #475569;
     }
 
     .recognition-status.summary.warning .recognition-summary-pill {
-      background: transparent;
-      color: #475569;
+      color: inherit;
     }
 
     .recognition-summary-pill.is-review-target {
-      border: 0;
-      background: transparent;
-      color: #475569;
       cursor: pointer;
-      text-decoration: underline;
-      text-decoration-color: rgba(71, 85, 105, 0.45);
-      text-underline-offset: 3px;
     }
 
     .recognition-summary-pill.is-review-target:hover {
@@ -2878,8 +2929,27 @@
     }
 
     .judge-panel {
-      border-color: #bbf7d0;
-      background: #f8fff9;
+      display: grid;
+      gap: 14px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .judge-layer {
+      min-width: 0;
+      padding: 14px;
+      border: 1px solid #dbe5df;
+      border-radius: 14px;
+      background: #ffffff;
+    }
+
+    .judge-layer-title {
+      margin: 0 0 10px;
+      color: #166534;
+      font-size: 13px;
+      font-weight: 900;
     }
 
     .judge-panel h2 {
@@ -2909,6 +2979,8 @@
     }
 
     .judge-result-wrap {
+      display: grid;
+      gap: 14px;
       position: relative;
     }
 
@@ -3292,6 +3364,24 @@
       align-items: center;
       justify-content: flex-start;
       padding-top: 2px;
+    }
+
+    .judge-decision-recommendation {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      padding: 9px 10px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, .72);
+      color: #475569;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .judge-decision-recommendation strong {
+      color: #0f172a;
+      font-size: 13px;
+      line-height: 1.4;
     }
 
     .judge-decision-metric {
@@ -4186,6 +4276,21 @@
         padding: 12px;
       }
 
+      .recognition-summary-meta {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .page-title-row.judge-title-row {
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .page-title-row.judge-title-row .quota-entry-row,
+      .coordinate-workspace .workspace-head .quota-entry-row {
+        flex: 0 0 auto;
+        max-width: 46%;
+      }
+
       .buttons,
       .format-setting-row,
       .gold-input-grid,
@@ -4280,7 +4385,7 @@
 
       .judge-panel {
         margin-top: 10px;
-        padding: 10px;
+        padding: 0;
       }
 
       .judge-detail-title {
@@ -4806,6 +4911,10 @@
       display: none !important;
     }
 
+    .quote-placeholder #goldPriceInfo {
+      display: none !important;
+    }
+
     .quote-grid {
       grid-template-columns: minmax(0, 1fr);
       min-width: 0;
@@ -4964,11 +5073,16 @@
       }
 
       .coordinate-workspace .workspace-head {
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
       }
 
       .coordinate-workspace .workspace-heading-copy {
-        flex: 1 1 100%;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .coordinate-workspace .workspace-head .quota-entry-row {
+        margin-top: 6px;
       }
 
       .coordinate-workspace .cadastral-grid-badge.is-active {
@@ -5385,11 +5499,11 @@
           <div id="spatialProviderAttribution" class="spatial-provider-attribution" hidden></div>
         </div>
         <aside id="spatialResultCard" class="spatial-result-card" aria-label="地块详情">
-          <button id="spatialShareCardAction" type="button" class="spatial-share-card-action" onclick="openSpatialShareDialog()" aria-label="分享结果" title="分享结果" hidden>↗</button>
+          <button id="spatialShareCardAction" type="button" class="spatial-share-card-action" onclick="openSpatialShareDialog()" aria-label="分享结果" title="分享结果" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5"/></svg></button>
           <button id="spatialResultSheetToggle" type="button" class="spatial-sheet-toggle" aria-expanded="false" aria-controls="spatialResultDetails" onclick="toggleSpatialResultSheet()">
             <span id="spatialCollapsedSummary">—</span>
             <span id="spatialReviewCompact" class="spatial-review-compact" hidden>待核对</span>
-            <span class="spatial-sheet-chevron" aria-hidden="true">⌃</span>
+            <span class="spatial-sheet-chevron" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7 14 5-5 5 5"/></svg></span>
           </button>
           <div id="spatialResultDetails" class="spatial-result-details">
             <div class="spatial-detail-heading">
@@ -5405,7 +5519,7 @@
               <div id="spatialAreaFact" class="spatial-primary-fact" hidden><span>面积</span><strong id="spatialAreaValue"></strong></div>
               <div id="spatialLengthFact" hidden><span id="spatialLengthLabel">周长</span><strong id="spatialLengthValue"></strong></div>
               <div><span>坐标点</span><strong id="spatialPointCount"></strong></div>
-              <div><span>中心位置</span><strong id="spatialCentroid"></strong></div>
+              <div id="spatialCentroidFact" hidden><span>中心位置</span><strong id="spatialCentroid"></strong></div>
             </section>
             <div id="spatialRegionalView" class="spatial-regional-view" hidden></div>
             <button id="spatialKmlAction" type="button" class="secondary spatial-kml-action" onclick="downloadKml()" disabled>下载 KML</button>
@@ -5424,14 +5538,16 @@
       </div>
       <div class="page-title-row judge-title-row">
         <h1>矿地快判</h1>
+        <div class="quota-entry-row">
+          <div id="judgeQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
+          <button id="judgeQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
+        </div>
       </div>
       <p class="intro">上传现场图做保守初筛；结果不能替代采样和检测。</p>
-      <div class="quota-entry-row">
-        <div id="judgeQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
-        <button id="judgeQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
-      </div>
 
       <div class="panel judge-panel">
+        <section class="judge-layer judge-upload-layer" aria-labelledby="judgeUploadLayerTitle">
+        <div id="judgeUploadLayerTitle" class="judge-layer-title">上传区</div>
         <div id="judgeMessage" class="message"></div>
         <div id="judgeProgressVisual" class="judge-progress-visual" aria-live="polite">
           <span class="judge-progress-icon" aria-hidden="true"></span>
@@ -5445,10 +5561,15 @@
         </label>
         <input id="judgeImageInput" class="judge-file-input" type="file" accept="image/*" />
         <div id="judgeImagePreview" class="image-preview"></div>
+        </section>
         <div class="judge-result-wrap">
+          <section class="judge-layer judge-summary-layer" aria-labelledby="judgeSummaryLayerTitle">
+          <div id="judgeSummaryLayerTitle" class="judge-layer-title">结果摘要</div>
           <div id="judgeDecisionCard" class="judge-decision-card" hidden></div>
+          </section>
+          <section class="judge-layer judge-detail-layer" aria-labelledby="judgeDetailLayerTitle">
           <div class="judge-detail-wrap">
-            <div class="judge-detail-title">快判详情</div>
+            <div id="judgeDetailLayerTitle" class="judge-detail-title">快判详情</div>
             <article id="judgeResult" class="judge-detail-content" aria-label="快判详情">
               <p class="judge-detail-placeholder">结构初筛结果会显示在这里。</p>
             </article>
@@ -5457,6 +5578,7 @@
               <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">&#10697;</button>
             </div>
           </div>
+          </section>
         </div>
             <div id="judgeFeedbackPanel" class="judge-feedback" hidden>
               <div class="judge-feedback-title">这个判断对你有帮助吗？</div>
@@ -5556,12 +5678,12 @@ K值 = 纯度 ÷ 100 × 24
 Au值 = 纯度 × 10 后取整数</div>
         </details>
 
-        <div class="quote-placeholder" hidden aria-hidden="true">
+        <div class="quote-placeholder">
           <div class="quote-header">
             <strong>报价对比</strong>
             <button type="button" class="ghost-action" onclick="clearGoldCalculator()">清空全部</button>
           </div>
-          <p id="goldPriceInfo">正在读取参考金价...</p>
+          <p id="goldPriceInfo" hidden></p>
           <div class="quote-grid">
             <div>
               <label id="shopQuoteLabel" for="shopQuote">金店报价（元/克）</label>
@@ -5831,6 +5953,7 @@ Au值 = 纯度 × 10 后取整数</div>
     const spatialLengthLabel = document.getElementById("spatialLengthLabel");
     const spatialLengthValue = document.getElementById("spatialLengthValue");
     const spatialPointCount = document.getElementById("spatialPointCount");
+    const spatialCentroidFact = document.getElementById("spatialCentroidFact");
     const spatialCentroid = document.getElementById("spatialCentroid");
     const spatialRegionalView = document.getElementById("spatialRegionalView");
     const spatialKmlAction = document.getElementById("spatialKmlAction");
@@ -6151,9 +6274,7 @@ Au值 = 纯度 × 10 后取整数</div>
     loadUserQuota();
     cleanupJudgeHistoryStorage();
     renderJudgeRecent();
-    if (!document.querySelector(".quote-placeholder")?.hidden) {
-      loadGoldReferencePrice();
-    }
+    updateGoldPriceInfo();
     trackEvent("page_visit");
 
     const PAGE_ROUTE_META = {
@@ -7689,18 +7810,14 @@ Au值 = 纯度 × 10 后取整数</div>
           : "当前坐标需要对照原图人工核对。";
       handwrittenDmsReviewPanel.appendChild(statusText);
 
-      if (!isConfirmed) {
+      if (!isConfirmed && !ordinaryReviewOnly) {
         const confirmButton = document.createElement("button");
         confirmButton.type = "button";
         confirmButton.className = "handwritten-dms-review-button";
         confirmButton.textContent = pointIntentReview
           ? "确认同一位置并作为 Point"
-          : ordinaryReviewOnly
-            ? "我已核对，继续使用未确认结果"
-            : "我已对照原图核对当前坐标";
-        confirmButton.addEventListener("click", ordinaryReviewOnly
-          ? acknowledgeOrdinaryCoordinateReview
-          : pointIntentReview
+          : "我已对照原图核对当前坐标";
+        confirmButton.addEventListener("click", pointIntentReview
           ? confirmPointGeometryIntentReview
           : confirmHandwrittenDmsReview);
         handwrittenDmsReviewPanel.appendChild(confirmButton);
@@ -8551,8 +8668,16 @@ Au值 = 纯度 × 10 后取整数</div>
       spatialLengthFact.hidden = !Number.isFinite(linearValue);
       spatialLengthLabel.textContent = Number.isFinite(facts?.perimeterMeters) ? "周长" : "长度";
       spatialLengthValue.textContent = formatSpatialMeters(linearValue);
-      spatialPointCount.textContent = Number.isFinite(facts?.pointCount) ? `${facts.pointCount} 个` : "—";
-      spatialCentroid.textContent = Array.isArray(facts?.centroid) ? "查看" : "—";
+      const pointCount = Number.isFinite(facts?.pointCount)
+        ? facts.pointCount
+        : getSpatialPositions(preview?.geometry).length;
+      spatialPointCount.textContent = `${pointCount} 个`;
+      const centroid = Array.isArray(facts?.centroid) && facts.centroid.length >= 2
+        && Number.isFinite(facts.centroid[0]) && Number.isFinite(facts.centroid[1])
+        ? facts.centroid
+        : null;
+      spatialCentroidFact.hidden = !centroid;
+      spatialCentroid.textContent = centroid ? `${centroid[1].toFixed(5)}, ${centroid[0].toFixed(5)}` : "";
 
       const regionalCount = Number(payload.regionalViewCount);
       spatialRegionalView.hidden = !Number.isFinite(regionalCount) || regionalCount <= 0;
@@ -9269,12 +9394,22 @@ Au值 = 纯度 × 10 后取整数</div>
       const country = review.orderStatus === "ambiguous" ? "" : getRecognitionSummaryRegion(meta);
       const area = getRecognitionSummaryAreaLabel(meta);
       const reviewSummary = getCoordinateReviewSummary(meta, review);
+      const areaValue = area.replace(/^区域面积：/, "");
       const chips = [
-        meta.previousResult === true ? "上次结果" : reviewSummary.text,
-        `坐标点：${count}`,
-        area,
-        `国家／地区：${country || "未知"}`
-      ].filter(Boolean);
+        {
+          key: "状态",
+          value: meta.previousResult === true ? "上次结果" : (reviewSummary.text || "有效"),
+          tone: meta.previousResult === true ? "neutral" : review.requiresReview ? "warning" : "valid",
+          reviewTarget: reviewSummary.targetGroupIndex > 0
+        },
+        { key: "点数", value: String(count), tone: count > 0 ? "valid" : "neutral" },
+        {
+          key: "面积",
+          value: areaValue,
+          tone: /待核对/.test(areaValue) ? "warning" : /不适用|未知/.test(areaValue) ? "neutral" : "valid"
+        },
+        { key: "国家／地区", value: country || "未知", tone: country ? "valid" : "neutral" }
+      ];
 
       recognitionSummary.style.display = "flex";
       recognitionSummary.className = `recognition-status summary${review.requiresReview ? " warning" : ""}`;
@@ -9287,10 +9422,11 @@ Au值 = 纯度 × 10 后取整数</div>
 
       const chipWrap = document.createElement("span");
       chipWrap.className = "recognition-summary-meta";
-      chips.forEach(text => {
+      chips.forEach(item => {
         const chip = document.createElement("span");
-        chip.className = "recognition-summary-pill";
-        if (text === reviewSummary.text && reviewSummary.targetGroupIndex > 0) {
+        chip.className = `recognition-summary-pill is-${item.tone}`;
+        chip.dataset.summaryKey = item.key;
+        if (item.reviewTarget) {
           chip.classList.add("is-review-target");
           chip.tabIndex = 0;
           chip.role = "button";
@@ -9302,7 +9438,13 @@ Au值 = 纯度 × 10 后取整数</div>
             }
           });
         }
-        chip.textContent = text;
+        const key = document.createElement("span");
+        key.className = "recognition-summary-key";
+        key.textContent = item.key;
+        const value = document.createElement("strong");
+        value.className = "recognition-summary-value";
+        value.textContent = item.value;
+        chip.append(key, value);
         chipWrap.appendChild(chip);
       });
       recognitionSummary.appendChild(chipWrap);
@@ -10479,6 +10621,7 @@ Au值 = 纯度 × 10 后取整数</div>
       const decision = meta?.worth || getJudgeDecisionMeta(grade, text).worth || "";
       return String(decision)
         .replace(/^[🔥👍⚠❌✔✖]\s*/, "")
+        .replace(/[□�\uFFFD]/g, "")
         .replace(/[()（）]/g, "")
         .trim() || "可以回看";
     }
@@ -10986,8 +11129,8 @@ Au值 = 纯度 × 10 后取整数</div>
             <span class="judge-decision-metric"><strong>等级 ${escapeHtml(grade)}</strong></span>
             <span class="judge-decision-metric"><strong>${escapeHtml(String(official.score))}分</strong></span>
             <span class="judge-decision-metric">可信度 <strong>${escapeHtml(official.confidence)}</strong></span>
-            <span class="judge-decision-metric">建议 <strong>${escapeHtml(getJudgeDecisionText(grade, text, meta))}</strong></span>
           </div>
+          <div class="judge-decision-recommendation"><span>建议</span><strong>${escapeHtml(getJudgeDecisionText(grade, text, meta))}</strong></div>
           <div class="judge-official-note">快判结果仅供初筛参考，需结合现场与检测结果确认。</div>
         </div>`;
       console.log("AI判读移动端状态：renderResultCard 完成", {
@@ -11452,6 +11595,9 @@ Au值 = 纯度 × 10 后取整数</div>
       resetJudgeFeedback();
       hideJudgeProgressVisual();
       showJudgeMessage("判读结果已清除。");
+      setTimeout(() => {
+        if (judgeMessage?.textContent === "判读结果已清除。") showJudgeMessage("");
+      }, 1600);
     }
 
     function buildJudgeCopyText() {

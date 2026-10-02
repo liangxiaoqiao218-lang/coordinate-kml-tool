@@ -326,6 +326,7 @@ try {
     setDebug('正在查找坐标区域…');
     setDebugRunning(true);
     const heading = document.querySelector('.workspace-heading-copy h1');
+    const quota = document.querySelector('.coordinate-workspace .quota-entry-row');
     return {
       shortHeight,
       shortOpen,
@@ -334,7 +335,11 @@ try {
       backgroundColor: getComputedStyle(detail).backgroundColor,
       color: getComputedStyle(detail).color,
       headingWidth: Math.round(heading.getBoundingClientRect().width),
-      headingWritingMode: getComputedStyle(heading).writingMode
+      headingWritingMode: getComputedStyle(heading).writingMode,
+      headingTop: Math.round(heading.getBoundingClientRect().top),
+      headingRight: Math.round(heading.getBoundingClientRect().right),
+      quotaTop: Math.round(quota.getBoundingClientRect().top),
+      quotaLeft: Math.round(quota.getBoundingClientRect().left)
     };
   })()`);
   assert.equal(detailSizing.shortOpen, true);
@@ -342,8 +347,10 @@ try {
   assert.ok(detailSizing.longHeight > detailSizing.shortHeight && detailSizing.longHeight <= 240);
   assert.equal(detailSizing.backgroundColor, 'rgb(15, 23, 42)');
   assert.equal(detailSizing.color, 'rgb(229, 231, 235)');
-  assert.ok(detailSizing.headingWidth > 180);
+  assert.ok(detailSizing.headingWidth > 100);
   assert.equal(detailSizing.headingWritingMode, 'horizontal-tb');
+  assert.ok(Math.abs(detailSizing.quotaTop - detailSizing.headingTop) <= 20);
+  assert.ok(detailSizing.headingRight + 8 <= detailSizing.quotaLeft);
   results.push({ state: "coordinate-detail-sizing", result: "PASS", ...detailSizing });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-processing.png"));
   await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-processing-full.png"), 390);
@@ -420,12 +427,18 @@ try {
     const summary = document.querySelector('#recognitionSummary');
     const summaryStyle = getComputedStyle(summary);
     const summaryMarkerStyle = getComputedStyle(summary, '::before');
+    const summaryCells = [...summary.querySelectorAll('.recognition-summary-pill')].map(cell => ({
+      key: cell.dataset.summaryKey,
+      value: cell.querySelector('.recognition-summary-value')?.textContent || '',
+      tone: [...cell.classList].find(name => /^is-(valid|warning|neutral)$/u.test(name)) || ''
+    }));
     return {
       reopened,
       staleDetected,
       lineText,
       polygonText,
       selfIntersectingText,
+      summaryCells,
       identityBound,
       summaryBackground: summaryStyle.backgroundColor,
       summaryBorderWidth: summaryStyle.borderTopWidth,
@@ -434,11 +447,17 @@ try {
   })()`);
   assert.equal(feedbackContract.reopened, true);
   assert.equal(feedbackContract.staleDetected, true);
-  assert.match(feedbackContract.lineText, /坐标点：2/u);
-  assert.match(feedbackContract.lineText, /区域面积：不适用/u);
-  assert.match(feedbackContract.lineText, /国家／地区：未知/u);
-  assert.match(feedbackContract.polygonText, /区域面积：12\.5 ha/u);
-  assert.match(feedbackContract.selfIntersectingText, /区域面积：待核对/u);
+  assert.match(feedbackContract.lineText, /点数2/u);
+  assert.match(feedbackContract.lineText, /面积不适用/u);
+  assert.match(feedbackContract.lineText, /国家／地区未知/u);
+  assert.match(feedbackContract.polygonText, /面积12\.5 ha/u);
+  assert.match(feedbackContract.selfIntersectingText, /面积待核对/u);
+  assert.deepEqual(feedbackContract.summaryCells, [
+    { key: "状态", value: "坐标待核对", tone: "is-warning" },
+    { key: "点数", value: "4", tone: "is-valid" },
+    { key: "面积", value: "待核对", tone: "is-warning" },
+    { key: "国家／地区", value: "未知", tone: "is-neutral" }
+  ]);
   assert.equal(feedbackContract.summaryBackground, "rgb(240, 253, 244)");
   assert.equal(feedbackContract.summaryBorderWidth, "0px");
   assert.equal(feedbackContract.summaryMarkerDisplay, "none");
@@ -489,6 +508,8 @@ try {
     return {
       resultVisible: Boolean(document.querySelector('#goldResultCard').getClientRects().length),
       quoteVisible: Boolean(document.querySelector('.quote-placeholder').getClientRects().length),
+      realtimePriceHidden: !document.querySelector('#goldPriceInfo').getClientRects().length,
+      manualQuoteVisible: Boolean(document.querySelector('#shopQuote').getClientRects().length),
       formulaArrow: getComputedStyle(document.querySelector('.formula-box > summary'), '::after').content,
       copyVisible: Boolean(document.querySelector('#goldActions').getClientRects().length),
       initiallyDisabled,
@@ -501,7 +522,9 @@ try {
     };
   })()`);
   assert.equal(gold.resultVisible, true);
-  assert.equal(gold.quoteVisible, false);
+  assert.equal(gold.quoteVisible, true);
+  assert.equal(gold.realtimePriceHidden, true);
+  assert.equal(gold.manualQuoteVisible, true);
   assert.match(gold.formulaArrow, /⌄/u);
   assert.equal(gold.copyVisible, true);
   assert.equal(gold.initiallyDisabled, true);
