@@ -1308,6 +1308,7 @@ app.get("/api/version", (req, res) => {
       confirmationRuntimeVersion: CONFIRMATION_RUNTIME_VERSION,
       spatialResultEnabled: isSpatialResultEnabled(),
       regressionTestMode: process.env.REGRESSION_TEST_MODE === "true",
+      rcAsyncFocusSimulationEnabled: isRcAsyncFocusSimulationEnabled(),
       recognitionHardDeadlineMs: getRecognitionHardDeadlineMs(),
       workingTreeDirty: process.env.WORKING_TREE_DIRTY === "true"
         ? true
@@ -3169,6 +3170,22 @@ function getRegressionTestMode(req) {
     : "";
 
   return { requested, enabled, local, production, active, rejectReason };
+}
+
+function isRcAsyncFocusSimulationEnabled() {
+  const enabled = /^(1|true|yes)$/i.test(
+    String(process.env.ENABLE_RC_ASYNC_FOCUS_SIMULATION || "").trim()
+  );
+  const deploymentTier = String(process.env.DEPLOYMENT_TIER || "").trim().toLowerCase();
+  const serviceName = String(process.env.RENDER_SERVICE_NAME || "").trim().toLowerCase();
+  const runtimeBranch = String(
+    process.env.RENDER_GIT_BRANCH || process.env.GIT_BRANCH || ""
+  ).trim();
+
+  return enabled
+    && deploymentTier === "rc"
+    && serviceName === "coordinate-kml-tool-rc"
+    && runtimeBranch === "hotfix/production-generic-dms-review-recovery";
 }
 
 function isPrivateIp(ip) {
