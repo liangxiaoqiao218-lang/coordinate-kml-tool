@@ -1,14 +1,18 @@
 const ISSUE_TYPES = new Set(["recognition_failed", "coordinate_correction", "kml_failed"]);
-const CASE_STATUSES = new Set(["NEW", "TRIAGED", "IN_PROGRESS", "BLOCKED", "VERIFIED", "CLOSED"]);
+const CASE_STATUSES = new Set(["NEW", "TRIAGED", "IN_PROGRESS", "BLOCKED", "VERIFIED", "RESOLVED", "CLOSED"]);
 const STAGE_STATUSES = new Set(["UNKNOWN", "PASS", "FAIL", "BLOCKED", "NOT_APPLICABLE"]);
 const STAGE_KEYS = ["delivery", "problemResolution", "peerValidation", "production"];
 const CRS_STATUSES = new Set(["UNKNOWN", "WORKING_ASSUMPTION", "CONFIRMED"]);
 const GEOMETRY_REPRESENTATIONS = new Set(["UNKNOWN", "POLYGON", "MULTIPOINT", "LINESTRING"]);
 const ARTIFACT_STATUSES = new Set(["NOT_SAVED", "AUTHORIZED_REFERENCE", "UNKNOWN"]);
 const IDENTITY_STATUSES = new Set(["REQUEST_ONLY", "CURRENT", "UNKNOWN"]);
-const FORBIDDEN_KEYS = /(?:image|provider|cookie|authorization|auth_header|secret|password|api_key|coordinates?|raw_response|environment|env_config)/iu;
+const FORBIDDEN_KEYS = /(?:image|provider|cookie|authorization|auth[_-]?header|secret|password|api[_-]?key|coordinates?|raw[_-]?response|environment|env[_-]?config)/iu;
+const ALLOWED_COARSE_COORDINATE_KEYS = new Set(["coordinatetype", "coordinate_type"]);
 const RESULT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
+const ISSUE_SOURCES = new Set(["UNKNOWN", "COORDINATE_IMAGE_UPLOAD", "MANUAL_ASSISTANCE", "ADMIN"]);
+const FAILURE_STAGES = new Set(["UNKNOWN", "ACQUISITION", "VALIDATION", "FINALIZATION", "MANUAL_ASSISTANCE"]);
+const COORDINATE_TYPES = new Set(["UNKNOWN", "DECIMAL_DEGREES", "DMS", "UTM", "PROJECTED", "MIXED"]);
 const STAGE_EVIDENCE_PREFIX = Object.freeze({
   delivery: "DELIVERY",
   problemResolution: "PROBLEM_RESOLUTION",
@@ -28,7 +32,7 @@ function enumValue(value, allowed, fallback) {
 function assertNoForbiddenMaterial(value, path = "payload") {
   if (!value || typeof value !== "object") return;
   for (const [key, nested] of Object.entries(value)) {
-    if (FORBIDDEN_KEYS.test(key)) {
+    if (FORBIDDEN_KEYS.test(key) && !ALLOWED_COARSE_COORDINATE_KEYS.has(String(key).toLowerCase())) {
       throw Object.assign(new Error(`COORDINATE_CASE_FORBIDDEN_FIELD:${path}.${key}`), { code: "COORDINATE_CASE_FORBIDDEN_FIELD" });
     }
     assertNoForbiddenMaterial(nested, `${path}.${key}`);
@@ -109,7 +113,8 @@ export function normalizeCoordinateCaseInput(raw = {}) {
   if (commitSha && !COMMIT_PATTERN.test(commitSha)) {
     throw Object.assign(new Error("COORDINATE_CASE_COMMIT_INVALID"), { code: "COORDINATE_CASE_COMMIT_INVALID" });
   }
-  return {
+  const progressStatus = enumValue(raw.progressStatus ?? raw.progress_status, CASE_STATUSES, "NEW");
+  const normalized = {
     recognition_request_id: recognitionRequestId,
     job_id: safeText(raw.jobId ?? raw.job_id, 160, "jobId") || null,
     ...identity,
@@ -117,7 +122,7 @@ export function normalizeCoordinateCaseInput(raw = {}) {
     issue_summary: issueSummary,
     resolution_summary: safeText(raw.resolutionSummary ?? raw.resolution_summary, 1200, "resolutionSummary") || null,
     owner: safeText(raw.owner, 120, "owner") || null,
-    progress_status: enumValue(raw.progressStatus ?? raw.progress_status, CASE_STATUSES, "NEW"),
+    progress_status: progressStatus,
     blocker: safeText(raw.blocker, 800, "blocker") || null,
     delivery_status: enumValue(raw.deliveryStatus ?? raw.delivery_status, STAGE_STATUSES, "UNKNOWN"),
     problem_resolution_status: enumValue(raw.problemResolutionStatus ?? raw.problem_resolution_status, STAGE_STATUSES, "UNKNOWN"),
@@ -130,8 +135,33 @@ export function normalizeCoordinateCaseInput(raw = {}) {
     original_artifact_status: enumValue(raw.originalArtifactStatus ?? raw.original_artifact_status, ARTIFACT_STATUSES, "NOT_SAVED"),
     golden_ref: safeText(raw.goldenRef ?? raw.golden_ref, 240, "goldenRef") || null,
     commit_sha: commitSha || null,
-    receipt_ref: safeText(raw.receiptRef ?? raw.receipt_ref, 500, "receiptRef") || null
+    receipt_ref: safeText(raw.receiptRef ?? raw.receipt_ref, 500, "receiptRef") || null,
+    source: enumValue(raw.source, ISSUE_SOURCES, "ADMIN"),
+    failure_stage: enumValue(raw.failureStage ?? raw.failure_stage, FAILURE_STAGES, "UNKNOWN"),
+    error_code: safeText(raw.errorCode ?? raw.error_code, 160, "errorCode") || null,
+    coordinate_type: enumValue(raw.coordinateType ?? raw.coordinate_type, COORDINATE_TYPES, "UNKNOWN"),
+    runtime_commit: (() => {
+      const value = text(raw.runtimeCommit ?? raw.runtime_commit, 40).toLowerCase();
+      if (value && !COMMIT_PATTERN.test(value)) {
+        throw Object.assign(new Error("COORDINATE_CASE_RUNTIME_COMMIT_INVALID"), { code: "COORDINATE_CASE_RUNTIME_COMMIT_INVALID" });
+      }
+      return value || null;
+    })(),
+    occurred_at: text(raw.occurredAt ?? raw.occurred_at, 80) || null
   };
+  if (progressStatus === "RESOLVED") {
+    const evidenceComplete = Boolean(normalized.commit_sha)
+      && Boolean(normalized.receipt_ref)
+      && Boolean(normalized.golden_ref)
+      && normalized.sample_count > 0
+      && Boolean(normalized.evidence_scope)
+      && normalized.problem_resolution_status === "PASS"
+      && normalized.peer_validation_status === "PASS";
+    if (!evidenceComplete) {
+      throw Object.assign(new Error("COORDINATE_CASE_RESOLUTION_EVIDENCE_REQUIRED"), { code: "COORDINATE_CASE_RESOLUTION_EVIDENCE_REQUIRED" });
+    }
+  }
+  return normalized;
 }
 
 export function normalizeCoordinateCaseEvidenceInput(raw = {}) {
@@ -183,6 +213,12 @@ export function publicCoordinateCase(row = {}, evidence = []) {
     goldenRef: row.golden_ref,
     commitSha: row.commit_sha,
     receiptRef: row.receipt_ref,
+    source: row.source,
+    failureStage: row.failure_stage,
+    errorCode: row.error_code,
+    coordinateType: row.coordinate_type,
+    runtimeCommit: row.runtime_commit,
+    occurredAt: row.occurred_at,
     evidence: (evidence || []).map(item => ({
       evidenceId: item.evidence_id,
       evidenceType: item.evidence_type,
