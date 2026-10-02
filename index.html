@@ -2776,8 +2776,7 @@
 
     .debug-panel.is-running {
       border-color: #5eead4;
-      background: #f7fffd;
-      box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.08);
+      box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.1), 0 18px 42px rgba(15, 118, 110, 0.12);
     }
 
     .debug-panel summary {
@@ -2852,10 +2851,10 @@
       margin: 0;
       padding: 10px 12px;
       resize: vertical;
-      border: 1px solid #dbe6e2;
+      border: 0;
       border-radius: 8px;
-      background: #f8fafc;
-      color: #334155;
+      background: #0f172a;
+      color: #e5e7eb;
       white-space: pre-wrap;
       word-break: break-word;
       font-size: 13px;
@@ -3762,7 +3761,7 @@
       background: #ffffff;
     }
 
-    .gold-metric span {
+    .gold-metric > span {
       display: block;
       color: #72521a;
       font-size: 13px;
@@ -3773,8 +3772,20 @@
       display: block;
       margin-top: 6px;
       color: #0f172a;
-      font-size: 30px;
+      font-size: 26px;
+      font-weight: 600;
       line-height: 1.1;
+    }
+
+    .gold-metric-number,
+    .gold-metric-affix {
+      display: inline;
+      color: inherit;
+    }
+
+    .gold-metric-affix {
+      font-size: 16px;
+      font-weight: 600;
     }
 
     .gold-grade {
@@ -4887,10 +4898,11 @@
         top: 0;
         gap: 4px;
         margin-bottom: 12px;
-        padding: 4px 0;
+        padding: 0 0 4px;
         border: 0;
         border-radius: 0;
-        background: rgba(248, 251, 255, 0.94);
+        background: transparent;
+        box-shadow: none;
       }
 
       .page-nav .back-button {
@@ -5005,7 +5017,20 @@
 
       .gold-metric {
         min-width: 0;
-        padding: 12px 8px;
+        padding: 12px 10px;
+      }
+
+      .gold-metric > span {
+        font-size: 12.5px;
+      }
+
+      .gold-metric strong {
+        font-size: 24px;
+        font-weight: 600;
+      }
+
+      .gold-metric-affix {
+        font-size: 15px;
       }
 
       .site-footer-inner {
@@ -5028,7 +5053,7 @@
 
       .page-nav {
         gap: 4px;
-        padding: 4px;
+        padding: 0 0 4px;
       }
 
       .page-nav .back-button {
@@ -11602,6 +11627,27 @@ Au值 = 纯度 × 10 后取整数</div>
       }).catch(error => console.warn("Gold usage log failed", error));
     }
 
+    function renderGoldMetricValue(element, numberText, { prefix = "", suffix = "" } = {}) {
+      if (!element) return;
+      element.replaceChildren();
+      if (prefix) {
+        const prefixNode = document.createElement("span");
+        prefixNode.className = "gold-metric-affix";
+        prefixNode.textContent = prefix;
+        element.append(prefixNode);
+      }
+      const numberNode = document.createElement("span");
+      numberNode.className = "gold-metric-number";
+      numberNode.textContent = numberText;
+      element.append(numberNode);
+      if (suffix) {
+        const suffixNode = document.createElement("span");
+        suffixNode.className = "gold-metric-affix";
+        suffixNode.textContent = suffix;
+        element.append(suffixNode);
+      }
+    }
+
     function calculateGoldPurity() {
       updateGoldInputLabels();
       const result = getGoldCalculation();
@@ -11652,10 +11698,10 @@ Au值 = 纯度 × 10 后取整数`;
         return null;
       }
 
-      purityEl.textContent = `${formatGoldNumber(result.purity)}%`;
-      kEl.textContent = `${formatGoldNumber(result.kValue)}K`;
-      auEl.textContent = `Au${result.auValue}`;
-      densityEl.textContent = formatGoldNumber(result.density, 3);
+      renderGoldMetricValue(purityEl, formatGoldNumber(result.purity), { suffix: "%" });
+      renderGoldMetricValue(kEl, formatGoldNumber(result.kValue), { suffix: "K" });
+      renderGoldMetricValue(auEl, String(result.auValue), { prefix: "Au" });
+      renderGoldMetricValue(densityEl, formatGoldNumber(result.density, 3));
       gradeEl.textContent = result.grade;
       const ratioFormula = result.waterMode === "float"
         ? `比重 = 黄金重量 ÷ (黄金重量 - 水中浮重)

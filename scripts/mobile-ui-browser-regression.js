@@ -197,6 +197,7 @@ try {
         const footer = document.querySelector('.site-footer');
         const versionStamp = document.querySelector('.version-stamp');
         const main = document.querySelector('main.page');
+        const activeNav = document.querySelector('.view.active .page-nav');
         const visibleRect = element => {
           if (!element || !element.getClientRects().length) return null;
           const rect = element.getBoundingClientRect();
@@ -219,6 +220,8 @@ try {
           navRows: navRows.length,
           navScrollable: document.querySelector('.view.active .page-nav')?.scrollWidth > document.querySelector('.view.active .page-nav')?.clientWidth,
           pageNavOverflow: getComputedStyle(document.querySelector('.view.active .page-nav') || document.body).overflowX,
+          pageNavBackground: activeNav ? getComputedStyle(activeNav).backgroundColor : null,
+          pageNavBoxShadow: activeNav ? getComputedStyle(activeNav).boxShadow : null,
           coordinateInput: visibleRect(coordinateInput),
           coordinatePlaceholder: coordinateInput?.getAttribute('placeholder') || '',
           coordinateExampleLinkVisible: Boolean([...document.querySelectorAll('summary,button,a')].find(item => item.textContent.trim() === '查看输入示例' && item.getClientRects().length)),
@@ -237,6 +240,10 @@ try {
         assert.deepEqual(layout.navLabels, ["首页", "坐标识别", "矿地快判", "黄金成色计算器"], `${name} ${width}px keeps complete navigation labels`);
         assert.equal(layout.navRows, 1, `${name} ${width}px navigation remains on one row`);
         assert.equal(layout.pageNavOverflow, "auto", `${name} ${width}px navigation owns its horizontal scrolling`);
+        if (width <= 430) {
+          assert.equal(layout.pageNavBackground, "rgba(0, 0, 0, 0)", `${name} ${width}px navigation has no outer tray background`);
+          assert.equal(layout.pageNavBoxShadow, "none", `${name} ${width}px navigation has no outer tray shadow`);
+        }
       }
       if (name === "coordinate") {
         assert.ok(layout.coordinateInput?.height >= (width < 720 ? 215 : 250), `coordinate ${width}px restores the accepted input height`);
@@ -300,6 +307,8 @@ try {
       shortOpen,
       longHeight,
       maxHeight: getComputedStyle(detail).maxHeight,
+      backgroundColor: getComputedStyle(detail).backgroundColor,
+      color: getComputedStyle(detail).color,
       headingWidth: Math.round(heading.getBoundingClientRect().width),
       headingWritingMode: getComputedStyle(heading).writingMode
     };
@@ -307,6 +316,8 @@ try {
   assert.equal(detailSizing.shortOpen, true);
   assert.ok(detailSizing.shortHeight >= 48 && detailSizing.shortHeight <= 90);
   assert.ok(detailSizing.longHeight > detailSizing.shortHeight && detailSizing.longHeight <= 240);
+  assert.equal(detailSizing.backgroundColor, 'rgb(15, 23, 42)');
+  assert.equal(detailSizing.color, 'rgb(229, 231, 235)');
   assert.ok(detailSizing.headingWidth > 180);
   assert.equal(detailSizing.headingWritingMode, 'horizontal-tb');
   results.push({ state: "coordinate-detail-sizing", result: "PASS", ...detailSizing });
@@ -449,6 +460,8 @@ try {
     const staleDisabled = copy.disabled && copy.dataset.resultState === 'invalid';
     water.value = '0.6';
     water.dispatchEvent(new Event('input', { bubbles: true }));
+    const metricNumber = document.querySelector('#goldPurityResult .gold-metric-number');
+    const metricAffix = document.querySelector('#goldPurityResult .gold-metric-affix');
     return {
       resultVisible: Boolean(document.querySelector('#goldResultCard').getClientRects().length),
       quoteVisible: Boolean(document.querySelector('.quote-placeholder').getClientRects().length),
@@ -457,7 +470,10 @@ try {
       initiallyDisabled,
       validEnabled,
       staleDisabled,
-      purity: document.querySelector('#goldPurityResult').textContent.trim()
+      purity: document.querySelector('#goldPurityResult').textContent.trim(),
+      metricNumberSize: metricNumber ? getComputedStyle(metricNumber).fontSize : null,
+      metricNumberWeight: metricNumber ? getComputedStyle(metricNumber).fontWeight : null,
+      metricAffixSize: metricAffix ? getComputedStyle(metricAffix).fontSize : null
     };
   })()`);
   assert.equal(gold.resultVisible, true);
@@ -468,6 +484,9 @@ try {
   assert.equal(gold.validEnabled, true);
   assert.equal(gold.staleDisabled, true);
   assert.notEqual(gold.purity, "--");
+  assert.equal(gold.metricNumberSize, "24px");
+  assert.equal(gold.metricNumberWeight, "600");
+  assert.equal(gold.metricAffixSize, "15px");
   results.push({ state: "gold-calculator", result: "PASS", ...gold });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "gold-calculated.png"));
   await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "gold-calculated-full.png"), 390);
