@@ -279,10 +279,11 @@ test("P09E-30", "Coordinate Result presents Map as primary and KML as secondary"
   assert.match(html, />查看地图<\/button>[\s\S]*>下载 KML<\/button>/);
 });
 
-test("P09E-31", "recognition summary contract remains computed but is hidden from the product surface", () => {
+test("P09E-31", "recognition summary is initially hidden and becomes an identity-bound result overview", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(html, /id="recognitionSummary"[^>]*hidden/);
-  assert.match(html, /function setRecognitionSummary[\s\S]*区域概览[\s\S]*recognitionSummary\.hidden = true/);
+  assert.match(html, /function setRecognitionSummary[\s\S]*结果概览[\s\S]*dataset\.resultId[\s\S]*recognitionSummary\.hidden = false/);
+  assert.match(html, /function clearRecognitionSummary[\s\S]*recognitionSummary\.hidden = true[\s\S]*delete recognitionSummary\.dataset\.geometryHash/);
 });
 
 test("P09E-32", "fallback presentation contains one approved failure message and no technical copy", () => {

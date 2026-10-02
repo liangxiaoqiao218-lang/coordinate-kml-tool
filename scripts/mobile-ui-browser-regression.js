@@ -190,6 +190,7 @@ try {
           .filter(element => {
             const style = getComputedStyle(element);
             if (style.display === 'none' || style.visibility === 'hidden' || element.getAttribute('aria-hidden') === 'true') return false;
+            if (element.closest('.page-nav')) return false;
             const rect = element.getBoundingClientRect();
             return rect.width > 0 && (rect.left < -1 || rect.right > clientWidth + 1);
           })
@@ -200,6 +201,8 @@ try {
           offenders,
           navLabels,
           navRows: navRows.length,
+          navScrollable: document.querySelector('.view.active .page-nav')?.scrollWidth > document.querySelector('.view.active .page-nav')?.clientWidth,
+          pageNavOverflow: getComputedStyle(document.querySelector('.view.active .page-nav') || document.body).overflowX,
           coordinateInput: visibleRect(coordinateInput),
           coordinatePlaceholder: coordinateInput?.getAttribute('placeholder') || '',
           coordinateExampleLinkVisible: Boolean([...document.querySelectorAll('summary,button,a')].find(item => item.textContent.trim() === '查看输入示例' && item.getClientRects().length)),
@@ -210,7 +213,8 @@ try {
       assert.deepEqual(layout.offenders, [], `${name} ${width}px must not clip visible content`);
       if (name !== "home") {
         assert.deepEqual(layout.navLabels, ["首页", "坐标识别", "矿地快判", "黄金成色计算器"], `${name} ${width}px keeps complete navigation labels`);
-        assert.equal(layout.navRows, width < 720 ? 2 : 1, `${name} ${width}px navigation uses the expected row count`);
+        assert.equal(layout.navRows, 1, `${name} ${width}px navigation remains on one row`);
+        assert.equal(layout.pageNavOverflow, "auto", `${name} ${width}px navigation owns its horizontal scrolling`);
       }
       if (name === "coordinate") {
         assert.ok(layout.coordinateInput?.height >= (width < 720 ? 215 : 250), `coordinate ${width}px restores the accepted input height`);
@@ -278,6 +282,65 @@ try {
   results.push({ state: "coordinate-lifecycle", result: "PASS", ...statusStates });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-failure-with-results.png"));
 
+  const feedbackContract = await evaluate(cdp, sessionId, `(() => {
+    const input = document.querySelector('#coordinateInput');
+    const debugPanel = document.querySelector('#debugPanel');
+    setDebug('上一轮详情');
+    debugPanel.open = false;
+    setDebugRunning(true);
+    const reopened = debugPanel.open && !debugPanel.hidden;
+    setDebugRunning(false);
+
+    const revision = coordinateInputEditRevision;
+    input.value = '116.391245,39.907654';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const staleDetected = hasCoordinateInputChangedSince(revision);
+
+    const identity = { resultId: 'result-ui-1', resultRevision: 3, geometryHash: 'sha256:ui-1' };
+    setRecognitionSummary({
+      count: 2,
+      geometry: 'LineString',
+      engine: { groups: [{ geometry: 'LineString', validation: {}, warnings: [] }] },
+      resultIdentity: identity
+    });
+    const lineText = document.querySelector('#recognitionSummary').textContent;
+    const identityBound = { ...document.querySelector('#recognitionSummary').dataset };
+
+    setRecognitionSummary({
+      count: 4,
+      geometry: 'Polygon',
+      engine: { groups: [{ geometry: 'Polygon', kml_ready: true, requires_review: false, calculated_area_ha: 12.5, validation: {}, warnings: [] }] },
+      resultIdentity: identity
+    });
+    const polygonText = document.querySelector('#recognitionSummary').textContent;
+
+    setRecognitionSummary({
+      count: 4,
+      geometry: 'Polygon',
+      requiresReview: true,
+      engine: { groups: [{ geometry: 'Polygon', kml_ready: false, requires_review: true, validation: { self_intersecting: true }, warnings: [] }] },
+      resultIdentity: identity
+    });
+    const selfIntersectingText = document.querySelector('#recognitionSummary').textContent;
+    return { reopened, staleDetected, lineText, polygonText, selfIntersectingText, identityBound };
+  })()`);
+  assert.equal(feedbackContract.reopened, true);
+  assert.equal(feedbackContract.staleDetected, true);
+  assert.match(feedbackContract.lineText, /坐标点：2/u);
+  assert.match(feedbackContract.lineText, /区域面积：不适用/u);
+  assert.match(feedbackContract.lineText, /国家／地区：未知/u);
+  assert.match(feedbackContract.polygonText, /区域面积：12\.5 ha/u);
+  assert.match(feedbackContract.selfIntersectingText, /区域面积：待核对/u);
+  assert.deepEqual(feedbackContract.identityBound, { resultId: "result-ui-1", resultRevision: "3", geometryHash: "sha256:ui-1" });
+  results.push({ state: "coordinate-feedback-contract", result: "PASS", ...feedbackContract });
+  await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-result-overview.png"));
+  const overviewCleared = await evaluate(cdp, sessionId, `(() => {
+    clearRecognitionSummary();
+    const summary = document.querySelector('#recognitionSummary');
+    return summary.hidden && !summary.dataset.resultId && !summary.dataset.resultRevision && !summary.dataset.geometryHash;
+  })()`);
+  assert.equal(overviewCleared, true);
+
   await navigate(cdp, sessionId, `${baseUrl}/gold?browser-state=calculator`);
   const gold = await evaluate(cdp, sessionId, `(() => {
     const weight = document.querySelector('#goldWeight');
@@ -289,12 +352,14 @@ try {
     return {
       resultVisible: Boolean(document.querySelector('#goldResultCard').getClientRects().length),
       quoteVisible: Boolean(document.querySelector('.quote-placeholder').getClientRects().length),
+      formulaArrow: getComputedStyle(document.querySelector('.formula-box > summary'), '::after').content,
       copyVisible: Boolean(document.querySelector('#goldActions').getClientRects().length),
       purity: document.querySelector('#goldPurityResult').textContent.trim()
     };
   })()`);
   assert.equal(gold.resultVisible, true);
-  assert.equal(gold.quoteVisible, true);
+  assert.equal(gold.quoteVisible, false);
+  assert.match(gold.formulaArrow, /⌄/u);
   assert.equal(gold.copyVisible, true);
   assert.notEqual(gold.purity, "--");
   results.push({ state: "gold-calculator", result: "PASS", ...gold });
