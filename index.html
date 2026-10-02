@@ -2190,16 +2190,18 @@
 
     .coordinate-title-row .quota-status.quota-ok,
     .coordinate-title-row .quota-status.quota-low {
-      color: #3b82f6;
+      color: #64748b;
     }
 
     .judge-title-row .quota-status.quota-ok,
-    .judge-title-row .quota-status.quota-low {
-      color: #16a34a;
+    .judge-title-row .quota-status.quota-low,
+    .judge-title-row .quota-status.quota-empty,
+    .judge-title-row .quota-status.quota-vip {
+      color: #64748b;
     }
 
     .page-title-row .quota-status.quota-empty {
-      color: #c2410c;
+      color: #64748b;
     }
 
     .page-title-row .quota-status.quota-vip {
@@ -2937,6 +2939,12 @@
       box-shadow: none;
     }
 
+    .judge-panel .judge-upload-layer {
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+
     .judge-layer {
       min-width: 0;
       padding: 14px;
@@ -2950,6 +2958,12 @@
       color: #166534;
       font-size: 13px;
       font-weight: 900;
+    }
+
+    .judge-upload-title {
+      max-width: 24ch;
+      text-wrap: balance;
+      white-space: normal;
     }
 
     .judge-panel h2 {
@@ -4281,7 +4295,7 @@
       }
 
       .page-title-row.judge-title-row {
-        align-items: flex-start;
+        align-items: center;
         gap: 10px;
       }
 
@@ -4800,6 +4814,60 @@
       margin-bottom: 16px;
     }
 
+    .coordinate-workspace .workspace-head {
+      display: block;
+    }
+
+    .workspace-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .workspace-title-row h1 {
+      min-width: 0;
+      margin-bottom: 0;
+    }
+
+    .workspace-title-row .quota-entry-row,
+    .page-title-row.judge-title-row .quota-entry-row {
+      flex: 0 0 auto;
+      margin: 0;
+    }
+
+    .workspace-title-row .quota-status,
+    .page-title-row.judge-title-row .quota-status {
+      padding: 4px 9px;
+      border: 0;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.25;
+      white-space: nowrap;
+      box-shadow: none;
+    }
+
+    .page-title-row.judge-title-row {
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .page-title-row.judge-title-row h1 {
+      min-width: 0;
+      margin: 0;
+    }
+
+    .workspace-title-row .quota-status.quota-low,
+    .workspace-title-row .quota-status.quota-empty,
+    .page-title-row.judge-title-row .quota-status.quota-low,
+    .page-title-row.judge-title-row .quota-status.quota-empty {
+      background: #f1f5f9;
+      color: #64748b;
+    }
+
     .workspace-heading-copy h1,
     #judgePage h1,
     #goldPage h1 {
@@ -5006,6 +5074,31 @@
       padding-bottom: 12px;
     }
 
+    .page-help {
+      display: none;
+    }
+
+    body:has(#homePage.active) .page-help-home,
+    body:has(#coordinatePage.active) .page-help-coordinate,
+    body:has(#judgePage.active) .page-help-judge,
+    body:has(#goldPage.active) .page-help-gold {
+      display: block;
+    }
+
+    .footer-text-link {
+      min-height: 44px;
+      padding: 8px 0;
+      border: 0;
+      background: transparent;
+      color: #475569;
+      font: inherit;
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      box-shadow: none;
+      cursor: pointer;
+    }
+
     @media (max-width: 720px) {
       body {
         padding-bottom: 24px;
@@ -5073,16 +5166,15 @@
       }
 
       .coordinate-workspace .workspace-head {
+        display: block;
+      }
+
+      .workspace-title-row {
         flex-wrap: nowrap;
       }
 
-      .coordinate-workspace .workspace-heading-copy {
-        flex: 1 1 auto;
-        min-width: 0;
-      }
-
-      .coordinate-workspace .workspace-head .quota-entry-row {
-        margin-top: 6px;
+      .workspace-title-row .quota-entry-row {
+        max-width: 46%;
       }
 
       .coordinate-workspace .cadastral-grid-badge.is-active {
@@ -5316,14 +5408,14 @@
       </div>
       <section class="coordinate-workspace">
         <div class="workspace-head">
-          <div class="workspace-heading-copy">
+          <div class="workspace-title-row">
             <h1>坐标与 KML</h1>
-            <p class="workspace-subtitle">直接粘贴坐标，或上传图片识别</p>
+            <div class="quota-entry-row">
+              <div id="convertQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
+              <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
+            </div>
           </div>
-          <div class="quota-entry-row">
-            <div id="convertQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
-            <button id="convertQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
-          </div>
+          <p class="workspace-subtitle">直接粘贴坐标，或上传图片识别</p>
           <span id="cadastralGridBadge" class="cadastral-grid-badge">&#30719;&#26435;&#32593;&#26684;&#27169;&#24335;</span>
         </div>
         <div class="textarea-wrap coordinate-input-shell">
@@ -5546,8 +5638,7 @@
       <p class="intro">上传现场图做保守初筛；结果不能替代采样和检测。</p>
 
       <div class="panel judge-panel">
-        <section class="judge-layer judge-upload-layer" aria-labelledby="judgeUploadLayerTitle">
-        <div id="judgeUploadLayerTitle" class="judge-layer-title">上传区</div>
+        <section class="judge-layer judge-upload-layer" aria-label="上传矿地图片">
         <div id="judgeMessage" class="message"></div>
         <div id="judgeProgressVisual" class="judge-progress-visual" aria-live="polite">
           <span class="judge-progress-icon" aria-hidden="true"></span>
@@ -5556,7 +5647,7 @@
         <label id="judgeQuickUpload" for="judgeImageInput" class="judge-quick-upload" hidden>上传图片</label>
         <label id="judgeUploadCard" for="judgeImageInput" class="judge-upload-card">
           <span class="judge-upload-icon" aria-hidden="true">+</span>
-          <span class="judge-upload-title">上传矿石 / 河道 / 卫星图开始快判</span>
+          <span class="judge-upload-title">上传矿石、河道或卫星图进行快判</span>
           <span class="judge-upload-subtitle">选择图片后开始分析</span>
         </label>
         <input id="judgeImageInput" class="judge-file-input" type="file" accept="image/*" />
@@ -5715,17 +5806,33 @@ Au值 = 纯度 × 10 后取整数</div>
   <footer class="site-footer" aria-label="GeoKit Lab 帮助、联系与备案信息">
     <div class="site-footer-inner">
       <div class="footer-quick-links">
-        <details class="footer-details">
+        <details class="footer-details page-help page-help-home">
           <summary>帮助</summary>
-          <p>坐标：上传图片或粘贴坐标，结果生成后核对地图与 KML 状态。</p>
-          <p>快判与黄金：重要限制会在结果附近显示；详细方法按需展开。</p>
+          <p>可进行坐标识别与 KML、矿地快判和黄金成色计算；进入对应页面查看输入要求与结果边界。</p>
+        </details>
+        <details class="footer-details page-help page-help-coordinate">
+          <summary>帮助</summary>
+          <p>可直接粘贴坐标或上传坐标图片。结果后请核对点序、坐标系、几何及地图／KML状态；待核对项不会自动视为已确认。</p>
+        </details>
+        <details class="footer-details page-help page-help-judge">
+          <summary>帮助</summary>
+          <p>上传矿石、河道或卫星图做保守初筛。快判不能替代现场采样、检测或权属判断。</p>
+        </details>
+        <details class="footer-details page-help page-help-gold">
+          <summary>帮助</summary>
+          <p>填写黄金重量和排水差重或水中浮重计算成色；报价需手动填写币种与单价，结果仅供对比。</p>
         </details>
         <details class="footer-details">
-          <summary>关于与联系</summary>
+          <summary>关于我们</summary>
           <p class="site-footer-brand">© 2026 GeoKit Lab · 深圳萨赫勒数字科技有限公司</p>
+          <p>GeoKit Lab 提供坐标整理、空间交付和现场材料辅助分析工具。</p>
+        </details>
+        <details class="footer-details">
+          <summary>联系我们</summary>
           <p class="site-footer-address">地址：广东省深圳市南山区粤海街道粤桂社区白石路3818号阳光粤海花园二期3栋2019</p>
           <p class="site-footer-contact"><span class="contact-item">电话：<a href="tel:18677101811">18677101811</a></span><span class="contact-item">邮箱：<a href="mailto:464115177@qq.com">464115177@qq.com</a></span></p>
         </details>
+        <button type="button" class="footer-text-link" onclick="showPage('coordinate', 'support'); openManualSupport()">人工识别协助</button>
       </div>
       <div class="site-footer-legal">
         <p class="site-footer-filing">

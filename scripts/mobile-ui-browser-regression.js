@@ -133,6 +133,23 @@ async function fullScreenshot(cdp, sessionId, outputFile, width) {
   writeFileSync(outputFile, Buffer.from(capture.data, "base64"), { flag: "wx" });
 }
 
+async function markSyntheticState(cdp, sessionId, label) {
+  await evaluate(cdp, sessionId, `(() => {
+    let marker = document.querySelector('#syntheticUiReceiptMarker');
+    if (!marker) {
+      marker = document.createElement('div');
+      marker.id = 'syntheticUiReceiptMarker';
+      Object.assign(marker.style, {
+        position: 'fixed', top: '8px', right: '8px', zIndex: '2147483647',
+        padding: '5px 8px', borderRadius: '999px', background: '#334155',
+        color: '#fff', fontSize: '11px', fontWeight: '700', boxShadow: '0 2px 8px rgba(15,23,42,.18)'
+      });
+      document.body.append(marker);
+    }
+    marker.textContent = ${JSON.stringify(`合成 UI 状态：${label}（非真实识别结果）`)};
+  })()`);
+}
+
 let server;
 let chrome;
 let cdp;
@@ -262,6 +279,8 @@ try {
 
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, sessionId);
   await navigate(cdp, sessionId, `${baseUrl}/coordinate?browser-state=direct-paste`);
+  await markSyntheticState(cdp, sessionId, "坐标空输入");
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-empty-full.png"), 390);
   const directPaste = await evaluate(cdp, sessionId, `(() => {
     const coordinateInput = document.querySelector('#coordinateInput');
     coordinateInput.value = '1,116.391245,39.907654\\n2,116.401245,39.917654';
@@ -325,7 +344,7 @@ try {
     const longHeight = Math.round(detail.getBoundingClientRect().height);
     setDebug('正在查找坐标区域…');
     setDebugRunning(true);
-    const heading = document.querySelector('.workspace-heading-copy h1');
+    const heading = document.querySelector('.workspace-title-row h1');
     const quota = document.querySelector('.coordinate-workspace .quota-entry-row');
     return {
       shortHeight,
@@ -352,6 +371,7 @@ try {
   assert.ok(Math.abs(detailSizing.quotaTop - detailSizing.headingTop) <= 20);
   assert.ok(detailSizing.headingRight + 8 <= detailSizing.quotaLeft);
   results.push({ state: "coordinate-detail-sizing", result: "PASS", ...detailSizing });
+  await markSyntheticState(cdp, sessionId, "坐标识别中");
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-processing.png"));
   await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-processing-full.png"), 390);
 
@@ -370,6 +390,8 @@ try {
     const partial = document.querySelector('#uploadMessage').textContent.trim();
     showUploadSupportMessage('图片识别未完成，请重新识别或使用人工协助。', 'error');
     const failed = document.querySelector('#uploadMessage').textContent.trim();
+    setDebug('识别未完成\\n请重新识别或使用人工协助');
+    setDebugRunning(false);
     return { processing, complete, edited, partial, failed, editable: !input.readOnly && !input.disabled };
   })()`);
   assert.match(statusStates.processing, /正在查找坐标区域/u);
@@ -381,7 +403,9 @@ try {
   assert.doesNotMatch(statusStates.failed, /图片识别未完成图片识别未完成/u);
   assert.equal(statusStates.editable, true);
   results.push({ state: "coordinate-lifecycle", result: "PASS", ...statusStates });
+  await markSyntheticState(cdp, sessionId, "坐标识别失败");
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-failure-with-results.png"));
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-failure-full.png"), 390);
 
   const feedbackContract = await evaluate(cdp, sessionId, `(() => {
     const input = document.querySelector('#coordinateInput');
@@ -463,8 +487,32 @@ try {
   assert.equal(feedbackContract.summaryMarkerDisplay, "none");
   assert.deepEqual(feedbackContract.identityBound, { resultId: "result-ui-1", resultRevision: "3", geometryHash: "sha256:ui-1" });
   results.push({ state: "coordinate-feedback-contract", result: "PASS", ...feedbackContract });
+  await markSyntheticState(cdp, sessionId, "坐标结果待核对");
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-result-overview.png"));
-  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-result-overview-full.png"), 390);
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-review-full.png"), 390);
+  const successOverview = await evaluate(cdp, sessionId, `(() => {
+    setRecognitionSummary({
+      count: 4,
+      geometry: 'Polygon',
+      engine: { groups: [{ geometry: 'Polygon', kml_ready: true, requires_review: false, calculated_area_ha: 12.5, validation: {}, warnings: [] }] },
+      resultIdentity: { resultId: 'result-ui-success', resultRevision: 1, geometryHash: 'sha256:ui-success' }
+    });
+    const cells = [...document.querySelectorAll('#recognitionSummary .recognition-summary-pill')].map(cell => ({
+      key: cell.dataset.summaryKey,
+      value: cell.querySelector('.recognition-summary-value')?.textContent || '',
+      tone: [...cell.classList].find(name => /^is-(valid|warning|neutral)$/u.test(name)) || ''
+    }));
+    return { cells };
+  })()`);
+  await markSyntheticState(cdp, sessionId, "坐标成功概览");
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-success-full.png"), 390);
+  assert.deepEqual(successOverview.cells, [
+    { key: "状态", value: "有效", tone: "is-valid" },
+    { key: "点数", value: "4", tone: "is-valid" },
+    { key: "面积", value: "12.5 ha", tone: "is-valid" },
+    { key: "国家／地区", value: "未知", tone: "is-neutral" }
+  ]);
+  results.push({ state: "coordinate-success-overview", result: "PASS", ...successOverview });
   const previousResult = await evaluate(cdp, sessionId, `(() => {
     const previousMeta = activeRecognitionSummaryMeta;
     const previousText = document.querySelector('#coordinateInput').value;
@@ -476,7 +524,7 @@ try {
   })()`);
   assert.equal(previousResult.restored, true);
   assert.match(previousResult.text, /上次结果/u);
-  assert.deepEqual(previousResult.identity, { resultId: "result-ui-1", resultRevision: "3", geometryHash: "sha256:ui-1" });
+  assert.deepEqual(previousResult.identity, { resultId: "result-ui-success", resultRevision: "1", geometryHash: "sha256:ui-success" });
   results.push({ state: "coordinate-previous-result", result: "PASS", ...previousResult });
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-previous-result.png"));
   await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-previous-result-full.png"), 390);
@@ -486,6 +534,64 @@ try {
     return summary.hidden && !summary.dataset.resultId && !summary.dataset.resultRevision && !summary.dataset.geometryHash;
   })()`);
   assert.equal(overviewCleared, true);
+
+  const mapExpanded = await evaluate(cdp, sessionId, `(() => {
+    showPage('spatialResult', '', false);
+    renderSpatialResult({
+      mapPreviewObject: {
+        geometryType: 'Polygon',
+        geometry: { type: 'Polygon', coordinates: [[[116.391245,39.907654],[116.392245,39.907654],[116.392245,39.908654],[116.391245,39.907654]]] },
+        previewWarnings: []
+      },
+      spatialFactsStatus: 'available',
+      spatialFacts: { pointCount: 3, areaMeters2: 125000, perimeterMeters: 1500, centroid: null },
+      regionalViewCount: 0,
+      kmlEligibility: { allowed: true }
+    });
+    spatialShareCardAction.hidden = false;
+    setSpatialSheetExpanded(true);
+    const share = spatialShareCardAction.getBoundingClientRect();
+    const toggle = spatialResultSheetToggle.getBoundingClientRect();
+    return {
+      expanded: spatialResultSheetToggle.getAttribute('aria-expanded'),
+      pointCount: spatialPointCount.textContent,
+      centroidHidden: spatialCentroidFact.hidden,
+      shareVisible: Boolean(spatialShareCardAction.getClientRects().length),
+      controlGap: Math.round(Math.max(0, toggle.right - share.left)),
+      sheetBackground: getComputedStyle(spatialResultSheetToggle).backgroundImage
+    };
+  })()`);
+  await markSyntheticState(cdp, sessionId, "地图面板展开");
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "map-expanded-full.png"), 390);
+  assert.equal(mapExpanded.expanded, "true");
+  assert.equal(mapExpanded.pointCount, "3 个");
+  assert.equal(mapExpanded.centroidHidden, true);
+  assert.equal(mapExpanded.shareVisible, true);
+  assert.match(mapExpanded.sheetBackground, /linear-gradient/u);
+  results.push({ state: "map-expanded", result: "PASS", ...mapExpanded });
+
+  await navigate(cdp, sessionId, `${baseUrl}/judge?browser-state=synthetic-result`);
+  const judgeResultState = await evaluate(cdp, sessionId, `(() => {
+    setQuotaStatus(judgeQuotaStatus, '使用情况', 8, false);
+    judgeResult.value = '初筛结论：存在需要复核的矿化线索。\\n依据：颜色与纹理仅构成视觉线索。\\n建议：结合现场采样和检测结果确认。';
+    const decision = renderJudgeDecisionCard(judgeResult.value, { grade: 'B', score: 72, confidence: '中等' });
+    return {
+      uploadLabelPresent: document.body.textContent.includes('上传区'),
+      quotaColor: getComputedStyle(judgeQuotaStatus).color,
+      summaryVisible: Boolean(judgeDecisionCard.getClientRects().length),
+      detailVisible: Boolean(judgeResult.getClientRects().length),
+      recommendation: document.querySelector('.judge-decision-recommendation')?.textContent.trim() || '',
+      decisionGrade: decision?.grade || ''
+    };
+  })()`);
+  await markSyntheticState(cdp, sessionId, "矿地快判结果");
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "judge-result-full.png"), 390);
+  assert.equal(judgeResultState.uploadLabelPresent, false);
+  assert.equal(judgeResultState.quotaColor, "rgb(100, 116, 139)");
+  assert.equal(judgeResultState.summaryVisible, true);
+  assert.equal(judgeResultState.detailVisible, true);
+  assert.match(judgeResultState.recommendation, /建议/u);
+  results.push({ state: "judge-result", result: "PASS", ...judgeResultState });
 
   await navigate(cdp, sessionId, `${baseUrl}/gold?browser-state=calculator`);
   const gold = await evaluate(cdp, sessionId, `(() => {
@@ -503,6 +609,11 @@ try {
     const staleDisabled = copy.disabled && copy.dataset.resultState === 'invalid';
     water.value = '0.6';
     water.dispatchEvent(new Event('input', { bubbles: true }));
+    const quoteCurrency = document.querySelector('#quoteCurrency');
+    const shopQuote = document.querySelector('#shopQuote');
+    quoteCurrency.value = 'CNY';
+    shopQuote.value = '980';
+    shopQuote.dispatchEvent(new Event('input', { bubbles: true }));
     const metricNumber = document.querySelector('#goldPurityResult .gold-metric-number');
     const metricAffix = document.querySelector('#goldPurityResult .gold-metric-affix');
     return {
@@ -510,6 +621,9 @@ try {
       quoteVisible: Boolean(document.querySelector('.quote-placeholder').getClientRects().length),
       realtimePriceHidden: !document.querySelector('#goldPriceInfo').getClientRects().length,
       manualQuoteVisible: Boolean(document.querySelector('#shopQuote').getClientRects().length),
+      quoteCurrency: quoteCurrency.value,
+      quoteValue: shopQuote.value,
+      settlementText: document.querySelector('#settlementPreview').textContent.trim(),
       formulaArrow: getComputedStyle(document.querySelector('.formula-box > summary'), '::after').content,
       copyVisible: Boolean(document.querySelector('#goldActions').getClientRects().length),
       initiallyDisabled,
@@ -525,6 +639,9 @@ try {
   assert.equal(gold.quoteVisible, true);
   assert.equal(gold.realtimePriceHidden, true);
   assert.equal(gold.manualQuoteVisible, true);
+  assert.equal(gold.quoteCurrency, "CNY");
+  assert.equal(gold.quoteValue, "980");
+  assert.match(gold.settlementText, /预计/u);
   assert.match(gold.formulaArrow, /⌄/u);
   assert.equal(gold.copyVisible, true);
   assert.equal(gold.initiallyDisabled, true);
@@ -535,8 +652,31 @@ try {
   assert.equal(gold.metricNumberWeight, "600");
   assert.equal(gold.metricAffixSize, "15px");
   results.push({ state: "gold-calculator", result: "PASS", ...gold });
+  await markSyntheticState(cdp, sessionId, "黄金手动报价");
   await screenshot(cdp, sessionId, path.join(receiptRoot, "states", "gold-calculated.png"));
-  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "gold-calculated-full.png"), 390);
+  await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "gold-quote-full.png"), 390);
+
+  for (const [pageName, pagePath] of pages) {
+    await navigate(cdp, sessionId, `${baseUrl}${pagePath}?browser-state=help-${pageName}`);
+    const helpState = await evaluate(cdp, sessionId, `(() => {
+      const visibleHelp = [...document.querySelectorAll('.page-help')].filter(item => getComputedStyle(item).display !== 'none');
+      visibleHelp.forEach(item => { item.open = true; });
+      return {
+        visibleCount: visibleHelp.length,
+        className: visibleHelp[0]?.className || '',
+        text: visibleHelp[0]?.textContent.trim() || '',
+        aboutContactCombined: document.body.textContent.includes('关于与联系'),
+        manualSupportVisible: Boolean(document.querySelector('.footer-text-link')?.getClientRects().length)
+      };
+    })()`);
+    await markSyntheticState(cdp, sessionId, `${pageName} 页面帮助`);
+    await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", `help-${pageName}-full.png`), 390);
+    assert.equal(helpState.visibleCount, 1);
+    assert.match(helpState.className, new RegExp(`page-help-${pageName}`, 'u'));
+    assert.equal(helpState.aboutContactCombined, false);
+    assert.equal(helpState.manualSupportVisible, true);
+    results.push({ state: `help-${pageName}`, result: "PASS", ...helpState });
+  }
 
   await cdp.send("Browser.close");
   const receipt = {
