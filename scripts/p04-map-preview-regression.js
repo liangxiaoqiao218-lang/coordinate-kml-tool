@@ -110,17 +110,20 @@ test("P04-08", "Missing structured result fails closed", () => {
   assert.equal(preview.previewReasonCodes[0], MAP_PREVIEW_BLOCK_REASON.NO_STRUCTURED_RESULT);
 });
 
-test("P04-09", "No finalized geometry fails closed", () => {
+test("P04-09", "No finalized geometry fails closed at the missing final identity gate", () => {
   const result = finalized({ geometry: null, qualityGateStatus: "failed", kmlReady: false });
   const preview = adapter.adapt(result, { clock });
   assert.equal(preview.previewEligibility.allowed, false);
-  assert.equal(preview.previewReasonCodes[0], MAP_PREVIEW_BLOCK_REASON.NO_DRAWABLE_GEOMETRY);
+  assert.equal(preview.geometry, null);
+  assert.equal(preview.previewReasonCodes[0], "RESULT_IDENTITY_MISSING");
 });
 
-test("P04-10", "Unavailable family without a result stays blocked", () => {
+test("P04-10", "Unavailable family without final identity stays blocked", () => {
   const result = finalized({ geometry: null, availabilityStatus: "BLOCKED_BY_PROVIDER", qualityGateStatus: "failed", kmlReady: false });
   const preview = adapter.adapt(result, { clock });
-  assert.equal(preview.previewReasonCodes[0], MAP_PREVIEW_BLOCK_REASON.FAMILY_UNAVAILABLE_WITHOUT_RESULT);
+  assert.equal(preview.previewEligibility.allowed, false);
+  assert.equal(preview.geometry, null);
+  assert.equal(preview.previewReasonCodes[0], "RESULT_IDENTITY_MISSING");
 });
 
 test("P04-11", "Stale result revision is rejected", () => {
@@ -136,7 +139,7 @@ test("P04-12", "Geometry hash mismatch and facts failure are isolated", () => {
   assert.throws(() => calculateSpatialFacts({ type: "Unsupported", coordinates: [] }), /SPATIAL_FACTS_POSITIONS_REQUIRED/);
 });
 
-test("P04-13", "unconfirmed dms_grouped acquisition delta cannot reach Map", () => {
+test("P04-13", "unconfirmed dms_grouped acquisition delta can reach review Map without changing KML or formal authority", () => {
   const result = finalized({
     confirmationStatus: "pending",
     requiresReview: true,
@@ -148,9 +151,19 @@ test("P04-13", "unconfirmed dms_grouped acquisition delta cannot reach Map", () 
       exportEligible: false
     }
   });
+  const kmlReadyBeforePreview = result.kmlReady;
   const preview = adapter.adapt(result, { clock });
-  assert.equal(preview.previewEligibility.allowed, false);
-  assert.equal(preview.previewReasonCodes[0], MAP_PREVIEW_BLOCK_REASON.ACQUISITION_DELTA_CONFIRMATION_REQUIRED);
+  assert.equal(preview.previewEligibility.allowed, true);
+  assert.equal(preview.sourceResultId, result.resultId);
+  assert.equal(preview.sourceRevision, result.resultRevision);
+  assert.equal(preview.sourceGeometryHash, result.geometryHash);
+  assert.equal(result.decisionState, "REVIEW_REQUIRED");
+  assert.equal(result.confirmationStatus, "pending");
+  assert.equal(result.familySafetyPolicy.confirmationRequired, true);
+  assert.equal(result.familySafetyPolicy.exportEligible, false);
+  assert.equal(result.kmlReady, kmlReadyBeforePreview);
+  assert.ok(preview.previewWarnings.includes("KML_BLOCKED"));
+  assert.equal(new FinalizedResultSpatialGeometryAdapter().adapt(result).ok, false);
 });
 
 test("P04-14", "confirmed exact acquisition candidate can reach Map", () => {
@@ -168,7 +181,10 @@ test("P04-14", "confirmed exact acquisition candidate can reach Map", () => {
 });
 
 let passed = 0;
-for (const entry of cases) {
+const requestedCaseId = String(process.env.P04_CASE_ID || "").trim();
+const selectedCases = requestedCaseId ? cases.filter(entry => entry.id === requestedCaseId) : cases;
+assert.ok(selectedCases.length > 0, "P04_CASE_ID_NOT_FOUND");
+for (const entry of selectedCases) {
   try {
     await entry.run();
     passed += 1;
@@ -178,4 +194,4 @@ for (const entry of cases) {
     throw error;
   }
 }
-console.log(`P-04 map preview regression: ${passed}/${cases.length} PASS`);
+console.log(`P-04 map preview regression: ${passed}/${selectedCases.length} PASS`);

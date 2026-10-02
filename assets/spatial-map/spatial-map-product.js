@@ -31,6 +31,17 @@ let fallbackRenderer = null;
 let initializationPromise = null;
 const mobileResultQuery = globalThis.matchMedia?.("(max-width: 640px)");
 
+function failureDiagnosticElement() {
+  if (!elements.failure) return null;
+  let element = elements.failure.querySelector?.("[data-map-failure-diagnostic]");
+  if (element) return element;
+  element = document.createElement("small");
+  element.className = "spatial-map-failure-diagnostic";
+  element.dataset.mapFailureDiagnostic = "true";
+  elements.failure.insertBefore(element, elements.retry || null);
+  return element;
+}
+
 function placeProviderFailure() {
   if (!elements.failure || !elements.details) return;
   if (mobileResultQuery?.matches && elements.card) {
@@ -41,7 +52,8 @@ function placeProviderFailure() {
   elements.details.insertBefore(elements.failure, warning);
 }
 
-function updateState({ state, detail = null }) {
+function updateState({ state, detail = null, diagnostic = null }) {
+  const safeDiagnostic = diagnostic || {};
   if (elements.state) {
     elements.state.textContent = state === "READY"
       ? "地图"
@@ -50,11 +62,42 @@ function updateState({ state, detail = null }) {
         : "地块详情";
     elements.state.dataset.providerState = state;
     elements.state.dataset.detail = detail || "";
+    elements.state.dataset.failureStage = safeDiagnostic.stage || "";
+    elements.state.dataset.resourceCategory = safeDiagnostic.resourceCategory || "";
+    elements.state.dataset.httpStatus = safeDiagnostic.httpStatus == null ? "" : String(safeDiagnostic.httpStatus);
   }
   const unavailable = state === "FALLBACK_LOCAL_SVG";
   if (elements.card) elements.card.dataset.providerUnavailable = String(unavailable);
   if (elements.failure) elements.failure.hidden = !unavailable;
   if (elements.retry) elements.retry.hidden = !unavailable;
+  const reason = failureDiagnosticElement();
+  if (reason) {
+    reason.hidden = !unavailable;
+    reason.textContent = unavailable
+      ? `无底图核对结果 · 原因编号：${safeDiagnostic.reasonCode || detail || "MAP_PROVIDER_UNAVAILABLE"}`
+      : "";
+  }
+}
+
+function presentMapResult(result) {
+  const ready = result?.state === "READY";
+  const fallback = result?.state === "FALLBACK_LOCAL_SVG";
+  if (elements.providerCanvas) elements.providerCanvas.hidden = !ready;
+  if (elements.local) elements.local.hidden = !fallback;
+  if (elements.attribution) {
+    if (ready) {
+      elements.attribution.textContent = result.renderReceipt?.provider === "AMAP"
+        ? "高德卫星地图"
+        : "OpenFreeMap · OpenStreetMap";
+      elements.attribution.hidden = false;
+    } else if (fallback) {
+      elements.attribution.textContent = "本地几何 · 无底图核对结果";
+      elements.attribution.hidden = false;
+    } else {
+      elements.attribution.textContent = "";
+      elements.attribution.hidden = true;
+    }
+  }
 }
 
 async function loadRuntimeConfig() {
@@ -140,19 +183,7 @@ async function open(payload) {
     publicConfig: runtimeConfig,
     container: elements.providerCanvas
   });
-  if (result.state === "READY") {
-    elements.providerCanvas.hidden = false;
-    elements.local.hidden = true;
-    if (elements.attribution) {
-      elements.attribution.textContent = result.renderReceipt?.provider === "AMAP"
-        ? "高德卫星地图"
-        : "OpenFreeMap · OpenStreetMap";
-      elements.attribution.hidden = false;
-    }
-  } else {
-    elements.providerCanvas.hidden = true;
-    elements.local.hidden = true;
-  }
+  presentMapResult(result);
   elements.shell?.dispatchEvent(new CustomEvent("geokit:spatial-map-opened", { detail: result }));
   return result;
 }
@@ -162,9 +193,7 @@ async function retry() {
   elements.providerCanvas.hidden = true;
   elements.local.hidden = true;
   const result = await controller.retry();
-  const ready = result?.state === "READY";
-  elements.providerCanvas.hidden = !ready;
-  elements.local.hidden = true;
+  presentMapResult(result);
   return result;
 }
 

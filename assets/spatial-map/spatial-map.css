@@ -31,6 +31,14 @@
 .spatial-local-map-canvas svg { width: 100%; height: 100%; }
 .spatial-map-canvas[hidden], .spatial-local-map-canvas[hidden] { display: none; }
 
+.spatial-map-failure-diagnostic {
+  min-width: 0;
+  color: #92400e;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .spatial-map-control {
   position: absolute;
   z-index: 8;

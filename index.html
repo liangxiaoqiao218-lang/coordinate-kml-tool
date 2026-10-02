@@ -8540,7 +8540,7 @@ Au值 = 纯度 × 10 后取整数</div>
         setSpatialSheetExpanded(!window.matchMedia("(max-width: 640px)").matches);
         await waitForSpatialLayout();
         const mapResult = await globalThis.GeoKitSatelliteMap?.open(payload);
-        if (!mapResult || mapResult.state !== "READY") {
+        if (!mapResult || !["READY", "FALLBACK_LOCAL_SVG"].includes(mapResult.state)) {
           showPage("coordinate", "", true);
           showMessage("地图服务暂时不可用，请稍后重试。", true, 8000);
           return;
