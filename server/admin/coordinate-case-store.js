@@ -1,6 +1,6 @@
 import { buildCoverageSummary, normalizeCoordinateCaseEvidenceInput, normalizeCoordinateCaseInput, publicCoordinateCase } from "./coordinate-case-contract.js";
 
-const CASE_FIELDS = "case_id,case_number,recognition_request_id,job_id,result_id,result_revision,geometry_hash,result_identity_status,issue_type,issue_summary,resolution_summary,owner,progress_status,blocker,delivery_status,problem_resolution_status,peer_validation_status,production_status,evidence_scope,sample_count,crs_evidence_status,geometry_representation,original_artifact_status,golden_ref,commit_sha,receipt_ref,created_at,updated_at";
+const CASE_FIELDS = "case_id,case_number,recognition_request_id,job_id,result_id,result_revision,geometry_hash,result_identity_status,issue_type,issue_summary,resolution_summary,owner,progress_status,blocker,delivery_status,problem_resolution_status,peer_validation_status,production_status,evidence_scope,sample_count,crs_evidence_status,geometry_representation,original_artifact_status,golden_ref,commit_sha,receipt_ref,source,failure_stage,error_code,coordinate_type,runtime_commit,occurred_at,created_at,updated_at";
 const EVIDENCE_FIELDS = "evidence_id,case_id,evidence_type,status,evidence_scope,sample_count,reference_type,reference_value,created_at";
 
 function isMissingTable(error) {
@@ -60,6 +60,27 @@ export class CoordinateCaseStore {
     const { data, error } = await this.supabase.from("coordinate_cases").insert(payload).select(CASE_FIELDS).single();
     if (error) throw error;
     return publicCoordinateCase(data, []);
+  }
+
+  async createAutomatic(raw) {
+    if (!this.supabase) return { setupRequired: true, duplicate: false, case: null };
+    const payload = normalizeCoordinateCaseInput(raw);
+    payload.result_identity_status = await this.validateIdentity(payload);
+    const existing = await this.supabase.from("coordinate_cases").select(CASE_FIELDS).eq("recognition_request_id", payload.recognition_request_id).maybeSingle();
+    if (existing.error && !isMissingTable(existing.error)) throw existing.error;
+    if (isMissingTable(existing.error)) return { setupRequired: true, duplicate: false, case: null };
+    if (existing.data) return { setupRequired: false, duplicate: true, case: publicCoordinateCase(existing.data, []) };
+    const inserted = await this.supabase.from("coordinate_cases").insert(payload).select(CASE_FIELDS).single();
+    if (inserted.error?.code === "23505") {
+      const raced = await this.supabase.from("coordinate_cases").select(CASE_FIELDS).eq("recognition_request_id", payload.recognition_request_id).single();
+      if (raced.error) throw raced.error;
+      return { setupRequired: false, duplicate: true, case: publicCoordinateCase(raced.data, []) };
+    }
+    if (inserted.error) {
+      if (isMissingTable(inserted.error)) return { setupRequired: true, duplicate: false, case: null };
+      throw inserted.error;
+    }
+    return { setupRequired: false, duplicate: false, case: publicCoordinateCase(inserted.data, []) };
   }
 
   async update(caseId, raw) {

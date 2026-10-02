@@ -161,6 +161,10 @@ import {
   createRecognitionAcquisitionJobRuntime,
   getRecognitionAcquisitionJobHttpStatus
 } from "./server/recognition/recognition-acquisition-job-runtime.js";
+import {
+  COORDINATE_RECOGNITION_ISSUE_EVENT,
+  recordCoordinateRecognitionIssue
+} from "./server/recognition/coordinate-recognition-issue.js";
 import { MapPreviewAdapter } from "./server/spatial/adapters/map-preview-adapter.js";
 import { evaluateRecognitionOutputCapability } from "./server/recognition/recognition-output-capability.js";
 import {
@@ -15778,8 +15782,34 @@ async function recognizeCoordinatesHandler(req, res) {
       userUsageConsumed: body?.userUsageConsumed, recoveryRequired: body?.recoveryRequired,
       sourceCrs: body?.coordinateEngineV2?.source_crs, finalCrs: body?.finalizedCoordinateResult?.crs,
       code: body?.code, reason: body?.reason });
-    return originalSendRecognitionJson(body);
+    const sent = originalSendRecognitionJson(body);
+    if (!regressionTestMode.active) {
+      queueMicrotask(async () => {
+        try {
+          const result = await recordCoordinateRecognitionIssue({
+            store: coordinateCaseStore,
+            body,
+            requestId: body?.requestId || recognitionBudget?.requestId,
+            jobId: req.get("x-recognition-job-id"),
+            runtimeCommit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT
+          });
+          if (result.recorded) {
+            console.log("Coordinate recognition issue recorded", {
+              requestId: result.issue?.recognitionRequestId,
+              duplicate: result.duplicate === true,
+              source: result.issue?.source,
+              stage: result.issue?.failureStage,
+              errorCode: result.issue?.errorCode
+            });
+          }
+        } catch (error) {
+          console.error("Coordinate recognition issue record failed", { code: error?.code || "COORDINATE_RECOGNITION_ISSUE_RECORD_FAILED" });
+        }
+      });
+    }
+    return sent;
   };
+  res.json = sendRecognitionJson;
   const runBudgetedStage = async (stageName, action) => {
     recognitionBudget?.assertCanContinue({ stageName });
     const event = recognitionBudget?.stageStarted(stageName);
@@ -21379,7 +21409,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         });
       }
       console.error("Coordinate recognition fallback failed", { reason: "FALLBACK_ERROR" });
-      res.status(422).json({
+      return sendRecognitionJson({
         success: false,
         reason: "recognition_failed_closed",
         code: "COORDINATE_RECOGNITION_FAILED_CLOSED",
@@ -21404,7 +21434,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
 
 const recognitionAcquisitionJobRuntime = createRecognitionAcquisitionJobRuntime({
   maxJobs: 8,
-  execute: async input => {
+  execute: async (input, { jobId } = {}) => {
     const form = new FormData();
     form.append("image", new Blob([input.file.buffer], { type: input.file.mimetype }), input.file.originalname);
     for (const [key, value] of Object.entries(input.body || {})) {
@@ -21414,7 +21444,8 @@ const recognitionAcquisitionJobRuntime = createRecognitionAcquisitionJobRuntime(
       method: "POST",
       headers: {
         ...input.forwardHeaders,
-        "x-recognition-async-internal-token": recognitionAsyncInternalToken
+        "x-recognition-async-internal-token": recognitionAsyncInternalToken,
+        "x-recognition-job-id": jobId
       },
       body: form
     });
@@ -21521,6 +21552,26 @@ app.get("/api/recognize-coordinates/jobs/:jobId", (req, res) => {
     async: true,
     ...job
   });
+});
+
+app.post("/api/coordinate-recognition/issues/manual-assistance", async (req, res) => {
+  const jobId = String(req.body?.jobId || "").trim();
+  const job = recognitionAcquisitionJobRuntime.get(jobId, req.get("x-recognition-job-token"));
+  if (!job) return res.status(404).json({ success: false, reason: "job_not_found" });
+  try {
+    const result = await recordCoordinateRecognitionIssue({
+      store: coordinateCaseStore,
+      explicitEvent: COORDINATE_RECOGNITION_ISSUE_EVENT.MANUAL_ASSISTANCE_REQUESTED,
+      requestId: job.requestId,
+      jobId,
+      runtimeCommit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT
+    });
+    if (!result.recorded) return res.status(503).json({ success: false, reason: result.reason || "issue_store_unavailable" });
+    return res.status(202).json({ success: true, accepted: true, duplicate: result.duplicate === true });
+  } catch (error) {
+    console.error("Manual assistance issue record failed", { code: error?.code || "COORDINATE_RECOGNITION_ISSUE_RECORD_FAILED" });
+    return res.status(500).json({ success: false, reason: "issue_record_failed" });
+  }
 });
 
 app.use((error, req, res, next) => {
