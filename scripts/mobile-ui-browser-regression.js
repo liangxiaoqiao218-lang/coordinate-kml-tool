@@ -436,6 +436,7 @@ try {
     setRecognitionSummary({
       count: 2,
       geometry: 'LineString',
+      coordinateType: 'decimal_latlon',
       engine: { groups: [{ geometry: 'LineString', validation: {}, warnings: [] }] },
       resultIdentity: identity
     });
@@ -445,6 +446,7 @@ try {
     setRecognitionSummary({
       count: 4,
       geometry: 'Polygon',
+      coordinateType: 'decimal_latlon',
       engine: { groups: [{ geometry: 'Polygon', kml_ready: true, requires_review: false, calculated_area_ha: 12.5, validation: {}, warnings: [] }] },
       resultIdentity: identity
     });
@@ -453,6 +455,7 @@ try {
     setRecognitionSummary({
       count: 4,
       geometry: 'Polygon',
+      coordinateType: 'standard_dms_table',
       requiresReview: true,
       engine: { groups: [{ geometry: 'Polygon', kml_ready: false, requires_review: true, validation: { self_intersecting: true }, warnings: [] }] },
       resultIdentity: identity
@@ -486,16 +489,19 @@ try {
   })()`);
   assert.equal(feedbackContract.reopened, true);
   assert.equal(feedbackContract.staleDetected, true);
-  assert.match(feedbackContract.lineText, /点数2/u);
-  assert.match(feedbackContract.lineText, /面积不适用/u);
-  assert.match(feedbackContract.lineText, /国家／地区未知/u);
+  assert.match(feedbackContract.lineText, /区域类型线/u);
+  assert.match(feedbackContract.lineText, /坐标数量2/u);
+  assert.match(feedbackContract.lineText, /坐标类型经纬度/u);
+  assert.match(feedbackContract.lineText, /所属国家\/地区未知/u);
+  assert.doesNotMatch(feedbackContract.lineText, /面积/u);
   assert.match(feedbackContract.polygonText, /面积12\.5 ha/u);
-  assert.match(feedbackContract.selfIntersectingText, /面积待核对/u);
+  assert.match(feedbackContract.selfIntersectingText, /区域类型多边形（坐标待核对）/u);
+  assert.doesNotMatch(feedbackContract.selfIntersectingText, /面积/u);
   assert.deepEqual(feedbackContract.summaryCells, [
-    { key: "状态", value: "坐标待核对", tone: "is-warning" },
-    { key: "点数", value: "4", tone: "is-valid" },
-    { key: "面积", value: "待核对", tone: "is-warning" },
-    { key: "国家／地区", value: "未知", tone: "is-neutral" }
+    { key: "区域类型", value: "多边形（坐标待核对）", tone: "is-warning" },
+    { key: "所属国家/地区", value: "未知", tone: "is-neutral" },
+    { key: "坐标数量", value: "4", tone: "is-valid" },
+    { key: "坐标类型", value: "度分秒", tone: "is-valid" }
   ]);
   assert.equal(feedbackContract.summaryBackground, "rgb(240, 253, 244)");
   assert.equal(feedbackContract.summaryBorderWidth, "1px");
@@ -527,6 +533,7 @@ try {
     setRecognitionSummary({
       count: 4,
       geometry: 'Polygon',
+      coordinateType: 'decimal_latlon',
       engine: { groups: [{ geometry: 'Polygon', kml_ready: true, requires_review: false, calculated_area_ha: 12.5, validation: {}, warnings: [] }] },
       resultIdentity: { resultId: 'result-ui-success', resultRevision: 1, geometryHash: 'sha256:ui-success' }
     });
@@ -540,10 +547,11 @@ try {
   await markSyntheticState(cdp, sessionId, "坐标成功概览");
   await fullScreenshot(cdp, sessionId, path.join(receiptRoot, "states", "coordinate-success-full.png"), 390);
   assert.deepEqual(successOverview.cells, [
-    { key: "状态", value: "有效", tone: "is-valid" },
-    { key: "点数", value: "4", tone: "is-valid" },
-    { key: "面积", value: "12.5 ha", tone: "is-valid" },
-    { key: "国家／地区", value: "未知", tone: "is-neutral" }
+    { key: "区域类型", value: "多边形", tone: "is-valid" },
+    { key: "所属国家/地区", value: "未知", tone: "is-neutral" },
+    { key: "坐标数量", value: "4", tone: "is-valid" },
+    { key: "坐标类型", value: "经纬度", tone: "is-valid" },
+    { key: "面积", value: "12.5 ha", tone: "is-valid" }
   ]);
   results.push({ state: "coordinate-success-overview", result: "PASS", ...successOverview });
   const previousResult = await evaluate(cdp, sessionId, `(() => {

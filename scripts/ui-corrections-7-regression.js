@@ -10,8 +10,10 @@ function check(name, predicate) {
   checks.push(name);
 }
 
-check("result overview has independent status, point, area and region cells",
-  ["状态", "点数", "面积", "国家／地区"].every(label => source.includes(`key: "${label}"`)));
+check("result overview restores legacy area type region count and coordinate type fields",
+  ["区域类型", "所属国家/地区", "坐标数量", "坐标类型"].every(label => source.includes(`key: "${label}"`)));
+check("result overview only appends a legal valid area",
+  /const area = getRecognitionSummaryArea\(meta\);[\s\S]*?if \(area\) \{[\s\S]*?chips\.push\(\{ key: "面积", value: area, tone: "valid" \}\);/.test(source));
 check("result overview has valid warning and neutral tones",
   ["is-valid", "is-warning", "is-neutral"].every(name => source.includes(name)));
 check("area overview restores title dot framed panel and wrapping pills",
@@ -23,7 +25,8 @@ check("area overview restores title dot framed panel and wrapping pills",
 check("area overview preserves warning and unknown semantics",
   /\.recognition-summary-pill\.is-warning\s*\{[\s\S]*?background:\s*#fff7ed;/.test(source)
   && /\.recognition-summary-pill\.is-neutral\s*\{[\s\S]*?background:\s*#f8fafc;/.test(source)
-  && source.includes('tone: /待核对/.test(areaValue) ? "warning"'));
+  && source.includes('review.requiresReview ? "warning" : "valid"')
+  && source.includes('value: coordinateType || "未知"'));
 check("coordinate quota remains in workspace title row",
   /class="workspace-title-row"[\s\S]*?<h1>坐标与 KML<\/h1>[\s\S]*?id="convertQuotaStatus"/.test(source));
 check("judge quota is inside judge title row",
