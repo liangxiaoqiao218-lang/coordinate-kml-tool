@@ -2776,7 +2776,8 @@
 
     .debug-panel.is-running {
       border-color: #5eead4;
-      box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.1), 0 18px 42px rgba(15, 118, 110, 0.12);
+      background: #f7fffd;
+      box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.08);
     }
 
     .debug-panel summary {
@@ -2789,7 +2790,7 @@
     }
 
     .debug-title-row {
-      margin-bottom: 10px;
+      margin-bottom: 6px;
     }
 
     .debug-panel strong {
@@ -2845,15 +2846,16 @@
     .debug-panel textarea {
       overflow: auto;
       width: 100%;
-      min-height: 220px;
-      max-height: 75vh;
+      min-height: 48px;
+      max-height: 240px;
+      height: 48px;
       margin: 0;
-      padding: 12px;
+      padding: 10px 12px;
       resize: vertical;
-      border: 0;
+      border: 1px solid #dbe6e2;
       border-radius: 8px;
-      background: #0f172a;
-      color: #e5e7eb;
+      background: #f8fafc;
+      color: #334155;
       white-space: pre-wrap;
       word-break: break-word;
       font-size: 13px;
@@ -4794,14 +4796,35 @@
       margin-top: 14px;
     }
 
+    #copyGoldButton:disabled,
+    #copyGoldButton[aria-disabled="true"] {
+      border-color: #dbe3ea;
+      background: #eef2f6;
+      color: #94a3b8;
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+
     .site-footer {
       width: min(1060px, calc(100% - 32px));
-      margin-top: auto;
+      margin-top: 40px;
       padding-top: 12px;
     }
 
     body:has(#judgePage.active) .site-footer {
-      margin-top: auto;
+      margin-top: 40px;
+    }
+
+    body:has(#homePage.active) .site-footer {
+      margin-top: 40px;
+    }
+
+    .home-view {
+      min-height: auto;
+    }
+
+    #judgePage .intro {
+      margin-bottom: 22px;
     }
 
     .site-footer-inner {
@@ -4911,6 +4934,20 @@
 
       .workspace-head {
         align-items: flex-start;
+      }
+
+      .coordinate-workspace .workspace-head {
+        flex-wrap: wrap;
+      }
+
+      .coordinate-workspace .workspace-heading-copy {
+        flex: 1 1 100%;
+      }
+
+      .coordinate-workspace .cadastral-grid-badge.is-active {
+        order: 3;
+        max-width: 100%;
+        white-space: normal;
       }
 
       .workspace-subtitle,
@@ -5424,7 +5461,7 @@ Au值 = 纯度 × 10 后取整数</div>
         </div>
 
         <div id="goldActions" class="gold-actions">
-          <button id="copyGoldButton" type="button" class="primary-action" onclick="copyGoldResult()">复制结果</button>
+          <button id="copyGoldButton" type="button" class="primary-action" aria-disabled="true" onclick="copyGoldResult()" disabled>复制结果</button>
         </div>
 
         <div id="goldMessage" class="message"></div>
@@ -9595,7 +9632,17 @@ Au值 = 纯度 × 10 后取整数</div>
         debugPanel.open = visible;
       }
       debugText.textContent = value;
-      if (visible) debugText.scrollTop = debugText.scrollHeight;
+      if (visible) {
+        resizeDebugTextToContent();
+        debugText.scrollTop = debugText.scrollHeight;
+      }
+    }
+
+    function resizeDebugTextToContent() {
+      debugText.style.height = "auto";
+      const contentHeight = Math.max(48, Number(debugText.scrollHeight) || 48);
+      debugText.style.height = `${Math.min(contentHeight, 240)}px`;
+      debugText.classList.toggle("has-long-detail", contentHeight > 240);
     }
 
     function buildRecognitionCandidateSourceEvidence(data, expectedCount = 0) {
@@ -9646,6 +9693,7 @@ Au值 = 纯度 × 10 后取整数</div>
       debugPanel.style.display = "block";
       if ("open" in debugPanel) debugPanel.open = true;
       debugText.textContent = debugText.textContent ? `${debugText.textContent}\n${entry}` : entry;
+      resizeDebugTextToContent();
       debugText.scrollTop = debugText.scrollHeight;
     }
 
@@ -11576,6 +11624,7 @@ Au值 = 纯度 × 10 后取整数</div>
         renderGoldQuoteResult(null);
         messageEl.textContent = result.error;
         messageEl.className = "message error";
+        setGoldCopyAvailability(null);
         return null;
       }
 
@@ -11599,6 +11648,7 @@ Au值 = 纯度 × 10 后取整数`;
         renderGoldQuoteResult(null);
         messageEl.textContent = "";
         messageEl.className = "message";
+        setGoldCopyAvailability(null);
         return null;
       }
 
@@ -11631,7 +11681,23 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
       recordGoldUsage(result);
       messageEl.textContent = "";
       messageEl.className = "message";
+      setGoldCopyAvailability(result);
       return result;
+    }
+
+    function setGoldCopyAvailability(result) {
+      const copyButton = document.getElementById("copyGoldButton");
+      if (!copyButton) return;
+      const valid = Boolean(result)
+        && Number.isFinite(result.density)
+        && Number.isFinite(result.purity)
+        && Number.isFinite(result.kValue)
+        && Number.isFinite(result.auValue)
+        && result.goldWeight > 0
+        && result.waterDiff > 0;
+      copyButton.disabled = !valid;
+      copyButton.setAttribute("aria-disabled", String(!valid));
+      copyButton.dataset.resultState = valid ? "valid" : "invalid";
     }
 
     async function copyGoldResult() {
@@ -11673,7 +11739,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
         return;
       }
 
-      const originalText = "一键复制结果";
+      const originalText = "复制结果";
       copyButton.textContent = copied ? "已复制 ✓" : "复制失败，请手动复制";
       copyButton.classList.toggle("copy-success", copied);
 

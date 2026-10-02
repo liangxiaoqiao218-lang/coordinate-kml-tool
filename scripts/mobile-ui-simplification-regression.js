@@ -76,12 +76,22 @@ assert.match(html, /focusCoordinateInputAfterRecognition\(\);[\s\S]*?coordinateU
 assert.match(coordinate, /<section class="format-conversion" aria-label="格式转换">[\s\S]*?id="coordinateFormat"/u);
 assert.doesNotMatch(coordinate, /<summary>坐标说明<\/summary>|一行就是一个点/u);
 assert.match(html, /\.home-hero h1\s*\{[\s\S]*?font-size:\s*15px;[\s\S]*?font-weight:\s*600;/u);
-assert.match(html, /body:has\(#judgePage\.active\) \.site-footer\s*\{\s*margin-top:\s*auto;/u, "short judge pages keep the footer at the viewport bottom without fixed spacer content");
+assert.match(html, /\.site-footer\s*\{[\s\S]*?margin-top:\s*40px;/u, "footer follows content with a natural mobile starting gap instead of forced viewport fill");
+assert.match(html, /body:has\(#homePage\.active\) \.site-footer\s*\{\s*margin-top:\s*40px;/u);
+assert.match(html, /body:has\(#judgePage\.active\) \.site-footer\s*\{\s*margin-top:\s*40px;/u);
+assert.match(html, /\.home-view\s*\{\s*min-height:\s*auto;/u, "home content no longer creates a forced blank viewport filler");
 assert.match(html, /\.recognition-status\.summary\.warning\s*\{[\s\S]*?border-color:\s*transparent;[\s\S]*?background:\s*#f0fdf4;/u);
 assert.match(html, /\.recognition-status\.summary::before\s*\{\s*display:\s*none;/u, "overview has no repeated warning dot");
 assert.match(html, /\.recognition-summary-pill\.is-review-target\s*\{[\s\S]*?border:\s*0;[\s\S]*?background:\s*transparent;/u, "review details remain available without an orange warning badge");
 assert.match(html, /const detail = isFailure[\s\S]*?"本次图片识别未完成，请重试。"/u);
 assert.doesNotMatch(html, /class="upload-message-title"/u, "recognition failure message does not repeat a large title and body");
+assert.match(html, /\.debug-panel textarea\s*\{[\s\S]*?min-height:\s*48px;[\s\S]*?max-height:\s*240px;[\s\S]*?background:\s*#f8fafc;/u, "recognition detail is light and content-sized");
+assert.match(html, /function resizeDebugTextToContent\(\)[\s\S]*?Math\.min\(contentHeight, 240\)/u);
+assert.match(html, /\.coordinate-workspace \.workspace-head\s*\{\s*flex-wrap:\s*wrap;/u, "mobile result badges cannot squeeze the coordinate title into a vertical column");
+assert.match(html, /\.coordinate-workspace \.workspace-heading-copy\s*\{\s*flex:\s*1 1 100%;/u);
+assert.match(gold, /id="copyGoldButton"[^>]*aria-disabled="true"[^>]*disabled/u, "gold copy starts disabled without a valid result");
+assert.match(html, /function setGoldCopyAvailability\(result\)[\s\S]*?Number\.isFinite\(result\.density\)[\s\S]*?copyButton\.disabled = !valid/u, "gold copy follows the actual calculation result state");
+assert.match(html, /#copyGoldButton:disabled[\s\S]*?cursor:\s*not-allowed;/u);
 
-console.log("Mobile UI simplification regression: 64/64 PASS");
+console.log("Mobile UI simplification regression: 75/75 PASS");
 console.log("PROVIDER_CALLS=0");
