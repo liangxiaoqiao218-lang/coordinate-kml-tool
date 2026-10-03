@@ -216,7 +216,8 @@ export function parseCoordinateUsageSealKey(value) {
 
 function coordinateUsageProjectRefMatches(value, expectedProjectRef) {
   try {
-    const url = new URL(String(value || "").trim());
+    const source = String(value || "").trim();
+    const url = new URL(source);
     return url.protocol === "https:"
       && url.username === ""
       && url.password === ""
@@ -224,7 +225,8 @@ function coordinateUsageProjectRefMatches(value, expectedProjectRef) {
       && url.pathname === "/"
       && url.search === ""
       && url.hash === ""
-      && url.hostname === `${expectedProjectRef}.supabase.co`;
+      && url.hostname === `${expectedProjectRef}.supabase.co`
+      && source === `https://${expectedProjectRef}.supabase.co`;
   } catch {
     return false;
   }
@@ -256,12 +258,18 @@ export function createCoordinateUsageRuntimeDiagnostic({
   serviceRoleKeyPresent = false,
   sealKey = null,
   expectedProjectRef,
+  databaseEnvironment = "unknown",
   timeoutMs = 8000,
   randomRequestId = randomUUID,
   randomSessionBinding = () => randomBytes(32).toString("hex")
 } = {}) {
+  const normalizedDatabaseEnvironment = ["production", "rc"].includes(
+    String(databaseEnvironment || "").trim().toLowerCase()
+  )
+    ? String(databaseEnvironment).trim().toLowerCase()
+    : "unknown";
   const hasSupabaseUrl = String(supabaseUrl || "").trim().length > 0;
-  const productionProjectRefMatch = hasSupabaseUrl
+  const projectRefMatch = hasSupabaseUrl
     && /^[a-z0-9]{20}$/i.test(String(expectedProjectRef || ""))
     && coordinateUsageProjectRefMatches(supabaseUrl, String(expectedProjectRef));
   const hasServiceRoleKey = serviceRoleKeyPresent === true;
@@ -271,7 +279,7 @@ export function createCoordinateUsageRuntimeDiagnostic({
     : 8000;
   const initialStatus = !hasSupabaseUrl
     ? COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SUPABASE_URL_MISSING
-    : !productionProjectRefMatch
+    : !projectRefMatch
       ? COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SUPABASE_PROJECT_REF_MISMATCH
       : !hasServiceRoleKey
         ? COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SERVICE_ROLE_KEY_MISSING
@@ -281,7 +289,8 @@ export function createCoordinateUsageRuntimeDiagnostic({
   let snapshot = Object.freeze({
     status: initialStatus,
     probeComplete: false,
-    productionProjectRefMatch
+    databaseEnvironment: normalizedDatabaseEnvironment,
+    projectRefMatch
   });
   let probePromise = null;
 
@@ -289,7 +298,8 @@ export function createCoordinateUsageRuntimeDiagnostic({
     snapshot = Object.freeze({
       status,
       probeComplete: true,
-      productionProjectRefMatch
+      databaseEnvironment: normalizedDatabaseEnvironment,
+      projectRefMatch
     });
     return snapshot;
   };

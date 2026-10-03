@@ -10,6 +10,7 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const expectedProjectRef = "xyiffmpzdtmurmnsibdt";
+const rcProjectRef = "abcdefghijklmnopqrst";
 const supabaseUrl = `https://${expectedProjectRef}.supabase.co`;
 const sealKey = parseCoordinateUsageSealKey(Buffer.alloc(32, 11).toString("base64"));
 const requestId = "11111111-1111-4111-8111-111111111111";
@@ -48,6 +49,7 @@ function createDiagnostic(overrides = {}) {
     serviceRoleKeyPresent: true,
     sealKey,
     expectedProjectRef,
+    databaseEnvironment: "production",
     timeoutMs: 100,
     randomRequestId: () => requestId,
     randomSessionBinding: () => sessionBindingSha256,
@@ -73,7 +75,29 @@ async function assertStatus(expected, overrides = {}) {
 
 test("successful synthetic read-only RPC reports READY", async () => {
   const { result } = await assertStatus(COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.READY);
-  assert.equal(result.productionProjectRefMatch, true);
+  assert.equal(result.databaseEnvironment, "production");
+  assert.equal(result.projectRefMatch, true);
+});
+
+test("production identity is compile-time pinned and cannot be overridden", async () => {
+  const server = await readFile(path.join(root, "server.js"), "utf8");
+  assert.match(server, /const PRODUCTION_SUPABASE_PROJECT_REF = "xyiffmpzdtmurmnsibdt"/);
+  assert.match(server, /coordinateUsageDatabaseEnvironment === "production"\s*\? PRODUCTION_SUPABASE_PROJECT_REF/);
+  assert.doesNotMatch(server, /process\.env\.(?:PRODUCTION_)?SUPABASE_PROJECT_REF/);
+});
+
+test("only the exact RC service can use an explicit non-sensitive project ref", async () => {
+  const server = await readFile(path.join(root, "server.js"), "utf8");
+  assert.match(server, /renderServiceName === "coordinate-kml-tool-rc"\s*\? "rc"/);
+  assert.match(server, /coordinateUsageDatabaseEnvironment === "rc"\s*\? String\(process\.env\.RC_SUPABASE_PROJECT_REF \|\| ""\)\.trim\(\)/);
+
+  const { result } = await assertStatus(COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.READY, {
+    databaseEnvironment: "rc",
+    expectedProjectRef: rcProjectRef,
+    supabaseUrl: `https://${rcProjectRef}.supabase.co`
+  });
+  assert.equal(result.databaseEnvironment, "rc");
+  assert.equal(result.projectRefMatch, true);
 });
 
 test("configuration failures fail closed before RPC", async () => {
@@ -93,6 +117,51 @@ test("configuration failures fail closed before RPC", async () => {
   }
 });
 
+test("missing, malformed, mismatched, and structurally unsafe RC identities fail before RPC", async () => {
+  const cases = [
+    { expectedProjectRef: "" },
+    { expectedProjectRef: "not-a-project-ref" },
+    { expectedProjectRef: rcProjectRef, supabaseUrl: "https://aaaaaaaaaaaaaaaaaaaa.supabase.co" },
+    { expectedProjectRef: rcProjectRef, supabaseUrl: `https://user@${rcProjectRef}.supabase.co` },
+    { expectedProjectRef: rcProjectRef, supabaseUrl: `https://${rcProjectRef}.supabase.co:443` },
+    { expectedProjectRef: rcProjectRef, supabaseUrl: `https://${rcProjectRef}.supabase.co/path` },
+    { expectedProjectRef: rcProjectRef, supabaseUrl: `https://${rcProjectRef}.supabase.co?query=1` }
+  ];
+  for (const entry of cases) {
+    let rpcCount = 0;
+    const { result } = await assertStatus(
+      COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SUPABASE_PROJECT_REF_MISMATCH,
+      {
+        databaseEnvironment: "rc",
+        ...entry,
+        supabase: { async rpc() { rpcCount += 1; throw new Error("must_not_run"); } }
+      }
+    );
+    assert.equal(result.databaseEnvironment, "rc");
+    assert.equal(result.projectRefMatch, false);
+    assert.equal(rpcCount, 0);
+  }
+});
+
+test("unrecognized service environments fail closed without exposing identity", async () => {
+  let rpcCount = 0;
+  const { result } = await assertStatus(
+    COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SUPABASE_PROJECT_REF_MISMATCH,
+    {
+      databaseEnvironment: "unexpected",
+      expectedProjectRef: "",
+      supabase: { async rpc() { rpcCount += 1; throw new Error("must_not_run"); } }
+    }
+  );
+  assert.deepEqual(result, {
+    status: COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SUPABASE_PROJECT_REF_MISMATCH,
+    probeComplete: true,
+    databaseEnvironment: "unknown",
+    projectRefMatch: false
+  });
+  assert.equal(rpcCount, 0);
+});
+
 test("RPC errors map only to fixed redacted status enums", async () => {
   const cases = [
     [COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_SCHEMA_CACHE_ERROR, { code: "PGRST002", message: "sensitive schema text" }],
@@ -110,7 +179,7 @@ test("RPC errors map only to fixed redacted status enums", async () => {
     });
     const serialized = JSON.stringify(result);
     assert.equal(serialized.includes("sensitive"), false);
-    assert.deepEqual(Object.keys(result).sort(), ["probeComplete", "productionProjectRefMatch", "status"]);
+    assert.deepEqual(Object.keys(result).sort(), ["databaseEnvironment", "probeComplete", "projectRefMatch", "status"]);
   }
 
   const realisticResponses = [
@@ -188,7 +257,8 @@ test("version integration exposes only fixed diagnostic fields and awaits one st
   assert.match(server, /await coordinateUsageRuntimeDiagnostic\.runOnce\(\);\s*\r?\n\s*app\.listen/);
   assert.match(server, /coordinateUsageAtomicityRuntimeDiagnostic:\s*\{/);
   assert.match(server, /probeComplete: coordinateUsageDiagnostic\.probeComplete === true/);
-  assert.match(server, /productionProjectRefMatch: coordinateUsageDiagnostic\.productionProjectRefMatch === true/);
+  assert.match(server, /databaseEnvironment: \["production", "rc"\]\.includes\(coordinateUsageDiagnostic\.databaseEnvironment\)/);
+  assert.match(server, /projectRefMatch: coordinateUsageDiagnostic\.projectRefMatch === true/);
   assert.doesNotMatch(server, /coordinateUsageAtomicityRuntimeDiagnostic:\s*\{[^}]*?(?:supabaseUrl|serviceRoleKey|sealKey|error|message|details|hint)/s);
 });
 
