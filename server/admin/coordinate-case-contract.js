@@ -10,6 +10,7 @@ const FORBIDDEN_KEYS = /(?:image|provider|cookie|authorization|auth[_-]?header|s
 const ALLOWED_COARSE_COORDINATE_KEYS = new Set(["coordinatetype", "coordinate_type"]);
 const RESULT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
+const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,159}$/u;
 const ISSUE_SOURCES = new Set(["UNKNOWN", "COORDINATE_IMAGE_UPLOAD", "MANUAL_ASSISTANCE", "ADMIN"]);
 const FAILURE_STAGES = new Set(["UNKNOWN", "ACQUISITION", "VALIDATION", "FINALIZATION", "MANUAL_ASSISTANCE"]);
 const COORDINATE_TYPES = new Set(["UNKNOWN", "DECIMAL_DEGREES", "DMS", "UTM", "PROJECTED", "MIXED"]);
@@ -77,6 +78,15 @@ function safeText(value, max, path) {
   return text(value, max);
 }
 
+function machineErrorCode(value) {
+  const normalized = text(value, 160).toUpperCase();
+  if (!normalized) return null;
+  if (!ERROR_CODE_PATTERN.test(normalized)) {
+    throw Object.assign(new Error("COORDINATE_CASE_ERROR_CODE_INVALID"), { code: "COORDINATE_CASE_ERROR_CODE_INVALID" });
+  }
+  return normalized;
+}
+
 function normalizeResultIdentity(raw = {}) {
   const resultId = text(raw.resultId ?? raw.result_id, 200);
   const resultRevision = Number(raw.resultRevision ?? raw.result_revision ?? 0);
@@ -138,7 +148,7 @@ export function normalizeCoordinateCaseInput(raw = {}) {
     receipt_ref: safeText(raw.receiptRef ?? raw.receipt_ref, 500, "receiptRef") || null,
     source: enumValue(raw.source, ISSUE_SOURCES, "ADMIN"),
     failure_stage: enumValue(raw.failureStage ?? raw.failure_stage, FAILURE_STAGES, "UNKNOWN"),
-    error_code: safeText(raw.errorCode ?? raw.error_code, 160, "errorCode") || null,
+    error_code: machineErrorCode(raw.errorCode ?? raw.error_code),
     coordinate_type: enumValue(raw.coordinateType ?? raw.coordinate_type, COORDINATE_TYPES, "UNKNOWN"),
     runtime_commit: (() => {
       const value = text(raw.runtimeCommit ?? raw.runtime_commit, 40).toLowerCase();

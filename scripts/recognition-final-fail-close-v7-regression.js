@@ -100,6 +100,7 @@ function sliceBetween(source, start, end) {
 
 const indexSource = await readFile(path.join(root, "index.html"), "utf8");
 const browserGuardSource = [
+  sliceBetween(indexSource, "function getFinalizedGeometryCoordinateSource", "function getAuthorizedFinalizedGeometryKmlSource"),
   sliceBetween(indexSource, "function hasCompleteUnifiedRecognitionEvidence", "function refreshMapPreviewAction"),
   sliceBetween(indexSource, "function refreshMapPreviewAction", "function coordinateKmlVisualState"),
   sliceBetween(indexSource, "function coordinateKmlVisualState", "function syncKmlActionVisualState"),
@@ -111,6 +112,7 @@ let finalizeCalls = 0;
 const browserContext = vm.createContext({
   activeRecognitionAcquisitionResult: null,
   activeFinalizedCoordinateResult: null,
+  finalizedCoordinateDirty: false,
   agenticCoordinateController: {
     enabled: true,
     finalize: async () => {
@@ -250,10 +252,10 @@ try {
   assert.equal(result.providerCompletionState, "SUCCEEDED");
   assert.equal(result.providerCallCount, 1);
   assert.equal(result.acquisitionStatus, "COMPLETED");
-  assert.equal(result.authorizationStatus, "AUTHORIZED");
-  assert.equal(result.resultStatus, "authorized");
-  assert.equal(result.requiresReview, false);
-  assert.equal(result.boundaryBlocked, false);
+  assert.equal(result.authorizationStatus, "REVIEW_REQUIRED");
+  assert.equal(result.resultStatus, "needs_review");
+  assert.equal(result.requiresReview, true);
+  assert.equal(result.boundaryBlocked, true);
   assert.equal(result.mapReady, true);
   assert.equal(result.kmlReady, true);
   assert.equal(result.mapStatus, "ENABLED");
@@ -270,10 +272,18 @@ try {
   assert.ok(result.imageAcquisitionEvidence.imageCount > 1);
   assert.ok(result.imageAcquisitionEvidence.detailTileCount > 0);
   assert.equal(result.contractReasons.includes("COORDINATE_FORMAT_REQUIRES_VALIDATION"), false);
-  assert.equal(result.finalizedCoordinateResult?.decisionState, "AUTO_EXPORT");
-  assert.equal(result.finalizedCoordinateResult?.requiresReview, false);
+  assert.equal(result.finalizedCoordinateResult?.decisionState, "REVIEW_REQUIRED");
+  assert.equal(result.finalizedCoordinateResult?.confirmationStatus, "pending");
+  assert.equal(result.finalizedCoordinateResult?.qualityGateStatus, "review_required");
+  assert.equal(result.finalizedCoordinateResult?.requiresReview, true);
+  assert.ok(result.finalizedCoordinateResult?.resultId);
+  assert.ok(Number.isSafeInteger(result.finalizedCoordinateResult?.resultRevision));
+  assert.ok(result.finalizedCoordinateResult?.geometryHash);
   assert.notEqual(result.finalizedCoordinateResult?.mapReady, false);
   assert.equal(result.finalizedCoordinateResult?.kmlReady, true);
+  assert.equal(result.previewEligibility?.allowed, true);
+  assert.equal(result.kmlEligibility?.allowed, true);
+  assert.notEqual(result.authorizationStatus, "AUTHORIZED");
 
   const statsPromise = once(child, "message", { signal });
   child.send("stats");
