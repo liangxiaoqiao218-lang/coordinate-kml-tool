@@ -256,7 +256,7 @@ const PRODUCTION_SUPABASE_PROJECT_REF = "xyiffmpzdtmurmnsibdt";
 const renderServiceName = String(process.env.RENDER_SERVICE_NAME || "").trim().toLowerCase();
 const coordinateUsageDatabaseEnvironment = renderServiceName === "coordinate-kml-tool-rc"
   ? "rc"
-  : renderServiceName === "" || renderServiceName === "coordinate-kml-tool"
+  : renderServiceName === "coordinate-kml-tool"
     ? "production"
     : "unknown";
 const coordinateUsageExpectedProjectRef = coordinateUsageDatabaseEnvironment === "production"
@@ -264,10 +264,6 @@ const coordinateUsageExpectedProjectRef = coordinateUsageDatabaseEnvironment ===
   : coordinateUsageDatabaseEnvironment === "rc"
     ? String(process.env.RC_SUPABASE_PROJECT_REF || "").trim()
     : "";
-const coordinateUsageAtomicity = new CoordinateUsageAtomicityService({
-  supabase,
-  sealKey: coordinateUsageSealKey
-});
 const coordinateUsageRuntimeDiagnostic = createCoordinateUsageRuntimeDiagnostic({
   supabase,
   supabaseUrl,
@@ -275,6 +271,27 @@ const coordinateUsageRuntimeDiagnostic = createCoordinateUsageRuntimeDiagnostic(
   sealKey: coordinateUsageSealKey,
   expectedProjectRef: coordinateUsageExpectedProjectRef,
   databaseEnvironment: coordinateUsageDatabaseEnvironment
+});
+const coordinateUsageGuardedSupabase = supabase
+  ? Object.freeze({
+      rpc(name, params) {
+        const runtimeStatus = coordinateUsageRuntimeDiagnostic.snapshot();
+        if (runtimeStatus.status !== COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.READY
+          || runtimeStatus.probeComplete !== true
+          || runtimeStatus.projectRefMatch !== true
+          || !["production", "rc"].includes(runtimeStatus.databaseEnvironment)) {
+          const error = new Error(COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE);
+          error.code = COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE;
+          throw error;
+        }
+        return supabase.rpc(name, params);
+      }
+    })
+  : null;
+const coordinateUsageAtomicity = new CoordinateUsageAtomicityService({
+  supabase: coordinateUsageGuardedSupabase,
+  sealKey: coordinateUsageSealKey,
+  runtimeAvailability: () => coordinateUsageRuntimeDiagnostic.snapshot()
 });
 const spatialShareStore = new SupabaseSpatialShareStore({ supabase });
 const __filename = fileURLToPath(import.meta.url);

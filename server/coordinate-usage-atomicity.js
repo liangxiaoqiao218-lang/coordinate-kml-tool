@@ -799,13 +799,34 @@ function classifyRpcFailure(error) {
 }
 
 export class CoordinateUsageAtomicityService {
-  constructor({ supabase, sealKey, clock = () => new Date().toISOString() } = {}) {
+  constructor({
+    supabase,
+    sealKey,
+    clock = () => new Date().toISOString(),
+    runtimeAvailability = null
+  } = {}) {
     this.supabase = supabase || null;
     this.sealKey = sealKey || null;
     this.clock = clock;
+    this.runtimeAvailability = typeof runtimeAvailability === "function" ? runtimeAvailability : null;
   }
 
   assertAvailable() {
+    if (this.runtimeAvailability) {
+      let runtimeStatus = null;
+      try {
+        runtimeStatus = this.runtimeAvailability();
+      } catch {
+        runtimeStatus = null;
+      }
+      if (!runtimeStatus
+        || runtimeStatus.status !== COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.READY
+        || runtimeStatus.probeComplete !== true
+        || runtimeStatus.projectRefMatch !== true
+        || !["production", "rc"].includes(runtimeStatus.databaseEnvironment)) {
+        throw fixedError(COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE);
+      }
+    }
     if (!this.supabase || typeof this.supabase.rpc !== "function" || !Buffer.isBuffer(this.sealKey) || this.sealKey.length !== 32) {
       throw fixedError(COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE);
     }
