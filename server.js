@@ -252,6 +252,18 @@ const supabase = supabaseUrl && supabaseServiceRoleKey
 const coordinateCaseStore = new CoordinateCaseStore({ supabase });
 let latestProviderModelObservation = null;
 const coordinateUsageSealKey = parseCoordinateUsageSealKey(process.env.COORDINATE_USAGE_SEAL_KEY);
+const PRODUCTION_SUPABASE_PROJECT_REF = "xyiffmpzdtmurmnsibdt";
+const renderServiceName = String(process.env.RENDER_SERVICE_NAME || "").trim().toLowerCase();
+const coordinateUsageDatabaseEnvironment = renderServiceName === "coordinate-kml-tool-rc"
+  ? "rc"
+  : renderServiceName === "" || renderServiceName === "coordinate-kml-tool"
+    ? "production"
+    : "unknown";
+const coordinateUsageExpectedProjectRef = coordinateUsageDatabaseEnvironment === "production"
+  ? PRODUCTION_SUPABASE_PROJECT_REF
+  : coordinateUsageDatabaseEnvironment === "rc"
+    ? String(process.env.RC_SUPABASE_PROJECT_REF || "").trim()
+    : "";
 const coordinateUsageAtomicity = new CoordinateUsageAtomicityService({
   supabase,
   sealKey: coordinateUsageSealKey
@@ -261,7 +273,8 @@ const coordinateUsageRuntimeDiagnostic = createCoordinateUsageRuntimeDiagnostic(
   supabaseUrl,
   serviceRoleKeyPresent: Boolean(supabaseServiceRoleKey),
   sealKey: coordinateUsageSealKey,
-  expectedProjectRef: "xyiffmpzdtmurmnsibdt"
+  expectedProjectRef: coordinateUsageExpectedProjectRef,
+  databaseEnvironment: coordinateUsageDatabaseEnvironment
 });
 const spatialShareStore = new SupabaseSpatialShareStore({ supabase });
 const __filename = fileURLToPath(import.meta.url);
@@ -1326,7 +1339,10 @@ app.get("/api/version", (req, res) => {
           ? coordinateUsageDiagnostic.status
           : COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.RPC_UNKNOWN_ERROR,
         probeComplete: coordinateUsageDiagnostic.probeComplete === true,
-        productionProjectRefMatch: coordinateUsageDiagnostic.productionProjectRefMatch === true
+        databaseEnvironment: ["production", "rc"].includes(coordinateUsageDiagnostic.databaseEnvironment)
+          ? coordinateUsageDiagnostic.databaseEnvironment
+          : "unknown",
+        projectRefMatch: coordinateUsageDiagnostic.projectRefMatch === true
       }
     }
   });
