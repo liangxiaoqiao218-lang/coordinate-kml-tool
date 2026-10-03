@@ -66,13 +66,20 @@ export class CoordinateCaseStore {
     if (!this.supabase) return { setupRequired: true, duplicate: false, case: null };
     const payload = normalizeCoordinateCaseInput(raw);
     payload.result_identity_status = await this.validateIdentity(payload);
-    const existing = await this.supabase.from("coordinate_cases").select(CASE_FIELDS).eq("recognition_request_id", payload.recognition_request_id).maybeSingle();
+    const automaticSources = ["COORDINATE_IMAGE_UPLOAD", "MANUAL_ASSISTANCE"];
+    const existing = await this.supabase.from("coordinate_cases").select(CASE_FIELDS)
+      .eq("recognition_request_id", payload.recognition_request_id)
+      .in("source", automaticSources)
+      .maybeSingle();
     if (existing.error && !isMissingTable(existing.error)) throw existing.error;
     if (isMissingTable(existing.error)) return { setupRequired: true, duplicate: false, case: null };
     if (existing.data) return { setupRequired: false, duplicate: true, case: publicCoordinateCase(existing.data, []) };
     const inserted = await this.supabase.from("coordinate_cases").insert(payload).select(CASE_FIELDS).single();
     if (inserted.error?.code === "23505") {
-      const raced = await this.supabase.from("coordinate_cases").select(CASE_FIELDS).eq("recognition_request_id", payload.recognition_request_id).single();
+      const raced = await this.supabase.from("coordinate_cases").select(CASE_FIELDS)
+        .eq("recognition_request_id", payload.recognition_request_id)
+        .in("source", automaticSources)
+        .single();
       if (raced.error) throw raced.error;
       return { setupRequired: false, duplicate: true, case: publicCoordinateCase(raced.data, []) };
     }

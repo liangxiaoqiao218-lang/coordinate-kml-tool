@@ -15,6 +15,8 @@ alter table public.coordinate_cases
   add constraint coordinate_cases_coordinate_type_check check (coordinate_type in ('UNKNOWN', 'DECIMAL_DEGREES', 'DMS', 'UTM', 'PROJECTED', 'MIXED')),
   drop constraint if exists coordinate_cases_runtime_commit_check,
   add constraint coordinate_cases_runtime_commit_check check (runtime_commit is null or runtime_commit ~ '^[0-9a-f]{40}$'),
+  drop constraint if exists coordinate_cases_error_code_check,
+  add constraint coordinate_cases_error_code_check check (error_code is null or error_code ~ '^[A-Z][A-Z0-9_]{0,159}$'),
   drop constraint if exists coordinate_cases_progress_status_check,
   add constraint coordinate_cases_progress_status_check check (progress_status in ('NEW', 'TRIAGED', 'IN_PROGRESS', 'BLOCKED', 'VERIFIED', 'RESOLVED', 'CLOSED')),
   drop constraint if exists coordinate_cases_resolved_evidence_check,
@@ -31,8 +33,23 @@ alter table public.coordinate_cases
     )
   );
 
-create unique index if not exists coordinate_cases_request_unique_idx
-  on public.coordinate_cases(recognition_request_id);
+do $$
+begin
+  if exists (
+    select 1
+    from public.coordinate_cases
+    where source in ('COORDINATE_IMAGE_UPLOAD', 'MANUAL_ASSISTANCE')
+    group by recognition_request_id
+    having count(*) > 1
+  ) then
+    raise exception 'coordinate_recognition_issue_v1 duplicate automatic request ids require an explicit data decision';
+  end if;
+end
+$$;
+
+create unique index if not exists coordinate_cases_automatic_request_unique_idx
+  on public.coordinate_cases(recognition_request_id)
+  where source in ('COORDINATE_IMAGE_UPLOAD', 'MANUAL_ASSISTANCE');
 
 comment on column public.coordinate_cases.source is 'coordinate_recognition_issue_v1 non-sensitive issue source';
 comment on column public.coordinate_cases.failure_stage is 'Safe pipeline stage only; UNKNOWN when evidence is insufficient';

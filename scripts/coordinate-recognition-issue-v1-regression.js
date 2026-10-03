@@ -9,6 +9,11 @@ import {
   buildCoordinateRecognitionIssue,
   recordCoordinateRecognitionIssue
 } from "../server/recognition/coordinate-recognition-issue.js";
+import {
+  RECOGNITION_ACQUISITION_JOB_STATUS,
+  createRecognitionAcquisitionJobRuntime,
+  getRecognitionAcquisitionJobHttpStatus
+} from "../server/recognition/recognition-acquisition-job-runtime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -22,6 +27,16 @@ const checks = [];
 function check(name, action) {
   try {
     action();
+    checks.push({ name, status: "PASS" });
+  } catch (error) {
+    checks.push({ name, status: "FAIL", error: error.message });
+    throw error;
+  }
+}
+
+async function checkAsync(name, action) {
+  try {
+    await action();
     checks.push({ name, status: "PASS" });
   } catch (error) {
     checks.push({ name, status: "FAIL", error: error.message });
@@ -49,17 +64,28 @@ function createDatabaseMock() {
       return {
         select() {
           let requestId = "";
+          let sources = null;
+          const matches = row => row.recognition_request_id === requestId
+            && (!sources || sources.includes(row.source));
           return {
             eq(column, value) {
               assert.equal(column, "recognition_request_id");
               requestId = value;
               return this;
             },
+            in(column, values) {
+              assert.equal(column, "source");
+              sources = values;
+              return this;
+            },
             async maybeSingle() {
-              return { data: rows.find(row => row.recognition_request_id === requestId) || null, error: null };
+              const matchesRows = rows.filter(matches);
+              return matchesRows.length > 1
+                ? { data: null, error: { code: "PGRST116" } }
+                : { data: matchesRows[0] || null, error: null };
             },
             async single() {
-              return { data: rows.find(row => row.recognition_request_id === requestId) || null, error: null };
+              return { data: rows.find(matches) || null, error: null };
             }
           };
         },
@@ -68,7 +94,9 @@ function createDatabaseMock() {
             select() {
               return {
                 async single() {
-                  if (rows.some(row => row.recognition_request_id === payload.recognition_request_id)) {
+                  if (rows.some(row => row.recognition_request_id === payload.recognition_request_id
+                    && ["COORDINATE_IMAGE_UPLOAD", "MANUAL_ASSISTANCE"].includes(row.source)
+                    && ["COORDINATE_IMAGE_UPLOAD", "MANUAL_ASSISTANCE"].includes(payload.source))) {
                     return { data: null, error: { code: "23505" } };
                   }
                   const row = materialize(payload);
@@ -138,6 +166,26 @@ check("privacy guard rejects image, coordinates, Provider response and credentia
   }
 });
 
+check("error code accepts only redacted machine identifiers", () => {
+  const normalized = normalizeCoordinateCaseInput({ ...failed, errorCode: "safe_machine_code_1" });
+  assert.equal(normalized.error_code, "SAFE_MACHINE_CODE_1");
+  for (const errorCode of [
+    "Aliyun provider said upstream content was invalid",
+    "request failed: user@example.com",
+    "{\"provider\":\"raw error\"}"
+  ]) {
+    assert.throws(
+      () => normalizeCoordinateCaseInput({ ...failed, errorCode }),
+      /COORDINATE_CASE_ERROR_CODE_INVALID/u
+    );
+  }
+  const safeFallback = buildCoordinateRecognitionIssue({
+    body: { authorizationStatus: "REVIEW_REQUIRED", code: "Provider returned free-form error" },
+    requestId: requestB
+  });
+  assert.equal(safeFallback.errorCode, "REVIEW_REQUIRED");
+});
+
 check("RESOLVED is rejected without fix and verification evidence", () => {
   assert.throws(() => normalizeCoordinateCaseInput({ ...failed, progressStatus: "RESOLVED" }), /COORDINATE_CASE_RESOLUTION_EVIDENCE_REQUIRED/u);
 });
@@ -160,6 +208,17 @@ check("RESOLVED accepts bounded fix and verification references while production
 });
 
 const database = createDatabaseMock();
+database.rows.push({
+  case_id: "legacy-admin-case",
+  case_number: 1,
+  recognition_request_id: requestA,
+  source: "ADMIN",
+  issue_type: "coordinate_correction",
+  issue_summary: "legacy admin record",
+  original_artifact_status: "NOT_SAVED",
+  created_at: "2026-10-01T00:00:00.000Z",
+  updated_at: "2026-10-01T00:00:00.000Z"
+});
 const store = new CoordinateCaseStore({ supabase: database });
 const first = await recordCoordinateRecognitionIssue({
   store,
@@ -186,22 +245,70 @@ check("database mock creates eligible issues and deduplicates by requestId", () 
   assert.equal(first.duplicate, false);
   assert.equal(duplicate.duplicate, true);
   assert.equal(second.recorded, true);
-  assert.equal(database.rows.length, 2);
+  assert.equal(database.rows.length, 3);
   assert.equal(counters.mockDatabaseWrites, 2);
+  assert.ok(database.rows.some(row => row.source === "ADMIN" && row.recognition_request_id === requestA));
+  assert.ok(database.rows.some(row => row.source === "COORDINATE_IMAGE_UPLOAD" && row.recognition_request_id === requestA));
 });
 
 check("stored automatic rows contain no retained artifact or user coordinate payload", () => {
   const serialized = JSON.stringify(database.rows);
   assert.equal(serialized.includes("providerResponse"), false);
   assert.equal(serialized.includes("coordinates"), false);
-  assert.ok(database.rows.every(row => row.original_artifact_status === "NOT_SAVED"));
+  assert.ok(database.rows.filter(row => row.source !== "ADMIN").every(row => row.original_artifact_status === "NOT_SAVED"));
 });
 
 const serverSource = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const migrationSource = fs.readFileSync(path.join(root, "supabase/migrations/20261003030000_coordinate_recognition_issue_v1.sql"), "utf8");
-check("runtime hook is disabled in regression mode and migration enforces request uniqueness", () => {
+const rollbackSource = fs.readFileSync(path.join(root, "supabase/rollbacks/20261003030000_coordinate_recognition_issue_v1.rollback.sql"), "utf8");
+check("runtime hook preserves failed-closed HTTP 422", () => {
   assert.match(serverSource, /if \(!regressionTestMode\.active\)/u);
-  assert.match(migrationSource, /unique index if not exists coordinate_cases_request_unique_idx/u);
+  assert.match(serverSource, /return res\.status\(422\)\.json\(\{\s*success: false,\s*reason: "recognition_failed_closed",\s*code: "COORDINATE_RECOGNITION_FAILED_CLOSED"/u);
+});
+
+await checkAsync("HTTP 422 remains an asynchronous FAILED job without success or quota consumption", async () => {
+  const runtime = createRecognitionAcquisitionJobRuntime({
+    execute: async () => ({
+      httpStatus: 422,
+      result: {
+        success: false,
+        reason: "recognition_failed_closed",
+        code: "COORDINATE_RECOGNITION_FAILED_CLOSED",
+        usageConsumed: false,
+        userUsageConsumed: false,
+        providerCallCount: 0
+      }
+    })
+  });
+  const queued = runtime.enqueue({ requestId: requestC });
+  let snapshot = runtime.get(queued.jobId, queued.jobAccessToken);
+  for (let attempt = 0; attempt < 20 && snapshot?.status === RECOGNITION_ACQUISITION_JOB_STATUS.QUEUED; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+    snapshot = runtime.get(queued.jobId, queued.jobAccessToken);
+  }
+  assert.equal(snapshot.status, RECOGNITION_ACQUISITION_JOB_STATUS.FAILED);
+  assert.equal(getRecognitionAcquisitionJobHttpStatus(snapshot), 422);
+  assert.equal(snapshot.result.success, false);
+  assert.equal(snapshot.result.usageConsumed, false);
+  assert.equal(snapshot.result.userUsageConsumed, false);
+});
+
+check("migration scopes request uniqueness and aborts instead of choosing duplicate data", () => {
+  assert.match(migrationSource, /coordinate_cases_automatic_request_unique_idx/u);
+  assert.match(migrationSource, /where source in \('COORDINATE_IMAGE_UPLOAD', 'MANUAL_ASSISTANCE'\)/u);
+  assert.match(migrationSource, /having count\(\*\) > 1/u);
+  assert.match(migrationSource, /raise exception 'coordinate_recognition_issue_v1 duplicate automatic request ids require an explicit data decision'/u);
+  assert.match(migrationSource, /coordinate_cases_error_code_check/u);
+  assert.doesNotMatch(migrationSource, /\bdelete\s+from\b|\bupdate\s+public\.coordinate_cases\b/iu);
+});
+
+check("rollback is executable, non-destructive and stops before a RESOLVED data decision", () => {
+  assert.match(rollbackSource, /^begin;/u);
+  assert.match(rollbackSource, /drop index if exists public\.coordinate_cases_automatic_request_unique_idx/u);
+  assert.match(rollbackSource, /where progress_status = 'RESOLVED'/u);
+  assert.match(rollbackSource, /raise exception 'coordinate_recognition_issue_v1 rollback requires an explicit decision for RESOLVED rows'/u);
+  assert.match(rollbackSource, /commit;\s*$/u);
+  assert.doesNotMatch(rollbackSource, /\bdelete\s+from\b|\bdrop\s+column\b/iu);
 });
 
 check("external side-effect counters remain zero", () => {

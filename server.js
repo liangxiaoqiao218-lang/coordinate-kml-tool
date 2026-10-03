@@ -21409,7 +21409,7 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         });
       }
       console.error("Coordinate recognition fallback failed", { reason: "FALLBACK_ERROR" });
-      return sendRecognitionJson({
+      return res.status(422).json({
         success: false,
         reason: "recognition_failed_closed",
         code: "COORDINATE_RECOGNITION_FAILED_CLOSED",
