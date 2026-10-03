@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  COORDINATE_USAGE_ERROR_CODE,
   COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS,
+  CoordinateUsageAtomicityService,
   createCoordinateUsageRuntimeDiagnostic,
   parseCoordinateUsageSealKey
 } from "../server/coordinate-usage-atomicity.js";
@@ -98,6 +100,12 @@ test("only the exact RC service can use an explicit non-sensitive project ref", 
   });
   assert.equal(result.databaseEnvironment, "rc");
   assert.equal(result.projectRefMatch, true);
+});
+
+test("empty and unknown service identities cannot enter production", async () => {
+  const server = await readFile(path.join(root, "server.js"), "utf8");
+  assert.match(server, /renderServiceName === "coordinate-kml-tool"\s*\? "production"\s*:\s*"unknown"/);
+  assert.doesNotMatch(server, /renderServiceName === ""\s*\|\|\s*renderServiceName === "coordinate-kml-tool"/);
 });
 
 test("configuration failures fail closed before RPC", async () => {
@@ -250,6 +258,71 @@ test("diagnostic uses only the read-only recovery-state RPC", async () => {
   await diagnostic.runOnce();
   assert.deepEqual(rpcNames, ["get_coordinate_recognition_commit_state"]);
   assert.equal(rpcNames.some(name => /prepare|commit(?!_state)/i.test(name)), false);
+});
+
+test("non-READY runtime identity gates every business method before RPC", async () => {
+  const unavailableStatuses = expectedStatuses.filter(status => status !== COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.READY);
+  for (const status of unavailableStatuses) {
+    let businessRpcCount = 0;
+    const service = new CoordinateUsageAtomicityService({
+      supabase: {
+        async rpc() {
+          businessRpcCount += 1;
+          return { data: null, error: null };
+        }
+      },
+      sealKey,
+      runtimeAvailability: () => Object.freeze({
+        status,
+        probeComplete: true,
+        databaseEnvironment: "production",
+        projectRefMatch: status !== COORDINATE_USAGE_RUNTIME_DIAGNOSTIC_STATUS.SUPABASE_PROJECT_REF_MISMATCH
+      })
+    });
+    for (const operation of [
+      () => service.prepare({}),
+      () => service.commit({}),
+      () => service.getState({}),
+      () => service.recover({})
+    ]) {
+      await assert.rejects(operation, error => error?.code === COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE);
+    }
+    assert.equal(businessRpcCount, 0, `${status} must block all business RPCs`);
+  }
+});
+
+test("incomplete, mismatched, and unknown runtime snapshots gate every business method before RPC", async () => {
+  const unavailableSnapshots = [
+    { status: "READY", probeComplete: false, databaseEnvironment: "production", projectRefMatch: true },
+    { status: "READY", probeComplete: true, databaseEnvironment: "production", projectRefMatch: false },
+    { status: "READY", probeComplete: true, databaseEnvironment: "unknown", projectRefMatch: true },
+    null
+  ];
+  for (const runtimeSnapshot of unavailableSnapshots) {
+    let businessRpcCount = 0;
+    const service = new CoordinateUsageAtomicityService({
+      supabase: { async rpc() { businessRpcCount += 1; return { data: null, error: null }; } },
+      sealKey,
+      runtimeAvailability: () => runtimeSnapshot
+    });
+    for (const operation of [
+      () => service.prepare({}),
+      () => service.commit({}),
+      () => service.getState({}),
+      () => service.recover({})
+    ]) {
+      await assert.rejects(operation, error => error?.code === COORDINATE_USAGE_ERROR_CODE.ATOMICITY_UNAVAILABLE);
+    }
+    assert.equal(businessRpcCount, 0);
+  }
+});
+
+test("server gives atomicity a guarded client and the live diagnostic gate", async () => {
+  const server = await readFile(path.join(root, "server.js"), "utf8");
+  assert.match(server, /const coordinateUsageGuardedSupabase = supabase/);
+  assert.match(server, /supabase: coordinateUsageGuardedSupabase/);
+  assert.match(server, /runtimeAvailability: \(\) => coordinateUsageRuntimeDiagnostic\.snapshot\(\)/);
+  assert.doesNotMatch(server, /new CoordinateUsageAtomicityService\(\{\s*supabase,\s*sealKey/s);
 });
 
 test("version integration exposes only fixed diagnostic fields and awaits one startup probe", async () => {
