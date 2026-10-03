@@ -17,7 +17,11 @@ Each follow-up turn must reconcile the new tool evidence with the whole-image st
 
 Never infer a missing direction, datum, coordinate reference system, grouping boundary, or digit from geography, filenames, prior examples, or expected answers. Supporting OCR is non-authoritative. Preserve source text and attach uncertainties to precise evidence regions. If material evidence remains unresolved, return a needs_review candidate and focused reviewItems. Do not authorize Map or KML; deterministic safety code decides that after validating your structured result.
 
-Return only one JSON object that conforms exactly to the supplied response schema. Do not include markdown, commentary, or properties outside that schema.`;
+Return only one JSON object that conforms exactly to the supplied response schema. Do not include markdown, commentary, or properties outside that schema.
+
+The top-level JSON object must contain observation and plan. Always include candidate, uncertainties, and reviewItems; use null or empty arrays when no value is available. observation.regions and plan.actions must always be arrays. Every region, action, uncertainty, review item, group, and point must include every field marked required by the supplied schema. Use only the supplied enum values and tool names. JSON numbers and booleans must not be quoted.
+
+For every candidate point, use latitude/longitude only for normalized signed geographic coordinates supported by explicit visible evidence. Use x/y only for projected coordinates, with x meaning easting and y meaning northing. A geographic-only point must set x and y to null; a projected-only point must set latitude and longitude to null. Do not place geographic values in x/y, do not copy projected values into latitude/longitude, and do not invent a conversion. When a projected CRS is explicitly and uniquely identified and x/y axis meaning is unambiguous, preserve the projected pair, set needsReview true, and return needs_review without adding a blocking uncertainty solely because deterministic conversion remains for the local safety layer. If the CRS family, CRS identity, axis meaning, direction, datum, grouping, or any source digit is unresolved, attach the precise blocking uncertainty and review item.`;
 
 function clone(value) {
   return structuredClone(value);
@@ -100,18 +104,33 @@ export async function buildCoordinateAgentProviderRequest({
 
 export function parseCoordinateAgentStructuredOutput(transportResponse) {
   if (!transportResponse || typeof transportResponse !== 'object' || Array.isArray(transportResponse)) {
-    throw new Error('Provider transport must return an object');
+    const error = new Error('Provider transport must return an object');
+    error.code = 'PROVIDER_ENVELOPE_INVALID';
+    error.path = 'transportResponse';
+    error.expectedType = 'object';
+    error.actualType = Array.isArray(transportResponse) ? 'array' : typeof transportResponse;
+    throw error;
   }
   const keys = Object.keys(transportResponse);
   if (keys.length !== 1 || keys[0] !== 'structuredOutput') {
-    throw new Error('Provider transport response must contain only structuredOutput');
+    const error = new Error('Provider transport response must contain only structuredOutput');
+    error.code = 'PROVIDER_ENVELOPE_INVALID';
+    error.path = 'transportResponse';
+    error.expectedType = 'structuredOutput-only object';
+    error.actualType = 'object';
+    throw error;
   }
   let output = transportResponse.structuredOutput;
   if (typeof output === 'string') {
     try {
       output = JSON.parse(output);
     } catch {
-      throw new Error('Provider structuredOutput is not valid JSON');
+      const error = new Error('Provider structuredOutput is not valid JSON');
+      error.code = 'PROVIDER_STRUCTURED_OUTPUT_INVALID_JSON';
+      error.path = 'structuredOutput';
+      error.expectedType = 'JSON object';
+      error.actualType = 'string';
+      throw error;
     }
   }
   return assertStrictCoordinateAgentTurn(output);

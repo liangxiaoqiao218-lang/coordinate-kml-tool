@@ -38,4 +38,5 @@ export const GENERIC_TOOL_NAMES = Object.freeze({
   DETECT_TABLE_STRUCTURE: 'detect_table_structure',
   COORDINATE_MATH_CHECK: 'coordinate_math_check',
   SPATIAL_CONSISTENCY_CHECK: 'spatial_consistency_check',
+  PROJECTED_COORDINATE_TRANSFORM_CHECK: 'projected_coordinate_transform_check',
 });

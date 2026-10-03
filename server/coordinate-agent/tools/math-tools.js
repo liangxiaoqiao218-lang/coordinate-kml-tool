@@ -1,4 +1,5 @@
 import { GENERIC_TOOL_NAMES } from '../constants.js';
+import { transformAndVerifyProjectedPoints } from '../../projection/projected-crs-registry.js';
 
 function checkCoordinatePair(args) {
   const latitude = args?.latitude;
@@ -39,6 +40,38 @@ export function registerCoordinateMathTools(registry) {
     description: 'Check explicit geographic pairs for mathematical validity without changing them.',
     inputSchema: { type: 'object', additionalProperties: false, required: ['points'], properties: { points: { type: 'array' } } },
     execute: spatialConsistency,
+  });
+  registry.register({
+    name: GENERIC_TOOL_NAMES.PROJECTED_COORDINATE_TRANSFORM_CHECK,
+    description: 'Transform complete projected X/Y pairs only when an explicit supported CRS and easting/northing axis contract are present, then verify inverse round-trip error.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['coordinateSystem', 'axisOrder', 'points'],
+      properties: {
+        coordinateSystem: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['name', 'epsg'],
+          properties: {
+            name: { type: ['string', 'null'] },
+            epsg: { type: ['string', 'null'] },
+          },
+        },
+        axisOrder: { type: 'string' },
+        points: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['x', 'y'],
+            properties: { x: { type: 'number' }, y: { type: 'number' } },
+          },
+        },
+      },
+    },
+    execute: transformAndVerifyProjectedPoints,
   });
   return registry;
 }
