@@ -8682,15 +8682,11 @@ Au值 = 纯度 × 10 后取整数</div>
       setSpatialSheetExpanded(!expanded);
     }
 
-    function spatialCollapsedSummaryText(preview, facts) {
+    function getSpatialDisplayPointCount(preview, facts) {
       const pointCount = Number.isFinite(facts?.pointCount) ? facts.pointCount : getSpatialPositions(preview?.geometry).length;
-      if (preview?.geometryType === "Point") return `${pointCount || 1}点`;
-      if (preview?.geometryType === "MultiPoint") return `点位核对 · ${pointCount}点（非矿区边界）`;
-      if (preview?.geometryType === "LineString") {
-        const length = formatSpatialMeters(facts?.lengthMeters) || "线段";
-        return `${length} · ${pointCount}点`;
-      }
       if (preview?.geometryType === "Polygon" || preview?.geometryType === "MultiPolygon") {
+        // Display only: retain the summary's outer-boundary vertex convention.
+        // Closing duplicates are not additional points; never mutate geometry.
         const polygonRings = preview?.geometryType === "Polygon"
           ? [preview?.geometry?.coordinates?.[0]]
           : (preview?.geometry?.coordinates || []).map(polygon => polygon?.[0]);
@@ -8701,11 +8697,25 @@ Au值 = 纯度 × 10 后取整数</div>
             : ring;
           return total + new Set(openRing.map(position => JSON.stringify(position))).size;
         }, 0);
+        return boundaryPointCount || pointCount;
+      }
+      return pointCount;
+    }
+
+    function spatialCollapsedSummaryText(preview, facts) {
+      const pointCount = getSpatialDisplayPointCount(preview, facts);
+      if (preview?.geometryType === "Point") return `${pointCount || 1}点`;
+      if (preview?.geometryType === "MultiPoint") return `点位核对 · ${pointCount}点（非矿区边界）`;
+      if (preview?.geometryType === "LineString") {
+        const length = formatSpatialMeters(facts?.lengthMeters) || "线段";
+        return `${length} · ${pointCount}点`;
+      }
+      if (preview?.geometryType === "Polygon" || preview?.geometryType === "MultiPolygon") {
         if (spatialHasBoundaryReviewWarning(preview)) {
-          return `矿区轮廓待核对 · ${boundaryPointCount}点`;
+          return `矿区轮廓待核对 · ${pointCount}点`;
         }
         const area = formatSpatialCollapsedArea(facts?.areaMeters2) || "区域";
-        return `${area} · ${boundaryPointCount || pointCount}点`;
+        return `${area} · ${pointCount}点`;
       }
       return `${preview?.geometryType || "Geometry"} · ${pointCount}点`;
     }
@@ -8788,9 +8798,7 @@ Au值 = 纯度 × 10 后取整数</div>
       spatialLengthFact.hidden = !Number.isFinite(linearValue);
       spatialLengthLabel.textContent = Number.isFinite(facts?.perimeterMeters) ? "周长" : "长度";
       spatialLengthValue.textContent = formatSpatialMeters(linearValue);
-      const pointCount = Number.isFinite(facts?.pointCount)
-        ? facts.pointCount
-        : getSpatialPositions(preview?.geometry).length;
+      const pointCount = getSpatialDisplayPointCount(preview, facts);
       spatialPointCount.textContent = `${pointCount} 个`;
       const centroid = Array.isArray(facts?.centroid) && facts.centroid.length >= 2
         && Number.isFinite(facts.centroid[0]) && Number.isFinite(facts.centroid[1])
