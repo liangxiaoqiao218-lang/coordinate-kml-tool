@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 export const INDONESIA_STRUCTURED_B_RC = Object.freeze({
   mode: "indonesia_utm50s_structured_b",
   batchId: "indonesia-ab-20261010-v1",
-  runId: "indonesia-b-rc-enablement-20261010-01",
+  runId: "indonesia-b-rc-enablement-20261010-02",
   imageSha256: "41f2b2117667fb92f6a4eb703822b1893e29c985be2e14f7b20fbda103b66cf2",
   rcProjectRef: "thjojitdafxfarhxhoyo",
   rcServiceName: "coordinate-kml-tool-rc",
