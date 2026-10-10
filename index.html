@@ -1092,6 +1092,40 @@
       pointer-events: none;
     }
 
+    .coordinate-product-candidate-control {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      max-width: 520px;
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid rgba(37, 99, 235, 0.24);
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .coordinate-product-candidate-control[hidden] {
+      display: none;
+    }
+
+    .coordinate-product-candidate-control input {
+      width: auto;
+      min-height: 0;
+      margin: 2px 0 0;
+      flex: 0 0 auto;
+    }
+
+    .coordinate-product-candidate-control label {
+      margin: 0;
+      color: inherit;
+      font-size: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
     .compact-upload-box {
       max-height: none;
       overflow: visible;
@@ -5451,6 +5485,12 @@
                 <span class="coordinate-upload-subtitle">点击选择坐标图片</span>
               </label>
               <input id="imageInput" class="coordinate-file-input" type="file" accept="image/*" />
+              <div id="indonesiaStructuredProductModeControl" class="coordinate-product-candidate-control" hidden>
+                <input id="indonesiaStructuredProductMode" type="checkbox" />
+                <label for="indonesiaStructuredProductMode">
+                  内部候选：使用 UTM 50S 结构化 B 路径（仅明确适用的印度尼西亚坐标表）
+                </label>
+              </div>
               <div id="imagePreview" class="image-preview"></div>
               <div id="uploadMessage" class="upload-message"></div>
             </div>
@@ -5969,6 +6009,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
   <script>
     const APP_VERSION = "v1.0.2";
+    const INDONESIA_STRUCTURED_PRODUCT_MODE = "indonesia_utm50s_structured_b";
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
@@ -5978,6 +6019,8 @@ Au值 = 纯度 × 10 后取整数</div>
     const cadastralGridBadge = document.getElementById("cadastralGridBadge");
     const cadastralGridSelection = document.getElementById("cadastralGridSelection");
     const imageInput = document.getElementById("imageInput");
+    const indonesiaStructuredProductModeControl = document.getElementById("indonesiaStructuredProductModeControl");
+    const indonesiaStructuredProductMode = document.getElementById("indonesiaStructuredProductMode");
     const message = document.getElementById("message");
     const toast = document.getElementById("toast");
     const uploadMessage = document.getElementById("uploadMessage");
@@ -6127,6 +6170,11 @@ Au值 = 纯度 × 10 后取整数</div>
         manualSupportEnabled: true,
         aiJudgeEnabled: true,
         goldCalculatorEnabled: true
+      },
+      coordinateProductCandidates: {
+        indonesiaUtm50StructuredB: {
+          available: false
+        }
       }
     };
     const historyStack = [];
@@ -6841,8 +6889,35 @@ Au值 = 纯度 × 10 后取整数</div>
         && appConfig?.featureFlags?.goldCalculatorEnabled !== false;
     }
 
+    function isIndonesiaStructuredProductModeAvailable(config = appConfig) {
+      return config?.coordinateProductCandidates?.indonesiaUtm50StructuredB?.available === true;
+    }
+
+    function resolveIndonesiaStructuredProductMode({
+      available = isIndonesiaStructuredProductModeAvailable(),
+      selected = indonesiaStructuredProductMode?.checked === true
+    } = {}) {
+      return available && selected ? INDONESIA_STRUCTURED_PRODUCT_MODE : "";
+    }
+
+    function appendIndonesiaStructuredProductMode(formData, options = {}) {
+      const requestedMode = resolveIndonesiaStructuredProductMode(options);
+      if (requestedMode) formData.append("coordinateProductMode", requestedMode);
+      return requestedMode;
+    }
+
     function applyFeatureAvailability() {
       const goldEnabled = isGoldCalculatorEnabled();
+      const indonesiaStructuredModeAvailable = isIndonesiaStructuredProductModeAvailable();
+
+      if (indonesiaStructuredProductModeControl) {
+        indonesiaStructuredProductModeControl.hidden = !indonesiaStructuredModeAvailable;
+      }
+
+      if (indonesiaStructuredProductMode) {
+        if (!indonesiaStructuredModeAvailable) indonesiaStructuredProductMode.checked = false;
+        indonesiaStructuredProductMode.disabled = !indonesiaStructuredModeAvailable;
+      }
 
       if (homeGoldEntry) {
         homeGoldEntry.hidden = !goldEnabled;
@@ -16457,6 +16532,7 @@ ${placemarks}
       }
 
       imageInput.disabled = true;
+      if (indonesiaStructuredProductMode) indonesiaStructuredProductMode.disabled = true;
       supportPanel.style.display = "none";
       clearUploadMessage();
       activeCoordinatePrecisionMode = "";
@@ -16525,6 +16601,7 @@ ${placemarks}
           formData.append("image", file);
           formData.append("visitorId", currentVisitorId);
           formData.append("userCode", userCode);
+          appendIndonesiaStructuredProductMode(formData);
           appendDebug("正在查找坐标区域…");
           showMessage("正在调用识别接口……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
           showRecognitionProgress("正在识别坐标...", "loading");
@@ -17084,6 +17161,9 @@ ${placemarks}
       } finally {
         setDebugRunning(false);
         imageInput.disabled = false;
+        if (indonesiaStructuredProductMode) {
+          indonesiaStructuredProductMode.disabled = !isIndonesiaStructuredProductModeAvailable();
+        }
         if (!preserveSelectedImageAfterStop) imageInput.value = "";
       }
     }

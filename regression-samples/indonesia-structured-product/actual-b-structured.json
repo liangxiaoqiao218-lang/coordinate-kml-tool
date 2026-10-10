@@ -1,0 +1,36 @@
+{
+  "source": {
+    "title": "KOORDINAT IPR KOPERASI BADAN A",
+    "coordinateSystemExplicit": "UTM WGS 1984 ZONA 50S",
+    "datumExplicit": null,
+    "pointOrder": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"],
+    "points": [
+      { "id": "1", "order": 1, "xRaw": "778807,293", "yRaw": "9721476,737", "latitudeRaw": "2° 31' 2,805\" S", "longitudeRaw": "119° 30' 25,820\" E" },
+      { "id": "2", "order": 2, "xRaw": "778981,768", "yRaw": "9721477,288", "latitudeRaw": "2° 31' 2,776\" S", "longitudeRaw": "119° 30' 31,465\" E" },
+      { "id": "3", "order": 3, "xRaw": "778982,700", "yRaw": "9721182,351", "latitudeRaw": "2° 31' 12,373\" S", "longitudeRaw": "119° 30' 31,513\" E" },
+      { "id": "4", "order": 4, "xRaw": "778855,308", "yRaw": "9721181,948", "latitudeRaw": "2° 31' 12,394\" S", "longitudeRaw": "119° 30' 27,392\" E" },
+      { "id": "5", "order": 5, "xRaw": "778855,543", "yRaw": "9721107,284", "latitudeRaw": "2° 31' 14,823\" S", "longitudeRaw": "119° 30' 27,404\" E" },
+      { "id": "6", "order": 6, "xRaw": "778980,724", "yRaw": "9721107,010", "latitudeRaw": "2° 31' 14,824\" S", "longitudeRaw": "119° 30' 31,454\" E" },
+      { "id": "7", "order": 7, "xRaw": "778980,920", "yRaw": "9720910,990", "latitudeRaw": "2° 31' 21,202\" S", "longitudeRaw": "119° 30' 31,473\" E" },
+      { "id": "8", "order": 8, "xRaw": "779100,477", "yRaw": "9720911,109", "latitudeRaw": "2° 31' 21,191\" S", "longitudeRaw": "119° 30' 35,340\" E" },
+      { "id": "9", "order": 9, "xRaw": "779100,599", "yRaw": "9720788,271", "latitudeRaw": "2° 31' 25,188\" S", "longitudeRaw": "119° 30' 35,352\" E" },
+      { "id": "10", "order": 10, "xRaw": "778950,926", "yRaw": "9720787,948", "latitudeRaw": "2° 31' 25,208\" S", "longitudeRaw": "119° 30' 30,510\" E" },
+      { "id": "11", "order": 11, "xRaw": "778950,926", "yRaw": "9720833,787", "latitudeRaw": "2° 31' 23,716\" S", "longitudeRaw": "119° 30' 30,507\" E" },
+      { "id": "12", "order": 12, "xRaw": "778927,907", "yRaw": "9720833,787", "latitudeRaw": "2° 31' 23,718\" S", "longitudeRaw": "119° 30' 29,762\" E" },
+      { "id": "13", "order": 13, "xRaw": "778927,907", "yRaw": "9720922,219", "latitudeRaw": "2° 31' 20,840\" S", "longitudeRaw": "119° 30' 29,757\" E" },
+      { "id": "14", "order": 14, "xRaw": "778906,895", "yRaw": "9720922,219", "latitudeRaw": "2° 31' 20,842\" S", "longitudeRaw": "119° 30' 29,077\" E" },
+      { "id": "15", "order": 15, "xRaw": "778906,895", "yRaw": "9721078,633", "latitudeRaw": "2° 31' 15,752\" S", "longitudeRaw": "119° 30' 29,067\" E" },
+      { "id": "16", "order": 16, "xRaw": "778807,082", "yRaw": "9721078,633", "latitudeRaw": "2° 31' 15,758\" S", "longitudeRaw": "119° 30' 25,838\" E" }
+    ]
+  },
+  "objects": [
+    {
+      "objectId": "obj_1",
+      "displayName": "RENCANA IPR KOPERASI BADAN A (9,24 Ha)",
+      "geometryType": "Polygon",
+      "outerRing": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"],
+      "innerRings": []
+    }
+  ],
+  "unresolvedItems": []
+}

@@ -140,6 +140,20 @@ import {
   createLocalOcrClassificationImage
 } from "./server/recognition/projected-source-evidence.js";
 import { bindProviderRepresentationsToSource } from "./server/recognition/multi-representation-source-evidence.js";
+import {
+  CAPABILITY as INDONESIA_STRUCTURED_PRODUCT_CAPABILITY,
+  MODEL as INDONESIA_STRUCTURED_PRODUCT_MODEL,
+  STRUCTURED_RESULT_STATUS as INDONESIA_STRUCTURED_PROVIDER_STATUS,
+  buildCoordinateStructuredCall,
+  classifyCoordinateStructuredProviderResult
+} from "./server/recognition/qwen38-coordinate-structured-adapter.mjs";
+import {
+  INDONESIA_STRUCTURED_PRODUCT_MODE,
+  INDONESIA_STRUCTURED_PRODUCT_STATUS,
+  INDONESIA_STRUCTURED_ROUTE_STATUS,
+  buildIndonesiaStructuredProductBridge,
+  selectIndonesiaStructuredProductRoute
+} from "./server/recognition/indonesia-structured-product-bridge.js";
 import { createRecognitionDiagnosticSession, authorizationDiagnosticBody } from "./server/recognition/recognition-diagnostics.js";
 import {
   buildRecognitionAcquisitionLogSummary,
@@ -240,6 +254,9 @@ const aliyunApiKey = process.env.ALIYUN_API_KEY || process.env.DASHSCOPE_API_KEY
 const aliyunBaseURL = process.env.ALIYUN_BASE_URL || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || "qwen3.8-flash";
 const aliyunOcrModel = process.env.ALIYUN_OCR_MODEL || process.env.DASHSCOPE_OCR_MODEL || "qwen-vl-ocr-latest";
+const indonesiaStructuredProductEnabled = process.env.INDONESIA_STRUCTURED_B_PRODUCT_ENABLED === "true";
+const indonesiaStructuredProductUiAvailable = process.env.NODE_ENV !== "production"
+  && indonesiaStructuredProductEnabled;
 const agenticCoordinateApi = createAgenticCoordinateApi({
   modelName: aliyunVisionModel,
   providerCall: request => callAliyunVision(request)
@@ -11393,7 +11410,12 @@ app.get("/api/config", async (req, res) => {
         authoritativeUser ? buildUsageQuotaPayload(authoritativeUser) : null
       ),
       featureFlags: data.featureFlags,
-      permissions: getEffectivePermissions(user, data.featureFlags)
+      permissions: getEffectivePermissions(user, data.featureFlags),
+      coordinateProductCandidates: {
+        indonesiaUtm50StructuredB: {
+          available: indonesiaStructuredProductUiAvailable
+        }
+      }
     });
   } catch (error) {
     console.error(error);
@@ -17162,6 +17184,120 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           url: image.dataUrl
         }
       }));
+    const requestedStructuredProductMode = String(
+      req.get("x-coordinate-product-mode") || req.body?.coordinateProductMode || ""
+    ).trim();
+    const indonesiaStructuredRoute = selectIndonesiaStructuredProductRoute({
+      enabled: indonesiaStructuredProductEnabled,
+      requestedMode: requestedStructuredProductMode,
+      sourceContextText: oneShotLocalOcrSourceContextText
+    });
+    const buildIndonesiaStructuredFailureResponse = ({ reasonCode, warning }) => {
+      const failurePayload = {
+        success: false,
+        reason: "indonesia_structured_product_review_required",
+        code: reasonCode,
+        model: INDONESIA_STRUCTURED_PRODUCT_MODEL,
+        rawText: "",
+        coordinates: "",
+        precisionMode: "indonesia-utm50s-structured-projected",
+        requiresReview: true,
+        warning,
+        structuredProductMode: INDONESIA_STRUCTURED_PRODUCT_MODE,
+        structuredProductRouteStatus: indonesiaStructuredRoute.status,
+        parserTrace: [
+          "INDONESIA_STRUCTURED_PRODUCT:selected",
+          `INDONESIA_STRUCTURED_PRODUCT:${reasonCode}`,
+          "INDONESIA_STRUCTURED_PRODUCT:no_fallback"
+        ]
+      };
+      const failedEngine = buildCoordinateEngineV2ShadowResult(failurePayload, {
+        lockedCoordinateType: "indonesia_utm50_projected",
+        forceRequiresReview: true,
+        rawHint: ""
+      });
+      return buildCoordinateVerificationResponse(failurePayload, failedEngine);
+    };
+    if (requestedStructuredProductMode === INDONESIA_STRUCTURED_PRODUCT_MODE
+      && indonesiaStructuredRoute.status === INDONESIA_STRUCTURED_ROUTE_STATUS.BLOCKED) {
+      return res.status(422).json(buildIndonesiaStructuredFailureResponse({
+        reasonCode: indonesiaStructuredRoute.reasonCode,
+        warning: "结构化 B 路径未满足启用或原图证据门禁；未调用其他模型，也未回退到旧 OCR。"
+      }));
+    }
+    if (indonesiaStructuredRoute.status === INDONESIA_STRUCTURED_ROUTE_STATUS.SELECTED) {
+      recognitionBudget?.setAcquisitionRouteReason("INDONESIA_STRUCTURED_B_PRODUCT");
+      let structuredProviderResponse;
+      try {
+        structuredProviderResponse = await callAliyunVision(buildCoordinateStructuredCall({
+          imageItems,
+          stageName: "indonesia_structured_b"
+        }));
+      } catch (error) {
+        if (isRecognitionStopError(error)) throw error;
+        return res.status(503).json(buildIndonesiaStructuredFailureResponse({
+          reasonCode: error?.code || "INDONESIA_STRUCTURED_PROVIDER_UNAVAILABLE",
+          warning: "结构化 B Provider 调用未完成；本路径不重试，也不调用旧 OCR 或其他模型。"
+        }));
+      }
+      stage1ProviderSucceeded = true;
+      if (
+        regressionTestMode.active
+        && String(req.get("x-coordinate-regression-failure") || "").trim()
+          === "INDONESIA_STRUCTURED_POST_PROVIDER_INTERNAL_FAILURE"
+      ) {
+        throw new Error("REGRESSION_INDONESIA_STRUCTURED_POST_PROVIDER_INTERNAL_FAILURE");
+      }
+      const structuredExtractedText = extractProviderMessageText(structuredProviderResponse);
+      const structuredProviderResult = classifyCoordinateStructuredProviderResult({
+        selectedCapability: INDONESIA_STRUCTURED_PRODUCT_CAPABILITY,
+        response: structuredProviderResponse,
+        extractedText: structuredExtractedText
+      });
+      if (structuredProviderResult.status !== INDONESIA_STRUCTURED_PROVIDER_STATUS.VALID) {
+        return res.status(422).json(buildIndonesiaStructuredFailureResponse({
+          reasonCode: structuredProviderResult.reasonCode || "INDONESIA_STRUCTURED_PROVIDER_CONTRACT_INVALID",
+          warning: "结构化 B 响应未通过严格合同；本路径不修复输出、不重试，也不回退到旧 OCR。"
+        }));
+      }
+      const structuredBridge = buildIndonesiaStructuredProductBridge(structuredProviderResult.structured);
+      if (structuredBridge.status !== INDONESIA_STRUCTURED_PRODUCT_STATUS.ACCEPTED_REVIEW_REQUIRED) {
+        return res.status(422).json(buildIndonesiaStructuredFailureResponse({
+          reasonCode: structuredBridge.reasonCode || "INDONESIA_STRUCTURED_DETERMINISTIC_VALIDATION_FAILED",
+          warning: "结构化 B 结果未通过确定性 CRS、点序、拓扑或转换校验；不生成当前结果的地图或 KML。"
+        }));
+      }
+      const consumeResult = await consumeCoordinateUsage({
+        note: "Coordinate recognition consumed after scoped Indonesia structured B validation"
+      });
+      if (!consumeResult.success) {
+        return res.status(consumeResult.reason === "limit_exceeded" ? 403 : 500).json({
+          success: false,
+          reason: consumeResult.reason || "db_error",
+          code: consumeResult.reason === "limit_exceeded" ? getQuotaExhaustedCode("convert") : undefined,
+          error: consumeResult.reason === "limit_exceeded" ? "CONVERT_QUOTA_EXHAUSTED" : "CONVERT_QUOTA_CONSUME_FAILED",
+          rawText: "",
+          coordinates: ""
+        });
+      }
+      const structuredPayload = {
+        success: true,
+        recognitionFileName: uploadedFileName,
+        model: `${INDONESIA_STRUCTURED_PRODUCT_MODEL}+structured-product-bridge`,
+        ...structuredBridge.payload,
+        structuredProductMode: INDONESIA_STRUCTURED_PRODUCT_MODE,
+        structuredProductRouteStatus: indonesiaStructuredRoute.status,
+        structuredProviderAuthority: structuredProviderResult.authority,
+        quota: consumeResult.quota
+      };
+      const structuredEngine = buildCoordinateEngineV2ShadowResult(structuredPayload, {
+        fileName: uploadedFileName,
+        lockedCoordinateType: "indonesia_utm50_projected",
+        forceRequiresReview: true,
+        rawHint: oneShotLocalOcrSourceContextText
+      });
+      return res.json(buildCoordinateVerificationResponse(structuredPayload, structuredEngine));
+    }
     const selectedProviderPrompt = buildRecognitionFirstPromptPrefix(recognitionImageAcquisition)
       + buildOneShotStructuredFamilyPrompt({
         family: ONE_SHOT_STRUCTURED_FAMILY.GENERIC_REVIEW,
