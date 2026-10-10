@@ -172,6 +172,10 @@ import {
   CoordinateThreeCaseRcAdmissionError,
   createCoordinateThreeCaseRcAdmission
 } from "./server/recognition/coordinate-three-case-rc-admission.js";
+import {
+  createCoordinateThreeCaseRcInternalBindingMiddleware,
+  createCoordinateThreeCaseRcJobForwarder
+} from "./server/recognition/coordinate-three-case-rc-runtime.js";
 import { createRecognitionDiagnosticSession, authorizationDiagnosticBody } from "./server/recognition/recognition-diagnostics.js";
 import {
   buildRecognitionAcquisitionLogSummary,
@@ -21914,67 +21918,14 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
 
 const recognitionAcquisitionJobRuntime = createRecognitionAcquisitionJobRuntime({
   maxJobs: 8,
-  execute: async (input, { jobId } = {}) => {
-    const indonesiaStructuredRcJob = indonesiaStructuredBRcAdmission.config.ready
-      && input.body?.coordinateProductMode === INDONESIA_STRUCTURED_B_RC.mode;
-    const terminateUnsettledClaim = async () => {
-      if (!indonesiaStructuredRcJob) return;
-      try {
-        await indonesiaStructuredBRcAdmission.terminatePreProviderClaim({
-          recognitionRequestId: input.requestId,
-          authorization: input.forwardHeaders?.authorization
-        });
-      } catch {
-        // A dispatched or already-settled claim remains governed by its authoritative terminal state.
-      }
-    };
-    const terminateThreeCaseClaim = async () => {
-      if (!coordinateThreeCaseRcAdmission.config.guardRequired) return;
-      try {
-        await coordinateThreeCaseRcAdmission.terminatePreProviderClaim({
-          caseId: input.forwardHeaders?.["x-coordinate-rc-case-id"],
-          productMode: input.body?.coordinateProductMode,
-          recognitionRequestId: input.requestId,
-          imageBuffer: input.file.buffer,
-          authorization: input.forwardHeaders?.authorization
-        });
-      } catch {
-        // A dispatched or already-settled claim remains governed by its authoritative terminal state.
-      }
-    };
-    const form = new FormData();
-    form.append("image", new Blob([input.file.buffer], { type: input.file.mimetype }), input.file.originalname);
-    for (const [key, value] of Object.entries(input.body || {})) {
-      if (typeof value === "string") form.append(key, value);
-    }
-    let response;
-    try {
-      response = await fetch(`http://127.0.0.1:${port}/api/internal/recognize-coordinates-long`, {
-        method: "POST",
-        headers: {
-          ...input.forwardHeaders,
-          "x-recognition-async-internal-token": recognitionAsyncInternalToken,
-          "x-recognition-job-id": jobId
-        },
-        body: form
-      });
-    } catch (error) {
-      await terminateUnsettledClaim();
-      await terminateThreeCaseClaim();
-      throw error;
-    }
-    const result = await response.json().catch(() => ({
-      success: false,
-      reason: "async_response_invalid",
-      rawText: "",
-      coordinates: ""
-    }));
-    if (!response.ok) {
-      await terminateUnsettledClaim();
-      await terminateThreeCaseClaim();
-    }
-    return { httpStatus: response.status, result };
-  }
+  execute: createCoordinateThreeCaseRcJobForwarder({
+    fetchImpl: fetch,
+    getPort: () => port,
+    internalToken: recognitionAsyncInternalToken,
+    coordinateThreeCaseRcAdmission,
+    indonesiaStructuredBRcAdmission,
+    indonesiaProductMode: INDONESIA_STRUCTURED_B_RC.mode
+  })
 });
 
 app.post(
@@ -22005,34 +21956,10 @@ app.post(
     lowValueFallbackCutoffMs: 145_000
   }),
   upload.single("image"),
-  async (req, res, next) => {
-    req.coordinateThreeCaseRcAsyncAuthorized = true;
-    if (!coordinateThreeCaseRcAdmission.config.guardRequired) return next();
-    const budget = getRecognitionBudget();
-    try {
-      coordinateThreeCaseRcAdmission.bindBudget({
-        budget,
-        caseId: req.get("x-coordinate-rc-case-id"),
-        productMode: req.body?.coordinateProductMode,
-        recognitionRequestId: req.get("x-recognition-request-id"),
-        imageBuffer: req.file?.buffer,
-        authorization: req.get("authorization")
-      });
-      return next();
-    } catch (error) {
-      await coordinateThreeCaseRcAdmission.terminatePreProviderClaim({
-        caseId: req.get("x-coordinate-rc-case-id"),
-        productMode: req.body?.coordinateProductMode,
-        recognitionRequestId: req.get("x-recognition-request-id"),
-        imageBuffer: req.file?.buffer,
-        authorization: req.get("authorization")
-      }).catch(() => {});
-      return res.status(error?.httpStatus || 503).json({
-        success: false,
-        reason: error?.code || "COORDINATE_THREE_CASE_RC_BINDING_FAILED"
-      });
-    }
-  },
+  createCoordinateThreeCaseRcInternalBindingMiddleware({
+    admission: coordinateThreeCaseRcAdmission,
+    activateDeadlineContext: activateRecognitionDeadlineContext
+  }),
   recognizeCoordinatesHandler
 );
 

@@ -4,7 +4,7 @@
 
 This release candidate adds the already-reviewed `qwen3.8-flash` image-recognition adapter and a one-window RC admission layer for exactly three frozen images: Indonesia UTM50S, MGRS and BFTM. It does not enable Production, MapTiler, PDF upload, reverse KML import, UI redesign, model-comparison administration or a new map provider.
 
-The current window is `coordinate-three-case-rc-20261011-r3`. The closed R1 and R2 runs remain closed. R3 changes only the run/batch/database binding and the local white-listed result artifact needed to preserve the single authorized execution result without another model call.
+The current window is `coordinate-three-case-rc-20261011-r4`. The closed R1, R2 and R3 runs remain closed. R4 changes only the run/batch/database binding plus the request-owned recognition-budget context correction required after the R3 pre-Provider failure. The local white-listed result artifact continues to preserve the single authorized execution result without another model call.
 
 The ordinary image path remains one-shot. Direct OCR calls and automatic model retries are both zero. The shared Provider boundary rejects every dispatch that is not bound to a current RC claim, the exact image digest, the exact case, the exact model and the active database run.
 

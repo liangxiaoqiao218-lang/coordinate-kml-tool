@@ -10,8 +10,8 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-client-preflight.ps1')
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-result-artifact.ps1')
-$runId = 'coordinate-three-case-rc-20261011-r3'
-$batchId = 'coordinate-three-case-rc-20261011-v3'
+$runId = 'coordinate-three-case-rc-20261011-r4'
+$batchId = 'coordinate-three-case-rc-20261011-v4'
 $expectedModel = 'qwen3.8-flash'
 $caseDefinitions = @(
   [ordered]@{ caseId = 'indonesia'; imageSha256 = '41f2b2117667fb92f6a4eb703822b1893e29c985be2e14f7b20fbda103b66cf2'; productMode = 'indonesia_utm50s_structured_b'; path = $IndonesiaImagePath },

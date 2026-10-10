@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "batchId": "coordinate-three-case-rc-20261011-v3",
-  "runId": "coordinate-three-case-rc-20261011-r3",
+  "batchId": "coordinate-three-case-rc-20261011-v4",
+  "runId": "coordinate-three-case-rc-20261011-r4",
   "projectRef": "thjojitdafxfarhxhoyo",
   "serviceName": "coordinate-kml-tool-rc",
   "model": "qwen3.8-flash",

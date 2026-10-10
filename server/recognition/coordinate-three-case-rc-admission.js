@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 
 export const COORDINATE_THREE_CASE_RC = Object.freeze({
-  batchId: "coordinate-three-case-rc-20261011-v3",
-  runId: "coordinate-three-case-rc-20261011-r3",
-  manifestSha256: "f511490c8e0b28d18dfd1867a2d50c28890e6011065c9b478bd01fd3ba04b7fe",
+  batchId: "coordinate-three-case-rc-20261011-v4",
+  runId: "coordinate-three-case-rc-20261011-r4",
+  manifestSha256: "b5c0cee06a5c9b42a4cba17f7cf01b503aebac9b569537685baf2957a33d47d5",
   rcProjectRef: "thjojitdafxfarhxhoyo",
   rcServiceName: "coordinate-kml-tool-rc",
   providerHostname: "dashscope.aliyuncs.com",
@@ -360,6 +360,9 @@ export function createCoordinateThreeCaseRcAdmission({
     if (!config.guardRequired) return Object.freeze({ bound: false, reason: "DISABLED" });
     if (!budget || typeof budget !== "object") fail("COORDINATE_THREE_CASE_RC_BUDGET_REQUIRED", 503);
     const preflight = preflightJob(input);
+    if (safeUuid(budget.requestId) !== preflight.requestId) {
+      fail("COORDINATE_THREE_CASE_RC_BUDGET_CONTEXT_MISMATCH", 503);
+    }
     const existing = sessions.get(budget);
     if (existing) {
       if (existing.caseId !== preflight.caseId || existing.requestId !== preflight.requestId) {
