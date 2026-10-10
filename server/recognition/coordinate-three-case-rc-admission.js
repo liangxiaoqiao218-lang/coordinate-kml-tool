@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 
 export const COORDINATE_THREE_CASE_RC = Object.freeze({
-  batchId: "coordinate-three-case-rc-20261011-v1",
-  runId: "coordinate-three-case-rc-20261011-r1",
-  manifestSha256: "0485cf93fe4c43695ea34f803595a704ca8a27b81978fc4a3436edd9013e255f",
+  batchId: "coordinate-three-case-rc-20261011-v2",
+  runId: "coordinate-three-case-rc-20261011-r2",
+  manifestSha256: "e599042500ab487eba207b17d95900d7906f7434e56c5ce0e896476ce50af8ae",
   rcProjectRef: "thjojitdafxfarhxhoyo",
   rcServiceName: "coordinate-kml-tool-rc",
   providerHostname: "dashscope.aliyuncs.com",

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "batchId": "coordinate-three-case-rc-20261011-v1",
-  "runId": "coordinate-three-case-rc-20261011-r1",
+  "batchId": "coordinate-three-case-rc-20261011-v2",
+  "runId": "coordinate-three-case-rc-20261011-r2",
   "projectRef": "thjojitdafxfarhxhoyo",
   "serviceName": "coordinate-kml-tool-rc",
   "model": "qwen3.8-flash",
@@ -37,6 +37,7 @@
     }
   ],
   "nonIndonesiaBudget": {
+    "historicalBatchId": "coordinate-three-case-rc-20261011-v1",
     "caseIds": ["mgrs", "bftm"],
     "maxDispatched": 2,
     "totalCostLimitCny": 2,
