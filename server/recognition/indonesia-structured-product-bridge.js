@@ -42,7 +42,8 @@ function normalizeCrs(value) {
 export function selectIndonesiaStructuredProductRoute({
   enabled = false,
   requestedMode = "",
-  sourceContextText = ""
+  sourceContextText = "",
+  controlledRcProjectedColumnsHintAuthorized = false
 } = {}) {
   const requested = text(requestedMode);
   if (requested !== INDONESIA_STRUCTURED_PRODUCT_MODE) {
@@ -54,17 +55,22 @@ export function selectIndonesiaStructuredProductRoute({
   const context = normalizeCrs(sourceContextText);
   const explicitUtm50s = /(?:UTM\s+WGS\s*1984[^\r\n]{0,80}(?:ZONA|ZONE)\s*50\s*S|EPSG\s*:?\s*32750)/u.test(context);
   const projectedColumns = /(?:\bX\b[^\r\n]{0,60}\bY\b|\bEASTING\b[^\r\n]{0,60}\bNORTHING\b)/u.test(context);
-  if (!explicitUtm50s || !projectedColumns) {
+  const projectedColumnsHintOnly = !projectedColumns && controlledRcProjectedColumnsHintAuthorized === true;
+  if (!explicitUtm50s || (!projectedColumns && !projectedColumnsHintOnly)) {
     return Object.freeze({
       status: INDONESIA_STRUCTURED_ROUTE_STATUS.BLOCKED,
       reasonCode: "STRUCTURED_PRODUCT_SOURCE_EVIDENCE_REQUIRED",
-      evidence: Object.freeze({ explicitUtm50s, projectedColumns })
+      evidence: Object.freeze({ explicitUtm50s, projectedColumns, projectedColumnsHintOnly: false })
     });
   }
   return Object.freeze({
     status: INDONESIA_STRUCTURED_ROUTE_STATUS.SELECTED,
     reasonCode: null,
-    evidence: Object.freeze({ explicitUtm50s: true, projectedColumns: true })
+    evidence: Object.freeze({
+      explicitUtm50s: true,
+      projectedColumns,
+      projectedColumnsHintOnly
+    })
   });
 }
 

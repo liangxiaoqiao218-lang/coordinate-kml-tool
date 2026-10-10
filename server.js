@@ -17239,10 +17239,25 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         usage
       });
     };
+    let controlledRcProjectedColumnsHintAuthorized = false;
+    if (indonesiaStructuredRcSelected && req.indonesiaStructuredRcAsyncAuthorized === true) {
+      try {
+        indonesiaStructuredBRcAdmission.preflightJob({
+          mode: requestedStructuredProductMode,
+          recognitionRequestId: indonesiaStructuredRcRequestId,
+          imageBuffer: indonesiaStructuredRcOriginalImageBuffer,
+          authorization: indonesiaStructuredRcAuthorization
+        });
+        controlledRcProjectedColumnsHintAuthorized = true;
+      } catch {
+        // Keep the original source-evidence gate authoritative for any unverified request.
+      }
+    }
     const indonesiaStructuredRoute = selectIndonesiaStructuredProductRoute({
       enabled: indonesiaStructuredProductEnabled,
       requestedMode: requestedStructuredProductMode,
-      sourceContextText: oneShotLocalOcrSourceContextText
+      sourceContextText: oneShotLocalOcrSourceContextText,
+      controlledRcProjectedColumnsHintAuthorized
     });
     const buildIndonesiaStructuredFailureResponse = ({ reasonCode, warning }) => {
       const failurePayload = {
