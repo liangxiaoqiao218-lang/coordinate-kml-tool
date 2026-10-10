@@ -49,26 +49,44 @@ export function selectIndonesiaStructuredProductRoute({
   if (requested !== INDONESIA_STRUCTURED_PRODUCT_MODE) {
     return Object.freeze({ status: INDONESIA_STRUCTURED_ROUTE_STATUS.NOT_SELECTED, reasonCode: null });
   }
-  if (enabled !== true) {
-    return Object.freeze({ status: INDONESIA_STRUCTURED_ROUTE_STATUS.BLOCKED, reasonCode: "STRUCTURED_PRODUCT_FEATURE_DISABLED" });
-  }
   const context = normalizeCrs(sourceContextText);
   const explicitUtm50s = /(?:UTM\s+WGS\s*1984[^\r\n]{0,80}(?:ZONA|ZONE)\s*50\s*S|EPSG\s*:?\s*32750)/u.test(context);
   const projectedColumns = /(?:\bX\b[^\r\n]{0,60}\bY\b|\bEASTING\b[^\r\n]{0,60}\bNORTHING\b)/u.test(context);
   const projectedColumnsHintOnly = !projectedColumns && controlledRcProjectedColumnsHintAuthorized === true;
+  if (enabled !== true) {
+    return Object.freeze({
+      status: INDONESIA_STRUCTURED_ROUTE_STATUS.BLOCKED,
+      reasonCode: "STRUCTURED_PRODUCT_FEATURE_DISABLED",
+      evidence: Object.freeze({
+        sourceContextPresent: text(sourceContextText).length > 0,
+        explicitUtm50s,
+        projectedColumns,
+        controlledRcProjectedColumnsHintAuthorized: controlledRcProjectedColumnsHintAuthorized === true,
+        projectedColumnsHintOnly
+      })
+    });
+  }
   if (!explicitUtm50s || (!projectedColumns && !projectedColumnsHintOnly)) {
     return Object.freeze({
       status: INDONESIA_STRUCTURED_ROUTE_STATUS.BLOCKED,
       reasonCode: "STRUCTURED_PRODUCT_SOURCE_EVIDENCE_REQUIRED",
-      evidence: Object.freeze({ explicitUtm50s, projectedColumns, projectedColumnsHintOnly: false })
+      evidence: Object.freeze({
+        sourceContextPresent: text(sourceContextText).length > 0,
+        explicitUtm50s,
+        projectedColumns,
+        controlledRcProjectedColumnsHintAuthorized: controlledRcProjectedColumnsHintAuthorized === true,
+        projectedColumnsHintOnly
+      })
     });
   }
   return Object.freeze({
     status: INDONESIA_STRUCTURED_ROUTE_STATUS.SELECTED,
     reasonCode: null,
     evidence: Object.freeze({
+      sourceContextPresent: text(sourceContextText).length > 0,
       explicitUtm50s: true,
       projectedColumns,
+      controlledRcProjectedColumnsHintAuthorized: controlledRcProjectedColumnsHintAuthorized === true,
       projectedColumnsHintOnly
     })
   });

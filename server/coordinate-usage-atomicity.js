@@ -19,6 +19,7 @@ import { FAMILY_AVAILABILITY_STATUS } from "./coordinate-finalizer/family-availa
 import { createGeometryHash } from "./coordinate-finalizer/geometry-hash.js";
 import { validateFinalizedGeometry } from "./coordinate-finalizer/geometry-finalizer.js";
 import { evaluateAgenticCoordinateUsageAuthority } from "./agentic-coordinate-usage-authority.js";
+import { sanitizeIndonesiaStructuredPreflightDiagnostics } from "./recognition/indonesia-structured-diagnostics.js";
 
 export const COORDINATE_USAGE_ATOMICITY_VERSION = "coordinate_usage_atomicity_p0_v1";
 export const COORDINATE_USAGE_SEAL_VERSION = "AES_256_GCM_V1";
@@ -165,6 +166,9 @@ export function buildUnchargedCoordinateFailureResponse({
   )
     ? String(body.providerCompletionState).trim().toUpperCase()
     : providerCallCount > 0 ? "FAILED" : "NOT_STARTED";
+  const indonesiaStructuredPreflightDiagnostics = sanitizeIndonesiaStructuredPreflightDiagnostics(
+    body?.indonesiaStructuredPreflightDiagnostics
+  );
   return Object.freeze({
     success: false,
     reason,
@@ -184,6 +188,7 @@ export function buildUnchargedCoordinateFailureResponse({
     authorityReason: safeAuthorityReason,
     candidateEvidenceStatus: candidatePointCount > 0 ? "PRESENT" : "ABSENT",
     candidatePointCount,
+    ...(indonesiaStructuredPreflightDiagnostics ? { indonesiaStructuredPreflightDiagnostics } : {}),
     rawText: "",
     coordinates: ""
   });

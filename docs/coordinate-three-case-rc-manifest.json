@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "batchId": "coordinate-three-case-rc-20261011-v1",
+  "runId": "coordinate-three-case-rc-20261011-r1",
+  "projectRef": "thjojitdafxfarhxhoyo",
+  "serviceName": "coordinate-kml-tool-rc",
+  "model": "qwen3.8-flash",
+  "runWindowSeconds": 1800,
+  "claimTtlSeconds": 600,
+  "maxConcurrentDispatches": 1,
+  "automaticRetries": 0,
+  "directOcrCalls": 0,
+  "cases": [
+    {
+      "caseId": "indonesia",
+      "imageSha256": "41f2b2117667fb92f6a4eb703822b1893e29c985be2e14f7b20fbda103b66cf2",
+      "productMode": "indonesia_utm50s_structured_b",
+      "budgetPool": "INDONESIA_HISTORICAL_6_CALL_5_CNY",
+      "reserveCny": 0.816,
+      "maxVisionCalls": 1
+    },
+    {
+      "caseId": "mgrs",
+      "imageSha256": "af999328e3232af304e03901c5e8d58cad794ea588ee31709aef6668974f4004",
+      "productMode": "",
+      "budgetPool": "MGRS_BFTM_SHARED_2_CNY",
+      "reserveCny": 1,
+      "maxVisionCalls": 1
+    },
+    {
+      "caseId": "bftm",
+      "imageSha256": "4567ce9889c47d65414b19e543c06b5322b86c53b76bb53e87da761bc0988e1d",
+      "productMode": "",
+      "budgetPool": "MGRS_BFTM_SHARED_2_CNY",
+      "reserveCny": 1,
+      "maxVisionCalls": 1
+    }
+  ],
+  "nonIndonesiaBudget": {
+    "caseIds": ["mgrs", "bftm"],
+    "maxDispatched": 2,
+    "totalCostLimitCny": 2,
+    "reservePerDispatchCny": 1
+  },
+  "indonesiaBudget": {
+    "historicalBatchId": "indonesia-ab-20261010-v1",
+    "maxAttempts": 6,
+    "totalCostLimitCny": 5
+  }
+}

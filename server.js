@@ -155,10 +155,23 @@ import {
   selectIndonesiaStructuredProductRoute
 } from "./server/recognition/indonesia-structured-product-bridge.js";
 import {
+  buildIndonesiaStructuredPreflightDiagnostics,
+  classifyIndonesiaStructuredProviderFailure
+} from "./server/recognition/indonesia-structured-diagnostics.js";
+import {
+  COORDINATE_PROVIDER_MODELS,
+  prepareCoordinateProviderRequest,
+  validateCoordinateProviderResponse
+} from "./server/recognition/model-provider-compatibility.js";
+import {
   INDONESIA_STRUCTURED_B_RC,
   IndonesiaStructuredBRcAdmissionError,
   createIndonesiaStructuredBRcAdmission
 } from "./server/recognition/indonesia-structured-b-rc-admission.js";
+import {
+  CoordinateThreeCaseRcAdmissionError,
+  createCoordinateThreeCaseRcAdmission
+} from "./server/recognition/coordinate-three-case-rc-admission.js";
 import { createRecognitionDiagnosticSession, authorizationDiagnosticBody } from "./server/recognition/recognition-diagnostics.js";
 import {
   buildRecognitionAcquisitionLogSummary,
@@ -257,8 +270,8 @@ const upload = multer({
 const COORDINATE_IMAGE_INVALID_CODE = "COORDINATE_IMAGE_INVALID";
 const aliyunApiKey = process.env.ALIYUN_API_KEY || process.env.DASHSCOPE_API_KEY || "";
 const aliyunBaseURL = process.env.ALIYUN_BASE_URL || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
-const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || "qwen3.8-flash";
-const aliyunOcrModel = process.env.ALIYUN_OCR_MODEL || process.env.DASHSCOPE_OCR_MODEL || "qwen-vl-ocr-latest";
+const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || COORDINATE_PROVIDER_MODELS.VISION;
+const aliyunOcrModel = process.env.ALIYUN_OCR_MODEL || process.env.DASHSCOPE_OCR_MODEL || COORDINATE_PROVIDER_MODELS.OCR;
 const indonesiaStructuredProductEnabled = process.env.INDONESIA_STRUCTURED_B_PRODUCT_ENABLED === "true";
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const agenticCoordinateApi = createAgenticCoordinateApi({
@@ -310,6 +323,11 @@ const coordinateUsageGuardedSupabase = supabase
     })
   : null;
 const indonesiaStructuredBRcAdmission = createIndonesiaStructuredBRcAdmission({
+  supabase: coordinateUsageGuardedSupabase,
+  adminPassword,
+  env: process.env
+});
+const coordinateThreeCaseRcAdmission = createCoordinateThreeCaseRcAdmission({
   supabase: coordinateUsageGuardedSupabase,
   adminPassword,
   env: process.env
@@ -3613,6 +3631,44 @@ app.post("/api/admin/coordinate-products/indonesia-structured-b/single-run-claim
       return res.status(error.httpStatus).json({ success: false, code: error.code });
     }
     return res.status(503).json({ success: false, code: "INDONESIA_STRUCTURED_B_RC_CLAIM_UNAVAILABLE" });
+  }
+});
+
+app.post("/api/admin/coordinate-products/three-case-rc/claims", async (req, res) => {
+  try {
+    const claim = await coordinateThreeCaseRcAdmission.claim({
+      adminHeader: req.get("x-admin-password"),
+      runId: req.body?.runId,
+      batchId: req.body?.batchId,
+      caseId: req.body?.caseId,
+      imageSha256: req.body?.imageSha256,
+      recognitionRequestId: req.body?.recognitionRequestId
+    });
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(201).json(claim);
+  } catch (error) {
+    const status = error instanceof CoordinateThreeCaseRcAdmissionError ? error.httpStatus : 503;
+    return res.status(status).json({ success: false, code: error?.code || "COORDINATE_THREE_CASE_RC_CLAIM_FAILED" });
+  }
+});
+
+app.get("/api/admin/coordinate-products/three-case-rc/status", async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(await coordinateThreeCaseRcAdmission.status({ adminHeader: req.get("x-admin-password") }));
+  } catch (error) {
+    const status = error instanceof CoordinateThreeCaseRcAdmissionError ? error.httpStatus : 503;
+    return res.status(status).json({ success: false, code: error?.code || "COORDINATE_THREE_CASE_RC_STATUS_FAILED" });
+  }
+});
+
+app.post("/api/admin/coordinate-products/three-case-rc/close", async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(await coordinateThreeCaseRcAdmission.close({ adminHeader: req.get("x-admin-password") }));
+  } catch (error) {
+    const status = error instanceof CoordinateThreeCaseRcAdmissionError ? error.httpStatus : 503;
+    return res.status(status).json({ success: false, code: error?.code || "COORDINATE_THREE_CASE_RC_CLOSE_FAILED" });
   }
 });
 
@@ -8357,6 +8413,13 @@ async function callAliyunVision({
     error.stageName = stageName;
     throw error;
   }
+  const providerCompatibility = prepareCoordinateProviderRequest({
+    modelName,
+    maxTokens,
+    responseFormat,
+    enableThinking,
+    highResolutionImages
+  });
   const budget = getRecognitionBudget();
   budget?.assertCanStartProvider({ stageName, minRequiredMs, lowValue });
   const effectiveTimeoutMs = budget ? budget.effectiveProviderTimeout(timeoutMs) : timeoutMs;
@@ -8401,17 +8464,22 @@ async function callAliyunVision({
     ],
     temperature
   };
+  if (providerCompatibility.applied) requestBody.stream = providerCompatibility.stream;
 
   if (Number.isFinite(Number(maxTokens)) && Number(maxTokens) > 0) {
     requestBody.max_tokens = Number(maxTokens);
   }
-  if (responseFormat && typeof responseFormat === "object") {
+  if (providerCompatibility.applied
+    ? providerCompatibility.includeResponseFormat
+    : responseFormat && typeof responseFormat === "object") {
     requestBody.response_format = responseFormat;
   }
-  if (typeof enableThinking === "boolean") {
-    requestBody.enable_thinking = enableThinking;
+  if (typeof providerCompatibility.enableThinking === "boolean") {
+    requestBody.enable_thinking = providerCompatibility.enableThinking;
   }
-  if (highResolutionImages === true) {
+  if (providerCompatibility.applied
+    ? providerCompatibility.includeHighResolutionImages
+    : highResolutionImages === true) {
     requestBody.vl_high_resolution_images = true;
   }
 
@@ -8422,6 +8490,12 @@ async function callAliyunVision({
   let providerUsageObserved = false;
 
   try {
+    await coordinateThreeCaseRcAdmission.dispatchForBudget({
+      budget,
+      modelName,
+      maxTokens,
+      enableThinking: providerCompatibility.enableThinking
+    });
     budget?.markProviderAttempted();
     console.log("[Aliyun] Provider phase", {
       phase: "request_dispatched",
@@ -8455,12 +8529,25 @@ async function callAliyunVision({
       httpStatusClass: `${Math.floor(Number(response.status) / 100)}xx`,
       result: bodyReadResult
     });
-    providerUsageObserved = Boolean(data?.usage && typeof data.usage === "object");
+    const providerUsageObjectPresent = Boolean(data?.usage && typeof data.usage === "object");
+    if (response.ok) {
+      const responseCompatibility = validateCoordinateProviderResponse({ modelName, payload: data });
+      providerUsageObserved = responseCompatibility.applied
+        ? responseCompatibility.responseContractValid === true
+        : providerUsageObjectPresent;
+    } else {
+      providerUsageObserved = providerUsageObjectPresent;
+    }
     providerCompletionState = response.ok ? "SUCCEEDED" : "FAILED";
     if (!response.ok) stageResult = "failed";
   } catch (error) {
     const endedAt = Date.now();
     const requestDeadlineExceeded = Boolean(getRecognitionDeadlineSignal()?.aborted);
+    if (String(error?.code || "").startsWith("MODEL_")) {
+      stageResult = "failed";
+      providerCompletionState = "FAILED";
+      throw error;
+    }
     if (error.name === "AbortError" || requestDeadlineExceeded) {
       stageResult = requestDeadlineExceeded ? "aborted" : "timeout";
       providerCompletionState = requestDeadlineExceeded ? "ABORTED" : "TIMED_OUT";
@@ -8500,6 +8587,11 @@ async function callAliyunVision({
         usageObserved: providerUsageObserved
       });
     }
+    coordinateThreeCaseRcAdmission.recordProviderResultForBudget({
+      budget,
+      completionState: providerCompletionState,
+      usage: data?.usage || null
+    });
     budget?.stageCompleted(stageEvent, { result: stageResult });
   }
 
@@ -15855,6 +15947,7 @@ async function recognizeCoordinatesHandler(req, res) {
   let oneShotStructuredFamilyRoute = classifyOneShotStructuredFamily();
   let oneShotAcquisitionContract = createOneShotAcquisitionContract({ route: oneShotStructuredFamilyRoute });
   let responseCommitPromise = null;
+  let coordinateThreeCaseRcSettlementAttempted = false;
   let unifiedRecognitionAcquisitionContext = null;
   let unifiedRecognitionAcquisitionFinalLogged = false;
   const requestRecognitionAcquisitionEvidenceStore = createRecognitionAcquisitionEvidenceStore();
@@ -16291,6 +16384,12 @@ async function recognizeCoordinatesHandler(req, res) {
     body = attachUnifiedRecognitionAcquisition(body);
     responseCommitPromise = (async () => {
       try {
+        coordinateThreeCaseRcSettlementAttempted = true;
+        await coordinateThreeCaseRcAdmission.settleForBudget({
+          budget: recognitionBudget,
+          httpStatus: res.statusCode,
+          body
+        });
         const settlement = await usageCommitController.settle({
           httpStatus: res.statusCode,
           body
@@ -16591,7 +16690,8 @@ async function recognizeCoordinatesHandler(req, res) {
     const preCanonicalStructuredMode = String(
       req.get("x-coordinate-product-mode") || req.body?.coordinateProductMode || ""
     ).trim();
-    const indonesiaStructuredRcOriginalImageBuffer = indonesiaStructuredBRcAdmission.config.guardRequired
+    const indonesiaStructuredRcOriginalImageBuffer = (indonesiaStructuredBRcAdmission.config.guardRequired
+      || coordinateThreeCaseRcAdmission.config.guardRequired)
       && preCanonicalStructuredMode === INDONESIA_STRUCTURED_B_RC.mode
       ? Buffer.from(req.file.buffer)
       : null;
@@ -17225,8 +17325,12 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     const requestedStructuredProductMode = String(
       req.get("x-coordinate-product-mode") || req.body?.coordinateProductMode || ""
     ).trim();
-    const indonesiaStructuredRcSelected = indonesiaStructuredBRcAdmission.config.guardRequired
+    const indonesiaStructuredRcSelected = indonesiaStructuredBRcAdmission.config.ready
       && requestedStructuredProductMode === INDONESIA_STRUCTURED_B_RC.mode;
+    const coordinateThreeCaseIndonesiaSelected = coordinateThreeCaseRcAdmission.config.guardRequired
+      && coordinateThreeCaseRcAdmission.getBoundCaseId(recognitionBudget) === "indonesia"
+      && requestedStructuredProductMode === INDONESIA_STRUCTURED_B_RC.mode;
+    const indonesiaStructuredAnyRcSelected = indonesiaStructuredRcSelected || coordinateThreeCaseIndonesiaSelected;
     const indonesiaStructuredRcRequestId = String(req.get("x-recognition-request-id") || "").trim().toLowerCase();
     const indonesiaStructuredRcAuthorization = req.get("authorization");
     const settleIndonesiaStructuredRc = async ({ outcome, providerCallCount, usage = null }) => {
@@ -17240,7 +17344,13 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       });
     };
     let controlledRcProjectedColumnsHintAuthorized = false;
+    let indonesiaStructuredRcPreflightChecked = false;
+    let indonesiaStructuredRcPreflightPassed = false;
+    let indonesiaStructuredRcPreflightFailureCode = indonesiaStructuredAnyRcSelected
+      ? "INDONESIA_STRUCTURED_B_RC_PREFLIGHT_NOT_ATTEMPTED"
+      : "INDONESIA_STRUCTURED_B_RC_PREFLIGHT_NOT_APPLICABLE";
     if (indonesiaStructuredRcSelected && req.indonesiaStructuredRcAsyncAuthorized === true) {
+      indonesiaStructuredRcPreflightChecked = true;
       try {
         indonesiaStructuredBRcAdmission.preflightJob({
           mode: requestedStructuredProductMode,
@@ -17249,9 +17359,18 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           authorization: indonesiaStructuredRcAuthorization
         });
         controlledRcProjectedColumnsHintAuthorized = true;
-      } catch {
+        indonesiaStructuredRcPreflightPassed = true;
+        indonesiaStructuredRcPreflightFailureCode = "NONE";
+      } catch (error) {
+        indonesiaStructuredRcPreflightFailureCode = String(error?.code || "INDONESIA_STRUCTURED_B_RC_PREFLIGHT_UNKNOWN");
         // Keep the original source-evidence gate authoritative for any unverified request.
       }
+    }
+    if (coordinateThreeCaseIndonesiaSelected && req.coordinateThreeCaseRcAsyncAuthorized === true) {
+      controlledRcProjectedColumnsHintAuthorized = true;
+      indonesiaStructuredRcPreflightChecked = true;
+      indonesiaStructuredRcPreflightPassed = true;
+      indonesiaStructuredRcPreflightFailureCode = "NONE";
     }
     const indonesiaStructuredRoute = selectIndonesiaStructuredProductRoute({
       enabled: indonesiaStructuredProductEnabled,
@@ -17259,7 +17378,21 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       sourceContextText: oneShotLocalOcrSourceContextText,
       controlledRcProjectedColumnsHintAuthorized
     });
-    const buildIndonesiaStructuredFailureResponse = ({ reasonCode, warning }) => {
+    const indonesiaStructuredPreflightDiagnostics = buildIndonesiaStructuredPreflightDiagnostics({
+      route: indonesiaStructuredRoute,
+      localOcrAttempted: oneShotLocalOcrAttempted,
+      sourceContextPresent: String(oneShotLocalOcrSourceContextText || "").trim().length > 0,
+      preflightChecked: indonesiaStructuredRcPreflightChecked,
+      preflightPassed: indonesiaStructuredRcPreflightPassed,
+      preflightFailureCode: indonesiaStructuredRcPreflightFailureCode,
+      controlledRcProjectedColumnsHintAuthorized
+    });
+    const buildIndonesiaStructuredFailureResponse = ({
+      reasonCode,
+      warning,
+      providerCallCount = 0,
+      providerCompletionState = "NOT_STARTED"
+    }) => {
       const failurePayload = {
         success: false,
         reason: "indonesia_structured_product_review_required",
@@ -17272,6 +17405,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         warning,
         structuredProductMode: INDONESIA_STRUCTURED_PRODUCT_MODE,
         structuredProductRouteStatus: indonesiaStructuredRoute.status,
+        indonesiaStructuredPreflightDiagnostics,
+        providerCallCount,
+        providerCompletionState,
         parserTrace: [
           "INDONESIA_STRUCTURED_PRODUCT:selected",
           `INDONESIA_STRUCTURED_PRODUCT:${reasonCode}`,
@@ -17287,17 +17423,19 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     };
     if (requestedStructuredProductMode === INDONESIA_STRUCTURED_PRODUCT_MODE
       && indonesiaStructuredRoute.status === INDONESIA_STRUCTURED_ROUTE_STATUS.BLOCKED) {
-      if (indonesiaStructuredRcSelected) {
+      if (indonesiaStructuredAnyRcSelected) {
         if (req.indonesiaStructuredRcAsyncAuthorized !== true) {
-          return res.status(404).json({ success: false, code: "INDONESIA_STRUCTURED_B_RC_ASYNC_JOB_REQUIRED" });
+          return res.status(404).json({ success: false, code: "COORDINATE_RC_ASYNC_JOB_REQUIRED" });
         }
-        try {
-          await settleIndonesiaStructuredRc({ outcome: "FAILED_PRE_PROVIDER", providerCallCount: 0 });
-        } catch (error) {
-          return res.status(error?.httpStatus || 503).json({
-            success: false,
-            code: error?.code || "INDONESIA_STRUCTURED_B_RC_PRE_PROVIDER_SETTLEMENT_FAILED"
-          });
+        if (indonesiaStructuredRcSelected) {
+          try {
+            await settleIndonesiaStructuredRc({ outcome: "FAILED_PRE_PROVIDER", providerCallCount: 0 });
+          } catch (error) {
+            return res.status(error?.httpStatus || 503).json({
+              success: false,
+              code: error?.code || "INDONESIA_STRUCTURED_B_RC_PRE_PROVIDER_SETTLEMENT_FAILED"
+            });
+          }
         }
       }
       return res.status(422).json(buildIndonesiaStructuredFailureResponse({
@@ -17307,7 +17445,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     }
     if (indonesiaStructuredRoute.status === INDONESIA_STRUCTURED_ROUTE_STATUS.SELECTED) {
       recognitionBudget?.setAcquisitionRouteReason("INDONESIA_STRUCTURED_B_PRODUCT");
-      const structuredImageItems = indonesiaStructuredRcSelected
+      const structuredImageItems = indonesiaStructuredAnyRcSelected
         ? [{
             type: "image_url",
             image_url: { url: `data:${req.file.mimetype};base64,${indonesiaStructuredRcOriginalImageBuffer.toString("base64")}` }
@@ -17352,9 +17490,16 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       try {
         structuredProviderResponse = await callAliyunVision(structuredProviderRequest);
       } catch (error) {
+        const providerFailure = classifyIndonesiaStructuredProviderFailure({
+          providerAttemptCount: recognitionBudget?.providerAttemptCount,
+          errorCode: error?.code
+        });
         if (indonesiaStructuredRcSelected) {
           try {
-            await settleIndonesiaStructuredRc({ outcome: "OUTCOME_UNKNOWN", providerCallCount: 1 });
+            await settleIndonesiaStructuredRc({
+              outcome: providerFailure.settlementOutcome,
+              providerCallCount: providerFailure.providerCallCount
+            });
           } catch (settlementError) {
             return res.status(settlementError?.httpStatus || 503).json({
               success: false,
@@ -17365,7 +17510,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         if (isRecognitionStopError(error)) throw error;
         return res.status(503).json(buildIndonesiaStructuredFailureResponse({
           reasonCode: error?.code || "INDONESIA_STRUCTURED_PROVIDER_UNAVAILABLE",
-          warning: "结构化 B Provider 调用未完成；本路径不重试，也不调用旧 OCR 或其他模型。"
+          warning: "结构化 B Provider 调用未完成；本路径不重试，也不调用旧 OCR 或其他模型。",
+          providerCallCount: providerFailure.providerCallCount,
+          providerCompletionState: providerFailure.providerCompletionState
         }));
       }
       stage1ProviderSucceeded = true;
@@ -17391,7 +17538,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         });
         return res.status(422).json(buildIndonesiaStructuredFailureResponse({
           reasonCode: structuredProviderResult.reasonCode || "INDONESIA_STRUCTURED_PROVIDER_CONTRACT_INVALID",
-          warning: "结构化 B 响应未通过严格合同；本路径不修复输出、不重试，也不回退到旧 OCR。"
+          warning: "结构化 B 响应未通过严格合同；本路径不修复输出、不重试，也不回退到旧 OCR。",
+          providerCallCount: 1,
+          providerCompletionState: "SUCCEEDED"
         }));
       }
       const structuredBridge = buildIndonesiaStructuredProductBridge(structuredProviderResult.structured);
@@ -17403,7 +17552,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         });
         return res.status(422).json(buildIndonesiaStructuredFailureResponse({
           reasonCode: structuredBridge.reasonCode || "INDONESIA_STRUCTURED_DETERMINISTIC_VALIDATION_FAILED",
-          warning: "结构化 B 结果未通过确定性 CRS、点序、拓扑或转换校验；不生成当前结果的地图或 KML。"
+          warning: "结构化 B 结果未通过确定性 CRS、点序、拓扑或转换校验；不生成当前结果的地图或 KML。",
+          providerCallCount: 1,
+          providerCompletionState: "SUCCEEDED"
         }));
       }
       await settleIndonesiaStructuredRc({
@@ -17431,6 +17582,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         ...structuredBridge.payload,
         structuredProductMode: INDONESIA_STRUCTURED_PRODUCT_MODE,
         structuredProductRouteStatus: indonesiaStructuredRoute.status,
+        indonesiaStructuredPreflightDiagnostics,
         structuredProviderAuthority: structuredProviderResult.authority,
         quota: consumeResult.quota
       };
@@ -20112,6 +20264,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           prompt: bftmRetryPrompt,
           imageItems,
           temperature: 0,
+          maxTokens: 8000,
           stageName: "family_retry",
           lowValue: true,
           familyEvidence: true
@@ -21738,6 +21891,20 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
     }
   } finally {
     if (responseCommitPromise) await responseCommitPromise;
+    if (!coordinateThreeCaseRcSettlementAttempted) {
+      coordinateThreeCaseRcSettlementAttempted = true;
+      await coordinateThreeCaseRcAdmission.settleForBudget({
+        budget: recognitionBudget,
+        httpStatus: res.statusCode,
+        forceOutcome: (recognitionBudget?.providerAttemptCount || 0) > 0
+          ? "OUTCOME_UNKNOWN"
+          : "FAILED_PRE_PROVIDER"
+      }).catch(() => {
+        console.error("Coordinate three-case RC settlement failed", {
+          code: "COORDINATE_THREE_CASE_RC_SETTLEMENT_FAILED"
+        });
+      });
+    }
     recognitionBudget?.markHandlerCompleted();
     if (regressionTestMode.active) {
       storeRegressionRecognitionTrace(recognitionBudget?.toSanitizedTrace());
@@ -21748,13 +21915,27 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
 const recognitionAcquisitionJobRuntime = createRecognitionAcquisitionJobRuntime({
   maxJobs: 8,
   execute: async (input, { jobId } = {}) => {
-    const indonesiaStructuredRcJob = indonesiaStructuredBRcAdmission.config.guardRequired
+    const indonesiaStructuredRcJob = indonesiaStructuredBRcAdmission.config.ready
       && input.body?.coordinateProductMode === INDONESIA_STRUCTURED_B_RC.mode;
     const terminateUnsettledClaim = async () => {
       if (!indonesiaStructuredRcJob) return;
       try {
         await indonesiaStructuredBRcAdmission.terminatePreProviderClaim({
           recognitionRequestId: input.requestId,
+          authorization: input.forwardHeaders?.authorization
+        });
+      } catch {
+        // A dispatched or already-settled claim remains governed by its authoritative terminal state.
+      }
+    };
+    const terminateThreeCaseClaim = async () => {
+      if (!coordinateThreeCaseRcAdmission.config.guardRequired) return;
+      try {
+        await coordinateThreeCaseRcAdmission.terminatePreProviderClaim({
+          caseId: input.forwardHeaders?.["x-coordinate-rc-case-id"],
+          productMode: input.body?.coordinateProductMode,
+          recognitionRequestId: input.requestId,
+          imageBuffer: input.file.buffer,
           authorization: input.forwardHeaders?.authorization
         });
       } catch {
@@ -21779,6 +21960,7 @@ const recognitionAcquisitionJobRuntime = createRecognitionAcquisitionJobRuntime(
       });
     } catch (error) {
       await terminateUnsettledClaim();
+      await terminateThreeCaseClaim();
       throw error;
     }
     const result = await response.json().catch(() => ({
@@ -21787,13 +21969,19 @@ const recognitionAcquisitionJobRuntime = createRecognitionAcquisitionJobRuntime(
       rawText: "",
       coordinates: ""
     }));
-    if (!response.ok) await terminateUnsettledClaim();
+    if (!response.ok) {
+      await terminateUnsettledClaim();
+      await terminateThreeCaseClaim();
+    }
     return { httpStatus: response.status, result };
   }
 });
 
 app.post(
   "/api/recognize-coordinates",
+  (req, res, next) => coordinateThreeCaseRcAdmission.config.guardRequired
+    ? res.status(404).json({ success: false, reason: "not_found" })
+    : next(),
   recognitionDeadlineMiddleware(),
   upload.single("image"),
   recognizeCoordinatesHandler
@@ -21817,6 +22005,34 @@ app.post(
     lowValueFallbackCutoffMs: 145_000
   }),
   upload.single("image"),
+  async (req, res, next) => {
+    req.coordinateThreeCaseRcAsyncAuthorized = true;
+    if (!coordinateThreeCaseRcAdmission.config.guardRequired) return next();
+    const budget = getRecognitionBudget();
+    try {
+      coordinateThreeCaseRcAdmission.bindBudget({
+        budget,
+        caseId: req.get("x-coordinate-rc-case-id"),
+        productMode: req.body?.coordinateProductMode,
+        recognitionRequestId: req.get("x-recognition-request-id"),
+        imageBuffer: req.file?.buffer,
+        authorization: req.get("authorization")
+      });
+      return next();
+    } catch (error) {
+      await coordinateThreeCaseRcAdmission.terminatePreProviderClaim({
+        caseId: req.get("x-coordinate-rc-case-id"),
+        productMode: req.body?.coordinateProductMode,
+        recognitionRequestId: req.get("x-recognition-request-id"),
+        imageBuffer: req.file?.buffer,
+        authorization: req.get("authorization")
+      }).catch(() => {});
+      return res.status(error?.httpStatus || 503).json({
+        success: false,
+        reason: error?.code || "COORDINATE_THREE_CASE_RC_BINDING_FAILED"
+      });
+    }
+  },
   recognizeCoordinatesHandler
 );
 
@@ -21830,9 +22046,10 @@ app.post("/api/recognize-coordinates/jobs", upload.single("image"), async (req, 
   const structuredModeHeader = String(req.get("x-coordinate-product-mode") || "").trim();
   const structuredModeBody = String(req.body?.coordinateProductMode || "").trim();
   const requestedStructuredProductMode = structuredModeHeader || structuredModeBody;
-  const indonesiaStructuredRcClaimAttempted = indonesiaStructuredBRcAdmission.config.guardRequired
+  const coordinateThreeCaseId = String(req.get("x-coordinate-rc-case-id") || "").trim().toLowerCase();
+  const indonesiaStructuredRcClaimAttempted = indonesiaStructuredBRcAdmission.config.ready
     && [structuredModeHeader, structuredModeBody].includes(INDONESIA_STRUCTURED_B_RC.mode);
-  const indonesiaStructuredRcJobSelected = indonesiaStructuredBRcAdmission.config.guardRequired
+  const indonesiaStructuredRcJobSelected = indonesiaStructuredBRcAdmission.config.ready
     && requestedStructuredProductMode === INDONESIA_STRUCTURED_B_RC.mode;
   const terminateClaimAfterPreflightFailure = async () => {
     if (!indonesiaStructuredRcClaimAttempted) return;
@@ -21885,6 +22102,22 @@ app.post("/api/recognize-coordinates/jobs", upload.single("image"), async (req, 
     req.body ||= {};
     req.body.coordinateProductMode = requestedStructuredProductMode;
   }
+  if (coordinateThreeCaseRcAdmission.config.guardRequired) {
+    try {
+      coordinateThreeCaseRcAdmission.preflightJob({
+        caseId: coordinateThreeCaseId,
+        productMode: requestedStructuredProductMode,
+        recognitionRequestId,
+        imageBuffer: originalImageBuffer,
+        authorization: req.get("authorization")
+      });
+    } catch (error) {
+      return res.status(error?.httpStatus || 422).json({
+        success: false,
+        reason: error?.code || "COORDINATE_THREE_CASE_RC_JOB_PREFLIGHT_REJECTED"
+      });
+    }
+  }
   if (indonesiaStructuredRcJobSelected) {
     try {
       await indonesiaStructuredBRcAdmission.activateOnStartup();
@@ -21909,11 +22142,16 @@ app.post("/api/recognize-coordinates/jobs", upload.single("image"), async (req, 
   }
   if (getRegressionTestMode(req).active) forwardHeaders["x-regression-test"] = "1";
   forwardHeaders["x-recognition-request-id"] = recognitionRequestId;
+  if (coordinateThreeCaseRcAdmission.config.guardRequired) {
+    forwardHeaders["x-coordinate-rc-case-id"] = coordinateThreeCaseId;
+  }
   try {
     const job = recognitionAcquisitionJobRuntime.enqueue({
       requestId: recognitionRequestId,
       file: {
-        buffer: indonesiaStructuredRcJobSelected ? originalImageBuffer : Buffer.from(req.file.buffer),
+        buffer: (indonesiaStructuredRcJobSelected || coordinateThreeCaseRcAdmission.config.guardRequired)
+          ? originalImageBuffer
+          : Buffer.from(req.file.buffer),
         mimetype: req.file.mimetype,
         originalname: getUploadedFileDisplayName(req.file) || "coordinate-image"
       },
@@ -21932,6 +22170,15 @@ app.post("/api/recognize-coordinates/jobs", upload.single("image"), async (req, 
       await terminateClaimAfterPreflightFailure();
     } catch {
       // Preserve the queue failure; an already-terminal claim stays terminal.
+    }
+    if (coordinateThreeCaseRcAdmission.config.guardRequired) {
+      await coordinateThreeCaseRcAdmission.terminatePreProviderClaim({
+        caseId: coordinateThreeCaseId,
+        productMode: requestedStructuredProductMode,
+        recognitionRequestId,
+        imageBuffer: originalImageBuffer,
+        authorization: req.get("authorization")
+      }).catch(() => {});
     }
     return res.status(error?.code === "RECOGNITION_JOB_CAPACITY_REACHED" ? 503 : 500).json({
       success: false,
@@ -22025,6 +22272,13 @@ await indonesiaStructuredBRcAdmission.activateOnStartup().catch(error => {
   console.error("Indonesia structured B RC activation failed", {
     code: error?.code || "INDONESIA_STRUCTURED_B_RC_ACTIVATION_FAILED"
   });
+});
+
+await coordinateThreeCaseRcAdmission.activateOnStartup().catch(error => {
+  console.error("Coordinate three-case RC activation failed", {
+    code: error?.code || "COORDINATE_THREE_CASE_RC_ACTIVATION_FAILED"
+  });
+  if (coordinateThreeCaseRcAdmission.config.enabled) throw error;
 });
 
 app.listen(port, () => {

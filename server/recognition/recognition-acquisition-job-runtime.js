@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { sanitizeIndonesiaStructuredPreflightDiagnostics } from "./indonesia-structured-diagnostics.js";
 
 export const RECOGNITION_ACQUISITION_JOB_STATUS = Object.freeze({
   QUEUED: "QUEUED",
@@ -51,6 +52,12 @@ function buildSafeFailureResult(output, fallbackCode) {
       : source.userUsageConsumed === true,
     recoveryRequired: source.recoveryRequired === true
   };
+  const indonesiaStructuredPreflightDiagnostics = sanitizeIndonesiaStructuredPreflightDiagnostics(
+    source.indonesiaStructuredPreflightDiagnostics
+  );
+  if (indonesiaStructuredPreflightDiagnostics) {
+    result.indonesiaStructuredPreflightDiagnostics = indonesiaStructuredPreflightDiagnostics;
+  }
   if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(String(source.requestId || ""))) {
     result.requestId = source.requestId;
   }
