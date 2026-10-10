@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>印尼16点 KML · 非生产地图与下载验收</title>
+  <link rel="stylesheet" href="/vendor/maplibre-gl/maplibre-gl.css">
+  <style>
+    :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; background: #f5f7fb; color: #172033; }
+    body { margin: 0; padding: 24px; }
+    main { max-width: 1080px; margin: 0 auto; }
+    .card { background: #fff; border: 1px solid #d9e0ea; border-radius: 14px; padding: 18px; margin-bottom: 16px; box-shadow: 0 8px 28px rgba(28,42,67,.06); }
+    .warning { border-left: 5px solid #d97706; background: #fff7ed; }
+    .status { white-space: pre-wrap; overflow-wrap: anywhere; background: #eef3f9; padding: 12px; border-radius: 8px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 7px 9px; border-bottom: 1px solid #d9e0ea; text-align: right; font-variant-numeric: tabular-nums; }
+    th:first-child, td:first-child { text-align: left; }
+    button, input::file-selector-button { padding: 10px 14px; border-radius: 8px; border: 1px solid #94a3b8; background: #fff; cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    #spatialProviderCanvas, #spatialLocalMapCanvas { min-height: 520px; border: 1px solid #cbd5e1; border-radius: 10px; overflow: hidden; }
+    #spatialLocalMapCanvas[hidden], #spatialProviderCanvas[hidden] { display: none; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card warning">
+      <h1>印尼16点 KML · 非生产地图与下载验收</h1>
+      <p>这是普通 HTTPS 非生产验收页，不上传图片、不调用识别模型、不改变坐标或 KML 权威。候选 A/B KML 和可选基线都只从本机选择并留在浏览器内存。</p>
+      <p>地图验收只在真实 OpenFreeMap/MapLibre provider 返回 <code>READY</code> 时通过；本地 SVG fallback 不计作真实地理底图证据。</p>
+    </section>
+
+    <section class="card">
+      <div class="actions">
+        <label>候选 KML：<input id="kmlFileInput" type="file" accept=".kml,application/vnd.google-earth.kml+xml"></label>
+        <label>可选本地基线：<input id="baselineKmlInput" type="file" accept=".kml,application/vnd.google-earth.kml+xml"></label>
+        <button id="downloadKml" type="button" disabled>下载同一份候选 KML</button>
+      </div>
+      <p id="acceptanceState" class="status" role="status" aria-live="polite">等待选择本机候选 KML。</p>
+      <p id="baselineComparison" class="status">未选择本地基线。</p>
+      <p id="downloadReceipt" class="status">尚未发起下载。</p>
+      <table aria-label="候选KML点号或环顶点序与经纬度">
+        <thead><tr><th>点号 / 环顶点序</th><th>Longitude</th><th>Latitude</th></tr></thead>
+        <tbody id="coordinateRows"><tr><td colspan="3">尚未读取候选。</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>真实地理底图验收</h2>
+      <div id="spatialProviderCanvas" aria-label="OpenFreeMap 地图"></div>
+      <div id="spatialLocalMapCanvas" hidden aria-label="本地 fallback"></div>
+      <p id="spatialProviderAttribution" hidden></p>
+      <p id="spatialProviderState" class="status"></p>
+    </section>
+
+    <section class="card">
+      <h2>材料外发边界</h2>
+      <p id="thirdPartyDisclosure">候选/基线 KML 与原图不会 POST 或上传。浏览器会向 OpenFreeMap/MapLibre 所需的样式与瓦片端点发出请求；这些请求会暴露访问者 IP、浏览器/来源信息以及由候选地图视口/瓦片编号推断出的地理区域。完整 KML 文件不由本页发送给地图第三方。</p>
+    </section>
+  </main>
+  <script type="module" src="./indonesia-kml-map-download-acceptance.js"></script>
+</body>
+</html>
