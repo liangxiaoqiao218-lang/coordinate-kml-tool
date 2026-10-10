@@ -10,6 +10,44 @@ function reject(code) {
   throw new IndonesiaKmlAcceptanceError(code);
 }
 
+function mapDisplayPosition(position) {
+  if (!Array.isArray(position) || position.length < 2
+    || !Number.isFinite(position[0]) || !Number.isFinite(position[1])) {
+    reject("MAP_DISPLAY_POSITION_INVALID");
+  }
+  return [position[0], position[1]];
+}
+
+function mapDisplayLine(line) {
+  if (!Array.isArray(line)) reject("MAP_DISPLAY_LINE_INVALID");
+  return line.map(mapDisplayPosition);
+}
+
+export function createMapDisplayGeometry2d(geometry) {
+  if (!geometry || typeof geometry !== "object" || Array.isArray(geometry)) {
+    reject("MAP_DISPLAY_GEOMETRY_REQUIRED");
+  }
+
+  let coordinates;
+  if (geometry.type === "Point") coordinates = mapDisplayPosition(geometry.coordinates);
+  else if (geometry.type === "MultiPoint" || geometry.type === "LineString") {
+    coordinates = mapDisplayLine(geometry.coordinates);
+  } else if (geometry.type === "Polygon") {
+    if (!Array.isArray(geometry.coordinates)) reject("MAP_DISPLAY_POLYGON_INVALID");
+    coordinates = geometry.coordinates.map(mapDisplayLine);
+  } else if (geometry.type === "MultiPolygon") {
+    if (!Array.isArray(geometry.coordinates)) reject("MAP_DISPLAY_MULTIPOLYGON_INVALID");
+    coordinates = geometry.coordinates.map(polygon => {
+      if (!Array.isArray(polygon)) reject("MAP_DISPLAY_MULTIPOLYGON_INVALID");
+      return polygon.map(mapDisplayLine);
+    });
+  } else {
+    reject("MAP_DISPLAY_GEOMETRY_TYPE_UNSUPPORTED");
+  }
+
+  return { ...geometry, coordinates };
+}
+
 export function revisionIsCurrent(expectedRevision, currentRevision) {
   return Number.isSafeInteger(expectedRevision)
     && Number.isSafeInteger(currentRevision)

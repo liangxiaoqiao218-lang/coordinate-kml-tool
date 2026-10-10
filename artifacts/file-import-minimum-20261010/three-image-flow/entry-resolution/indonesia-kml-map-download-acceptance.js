@@ -3,6 +3,7 @@ import { MapProductController } from "/assets/spatial-map/map-product-controller
 import { OpenFreeMapProviderAdapter } from "/assets/spatial-map/openfreemap-provider-adapter.js";
 import { LocalSvgRenderer } from "/assets/spatial-map/maplibre-renderer.js";
 import {
+  createMapDisplayGeometry2d,
   maximumRingDifferenceMeters,
   revisionIsCurrent,
   validateIndonesiaFeatureCollection
@@ -166,6 +167,7 @@ async function acceptSelectedKml(file, revision) {
   activeController = newController(revision);
   localCanvas.hidden = true;
   providerCanvas.hidden = false;
+  const mapDisplayGeometry = createMapDisplayGeometry2d(record.geometry);
   const preview = Object.freeze({
     schemaVersion: "map_preview_object_v1",
     sourceResultId: `offline-kml-${record.sha256.slice(0, 16)}`,
@@ -173,7 +175,7 @@ async function acceptSelectedKml(file, revision) {
     sourceGeometryHash: record.sha256,
     crs: { id: "EPSG:4326" },
     axisOrder: "longitude_latitude",
-    geometry: record.geometry,
+    geometry: mapDisplayGeometry,
     previewEligibility: { allowed: true },
     previewWarnings: ["NON_PRODUCTION_ACCEPTANCE_ONLY", "REAL_POSITION_ACCEPTANCE_REQUIRES_VISIBLE_PROVIDER_READY"]
   });
