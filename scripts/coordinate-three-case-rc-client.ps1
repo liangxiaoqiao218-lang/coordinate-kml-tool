@@ -9,8 +9,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-client-preflight.ps1')
-$runId = 'coordinate-three-case-rc-20261011-r2'
-$batchId = 'coordinate-three-case-rc-20261011-v2'
+. (Join-Path $PSScriptRoot 'coordinate-three-case-rc-result-artifact.ps1')
+$runId = 'coordinate-three-case-rc-20261011-r3'
+$batchId = 'coordinate-three-case-rc-20261011-v3'
+$expectedModel = 'qwen3.8-flash'
 $caseDefinitions = @(
   [ordered]@{ caseId = 'indonesia'; imageSha256 = '41f2b2117667fb92f6a4eb703822b1893e29c985be2e14f7b20fbda103b66cf2'; productMode = 'indonesia_utm50s_structured_b'; path = $IndonesiaImagePath },
   [ordered]@{ caseId = 'mgrs'; imageSha256 = 'af999328e3232af304e03901c5e8d58cad794ea588ee31709aef6668974f4004'; productMode = ''; path = $MgrsImagePath },
@@ -104,6 +106,7 @@ function Get-SanitizedCaseReceipt([System.Collections.IDictionary] $definition, 
   $result = $snapshot.result
   $finalized = $result.finalizedCoordinateResult
   $diagnostics = $result.indonesiaStructuredPreflightDiagnostics
+  $providerCalls = Get-CoordinateThreeCaseProviderCallObservation -Value $result.providerCallCount -Limit 1
   $identityPresent = -not [string]::IsNullOrWhiteSpace([string]$finalized.resultId) -and
     ([int64]$finalized.resultRevision -gt 0) -and
     -not [string]::IsNullOrWhiteSpace([string]$finalized.geometryHash)
@@ -112,23 +115,29 @@ function Get-SanitizedCaseReceipt([System.Collections.IDictionary] $definition, 
     terminalStatus = [string]$snapshot.status
     httpStatus = [int]$snapshot.httpStatus
     success = $result.success -eq $true
-    code = [string]$(if ($result.code) { $result.code } elseif ($result.reason) { $result.reason } else { 'NONE' })
-    modelMatch = [string]$result.model -like 'qwen3.8-flash*'
-    providerCallCount = [int]$result.providerCallCount
-    providerCompletionState = [string]$result.providerCompletionState
+    code = ConvertTo-CoordinateThreeCaseFixedCode -Value $(if ($result.code) { $result.code } elseif ($result.reason) { $result.reason } else { 'NONE' })
+    modelMatch = [string]$result.model -eq $expectedModel
+    providerCallCount = $providerCalls.value
+    providerCallCountKnown = $providerCalls.known
+    providerCallLimitExceeded = $providerCalls.limitExceeded
+    providerCompletionState = ConvertTo-CoordinateThreeCaseFixedCode -Value $result.providerCompletionState -Fallback 'UNKNOWN'
     resultIdentityPresent = $identityPresent
     technicalKmlReady = $result.technicalKmlReady -eq $true -or $finalized.technicalKmlReady -eq $true
     kmlReady = $result.kmlReady -eq $true -or $finalized.kmlReady -eq $true
     geometryPresent = $null -ne $finalized.geometry
     diagnosticsPresent = $null -ne $diagnostics
     localOcrAttempted = $diagnostics.localOcrAttempted -eq $true
+    sourceContextPresent = $diagnostics.sourceContextPresent -eq $true
     localOcrContextPresent = $diagnostics.localOcrContextPresent -eq $true
     explicitUtm50s = $diagnostics.explicitUtm50s -eq $true
     projectedColumns = $diagnostics.projectedColumns -eq $true
+    controlledRcHintAuthorized = $diagnostics.controlledRcHintAuthorized -eq $true
     controlledRcHintApplied = $diagnostics.controlledRcHintApplied -eq $true
+    preflightChecked = $diagnostics.preflightChecked -eq $true
     preflightPassed = $diagnostics.preflightPassed -eq $true
-    preflightFailureCode = [string]$(if ($diagnostics.preflightFailureCode) { $diagnostics.preflightFailureCode } else { 'NONE' })
-    routeFailureCode = [string]$(if ($diagnostics.routeFailureCode) { $diagnostics.routeFailureCode } else { 'NONE' })
+    routeSelected = $diagnostics.routeSelected -eq $true
+    preflightFailureCode = ConvertTo-CoordinateThreeCaseFixedCode -Value $diagnostics.preflightFailureCode
+    routeFailureCode = ConvertTo-CoordinateThreeCaseFixedCode -Value $diagnostics.routeFailureCode
   }
 }
 
@@ -138,6 +147,7 @@ if ($baseUri.Scheme -ne 'https' -or $baseUri.Host -ne 'coordinate-kml-tool-rc.on
 }
 $resolvedEvidencePath = [IO.Path]::GetFullPath($EvidencePath)
 if ($resolvedEvidencePath.StartsWith((Get-Location).Path, [StringComparison]::OrdinalIgnoreCase)) { throw 'EVIDENCE_PATH_MUST_BE_OUTSIDE_REPOSITORY' }
+$validatedResultPath = "${resolvedEvidencePath}.validated-results.json"
 $evidenceParent = Split-Path -Parent $resolvedEvidencePath
 if (-not (Test-Path -LiteralPath $evidenceParent)) { New-Item -ItemType Directory -Path $evidenceParent | Out-Null }
 try {
@@ -174,15 +184,31 @@ $invokeCase = {
   param($definition)
   return Invoke-RecognitionJob $client $baseUri.AbsoluteUri.TrimEnd('/') $definition
 }
+$validatedResultState = [pscustomobject]@{
+  Cases = [Collections.Generic.List[object]]::new()
+  LastIntegrity = $null
+}
 $convertReceipt = {
   param($definition, $snapshot)
-  return Get-SanitizedCaseReceipt $definition $snapshot
+  $receipt = Get-SanitizedCaseReceipt $definition $snapshot
+  $record = New-CoordinateThreeCaseValidatedResultRecord -Definition $definition -Snapshot $snapshot -ExpectedModel $expectedModel
+  $validatedResultState.Cases.Add($record)
+  $state = New-CoordinateThreeCaseValidatedResultState -RunId $runId -BatchId $batchId `
+    -ExpectedCommit $ExpectedCommit -Cases $validatedResultState.Cases -RuntimeCommitMatch $true
+  $validatedResultState.LastIntegrity = Write-CoordinateThreeCaseValidatedResultArtifact `
+    -Path $validatedResultPath -State $state
+  return $receipt
 }
 $closeRun = {
   return Invoke-JsonRequest $client 'POST' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/admin/coordinate-products/three-case-rc/close" ([ordered]@{})
 }
 $writeEvidence = {
   param($sequenceReceipts, $sequenceCloseReceipt, $failureCode, $runtimeReady)
+  $validatedState = New-CoordinateThreeCaseValidatedResultState -RunId $runId -BatchId $batchId `
+    -ExpectedCommit $ExpectedCommit -Cases $validatedResultState.Cases -RuntimeCommitMatch ($runtimeReady -eq $true) `
+    -RunClosed ($sequenceCloseReceipt.closed -eq $true) -ClientFailureCode ([string]$failureCode)
+  $validatedResultState.LastIntegrity = Write-CoordinateThreeCaseValidatedResultArtifact `
+    -Path $validatedResultPath -State $validatedState
   $evidence = [ordered]@{
     schemaVersion = 2
     runId = $runId
@@ -193,6 +219,12 @@ $writeEvidence = {
     cases = $sequenceReceipts
     runClosed = $sequenceCloseReceipt.closed -eq $true
     clientFailurePresent = -not [string]::IsNullOrWhiteSpace([string]$failureCode)
+    validatedResultArtifact = [ordered]@{
+      present = $true
+      verified = $validatedResultState.LastIntegrity.verified -eq $true
+      caseCount = [int]$validatedResultState.LastIntegrity.caseCount
+      sha256 = [string]$validatedResultState.LastIntegrity.sha256
+    }
     generatedAt = [DateTimeOffset]::UtcNow.ToString('O')
   }
   $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedEvidencePath -Encoding UTF8

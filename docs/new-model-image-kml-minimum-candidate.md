@@ -45,9 +45,65 @@ The historical Run04 receipt cannot identify which predicate failed, so the unde
 
 The candidate does not create a second geometry authority. Existing Map and KML consumers continue to bind `resultId`, `resultRevision`, and `geometryHash` from the same finalized result. The incremental regression verifies these bindings statically; no browser, Provider, RC, or Production execution is claimed.
 
+### Durable result handoff
+
+The async acquisition job store and finalized-result identity store are both process-local and time-bounded. The job token is held only in client memory, and a service restart or disabled deployment removes the server-side result identity. There is no existing safe post-close download-by-result-ID path.
+
+The controlled client therefore writes a second, local-only validated-result artifact outside the repository. It is updated atomically after every terminal case, re-read, SHA-256 verified and retained even if a later case or run close fails. Its explicit allowlist contains:
+
+- frozen case/image identity, terminal state, fixed error code, expected-model match and bounded Provider accounting;
+- the complete sanitized Indonesia preflight predicate envelope;
+- current finalized result ID/revision/geometry hash, normalized WGS84 geometry, final/source CRS and review/readiness state;
+- a boolean proof that Map/KML output capabilities bind the same result ID, revision and geometry hash.
+
+It never copies a whole response object. Passwords, claim/job tokens, authorization or other headers, raw Provider response/text, source candidates, request bodies and base64 image data are not retained. The private artifact is never printed to the terminal; the ordinary receipt exposes only artifact presence, case count, verification status and its SHA-256.
+
+This artifact preserves the result needed for independent deterministic review without another model call. It does **not** revive the in-memory finalizer identity after a restart and does not itself prove a browser Map preview or downloaded KML. An actual Map/KML browser gate must run against the same live service instance and current identity within its TTL, or be separately authorized; an offline geometry/KML check must remain labelled offline.
+
+The client receipt now also retains `sourceContextPresent`, `controlledRcHintAuthorized`, `preflightChecked` and `routeSelected`, closing the four diagnostic booleans that were present in the product response but absent from the prior receipt.
+
 ## Evidence classification
 
 The new regression is offline only. Dynamic cases exercise pure request/response, route, failure-envelope, and async-job contracts with no network. Source assertions verify integration call shapes. Existing Run04 receipts remain historical runtime evidence and are not relabeled as a successful recognition.
+
+The result-artifact follow-up has its own provider-free regression and does not rerun the already-passed model/route suite. It covers explicit allowlisting, diagnostic completeness, finalized geometry/CRS/identity binding, atomic write and SHA verification, later-case failure retention, close-failure retention, and sanitized terminal output. No RC, browser, HTTP, Provider or Production evidence is claimed.
+
+## Compatibility status after the minimum follow-up
+
+| Path | Current status | Follow-up change |
+| --- | --- | --- |
+| Ordinary image / `qwen3.8-flash` | Replaced in the existing candidate | No model or request-contract change in this follow-up. |
+| Mozambique late OCR | Adapted to `qwen3.5-ocr`, but not release-qualified | No further code change; historical output remains unstable and the route is unreachable after the one-shot primary call. |
+| MGRS OCR retry | Adapted to `qwen3.5-ocr`, but not selected by the one-shot ordinary flow | No further code change; parser and 1600-token contract remain unchanged. |
+| BFTM OCR/vision retries | Adapted to `qwen3.5-ocr`, but not selected by the one-shot ordinary flow | No further code change; parser and 8000-token bound remain unchanged. |
+| Mining quick judgment | Shared vision adapter compatibility retained | No workflow expansion and no runtime qualification claim. |
+| Agentic recognition | Shared vision adapter compatibility retained | No runtime qualification claim; it must remain disabled/not selected in the minimum RC. |
+| Edit-time organization | Existing behavior retained | Unchanged text remains zero-call; changed text can still make its pre-existing model call and is outside the minimum RC. |
+| Map/KML | Same finalized identity and geometry | Client artifact now preserves that binding for later review; no UI or consumer code changed. |
+
+## Consolidated differences requiring a later authorization
+
+No following action is performed by this offline follow-up. A future controlled window must authorize them together rather than piecemeal:
+
+1. freeze a new run/batch/manifest and corresponding database binding without reopening Run04 or either closed R1/R2 window;
+2. identify the exact three input files and unchanged cumulative call/cost ledgers;
+3. authorize one exact commit/push, one RC initialization, one enable deployment, one visible client execution, at most one vision call per frozen image, one close and one disable deployment, with zero automatic retry/fallback;
+4. decide whether an actual same-instance Map/KML browser check is included before disable; otherwise accept only the explicitly offline artifact review;
+5. identify the exact release artifact and rollback target. Production deployment remains a separate approval.
+
+### Incremental result-artifact evidence — 2026-10-11
+
+```ini
+COMMAND=pwsh -NoProfile -File scripts/coordinate-three-case-rc-result-artifact-regression.ps1
+EVIDENCE_CLASS=OFFLINE_DYNAMIC_AND_STATIC_NO_NETWORK
+RESULT=11/11 PASS
+PROVIDER_CALLS=0
+HTTP_REQUESTS=0
+POWERSHELL_PARSE=3/3 PASS
+GIT_DIFF_CHECK=PASS
+```
+
+The previously recorded `6/6` client preflight, `30/30` admission and `33/33` model/route regression results were reused and not rerun. No claim is made that those older results executed during this follow-up.
 
 ## Remaining gates and release plan
 
