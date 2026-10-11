@@ -158,6 +158,7 @@ import {
   buildIndonesiaStructuredPreflightDiagnostics,
   classifyIndonesiaStructuredProviderFailure
 } from "./server/recognition/indonesia-structured-diagnostics.js";
+import { createLocalOcrDiagnosticTracker } from "./server/recognition/local-ocr-diagnostics.js";
 import {
   COORDINATE_PROVIDER_MODELS,
   prepareCoordinateProviderRequest,
@@ -8850,6 +8851,15 @@ async function runLocalOcrFamilyClassification({
   stageCapMs = 7_000,
   minRequiredMs = 2_500
 } = {}) {
+  const budget = getRecognitionBudget();
+  const localOcrDiagnostic = createLocalOcrDiagnosticTracker({
+    inputAvailable: Boolean(imageBuffer && imageIdentity)
+  });
+  const snapshotLocalOcrDiagnostics = () => {
+    const snapshot = localOcrDiagnostic.snapshot();
+    budget?.setLocalOcrDiagnostics(snapshot);
+    return snapshot;
+  };
   const genericResult = () => {
     const route = classifyOneShotStructuredFamily();
     return {
@@ -8861,24 +8871,30 @@ async function runLocalOcrFamilyClassification({
       axisOrderEvidence: null,
       projectedTableOcrAcquisition: false,
       sourceContextText: "",
-      sourceContextProvenance: null
+      sourceContextProvenance: null,
+      localOcrDiagnostics: snapshotLocalOcrDiagnostics()
     };
   };
   if (!imageBuffer || !imageIdentity) return genericResult();
 
-  const budget = getRecognitionBudget();
   if (budget) {
     try {
       budget.assertCanStartLocalOcr({ stageName, minRequiredMs, lowValue: false });
     } catch (error) {
       if (error?.code === "RECOGNITION_LOCAL_OCR_ATTEMPT_LIMIT_REACHED"
-        || error?.code === RECOGNITION_BUDGET_CODE) return genericResult();
+        || error?.code === RECOGNITION_BUDGET_CODE) {
+        localOcrDiagnostic.markPhase("BUDGET_PRECHECK_SKIPPED");
+        snapshotLocalOcrDiagnostics();
+        return genericResult();
+      }
       throw error;
     }
   }
   const effectiveTimeoutMs = budget ? budget.effectiveTimeout(stageCapMs) : stageCapMs;
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < minRequiredMs) {
     budget?.recordSkippedStage(stageName, "insufficient_remaining_budget", "skipped");
+    localOcrDiagnostic.markPhase("BUDGET_PRECHECK_SKIPPED");
+    snapshotLocalOcrDiagnostics();
     return genericResult();
   }
 
@@ -8888,6 +8904,10 @@ async function runLocalOcrFamilyClassification({
   });
   let stageResult = "success";
   try {
+    localOcrDiagnostic.markPhase("WRAPPER_ENTERED");
+    snapshotLocalOcrDiagnostics();
+    localOcrDiagnostic.markPhase("PREPROCESSING");
+    snapshotLocalOcrDiagnostics();
     let localOcrImage = imageBuffer;
     let localOcrLayoutSafe = true;
     let sourceContextProvenance = null;
@@ -8914,6 +8934,8 @@ async function runLocalOcrFamilyClassification({
           same_request: true,
           mode: "header_crop"
         });
+        localOcrDiagnostic.setPreprocessingMode("WIDE_HEADER_CROP");
+        snapshotLocalOcrDiagnostics();
       } else {
         const classificationImage = await createLocalOcrClassificationImage({
           imageBuffer,
@@ -8922,11 +8944,19 @@ async function runLocalOcrFamilyClassification({
         localOcrImage = classificationImage.image;
         localOcrLayoutSafe = classificationImage.layoutSafe;
         sourceContextProvenance = classificationImage.provenance;
+        localOcrDiagnostic.setPreprocessingMode(
+          classificationImage.provenance?.mode === "overview_footer_composite"
+            ? "OVERVIEW_FOOTER_COMPOSITE"
+            : "SOURCE_IMAGE"
+        );
+        snapshotLocalOcrDiagnostics();
       }
     } catch {
       localOcrImage = imageBuffer;
       localOcrLayoutSafe = true;
       sourceContextProvenance = null;
+      localOcrDiagnostic.setPreprocessingMode("FALLBACK_SOURCE_IMAGE");
+      snapshotLocalOcrDiagnostics();
     }
     const result = await runCancellableOcrJob({
       createWorker: () => Tesseract.createWorker("eng", 1, {
@@ -8938,9 +8968,16 @@ async function runLocalOcrFamilyClassification({
       signal: getRecognitionDeadlineSignal(),
       timeoutMs: effectiveTimeoutMs,
       deadlineCode: RECOGNITION_DEADLINE_CODE,
-      timeoutCode: RECOGNITION_BUDGET_CODE
+      timeoutCode: RECOGNITION_BUDGET_CODE,
+      onPhase: phase => {
+        localOcrDiagnostic.markPhase(phase);
+        snapshotLocalOcrDiagnostics();
+      }
     });
     const rawLocalOcrText = String(result?.data?.text || "");
+    localOcrDiagnostic.setRawTextPresent(rawLocalOcrText.trim().length > 0);
+    localOcrDiagnostic.markPhase("POSTPROCESS_STARTED");
+    snapshotLocalOcrDiagnostics();
     const axisEvidenceText = rawLocalOcrText
       .split(/\r?\n/u)
       .map(line => normalizeText(line).trim())
@@ -8976,23 +9013,29 @@ async function runLocalOcrFamilyClassification({
       text: sourceText,
       layoutLines
     });
+    const projectedTableOcrAcquisition = shouldUseProjectedTableOcrAcquisition(rawLocalOcrText);
+    const contract = createOneShotAcquisitionContract({
+      route,
+      sourceText,
+      layoutLines,
+      imageIdentity,
+      resultRevision: 1
+    });
+    localOcrDiagnostic.markPhase("POSTPROCESS_COMPLETED");
+    localOcrDiagnostic.complete({ contextPresent: rawLocalOcrText.trim().length > 0 });
+    snapshotLocalOcrDiagnostics();
     return {
       attempted: true,
       route,
       sourceText,
       axisEvidenceText,
       axisOrderEvidence: selectedLocalEvidence.axisOrderEvidence || null,
-      projectedTableOcrAcquisition: shouldUseProjectedTableOcrAcquisition(rawLocalOcrText),
+      projectedTableOcrAcquisition,
       sourceContextText: rawLocalOcrText.slice(0, 40_000),
       sourceContextProvenance,
-      contract: createOneShotAcquisitionContract({
-        route,
-        sourceText,
-        layoutLines,
-        imageIdentity,
-        resultRevision: 1
-      }),
-      layoutLines
+      contract,
+      layoutLines,
+      localOcrDiagnostics: snapshotLocalOcrDiagnostics()
     };
   } catch (error) {
     stageResult = error?.code === RECOGNITION_DEADLINE_CODE
@@ -9000,10 +9043,25 @@ async function runLocalOcrFamilyClassification({
       : error?.code === RECOGNITION_BUDGET_CODE
         ? "timeout"
         : "failed";
-    if (error?.code === RECOGNITION_DEADLINE_CODE) throw error;
+    const currentDiagnostics = localOcrDiagnostic.snapshot();
+    if (error?.code === RECOGNITION_DEADLINE_CODE) {
+      localOcrDiagnostic.fail("DEADLINE_ABORTED");
+      error.localOcrDiagnostics = snapshotLocalOcrDiagnostics();
+      throw error;
+    }
+    if (error?.code === RECOGNITION_BUDGET_CODE) {
+      localOcrDiagnostic.fail("TIMEOUT");
+    } else if (currentDiagnostics.resultReceived === true) {
+      localOcrDiagnostic.fail("POSTPROCESS_ERROR_AFTER_RESULT");
+    } else if (currentDiagnostics.workerReady !== true) {
+      localOcrDiagnostic.fail("WORKER_CREATE_ERROR");
+    } else {
+      localOcrDiagnostic.fail("RECOGNIZE_ERROR");
+    }
     return {
       ...genericResult(),
-      attempted: true
+      attempted: true,
+      localOcrDiagnostics: snapshotLocalOcrDiagnostics()
     };
   } finally {
     budget?.stageCompleted(stageEvent, { result: stageResult });
@@ -15971,6 +16029,7 @@ async function recognizeCoordinatesHandler(req, res) {
   let oneShotLocalOcrAxisOrderEvidence = null;
   let oneShotLocalOcrSourceContextText = "";
   let oneShotLocalOcrSourceContextProvenance = null;
+  let oneShotLocalOcrDiagnostics = null;
   let projectedTableOcrAcquisition = false;
   let oneShotStructuredFamilyRoute = classifyOneShotStructuredFamily();
   let oneShotAcquisitionContract = createOneShotAcquisitionContract({ route: oneShotStructuredFamilyRoute });
@@ -16943,6 +17002,7 @@ async function recognizeCoordinatesHandler(req, res) {
     oneShotLocalOcrAxisOrderEvidence = oneShotFamilyClassification.axisOrderEvidence || null;
     oneShotLocalOcrSourceContextText = String(oneShotFamilyClassification.sourceContextText || "");
     oneShotLocalOcrSourceContextProvenance = oneShotFamilyClassification.sourceContextProvenance || null;
+    oneShotLocalOcrDiagnostics = oneShotFamilyClassification.localOcrDiagnostics || null;
     projectedTableOcrAcquisition = oneShotFamilyClassification.projectedTableOcrAcquisition === true;
     oneShotStructuredFamilyRoute = oneShotFamilyClassification.route;
     oneShotAcquisitionContract = oneShotFamilyClassification.contract;
@@ -17390,6 +17450,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       });
     };
     let controlledRcProjectedColumnsHintAuthorized = false;
+    let controlledRcModelCrsAcquisitionAuthorized = false;
     let indonesiaStructuredRcPreflightChecked = false;
     let indonesiaStructuredRcPreflightPassed = false;
     let indonesiaStructuredRcPreflightFailureCode = indonesiaStructuredAnyRcSelected
@@ -17412,17 +17473,27 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         // Keep the original source-evidence gate authoritative for any unverified request.
       }
     }
-    if (coordinateThreeCaseIndonesiaSelected && req.coordinateThreeCaseRcAsyncAuthorized === true) {
-      controlledRcProjectedColumnsHintAuthorized = true;
+    if (coordinateThreeCaseIndonesiaSelected) {
+      const controlledModelCrsAuthorization = coordinateThreeCaseRcAdmission
+        .getControlledModelCrsAcquisitionAuthorization({
+          budget: recognitionBudget,
+          caseId: "indonesia",
+          productMode: requestedStructuredProductMode
+        });
+      controlledRcProjectedColumnsHintAuthorized = controlledModelCrsAuthorization.authorized === true;
+      controlledRcModelCrsAcquisitionAuthorized = controlledModelCrsAuthorization.authorized === true;
       indonesiaStructuredRcPreflightChecked = true;
-      indonesiaStructuredRcPreflightPassed = true;
-      indonesiaStructuredRcPreflightFailureCode = "NONE";
+      indonesiaStructuredRcPreflightPassed = controlledModelCrsAuthorization.authorized === true;
+      indonesiaStructuredRcPreflightFailureCode = controlledModelCrsAuthorization.authorized === true
+        ? "NONE"
+        : controlledModelCrsAuthorization.reasonCode;
     }
     const indonesiaStructuredRoute = selectIndonesiaStructuredProductRoute({
       enabled: indonesiaStructuredProductEnabled,
       requestedMode: requestedStructuredProductMode,
       sourceContextText: oneShotLocalOcrSourceContextText,
-      controlledRcProjectedColumnsHintAuthorized
+      controlledRcProjectedColumnsHintAuthorized,
+      controlledRcModelCrsAcquisitionAuthorized
     });
     const indonesiaStructuredPreflightDiagnostics = buildIndonesiaStructuredPreflightDiagnostics({
       route: indonesiaStructuredRoute,
@@ -17431,7 +17502,9 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
       preflightChecked: indonesiaStructuredRcPreflightChecked,
       preflightPassed: indonesiaStructuredRcPreflightPassed,
       preflightFailureCode: indonesiaStructuredRcPreflightFailureCode,
-      controlledRcProjectedColumnsHintAuthorized
+      controlledRcProjectedColumnsHintAuthorized,
+      controlledRcModelCrsAcquisitionAuthorized,
+      localOcrDiagnostics: oneShotLocalOcrDiagnostics
     });
     const buildIndonesiaStructuredFailureResponse = ({
       reasonCode,

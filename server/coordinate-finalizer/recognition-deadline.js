@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
+import { sanitizeLocalOcrDiagnostics } from "../recognition/local-ocr-diagnostics.js";
 
 export const RECOGNITION_DEADLINE_CODE = "RECOGNITION_DEADLINE_EXCEEDED";
 export const RECOGNITION_BUDGET_CODE = "RECOGNITION_BUDGET_EXHAUSTED";
@@ -265,6 +266,7 @@ export class RecognitionBudget {
     this.initialUploadStage = null;
     this.acquisitionRouteReason = "UNCLASSIFIED";
     this.acquisitionTerminalState = "NOT_COMPLETED";
+    this.localOcrDiagnostics = null;
   }
 
   elapsedMs() {
@@ -448,6 +450,18 @@ export class RecognitionBudget {
 
   markUserUsageConsumed(consumed = true) {
     this.userUsageConsumed = consumed === true;
+  }
+
+  setLocalOcrDiagnostics(value) {
+    this.localOcrDiagnostics = sanitizeLocalOcrDiagnostics(value);
+    return this.localOcrDiagnostics;
+  }
+
+  getLocalOcrDiagnosticsForResponse({ deadlineAborted = false } = {}) {
+    if (!this.localOcrDiagnostics) return null;
+    return sanitizeLocalOcrDiagnostics(deadlineAborted && this.localOcrDiagnostics.outcome === "IN_PROGRESS"
+      ? { ...this.localOcrDiagnostics, outcome: "DEADLINE_ABORTED" }
+      : this.localOcrDiagnostics);
   }
 
   markUsageCommitState(state) {
@@ -828,6 +842,7 @@ export function recognitionDeadlineMiddleware({
       if (!res.headersSent) {
         deadlineResponseSent = true;
         const commitOutcomeUnknown = ["PREPARING", "PREPARED", "COMMITTING"].includes(budget.usageCommitState);
+        const localOcrDiagnostics = budget.getLocalOcrDiagnosticsForResponse({ deadlineAborted: true });
         budget.markResponseSent({
           httpStatus: 504,
           responseCode: commitOutcomeUnknown ? "USAGE_COMMIT_OUTCOME_UNKNOWN" : RECOGNITION_DEADLINE_CODE
@@ -847,7 +862,8 @@ export function recognitionDeadlineMiddleware({
           retryAllowed: false,
           deadlineMs,
           elapsedMs: Date.now() - startedAt,
-          terminationReason: "request_hard_deadline_during_usage_commit"
+          terminationReason: "request_hard_deadline_during_usage_commit",
+          ...(localOcrDiagnostics ? { localOcrDiagnostics } : {})
         } : {
           success: false,
           reason: "timeout",
@@ -863,7 +879,8 @@ export function recognitionDeadlineMiddleware({
           deadlineMs,
           elapsedMs: Date.now() - startedAt,
           terminationReason: "request_hard_deadline",
-          providerCancellationState: "aborted"
+          providerCancellationState: "aborted",
+          ...(localOcrDiagnostics ? { localOcrDiagnostics } : {})
         });
       }
     }, deadlineMs);

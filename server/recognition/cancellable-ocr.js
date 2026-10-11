@@ -16,7 +16,8 @@ export async function runCancellableOcrJob({
   timeoutMs,
   terminationTimeoutMs = 250,
   deadlineCode = "RECOGNITION_DEADLINE_EXCEEDED",
-  timeoutCode = "RECOGNITION_BUDGET_EXHAUSTED"
+  timeoutCode = "RECOGNITION_BUDGET_EXHAUSTED",
+  onPhase = null
 }) {
   if (typeof createWorker !== "function") throw new TypeError("createWorker is required");
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError("timeoutMs must be positive");
@@ -57,12 +58,17 @@ export async function runCancellableOcrJob({
 
   try {
     const operation = (async () => {
+      onPhase?.("WORKER_CREATE_STARTED");
       worker = await createWorker();
+      onPhase?.("WORKER_READY");
       if (stopped || signal?.aborted) {
         await terminate();
         throw createStopError(deadlineCode, "OCR job aborted.", "request_aborted");
       }
-      return worker.recognize(image, recognizeOptions, recognizeOutput);
+      onPhase?.("RECOGNIZE_STARTED");
+      const result = await worker.recognize(image, recognizeOptions, recognizeOutput);
+      onPhase?.("RESULT_RECEIVED");
+      return result;
     })();
 
     const cancellation = new Promise((_, reject) => {

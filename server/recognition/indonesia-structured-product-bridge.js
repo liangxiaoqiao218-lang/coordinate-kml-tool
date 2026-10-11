@@ -39,11 +39,48 @@ function normalizeCrs(value) {
   return text(value).replace(/\s+/gu, " ").toUpperCase();
 }
 
+function inspectSourceCrs(value) {
+  const context = normalizeCrs(value);
+  const identities = new Set();
+  for (const match of context.matchAll(/\bEPSG\s*:?\s*(\d{4,6})\b/gu)) {
+    identities.add(`EPSG:${match[1]}`);
+  }
+  let utmTokenPresent = false;
+  let targetUtmTokenPresent = false;
+  for (const match of context.matchAll(/\bUTM\b[^\r\n]{0,100}?\b(?:ZONE|ZONA)\s*(\d{1,2})\s*([NS])\b/gu)) {
+    utmTokenPresent = true;
+    const zone = Number(match[1]);
+    const hemisphere = String(match[2]);
+    if (zone >= 1 && zone <= 60) {
+      if (zone === 50 && hemisphere === "S") targetUtmTokenPresent = true;
+      else identities.add(`UTM:${zone}:${hemisphere}`);
+    }
+  }
+  if (/\bBFTM\b/u.test(context)) identities.add("EPSG:3440");
+  const conflictingDatumPresent = /\b(?:ED\s*50|WGS\s*(?:19)?72|NAD\s*(?:27|83)|ITRF\s*\d{4})\b/u.test(context);
+  const nonTargetIdentityPresent = [...identities].some(identity => (
+    identity.startsWith("EPSG:")
+      ? identity !== "EPSG:32750"
+      : identity !== "UTM:50:S"
+  ));
+  const explicitTargetIdentityPresent = identities.has("EPSG:32750");
+  const unresolvedExplicitCrs = utmTokenPresent
+    && targetUtmTokenPresent
+    && !explicitTargetIdentityPresent
+    && !nonTargetIdentityPresent
+    && !conflictingDatumPresent;
+  return Object.freeze({
+    sourceCrsConflict: conflictingDatumPresent || nonTargetIdentityPresent || identities.size > 1,
+    sourceCrsUnresolved: unresolvedExplicitCrs
+  });
+}
+
 export function selectIndonesiaStructuredProductRoute({
   enabled = false,
   requestedMode = "",
   sourceContextText = "",
-  controlledRcProjectedColumnsHintAuthorized = false
+  controlledRcProjectedColumnsHintAuthorized = false,
+  controlledRcModelCrsAcquisitionAuthorized = false
 } = {}) {
   const requested = text(requestedMode);
   if (requested !== INDONESIA_STRUCTURED_PRODUCT_MODE) {
@@ -51,44 +88,52 @@ export function selectIndonesiaStructuredProductRoute({
   }
   const context = normalizeCrs(sourceContextText);
   const explicitUtm50s = /(?:UTM\s+WGS\s*1984[^\r\n]{0,80}(?:ZONA|ZONE)\s*50\s*S|EPSG\s*:?\s*32750)/u.test(context);
+  const sourceCrsInspection = inspectSourceCrs(sourceContextText);
+  const sourceCrsConflict = sourceCrsInspection.sourceCrsConflict;
+  const sourceCrsUnresolved = !explicitUtm50s && sourceCrsInspection.sourceCrsUnresolved;
   const projectedColumns = /(?:\bX\b[^\r\n]{0,60}\bY\b|\bEASTING\b[^\r\n]{0,60}\bNORTHING\b)/u.test(context);
   const projectedColumnsHintOnly = !projectedColumns && controlledRcProjectedColumnsHintAuthorized === true;
+  const controlledRcModelCrsAcquisitionApplied = !explicitUtm50s
+    && !sourceCrsConflict
+    && controlledRcModelCrsAcquisitionAuthorized === true
+    && (projectedColumns || projectedColumnsHintOnly);
+  const evidence = () => Object.freeze({
+    sourceContextPresent: text(sourceContextText).length > 0,
+    explicitUtm50s,
+    sourceCrsConflict,
+    sourceCrsUnresolved,
+    projectedColumns,
+    controlledRcProjectedColumnsHintAuthorized: controlledRcProjectedColumnsHintAuthorized === true,
+    projectedColumnsHintOnly,
+    controlledRcModelCrsAcquisitionAuthorized: controlledRcModelCrsAcquisitionAuthorized === true,
+    controlledRcModelCrsAcquisitionApplied
+  });
   if (enabled !== true) {
     return Object.freeze({
       status: INDONESIA_STRUCTURED_ROUTE_STATUS.BLOCKED,
       reasonCode: "STRUCTURED_PRODUCT_FEATURE_DISABLED",
-      evidence: Object.freeze({
-        sourceContextPresent: text(sourceContextText).length > 0,
-        explicitUtm50s,
-        projectedColumns,
-        controlledRcProjectedColumnsHintAuthorized: controlledRcProjectedColumnsHintAuthorized === true,
-        projectedColumnsHintOnly
-      })
+      evidence: evidence()
     });
   }
-  if (!explicitUtm50s || (!projectedColumns && !projectedColumnsHintOnly)) {
+  if (sourceCrsConflict) {
+    return Object.freeze({
+      status: INDONESIA_STRUCTURED_ROUTE_STATUS.BLOCKED,
+      reasonCode: "STRUCTURED_PRODUCT_SOURCE_CRS_CONFLICT",
+      evidence: evidence()
+    });
+  }
+  if ((!explicitUtm50s && !controlledRcModelCrsAcquisitionApplied)
+    || (!projectedColumns && !projectedColumnsHintOnly)) {
     return Object.freeze({
       status: INDONESIA_STRUCTURED_ROUTE_STATUS.BLOCKED,
       reasonCode: "STRUCTURED_PRODUCT_SOURCE_EVIDENCE_REQUIRED",
-      evidence: Object.freeze({
-        sourceContextPresent: text(sourceContextText).length > 0,
-        explicitUtm50s,
-        projectedColumns,
-        controlledRcProjectedColumnsHintAuthorized: controlledRcProjectedColumnsHintAuthorized === true,
-        projectedColumnsHintOnly
-      })
+      evidence: evidence()
     });
   }
   return Object.freeze({
     status: INDONESIA_STRUCTURED_ROUTE_STATUS.SELECTED,
     reasonCode: null,
-    evidence: Object.freeze({
-      sourceContextPresent: text(sourceContextText).length > 0,
-      explicitUtm50s: true,
-      projectedColumns,
-      controlledRcProjectedColumnsHintAuthorized: controlledRcProjectedColumnsHintAuthorized === true,
-      projectedColumnsHintOnly
-    })
+    evidence: evidence()
   });
 }
 

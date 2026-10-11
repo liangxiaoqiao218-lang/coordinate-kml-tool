@@ -11,8 +11,8 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-client-preflight.ps1')
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-result-artifact.ps1')
-$runId = 'coordinate-three-case-rc-20261011-r5'
-$batchId = 'coordinate-three-case-rc-20261011-v5'
+$runId = 'coordinate-three-case-rc-20261011-r6'
+$batchId = 'coordinate-three-case-rc-20261011-v6'
 $expectedModel = 'qwen3.8-flash'
 $controlledVisitorId = Resolve-CoordinateThreeCaseControlledVisitorId -VisitorId $VisitorId
 $caseDefinitions = @(

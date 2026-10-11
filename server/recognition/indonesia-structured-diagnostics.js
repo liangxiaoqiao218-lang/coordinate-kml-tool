@@ -1,3 +1,5 @@
+import { sanitizeLocalOcrDiagnostics } from "./local-ocr-diagnostics.js";
+
 export const INDONESIA_STRUCTURED_DIAGNOSTIC_SCHEMA = "indonesia_structured_preflight_diagnostics_v1";
 
 const ROUTE_FAILURE_CODES = new Set([
@@ -5,6 +7,7 @@ const ROUTE_FAILURE_CODES = new Set([
   "STRUCTURED_PRODUCT_FEATURE_DISABLED",
   "STRUCTURED_PRODUCT_UTM50S_EVIDENCE_REQUIRED",
   "STRUCTURED_PRODUCT_PROJECTED_COLUMNS_EVIDENCE_REQUIRED",
+  "STRUCTURED_PRODUCT_SOURCE_CRS_CONFLICT",
   "STRUCTURED_PRODUCT_SOURCE_EVIDENCE_REQUIRED"
 ]);
 
@@ -16,7 +19,14 @@ const PREFLIGHT_FAILURE_CODES = new Set([
   "INDONESIA_STRUCTURED_B_RC_JOB_PREFLIGHT_UNAVAILABLE",
   "INDONESIA_STRUCTURED_B_RC_JOB_PREFLIGHT_REJECTED",
   "INDONESIA_STRUCTURED_B_RC_ADMISSION_UNAVAILABLE",
-  "INDONESIA_STRUCTURED_B_RC_NOT_ACTIVATED"
+  "INDONESIA_STRUCTURED_B_RC_NOT_ACTIVATED",
+  "COORDINATE_THREE_CASE_RC_CONTROLLED_MODEL_CRS_AUTHORIZED",
+  "COORDINATE_THREE_CASE_RC_CONTROLLED_MODEL_CRS_SCOPE_REJECTED",
+  "COORDINATE_THREE_CASE_RC_CONTROLLED_MODEL_CRS_BINDING_REJECTED",
+  "COORDINATE_THREE_CASE_RC_DISABLED",
+  "COORDINATE_THREE_CASE_RC_CONFIG_NOT_READY",
+  "COORDINATE_THREE_CASE_RC_NOT_ACTIVATED",
+  "COORDINATE_THREE_CASE_RC_BUDGET_REQUIRED"
 ]);
 
 function safeBoolean(value) {
@@ -55,6 +65,9 @@ export function classifyIndonesiaStructuredRouteFailure(route) {
   if (route?.reasonCode === "STRUCTURED_PRODUCT_FEATURE_DISABLED") {
     return "STRUCTURED_PRODUCT_FEATURE_DISABLED";
   }
+  if (route?.evidence?.sourceCrsConflict === true) {
+    return "STRUCTURED_PRODUCT_SOURCE_CRS_CONFLICT";
+  }
   if (route?.evidence?.explicitUtm50s !== true) {
     return "STRUCTURED_PRODUCT_UTM50S_EVIDENCE_REQUIRED";
   }
@@ -72,41 +85,55 @@ export function buildIndonesiaStructuredPreflightDiagnostics({
   preflightChecked = false,
   preflightPassed = false,
   preflightFailureCode = "INDONESIA_STRUCTURED_B_RC_PREFLIGHT_NOT_APPLICABLE",
-  controlledRcProjectedColumnsHintAuthorized = false
+  controlledRcProjectedColumnsHintAuthorized = false,
+  controlledRcModelCrsAcquisitionAuthorized = false,
+  localOcrDiagnostics = null
 } = {}) {
+  const sanitizedLocalOcrDiagnostics = sanitizeLocalOcrDiagnostics(localOcrDiagnostics);
   return Object.freeze({
     schemaVersion: INDONESIA_STRUCTURED_DIAGNOSTIC_SCHEMA,
     localOcrAttempted: safeBoolean(localOcrAttempted),
     sourceContextPresent: safeBoolean(sourceContextPresent),
     localOcrContextPresent: safeBoolean(sourceContextPresent),
     explicitUtm50s: safeBoolean(route?.evidence?.explicitUtm50s),
+    sourceCrsConflict: safeBoolean(route?.evidence?.sourceCrsConflict),
+    sourceCrsUnresolved: safeBoolean(route?.evidence?.sourceCrsUnresolved),
     projectedColumns: safeBoolean(route?.evidence?.projectedColumns),
     controlledRcHintAuthorized: safeBoolean(controlledRcProjectedColumnsHintAuthorized),
     controlledRcHintApplied: safeBoolean(route?.evidence?.projectedColumnsHintOnly),
+    controlledRcModelCrsAcquisitionAuthorized: safeBoolean(controlledRcModelCrsAcquisitionAuthorized),
+    controlledRcModelCrsAcquisitionApplied: safeBoolean(route?.evidence?.controlledRcModelCrsAcquisitionApplied),
     preflightChecked: safeBoolean(preflightChecked),
     preflightPassed: safeBoolean(preflightPassed),
     preflightFailureCode: safeEnum(preflightFailureCode, PREFLIGHT_FAILURE_CODES, "INDONESIA_STRUCTURED_B_RC_PREFLIGHT_UNKNOWN"),
     routeSelected: route?.status === "SELECTED",
-    routeFailureCode: classifyIndonesiaStructuredRouteFailure(route)
+    routeFailureCode: classifyIndonesiaStructuredRouteFailure(route),
+    ...(sanitizedLocalOcrDiagnostics ? { localOcrDiagnostics: sanitizedLocalOcrDiagnostics } : {})
   });
 }
 
 export function sanitizeIndonesiaStructuredPreflightDiagnostics(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)
     || value.schemaVersion !== INDONESIA_STRUCTURED_DIAGNOSTIC_SCHEMA) return null;
+  const localOcrDiagnostics = sanitizeLocalOcrDiagnostics(value.localOcrDiagnostics);
   return Object.freeze({
     schemaVersion: INDONESIA_STRUCTURED_DIAGNOSTIC_SCHEMA,
     localOcrAttempted: safeBoolean(value.localOcrAttempted),
     sourceContextPresent: safeBoolean(value.sourceContextPresent),
     localOcrContextPresent: safeBoolean(value.localOcrContextPresent),
     explicitUtm50s: safeBoolean(value.explicitUtm50s),
+    sourceCrsConflict: safeBoolean(value.sourceCrsConflict),
+    sourceCrsUnresolved: safeBoolean(value.sourceCrsUnresolved),
     projectedColumns: safeBoolean(value.projectedColumns),
     controlledRcHintAuthorized: safeBoolean(value.controlledRcHintAuthorized),
     controlledRcHintApplied: safeBoolean(value.controlledRcHintApplied),
+    controlledRcModelCrsAcquisitionAuthorized: safeBoolean(value.controlledRcModelCrsAcquisitionAuthorized),
+    controlledRcModelCrsAcquisitionApplied: safeBoolean(value.controlledRcModelCrsAcquisitionApplied),
     preflightChecked: safeBoolean(value.preflightChecked),
     preflightPassed: safeBoolean(value.preflightPassed),
     preflightFailureCode: safeEnum(value.preflightFailureCode, PREFLIGHT_FAILURE_CODES, "INDONESIA_STRUCTURED_B_RC_PREFLIGHT_UNKNOWN"),
     routeSelected: safeBoolean(value.routeSelected),
-    routeFailureCode: safeEnum(value.routeFailureCode, ROUTE_FAILURE_CODES, "STRUCTURED_PRODUCT_SOURCE_EVIDENCE_REQUIRED")
+    routeFailureCode: safeEnum(value.routeFailureCode, ROUTE_FAILURE_CODES, "STRUCTURED_PRODUCT_SOURCE_EVIDENCE_REQUIRED"),
+    ...(localOcrDiagnostics ? { localOcrDiagnostics } : {})
   });
 }

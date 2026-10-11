@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 
 export const COORDINATE_THREE_CASE_RC = Object.freeze({
-  batchId: "coordinate-three-case-rc-20261011-v5",
-  runId: "coordinate-three-case-rc-20261011-r5",
-  manifestSha256: "1a84785aa1e00e2b2fb4ca803764855c14de5a9cbe3f179d5e7c3061cc3c6743",
+  batchId: "coordinate-three-case-rc-20261011-v6",
+  runId: "coordinate-three-case-rc-20261011-r6",
+  manifestSha256: "c1a240fb28541b1739b9e4ea369877137ecbd619e1852b18c2bac38e0689cf9f",
   rcProjectRef: "thjojitdafxfarhxhoyo",
   rcServiceName: "coordinate-kml-tool-rc",
   providerHostname: "dashscope.aliyuncs.com",
@@ -395,7 +395,8 @@ export function createCoordinateThreeCaseRcAdmission({
       caseId: normalizedCaseId,
       requestId,
       imageSha256: actualImageSha256,
-      tokenHash: tokenHash(token)
+      tokenHash: tokenHash(token),
+      productMode: definition.productMode
     });
   }
 
@@ -455,6 +456,37 @@ export function createCoordinateThreeCaseRcAdmission({
     }
     session.dispatched = true;
     return Object.freeze({ dispatched: true, caseId: session.caseId });
+  }
+
+  function getControlledModelCrsAcquisitionAuthorization({
+    budget,
+    caseId,
+    productMode
+  } = {}) {
+    const reject = reasonCode => Object.freeze({ authorized: false, reasonCode });
+    if (!config.guardRequired) return reject("COORDINATE_THREE_CASE_RC_DISABLED");
+    if (!config.ready) return reject("COORDINATE_THREE_CASE_RC_CONFIG_NOT_READY");
+    if (activationState !== "READY") return reject("COORDINATE_THREE_CASE_RC_NOT_ACTIVATED");
+    if (!budget || typeof budget !== "object") return reject("COORDINATE_THREE_CASE_RC_BUDGET_REQUIRED");
+    const normalizedCaseId = safeCaseId(caseId);
+    const definition = COORDINATE_THREE_CASE_RC.cases[normalizedCaseId];
+    const normalizedProductMode = String(productMode || "").trim();
+    const session = sessions.get(budget);
+    if (!definition || normalizedCaseId !== "indonesia"
+      || normalizedProductMode !== definition.productMode) {
+      return reject("COORDINATE_THREE_CASE_RC_CONTROLLED_MODEL_CRS_SCOPE_REJECTED");
+    }
+    if (!session || session.settled || session.dispatched
+      || session.caseId !== normalizedCaseId
+      || session.productMode !== normalizedProductMode
+      || safeUuid(budget.requestId) !== session.requestId
+      || (Number(budget.providerAttemptCount) || 0) !== 0) {
+      return reject("COORDINATE_THREE_CASE_RC_CONTROLLED_MODEL_CRS_BINDING_REJECTED");
+    }
+    return Object.freeze({
+      authorized: true,
+      reasonCode: "COORDINATE_THREE_CASE_RC_CONTROLLED_MODEL_CRS_AUTHORIZED"
+    });
   }
 
   function recordProviderResultForBudget({ budget, completionState, usage } = {}) {
@@ -593,6 +625,7 @@ export function createCoordinateThreeCaseRcAdmission({
     validateVisitorEnvelope,
     preflightJob,
     bindBudget,
+    getControlledModelCrsAcquisitionAuthorization,
     dispatchForBudget,
     recordProviderResultForBudget,
     settleForBudget,

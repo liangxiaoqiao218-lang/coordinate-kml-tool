@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { sanitizeIndonesiaStructuredPreflightDiagnostics } from "./indonesia-structured-diagnostics.js";
+import { sanitizeLocalOcrDiagnostics } from "./local-ocr-diagnostics.js";
 
 export const RECOGNITION_ACQUISITION_JOB_STATUS = Object.freeze({
   QUEUED: "QUEUED",
@@ -58,6 +59,8 @@ function buildSafeFailureResult(output, fallbackCode) {
   if (indonesiaStructuredPreflightDiagnostics) {
     result.indonesiaStructuredPreflightDiagnostics = indonesiaStructuredPreflightDiagnostics;
   }
+  const localOcrDiagnostics = sanitizeLocalOcrDiagnostics(source.localOcrDiagnostics);
+  if (localOcrDiagnostics) result.localOcrDiagnostics = localOcrDiagnostics;
   if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(String(source.requestId || ""))) {
     result.requestId = source.requestId;
   }

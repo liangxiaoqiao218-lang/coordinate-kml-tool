@@ -4,14 +4,14 @@
 
 This release candidate adds the already-reviewed `qwen3.8-flash` image-recognition adapter and a one-window RC admission layer for exactly three frozen images: Indonesia UTM50S, MGRS and BFTM. It does not enable Production, MapTiler, PDF upload, reverse KML import, UI redesign, model-comparison administration or a new map provider.
 
-The current window is `coordinate-three-case-rc-20261011-r5`. The closed R1 through R4 runs remain closed. R5 changes only the run/batch/database binding plus controlled test-visitor propagation and accurate fail-closed permission diagnostics required after the R4 pre-Provider failure. The local white-listed result artifact continues to preserve the single authorized execution result without another model call.
+The current window is `coordinate-three-case-rc-20261011-r6`. The closed R1 through R5 runs remain closed. R6 binds the approved source-evidence relaxation candidate to a fresh run/batch/database identity while preserving controlled test-visitor propagation, fail-closed permission diagnostics and the local white-listed result artifact. The artifact preserves the single authorized execution result without another model call.
 
 The ordinary image path remains one-shot. Direct OCR calls and automatic model retries are both zero. The shared Provider boundary rejects every dispatch that is not bound to a current RC claim, the exact image digest, the exact case, the exact model and the active database run.
 
 ## Budget and admission invariants
 
 - Indonesia uses the existing `indonesia-ab-20261010-v1` cumulative budget row as the single atomic six-call/CNY 5 authority. The closed Run04 single-run row is not reopened or updated; only the shared historical budget counters are reserved and settled when the new run dispatches. Counters are not reset.
-- MGRS and BFTM continue to share the original `coordinate-three-case-rc-20261011-v1` CNY 2 ledger. R5 does not create or reset another budget row. Each dispatch reserves CNY 1; each case can be claimed and dispatched once.
+- MGRS and BFTM continue to share the original `coordinate-three-case-rc-20261011-v1` CNY 2 ledger. R6 does not create or reset another budget row. Each dispatch reserves CNY 1; each case can be claimed and dispatched once.
 - The run allows at most three claims, three dispatches and one active dispatch at a time.
 - Missing Provider usage remains `UNKNOWN`; it is never rewritten as zero. Reservations are not released after an unknown-cost response.
 - Closing the run is irreversible and immediately blocks new claims or dispatches. Unused claims are settled pre-Provider and unused cases are closed; an already-dispatched case remains `UNKNOWN` with its conservative reservation until its authoritative settlement arrives.
@@ -50,7 +50,7 @@ The client also writes a separate private validated-result artifact outside the 
 
 The retained identity is evidence, not a durable server authorization. Recognition jobs and finalized identities remain process-local and time-bounded. A later browser Map/KML test must use the same live service/current identity before shutdown or be separately authorized; post-close offline validation must not be reported as a real browser download.
 
-The R5-only incremental checks are provider-free and perform zero HTTP calls: client preflight/envelope `8/8 PASS`, in-process actual request-chain boundary `13/13 PASS`, sanitized result artifact `12/12 PASS`, and R5 run/budget binding `12/12 PASS`. The request-chain check extracts and executes the current inline Express jobs callback and full `recognizeCoordinatesHandler` in a no-listener VM, with the production visitor ingress and preflight middleware, async runtime, internal forwarder and binding middleware, exported permission helper, real RC admission object and uncharged permission-failure settlement helper. The full handler uses the existing provider-free `fast_success` regression path; a separate case reaches RC pre-Provider dispatch. Database RPC, localhost internal transport and final Provider transport are explicit in-process stubs; these results are not real recognition evidence. R5 retains the original process-local `ensureUser()` plus `getEffectivePermissions()` semantics; the additional read-only durable-user existence check prevents a later real user insert and does not grant permission.
+The R6-only incremental binding check is provider-free and performs zero HTTP calls. The already-reviewed source-evidence relaxation, request-chain, deadline and artifact evidence is reused rather than rerun. Database initialization and final Provider transport remain separately gated; offline results are not real recognition evidence. R6 retains the original process-local `ensureUser()` plus `getEffectivePermissions()` semantics; the additional read-only durable-user existence check prevents a later real user insert and does not grant permission.
 
 ## Remaining gates
 

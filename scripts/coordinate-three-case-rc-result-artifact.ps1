@@ -58,6 +58,11 @@ function Get-CoordinateThreeCaseSanitizedCaseReceipt {
   $result = $Snapshot.result
   $finalized = $result.finalizedCoordinateResult
   $diagnostics = $result.indonesiaStructuredPreflightDiagnostics
+  $localOcrDiagnostics = if ($diagnostics.localOcrDiagnostics) {
+    $diagnostics.localOcrDiagnostics
+  } else {
+    $result.localOcrDiagnostics
+  }
   $providerCalls = Get-CoordinateThreeCaseProviderCallObservation -Value $result.providerCallCount -Limit 1
   $identityPresent = -not [string]::IsNullOrWhiteSpace([string]$finalized.resultId) -and
     ([int64]$finalized.resultRevision -gt 0) -and
@@ -83,9 +88,24 @@ function Get-CoordinateThreeCaseSanitizedCaseReceipt {
     sourceContextPresent = $diagnostics.sourceContextPresent -eq $true
     localOcrContextPresent = $diagnostics.localOcrContextPresent -eq $true
     explicitUtm50s = $diagnostics.explicitUtm50s -eq $true
+    sourceCrsConflict = $diagnostics.sourceCrsConflict -eq $true
+    sourceCrsUnresolved = $diagnostics.sourceCrsUnresolved -eq $true
     projectedColumns = $diagnostics.projectedColumns -eq $true
     controlledRcHintAuthorized = $diagnostics.controlledRcHintAuthorized -eq $true
     controlledRcHintApplied = $diagnostics.controlledRcHintApplied -eq $true
+    controlledRcModelCrsAcquisitionAuthorized = $diagnostics.controlledRcModelCrsAcquisitionAuthorized -eq $true
+    controlledRcModelCrsAcquisitionApplied = $diagnostics.controlledRcModelCrsAcquisitionApplied -eq $true
+    localOcrPhase = ConvertTo-CoordinateThreeCaseFixedCode -Value $localOcrDiagnostics.phase -Fallback 'UNKNOWN'
+    localOcrOutcome = ConvertTo-CoordinateThreeCaseFixedCode -Value $localOcrDiagnostics.outcome -Fallback 'UNKNOWN'
+    localOcrPreprocessingMode = ConvertTo-CoordinateThreeCaseFixedCode -Value $localOcrDiagnostics.preprocessingMode -Fallback 'UNKNOWN'
+    localOcrWrapperEntered = $localOcrDiagnostics.wrapperEntered -eq $true
+    localOcrWorkerCreateStarted = $localOcrDiagnostics.workerCreateStarted -eq $true
+    localOcrWorkerReady = $localOcrDiagnostics.workerReady -eq $true
+    localOcrRecognizeStarted = $localOcrDiagnostics.recognizeStarted -eq $true
+    localOcrResultReceived = $localOcrDiagnostics.resultReceived -eq $true
+    localOcrPostprocessCompleted = $localOcrDiagnostics.postprocessCompleted -eq $true
+    localOcrContextReturned = $localOcrDiagnostics.contextReturned -eq $true
+    localOcrRawTextPresent = $localOcrDiagnostics.rawTextPresent -eq $true
     preflightChecked = $diagnostics.preflightChecked -eq $true
     preflightPassed = $diagnostics.preflightPassed -eq $true
     routeSelected = $diagnostics.routeSelected -eq $true
@@ -191,6 +211,11 @@ function New-CoordinateThreeCaseValidatedResultRecord {
   $finalized = $result.finalizedCoordinateResult
   $capabilities = $result.outputCapabilities
   $diagnostics = $result.indonesiaStructuredPreflightDiagnostics
+  $localOcrDiagnostics = if ($diagnostics.localOcrDiagnostics) {
+    $diagnostics.localOcrDiagnostics
+  } else {
+    $result.localOcrDiagnostics
+  }
   $providerCalls = Get-CoordinateThreeCaseProviderCallObservation -Value $result.providerCallCount -Limit 1
   $safeResultId = ConvertTo-CoordinateThreeCaseFixedCode -Value $finalized.resultId -Fallback ''
   $safeGeometryHash = if ([string]$finalized.geometryHash -match '^sha256:[0-9a-f]{64}$') {
@@ -239,9 +264,24 @@ function New-CoordinateThreeCaseValidatedResultRecord {
       sourceContextPresent = $diagnostics.sourceContextPresent -eq $true
       localOcrContextPresent = $diagnostics.localOcrContextPresent -eq $true
       explicitUtm50s = $diagnostics.explicitUtm50s -eq $true
+      sourceCrsConflict = $diagnostics.sourceCrsConflict -eq $true
+      sourceCrsUnresolved = $diagnostics.sourceCrsUnresolved -eq $true
       projectedColumns = $diagnostics.projectedColumns -eq $true
       controlledRcHintAuthorized = $diagnostics.controlledRcHintAuthorized -eq $true
       controlledRcHintApplied = $diagnostics.controlledRcHintApplied -eq $true
+      controlledRcModelCrsAcquisitionAuthorized = $diagnostics.controlledRcModelCrsAcquisitionAuthorized -eq $true
+      controlledRcModelCrsAcquisitionApplied = $diagnostics.controlledRcModelCrsAcquisitionApplied -eq $true
+      localOcrPhase = ConvertTo-CoordinateThreeCaseFixedCode -Value $localOcrDiagnostics.phase -Fallback 'UNKNOWN'
+      localOcrOutcome = ConvertTo-CoordinateThreeCaseFixedCode -Value $localOcrDiagnostics.outcome -Fallback 'UNKNOWN'
+      localOcrPreprocessingMode = ConvertTo-CoordinateThreeCaseFixedCode -Value $localOcrDiagnostics.preprocessingMode -Fallback 'UNKNOWN'
+      localOcrWrapperEntered = $localOcrDiagnostics.wrapperEntered -eq $true
+      localOcrWorkerCreateStarted = $localOcrDiagnostics.workerCreateStarted -eq $true
+      localOcrWorkerReady = $localOcrDiagnostics.workerReady -eq $true
+      localOcrRecognizeStarted = $localOcrDiagnostics.recognizeStarted -eq $true
+      localOcrResultReceived = $localOcrDiagnostics.resultReceived -eq $true
+      localOcrPostprocessCompleted = $localOcrDiagnostics.postprocessCompleted -eq $true
+      localOcrContextReturned = $localOcrDiagnostics.contextReturned -eq $true
+      localOcrRawTextPresent = $localOcrDiagnostics.rawTextPresent -eq $true
       preflightChecked = $diagnostics.preflightChecked -eq $true
       preflightPassed = $diagnostics.preflightPassed -eq $true
       routeSelected = $diagnostics.routeSelected -eq $true

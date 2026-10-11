@@ -63,9 +63,26 @@ $successSnapshot = @'
       "sourceContextPresent": true,
       "localOcrContextPresent": true,
       "explicitUtm50s": true,
+      "sourceCrsConflict": false,
       "projectedColumns": false,
       "controlledRcHintAuthorized": true,
       "controlledRcHintApplied": true,
+      "controlledRcModelCrsAcquisitionAuthorized": true,
+      "controlledRcModelCrsAcquisitionApplied": false,
+      "localOcrDiagnostics": {
+        "phase": "CONTEXT_RETURNED",
+        "outcome": "SUCCESS_WITH_CONTEXT",
+        "preprocessingMode": "OVERVIEW_FOOTER_COMPOSITE",
+        "wrapperEntered": true,
+        "workerCreateStarted": true,
+        "workerReady": true,
+        "recognizeStarted": true,
+        "resultReceived": true,
+        "postprocessCompleted": true,
+        "contextReturned": true,
+        "rawTextPresent": true,
+        "rawText": "forbidden-nested-ocr-sentinel"
+      },
       "preflightChecked": true,
       "preflightPassed": true,
       "routeSelected": true,
@@ -138,6 +155,39 @@ $successRecord = New-CoordinateThreeCaseValidatedResultRecord -Definition $defin
 $failureDefinition = [ordered]@{ caseId = 'fixture-b'; imageSha256 = ('b' * 64) }
 $failureRecord = New-CoordinateThreeCaseValidatedResultRecord -Definition $failureDefinition `
   -Snapshot $failureSnapshot -ExpectedModel 'qwen3.8-flash'
+$deadlineSnapshot = @'
+{
+  "status": "FAILED",
+  "httpStatus": 504,
+  "result": {
+    "success": false,
+    "code": "RECOGNITION_DEADLINE_EXCEEDED",
+    "reason": "timeout",
+    "providerCallCount": 0,
+    "providerCompletionState": "NOT_STARTED",
+    "localOcrDiagnostics": {
+      "schemaVersion": "local_ocr_diagnostics_v1",
+      "phase": "RECOGNIZE_STARTED",
+      "outcome": "DEADLINE_ABORTED",
+      "preprocessingMode": "SOURCE_IMAGE",
+      "attempted": true,
+      "wrapperEntered": true,
+      "workerCreateStarted": true,
+      "workerReady": true,
+      "recognizeStarted": true,
+      "resultReceived": false,
+      "postprocessStarted": false,
+      "postprocessCompleted": false,
+      "contextReturned": false,
+      "rawTextPresent": false,
+      "rawText": "forbidden-deadline-ocr-sentinel"
+    }
+  }
+}
+'@ | ConvertFrom-Json
+$deadlineDefinition = [ordered]@{ caseId = 'fixture-deadline'; imageSha256 = ('d' * 64) }
+$deadlineRecord = New-CoordinateThreeCaseValidatedResultRecord -Definition $deadlineDefinition `
+  -Snapshot $deadlineSnapshot -ExpectedModel 'qwen3.8-flash'
 
 Assert-Case 'success result retains current finalized geometry and consumer identity binding' {
   Require ($successRecord.finalizedResult.identityPresent -eq $true) 'IDENTITY_NOT_RETAINED'
@@ -187,8 +237,23 @@ Assert-Case 'diagnostic artifact retains the full fixed Run04 predicate envelope
   Require ($diagnostics.projectedColumns -eq $false) 'PROJECTED_COLUMNS_VALUE_MISMATCH'
   Require ($diagnostics.controlledRcHintAuthorized -eq $true) 'HINT_AUTHORIZATION_MISSING'
   Require ($diagnostics.controlledRcHintApplied -eq $true) 'HINT_APPLICATION_MISSING'
+  Require ($diagnostics.controlledRcModelCrsAcquisitionAuthorized -eq $true) 'MODEL_CRS_AUTHORIZATION_MISSING'
+  Require ($diagnostics.controlledRcModelCrsAcquisitionApplied -eq $false) 'MODEL_CRS_APPLICATION_MISMATCH'
+  Require ($diagnostics.localOcrPhase -eq 'CONTEXT_RETURNED') 'LOCAL_OCR_PHASE_MISSING'
+  Require ($diagnostics.localOcrOutcome -eq 'SUCCESS_WITH_CONTEXT') 'LOCAL_OCR_OUTCOME_MISSING'
+  Require ($diagnostics.localOcrWorkerReady -eq $true) 'LOCAL_OCR_WORKER_READY_MISSING'
+  Require ($diagnostics.localOcrResultReceived -eq $true) 'LOCAL_OCR_RESULT_RECEIPT_MISSING'
+  Require ($diagnostics.localOcrPostprocessCompleted -eq $true) 'LOCAL_OCR_POSTPROCESS_MISSING'
   Require ($diagnostics.preflightChecked -eq $true) 'PREFLIGHT_CHECK_MISSING'
   Require ($diagnostics.routeSelected -eq $true) 'ROUTE_SELECTION_MISSING'
+}
+
+Assert-Case 'top-level hard-deadline OCR diagnostics survive the sanitized artifact boundary' {
+  Require ($deadlineRecord.diagnostics.localOcrPhase -eq 'RECOGNIZE_STARTED') 'DEADLINE_OCR_PHASE_MISSING'
+  Require ($deadlineRecord.diagnostics.localOcrOutcome -eq 'DEADLINE_ABORTED') 'DEADLINE_OCR_OUTCOME_MISSING'
+  Require ($deadlineRecord.diagnostics.localOcrContextReturned -eq $false) 'DEADLINE_CONTEXT_RETURNED_MISMATCH'
+  $json = $deadlineRecord | ConvertTo-Json -Depth 30 -Compress
+  Require (-not $json.Contains('forbidden-deadline-ocr-sentinel')) 'DEADLINE_RAW_OCR_LEAKED'
 }
 
 Assert-Case 'explicit whitelist excludes tokens raw responses headers source text and candidates' {
@@ -196,7 +261,8 @@ Assert-Case 'explicit whitelist excludes tokens raw responses headers source tex
   foreach ($forbidden in @(
     'forbidden-claim-sentinel', 'forbidden-job-sentinel', 'forbidden-provider-sentinel',
     'forbidden-auth-sentinel', 'forbidden-source-text-sentinel', 'forbidden-ocr-sentinel',
-    'forbidden-geometry-sentinel', 'forbidden-candidate-sentinel', 'sourceCandidates', 'rawProviderResponse'
+    'forbidden-geometry-sentinel', 'forbidden-candidate-sentinel', 'forbidden-nested-ocr-sentinel',
+    'sourceCandidates', 'rawProviderResponse'
   )) {
     Require (-not $json.Contains($forbidden)) "FORBIDDEN_ARTIFACT_FIELD_$forbidden"
   }
