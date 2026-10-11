@@ -6021,10 +6021,10 @@ Au值 = 纯度 × 10 后取整数</div>
     const INDONESIA_STRUCTURED_PRODUCT_MODE = "indonesia_utm50s_structured_b";
     const COORDINATE_THREE_CASE_RC_R7_RUN_ID = "coordinate-three-case-rc-20261011-r7";
     const COORDINATE_THREE_CASE_RC_R7_VISITOR_ID = "rc-b-release-20261010-4f125a9";
-    const COORDINATE_CONSUMER_REPLAY_RUN_ID = "coordinate-indonesia-consumer-replay-20261012-r1";
-    const COORDINATE_CONSUMER_REPLAY_BATCH_ID = "coordinate-indonesia-consumer-replay-20261012-v1";
+    const COORDINATE_CONSUMER_REPLAY_RUN_ID = "coordinate-indonesia-consumer-replay-20261012-r2";
+    const COORDINATE_CONSUMER_REPLAY_BATCH_ID = "coordinate-indonesia-consumer-replay-20261012-v2";
     const coordinateThreeCaseRcBrowserMode = new URLSearchParams(window.location.search).get("coordinate-three-case-rc") === "r7";
-    const coordinateConsumerReplayBrowserMode = new URLSearchParams(window.location.search).get("coordinate-consumer-replay") === "r1";
+    const coordinateConsumerReplayBrowserMode = new URLSearchParams(window.location.search).get("coordinate-consumer-replay") === "r2";
     const controlledCoordinateConsumerBrowserMode = coordinateThreeCaseRcBrowserMode || coordinateConsumerReplayBrowserMode;
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
@@ -6176,7 +6176,7 @@ Au值 = 纯度 × 10 后取整数</div>
       }
     }
     const userCode = controlledCoordinateConsumerBrowserMode
-      ? (coordinateConsumerReplayBrowserMode ? "REPLAY-R1" : "R7-RC")
+      ? (coordinateConsumerReplayBrowserMode ? "REPLAY-R2" : "R7-RC")
       : getOrCreateUserCode();
     renderPricingConfigText();
     window.addEventListener("pricing-config-updated", () => {

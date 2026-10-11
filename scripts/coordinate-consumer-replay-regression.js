@@ -24,6 +24,8 @@ const artifactBytes = fs.readFileSync(artifactPath);
 const artifact = JSON.parse(artifactBytes.toString("utf8").replace(/^\uFEFF/u, ""));
 const sourceIdentity = artifact.cases[0].finalizedResult;
 const cases = [];
+const r2Incremental = process.argv.includes("--r2-incremental");
+const caseFilter = process.env.CONSUMER_REPLAY_CASE_FILTER ? new RegExp(process.env.CONSUMER_REPLAY_CASE_FILTER, "u") : null;
 const observedSideEffects = {
   providerCalls: 0,
   modelCalls: 0,
@@ -33,6 +35,8 @@ const observedSideEffects = {
   businessQuotaCalls: 0
 };
 async function test(name, fn) {
+  if (r2Incremental && !name.startsWith("R2 ")) return;
+  if (caseFilter && !caseFilter.test(name)) return;
   try { await fn(); cases.push({ name, pass: true }); }
   catch (error) {
     if (process.env.CONSUMER_REPLAY_REGRESSION_DEBUG === "true") console.error(error?.stack || error);
@@ -336,7 +340,7 @@ await test("close revokes replay identity and session", async () => {
   assert.throws(() => replay.status(auth), error => error?.code === "COORDINATE_CONSUMER_REPLAY_DISABLED");
 });
 
-await test("actual historical result dynamically reaches real install Map KML and evidence consumers", async () => {
+await test("R2 actual handlers registry install Map KML blob physical gate and close preserve one identity", async () => {
   const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const serverSource = fs.readFileSync(path.join(root, "server.js"), "utf8");
   const confirmationRuntime = new CoordinateConfirmationRuntime();
@@ -398,6 +402,9 @@ await test("actual historical result dynamically reaches real install Map KML an
   });
   assert.equal(registrationResponse.statusCode, 201);
   const registered = registrationResponse.payload;
+  assert.equal(registered.runId, "coordinate-indonesia-consumer-replay-20261012-r2");
+  assert.equal(registered.batchId, "coordinate-indonesia-consumer-replay-20261012-v2");
+  assert.ok(Date.parse(registered.expiresAt) <= Date.parse(sessionResponse.payload.expiresAt));
   const browserHeaders = { origin, cookie: cookieHeader, "x-coordinate-replay-csrf": csrfToken };
   const browserState = { anchorClicked: false, blobText: "", mapOpened: false, mapIdentityMatch: false,
     mapStatus: null, mapCode: null, mapResultIdMatch: null, mapRevisionMatch: null, mapGeometryHashMatch: null,
@@ -709,6 +716,50 @@ await test("source wiring uses actual product consumers and excludes recognition
   assert.doesNotMatch(client, /recognize-coordinates|three-case-rc\/claims|dispatch/u);
   assert.doesNotMatch(server.slice(server.indexOf("/api/admin/coordinate-consumer-replay/browser-session")),
     /activate_coordinate_three_case_rc_run/u);
+});
+
+await test("R2 actual frontend query binding accepts R2 only and matches runtime V2", () => {
+  const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const names = ["COORDINATE_CONSUMER_REPLAY_RUN_ID", "COORDINATE_CONSUMER_REPLAY_BATCH_ID", "coordinateConsumerReplayBrowserMode"];
+  const declarations = names.map(name => {
+    const declaration = index.match(new RegExp(`const ${name} = [^;]+;`, "u"));
+    assert.ok(declaration); return declaration[0];
+  }).join("\n");
+  for (const version of ["r1", "r2", "r7"]) {
+    const actual = vm.runInNewContext(`${declarations}\n({ runId: COORDINATE_CONSUMER_REPLAY_RUN_ID,
+      batchId: COORDINATE_CONSUMER_REPLAY_BATCH_ID, enabled: coordinateConsumerReplayBrowserMode })`,
+    { URLSearchParams, window: { location: { search: `?coordinate-consumer-replay=${version}` } } });
+    assert.equal(actual.enabled, version === "r2");
+    assert.equal(actual.runId, COORDINATE_CONSUMER_REPLAY.runId);
+    assert.equal(actual.batchId, COORDINATE_CONSUMER_REPLAY.batchId);
+  }
+});
+
+await test("R2 registration cannot outlive existing browser session and actual map handler rejects expiry", async () => {
+  const state = productMapFixture();
+  const { auth, created } = await session(state.replay);
+  state.clock.value = Date.parse(created.expiresAt) - 1000;
+  const registered = registration(state.replay);
+  assert.equal(registered.expiresAt, created.expiresAt);
+  const received = state.replay.receive(auth);
+  assert.equal((await state.map(received.resultIdentity)).statusCode, 200);
+  state.clock.value += 1000;
+  assert.equal((await state.map(received.resultIdentity)).statusCode, 410);
+  assert.throws(() => state.replay.status(auth), error => error.code === "COORDINATE_CONSUMER_REPLAY_BROWSER_SESSION_REQUIRED");
+  assert.equal(state.replay.close().closed, true);
+  assert.equal(state.confirmationRuntime.records.size, 0);
+});
+
+await test("R2 missing or expired authentication cannot register historical geometry", async () => {
+  for (const expired of [false, true]) {
+    const state = fixture();
+    if (expired) {
+      const { created } = await session(state.replay);
+      state.clock.value = Date.parse(created.expiresAt);
+    }
+    assert.throws(() => registration(state.replay), error => error.code === "COORDINATE_CONSUMER_REPLAY_BROWSER_SESSION_REQUIRED");
+    assert.equal(state.registry.size, 0);
+  }
 });
 
 const passed = cases.filter(item => item.pass).length;

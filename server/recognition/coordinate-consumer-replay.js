@@ -2,8 +2,8 @@ import crypto from "node:crypto";
 import { createGeometryHash } from "../coordinate-finalizer/geometry-hash.js";
 
 export const COORDINATE_CONSUMER_REPLAY = Object.freeze({
-  runId: "coordinate-indonesia-consumer-replay-20261012-r1",
-  batchId: "coordinate-indonesia-consumer-replay-20261012-v1",
+  runId: "coordinate-indonesia-consumer-replay-20261012-r2",
+  batchId: "coordinate-indonesia-consumer-replay-20261012-v2",
   sourceRunId: "coordinate-three-case-rc-20261011-r7",
   sourceBatchId: "coordinate-three-case-rc-20261011-v7",
   sourceCommit: "279f7bee577152a83efe6a53a5cdb44d6e18cebc",
@@ -269,6 +269,14 @@ export function createCoordinateConsumerReplay({
       fail("COORDINATE_CONSUMER_REPLAY_ARTIFACT_ENCODING_INVALID");
     }
     const source = validateSourceArtifact(buffer, artifactSha256);
+    prune();
+    const current = now();
+    const readySessions = [...sessions.values()].filter(session => session.visitorId === exactVisitorId && session.expiresAt > current);
+    if (!readySessions.length) fail("COORDINATE_CONSUMER_REPLAY_BROWSER_SESSION_REQUIRED", 401);
+    // Registration cannot extend browser authentication. The client independently
+    // applies the earlier process-start + 15m deadline and always attempts cleanup.
+    const expiresAt = Math.min(current + COORDINATE_CONSUMER_REPLAY.handoffTtlMs,
+      ...readySessions.map(session => session.expiresAt));
     const resultId = uuid();
     const resultRevision = 1;
     const geometryHash = createGeometryHash(source.finalized.geometry);
@@ -288,8 +296,6 @@ export function createCoordinateConsumerReplay({
       sourceArtifactSha256: source.digest,
       identity
     }), "utf8"));
-    const current = now();
-    const expiresAt = current + COORDINATE_CONSUMER_REPLAY.handoffTtlMs;
     entry = {
       identity,
       payload: replayPayload(registeredFinalized),
