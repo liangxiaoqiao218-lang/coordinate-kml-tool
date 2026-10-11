@@ -81,6 +81,61 @@ function Add-CoordinateThreeCaseJobVisitorIdentity {
   return $controlledVisitorId
 }
 
+function Write-CoordinateThreeCaseBrowserConsumerEvidenceArtifact {
+  param(
+    [Parameter(Mandatory = $true)] [object] $Evidence,
+    [Parameter(Mandatory = $true)] [string] $Path,
+    [Parameter(Mandatory = $true)] [string] $ExpectedRunId,
+    [Parameter(Mandatory = $true)] [string] $ExpectedCaseId
+  )
+
+  $expectedProperties = @(
+    'schemaVersion', 'runId', 'caseId', 'bindingDigest', 'resultInstalled',
+    'resultIdentityMatch', 'mapState', 'mapProvider', 'mapIdentityMatch',
+    'authorityMutationCount', 'kmlDownloadTriggered', 'kmlIdentityMatch',
+    'downloadFileName'
+  )
+  $actualProperties = @($Evidence.PSObject.Properties.Name | Sort-Object)
+  $expectedSorted = @($expectedProperties | Sort-Object)
+  $propertyDifference = @(Compare-Object -ReferenceObject $expectedSorted -DifferenceObject $actualProperties)
+  if (($actualProperties.Count -ne $expectedSorted.Count) -or ($propertyDifference.Count -ne 0)) {
+    throw 'R7_BROWSER_CONSUMER_EVIDENCE_SCHEMA_REJECTED'
+  }
+  foreach ($booleanField in @('resultInstalled', 'resultIdentityMatch', 'mapIdentityMatch', 'kmlDownloadTriggered', 'kmlIdentityMatch')) {
+    if ($Evidence.$booleanField -isnot [bool] -or $Evidence.$booleanField -ne $true) {
+      throw 'R7_BROWSER_CONSUMER_EVIDENCE_CONTRACT_REJECTED'
+    }
+  }
+  $authorityMutationCountIsInteger = ($Evidence.authorityMutationCount -is [int]) -or ($Evidence.authorityMutationCount -is [long])
+  $contractMatches = ([string]$Evidence.schemaVersion -eq 'coordinate_three_case_rc_r7_browser_evidence_v1') `
+    -and ([string]$Evidence.runId -eq $ExpectedRunId) `
+    -and ([string]$Evidence.caseId -eq $ExpectedCaseId) `
+    -and ([string]$Evidence.bindingDigest -match '^[a-f0-9]{64}$') `
+    -and ([string]$Evidence.mapState -eq 'READY') `
+    -and ([string]$Evidence.mapProvider -eq 'OPENFREEMAP') `
+    -and $authorityMutationCountIsInteger `
+    -and ([int64]$Evidence.authorityMutationCount -eq 0) `
+    -and ([string]$Evidence.downloadFileName -eq 'coordinates.kml')
+  if (-not $contractMatches) {
+    throw 'R7_BROWSER_CONSUMER_EVIDENCE_CONTRACT_REJECTED'
+  }
+
+  $resolvedPath = [IO.Path]::GetFullPath($Path)
+  if (-not (Test-Path -LiteralPath (Split-Path -Parent $resolvedPath) -PathType Container)) {
+    throw 'R7_BROWSER_CONSUMER_EVIDENCE_PARENT_MISSING'
+  }
+  $json = $Evidence | ConvertTo-Json -Depth 4 -Compress
+  [IO.File]::WriteAllText($resolvedPath, $json, [Text.UTF8Encoding]::new($false))
+  $roundTrip = Get-Content -LiteralPath $resolvedPath -Raw | ConvertFrom-Json
+  if ([string]$roundTrip.bindingDigest -ne [string]$Evidence.bindingDigest) {
+    throw 'R7_BROWSER_CONSUMER_EVIDENCE_WRITE_VERIFY_FAILED'
+  }
+  return [pscustomobject]@{
+    path = $resolvedPath
+    sha256 = (Get-FileHash -LiteralPath $resolvedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
+}
+
 function Test-CoordinateThreeCaseReceiptAllowsNext {
   param([Parameter(Mandatory = $true)] [System.Collections.IDictionary] $Receipt)
   return [string]$Receipt['terminalStatus'] -eq 'SUCCEEDED' -and $Receipt['success'] -eq $true
@@ -92,6 +147,7 @@ function Invoke-CoordinateThreeCaseControlledRun {
     [Parameter(Mandatory = $true)] [scriptblock] $BeforeCases,
     [Parameter(Mandatory = $true)] [scriptblock] $InvokeCase,
     [Parameter(Mandatory = $true)] [scriptblock] $ConvertReceipt,
+    [scriptblock] $AfterCase = { param($definition, $snapshot, $receipt) return $true },
     [Parameter(Mandatory = $true)] [scriptblock] $CloseRun,
     [Parameter(Mandatory = $true)] [scriptblock] $WriteEvidence
   )
@@ -110,6 +166,11 @@ function Invoke-CoordinateThreeCaseControlledRun {
         $receipts.Add($receipt)
         if (-not (Test-CoordinateThreeCaseReceiptAllowsNext -Receipt $receipt)) {
           $failureCode = 'CASE_TERMINAL_FAILURE'
+          break
+        }
+        $consumerReady = & $AfterCase $definition $snapshot $receipt
+        if ($consumerReady -ne $true) {
+          $failureCode = 'CASE_CONSUMER_GATE_FAILED'
           break
         }
       } catch {

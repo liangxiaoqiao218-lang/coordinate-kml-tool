@@ -170,9 +170,11 @@ import {
   createIndonesiaStructuredBRcAdmission
 } from "./server/recognition/indonesia-structured-b-rc-admission.js";
 import {
+  COORDINATE_THREE_CASE_RC,
   CoordinateThreeCaseRcAdmissionError,
   createCoordinateThreeCaseRcAdmission
 } from "./server/recognition/coordinate-three-case-rc-admission.js";
+import { createCoordinateThreeCaseRcBrowserHandoff } from "./server/recognition/coordinate-three-case-rc-browser-handoff.js";
 import {
   createCoordinateThreeCaseRcJobIngressMiddleware,
   createCoordinateThreeCaseRcJobPreflightMiddleware,
@@ -343,6 +345,7 @@ const coordinateThreeCaseRcAdmission = createCoordinateThreeCaseRcAdmission({
   adminPassword,
   env: process.env
 });
+let coordinateThreeCaseRcBrowserHandoff = null;
 const indonesiaStructuredProductUiAvailable = process.env.NODE_ENV !== "production"
   && indonesiaStructuredProductEnabled
   && !indonesiaStructuredBRcAdmission.config.guardRequired;
@@ -1421,6 +1424,12 @@ app.get("/api/version", (req, res) => {
     }
   });
 });
+
+function getConfiguredSpatialMapProvider() {
+  const webJsKey = String(process.env.AMAP_WEB_JS_KEY || "").trim();
+  const securityProxyReady = Boolean(String(process.env.AMAP_SECURITY_JSCODE || "").trim());
+  return webJsKey && securityProxyReady ? "AMAP" : "OPENFREEMAP";
+}
 
 app.get("/api/map-runtime-config", enforceSpatialApiEnabled, (req, res) => {
   const webJsKey = String(process.env.AMAP_WEB_JS_KEY || "").trim();
@@ -3677,7 +3686,9 @@ app.get("/api/admin/coordinate-products/three-case-rc/status", async (req, res) 
 app.post("/api/admin/coordinate-products/three-case-rc/close", async (req, res) => {
   try {
     res.setHeader("Cache-Control", "no-store");
-    return res.json(await coordinateThreeCaseRcAdmission.close({ adminHeader: req.get("x-admin-password") }));
+    const result = await coordinateThreeCaseRcAdmission.close({ adminHeader: req.get("x-admin-password") });
+    coordinateThreeCaseRcBrowserHandoff?.revoke?.();
+    return res.json(result);
   } catch (error) {
     const status = error instanceof CoordinateThreeCaseRcAdmissionError ? error.httpStatus : 503;
     return res.status(status).json({ success: false, code: error?.code || "COORDINATE_THREE_CASE_RC_CLOSE_FAILED" });
@@ -15971,6 +15982,104 @@ app.post(
   (req, res) => agenticCoordinateApi.finalize(req, res)
 );
 
+function buildRecognitionTerminalDiagnostics({
+  failureStage,
+  failureBranch,
+  unifiedTerminalReason,
+  contractReasons = [],
+  candidatePointCount = null,
+  candidateGroupCount = null,
+  downstreamFamilyParserReached = null,
+  deterministicParserOutcome = "NOT_REACHED",
+  detectedFamilyCue = "UNKNOWN"
+} = {}) {
+  const normalizedReasons = Array.isArray(contractReasons)
+    ? [...new Set(contractReasons.map(value => String(value || "").trim()).filter(Boolean))]
+    : [];
+  const normalizedCue = ["MGRS", "BFTM"].includes(detectedFamilyCue) ? detectedFamilyCue : "UNKNOWN";
+  return Object.freeze({
+    schemaVersion: "recognition_terminal_diagnostics_v1",
+    failureStage: String(failureStage || "UNKNOWN"),
+    failureBranch: String(failureBranch || "UNKNOWN"),
+    unifiedTerminalReason: String(unifiedTerminalReason || normalizedReasons[0] || "UNKNOWN"),
+    contractReasons: Object.freeze(normalizedReasons),
+    candidatePointCount: Number.isSafeInteger(candidatePointCount) && candidatePointCount >= 0
+      ? candidatePointCount : null,
+    candidateGroupCount: Number.isSafeInteger(candidateGroupCount) && candidateGroupCount >= 0
+      ? candidateGroupCount : null,
+    downstreamFamilyParserReached: typeof downstreamFamilyParserReached === "boolean"
+      ? downstreamFamilyParserReached : null,
+    deterministicParserOutcome: String(deterministicParserOutcome || "UNKNOWN"),
+    detectedFamilyCue: normalizedCue
+  });
+}
+
+function buildNoTrustedCandidateTerminalDiagnostics({
+  contractReasons,
+  candidateCounts,
+  downstreamFamilyParserReached,
+  deterministicParserOutcome,
+  detectedFamilyCue
+}) {
+  return buildRecognitionTerminalDiagnostics({
+    failureStage: "UNIFIED_RESPONSE_ATTACHMENT",
+    failureBranch: "NO_TRUSTED_CANDIDATES",
+    unifiedTerminalReason: contractReasons?.[0] || "NO_TRUSTED_CANDIDATES",
+    contractReasons,
+    candidatePointCount: candidateCounts?.pointCount,
+    candidateGroupCount: candidateCounts?.groupCount,
+    downstreamFamilyParserReached,
+    deterministicParserOutcome,
+    detectedFamilyCue
+  });
+}
+
+function buildUnifiedAcquisitionTerminalDiagnostics({
+  decision,
+  evidence,
+  contractReasons,
+  downstreamFamilyParserReached,
+  deterministicParserOutcome,
+  detectedFamilyCue
+}) {
+  const shouldReturnFailure = decision?.shouldReturnFailure === true;
+  return buildRecognitionTerminalDiagnostics({
+    failureStage: "UNIFIED_ACQUISITION_TERMINAL",
+    failureBranch: shouldReturnFailure
+      ? "DECISION_SHOULD_RETURN_FAILURE"
+      : "DECISION_REVIEW_REQUIRED",
+    unifiedTerminalReason: contractReasons?.[0] || (shouldReturnFailure
+      ? "DECISION_SHOULD_RETURN_FAILURE"
+      : "DECISION_REVIEW_REQUIRED"),
+    contractReasons,
+    candidatePointCount: Array.isArray(evidence?.candidateCoordinates)
+      ? evidence.candidateCoordinates.length : null,
+    candidateGroupCount: Array.isArray(evidence?.candidateCoordinateGroups)
+      ? evidence.candidateCoordinateGroups.length : null,
+    downstreamFamilyParserReached,
+    deterministicParserOutcome,
+    detectedFamilyCue
+  });
+}
+
+function buildGenericFallbackTerminalDiagnostics({
+  downstreamFamilyParserReached,
+  deterministicParserOutcome,
+  detectedFamilyCue
+}) {
+  return buildRecognitionTerminalDiagnostics({
+    failureStage: "GENERIC_FALLBACK",
+    failureBranch: "FALLBACK_ERROR",
+    unifiedTerminalReason: "FALLBACK_ERROR",
+    contractReasons: [],
+    candidatePointCount: null,
+    candidateGroupCount: null,
+    downstreamFamilyParserReached,
+    deterministicParserOutcome,
+    detectedFamilyCue
+  });
+}
+
 async function recognizeCoordinatesHandler(req, res) {
   const recognitionDiagnostic = createRecognitionDiagnosticSession();
   activateRecognitionDeadlineContext(req);
@@ -16037,6 +16146,9 @@ async function recognizeCoordinatesHandler(req, res) {
   let coordinateThreeCaseRcSettlementAttempted = false;
   let unifiedRecognitionAcquisitionContext = null;
   let unifiedRecognitionAcquisitionFinalLogged = false;
+  let downstreamFamilyParserReached = false;
+  let downstreamFamilyParserOutcome = "NOT_REACHED";
+  let observedFamilyCue = "UNKNOWN";
   const requestRecognitionAcquisitionEvidenceStore = createRecognitionAcquisitionEvidenceStore();
   const originalSendRecognitionJson = res.json.bind(res);
   const sendRecognitionJson = body => {
@@ -16401,7 +16513,14 @@ async function recognizeCoordinatesHandler(req, res) {
         visibleCrsEvidence,
         imageAcquisitionEvidence,
         contractReasons,
-        reviewReasons
+        reviewReasons,
+        recognitionTerminalDiagnostics: authorizationBody.recognitionTerminalDiagnostics || buildNoTrustedCandidateTerminalDiagnostics({
+          contractReasons,
+          candidateCounts,
+          downstreamFamilyParserReached,
+          deterministicParserOutcome: downstreamFamilyParserOutcome,
+          detectedFamilyCue: observedFamilyCue
+        })
       };
     }
     return refreshRecognitionReviewUsageAuthority({
@@ -16638,6 +16757,17 @@ async function recognizeCoordinatesHandler(req, res) {
     warning = "识别采集已完成；候选坐标尚未通过完整授权验证，地图与 KML 保持关闭。"
   }) => {
     if (decision.mayProceedToGeometryValidation) return null;
+    const terminalContractReasons = Array.isArray(decision.contractReasons)
+      ? [...new Set(decision.contractReasons.map(value => String(value || "").trim()).filter(Boolean))]
+      : [];
+    const terminalDiagnostics = buildUnifiedAcquisitionTerminalDiagnostics({
+      decision,
+      evidence,
+      contractReasons: terminalContractReasons,
+      downstreamFamilyParserReached,
+      deterministicParserOutcome: downstreamFamilyParserOutcome,
+      detectedFamilyCue: observedFamilyCue
+    });
     if (decision.shouldReturnFailure) {
       const failurePayload = {
         success: false,
@@ -16655,7 +16785,8 @@ async function recognizeCoordinatesHandler(req, res) {
         mapStatus: "CLOSED",
         kmlStatus: "CLOSED",
         reviewReasons: decision.contractReasons,
-        acquisitionContractConformance: conformance
+        acquisitionContractConformance: conformance,
+        recognitionTerminalDiagnostics: terminalDiagnostics
       };
       return res.status(422).json(failurePayload);
     }
@@ -16702,7 +16833,8 @@ async function recognizeCoordinatesHandler(req, res) {
         "UNIFIED_RECOGNITION_ACQUISITION:completed",
         "UNIFIED_RECOGNITION_AUTHORIZATION:review_required"
       ],
-      quota: consumeResult.quota
+      quota: consumeResult.quota,
+      recognitionTerminalDiagnostics: terminalDiagnostics
     };
     const reviewEngine = buildCoordinateEngineV2ShadowResult(reviewPayload, {
       forceRequiresReview: true,
@@ -17694,10 +17826,26 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
           coordinates: ""
         });
       }
+      const observedStructuredProviderModel = typeof structuredProviderRequest?.modelName === "string"
+        && structuredProviderRequest.modelName.trim()
+        ? structuredProviderRequest.modelName.trim()
+        : null;
+      const observedStructuredProviderCallCount = Number.isSafeInteger(recognitionBudget?.providerAttemptCount)
+        && recognitionBudget.providerAttemptCount >= 0
+        ? recognitionBudget.providerAttemptCount
+        : null;
       const structuredPayload = {
         success: true,
         recognitionFileName: uploadedFileName,
-        model: `${INDONESIA_STRUCTURED_PRODUCT_MODEL}+structured-product-bridge`,
+        ...(observedStructuredProviderModel ? {
+          model: observedStructuredProviderModel,
+          providerModel: observedStructuredProviderModel
+        } : {}),
+        adapterLabel: "structured-product-bridge",
+        ...(observedStructuredProviderCallCount == null
+          ? {}
+          : { providerCallCount: observedStructuredProviderCallCount }),
+        providerCompletionState: stage1ProviderSucceeded === true ? "SUCCEEDED" : "UNKNOWN",
         ...structuredBridge.payload,
         structuredProductMode: INDONESIA_STRUCTURED_PRODUCT_MODE,
         structuredProductRouteStatus: indonesiaStructuredRoute.status,
@@ -17711,7 +17859,25 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         forceRequiresReview: true,
         rawHint: oneShotLocalOcrSourceContextText
       });
-      return res.json(buildCoordinateVerificationResponse(structuredPayload, structuredEngine));
+      const structuredResponse = buildCoordinateVerificationResponse(structuredPayload, structuredEngine);
+      const structuredOutputCapabilities = evaluateRecognitionOutputCapability(
+        structuredResponse.finalizedCoordinateResult,
+        { formalAuthorized: false }
+      );
+      return res.json({
+        ...structuredResponse,
+        outputCapabilities: structuredOutputCapabilities,
+        mapReady: structuredOutputCapabilities.mapReady,
+        mapStatus: structuredOutputCapabilities.mapReady ? "ENABLED" : "CLOSED",
+        kmlReady: structuredOutputCapabilities.kmlReady,
+        kmlStatus: structuredOutputCapabilities.kmlReady ? "ENABLED" : "CLOSED",
+        previewEligibility: { allowed: structuredOutputCapabilities.mapReady },
+        kmlEligibility: {
+          allowed: structuredOutputCapabilities.kmlReady,
+          kmlReady: structuredOutputCapabilities.kmlReady,
+          unverified: structuredOutputCapabilities.unverified
+        }
+      });
     }
     const selectedProviderPrompt = buildRecognitionFirstPromptPrefix(recognitionImageAcquisition)
       + buildOneShotStructuredFamilyPrompt({
@@ -19726,6 +19892,7 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
         }
       }
     }
+    downstreamFamilyParserReached = true;
     let cadastralGrid = getCadastralGridInfo(rawText);
     let mgrs = getMgrsInfo(rawText);
     let mozambiqueGeographicTable = getMozambiqueGeographicInfo(rawText);
@@ -19734,6 +19901,10 @@ If no longitude/latitude decimal table is visible, output only: ${noCoordinatesT
     let kyrgyzGk = getKyrgyzGkInfo(rawText);
     let bftmLongTable = getBftmLongTableInfo(rawText, coordinates);
     let bftmAccepted = (hasBftmContext(rawText) || isLikelyBftmProjectedOnlyOutput(coordinates, req.file)) && countValidBftmProjectedRows(coordinates) >= 4;
+    observedFamilyCue = mgrs.isMgrs ? "MGRS" : bftmAccepted ? "BFTM" : "UNKNOWN";
+    downstreamFamilyParserOutcome = mgrs.isMgrs
+      ? "MGRS_ACCEPTED"
+       : bftmAccepted ? "BFTM_ACCEPTED" : "NO_MGRS_OR_BFTM_FAMILY_ACCEPTED";
     let utm30ProjectedXy = getUtm30ProjectedXyInfo(rawText, coordinates);
     let utm30Accepted = !bftmAccepted && utm30ProjectedXy.isUtm30ProjectedXy;
     let dmsGroupedInfo = getDmsGroupedCoordinateInfo(rawText);
@@ -22005,7 +22176,12 @@ If no clear longitude/latitude decimal table is visible, output only: ${noCoordi
         userUsageConsumed: false,
         recoveryRequired: false,
         rawText: "",
-        coordinates: ""
+        coordinates: "",
+        recognitionTerminalDiagnostics: buildGenericFallbackTerminalDiagnostics({
+          downstreamFamilyParserReached,
+          deterministicParserOutcome: downstreamFamilyParserOutcome,
+          detectedFamilyCue: observedFamilyCue
+        })
       });
     }
   } finally {
@@ -22041,6 +22217,159 @@ const recognitionAcquisitionJobRuntime = createRecognitionAcquisitionJobRuntime(
     indonesiaStructuredBRcAdmission,
     indonesiaProductMode: INDONESIA_STRUCTURED_B_RC.mode
   })
+});
+
+async function readCoordinateThreeCaseRcBrowserAccess(visitorId) {
+  if (!supabase || String(visitorId || "").trim() !== coordinateThreeCaseRcBrowserHandoff?.exactVisitorId) {
+    return null;
+  }
+  const { data: storedUser, error } = await supabase
+    .from("users")
+    .select("user_id,is_vip,free_convert_count,paid_convert_count")
+    .eq("user_id", String(visitorId).trim())
+    .maybeSingle();
+  if (error) throw error;
+  if (!storedUser) return Object.freeze({ existingUser: false });
+  const adminData = await readAdminData();
+  const localUser = ensureUser(adminData, visitorId);
+  const permissions = getEffectivePermissions(localUser, adminData?.featureFlags || {});
+  const convertRemaining = storedUser.is_vip === true
+    ? Number.MAX_SAFE_INTEGER
+    : Math.max(0, Number(storedUser.free_convert_count) || 0)
+      + Math.max(0, Number(storedUser.paid_convert_count) || 0);
+  return Object.freeze({ existingUser: true, permissions, convertRemaining });
+}
+
+coordinateThreeCaseRcBrowserHandoff = createCoordinateThreeCaseRcBrowserHandoff({
+  runId: COORDINATE_THREE_CASE_RC.runId,
+  batchId: COORDINATE_THREE_CASE_RC.batchId,
+  expectedOrigin: "https://coordinate-kml-tool-rc.onrender.com",
+  caseDefinitions: COORDINATE_THREE_CASE_RC.cases,
+  readRunStatus: () => coordinateThreeCaseRcAdmission.status({ adminHeader: adminPassword }),
+  readExistingUserAccess: readCoordinateThreeCaseRcBrowserAccess,
+  readJob: (jobId, jobAccessToken) => recognitionAcquisitionJobRuntime.getForHandoff(jobId, jobAccessToken),
+  validateFinalizedIdentity: identity => {
+    const validated = validateFinalizedCoordinateIdentity(identity);
+    if (validated?.ok !== true) return validated;
+    coordinateConfirmationRuntime.cleanup();
+    const record = coordinateConfirmationRuntime.records.get(String(identity?.resultId || ""));
+    return Object.freeze({ ...validated, expiresAt: Number(record?.expiresAt) });
+  },
+  selectedMapProvider: getConfiguredSpatialMapProvider
+});
+
+function coordinateThreeCaseRcBrowserError(res, error, fallbackCode) {
+  res.setHeader("Cache-Control", "no-store");
+  return res.status(Number(error?.httpStatus) || 503).json({
+    success: false,
+    code: error?.code || fallbackCode
+  });
+}
+
+app.post("/api/admin/coordinate-products/three-case-rc/browser-session", async (req, res) => {
+  try {
+    if (!req.get("x-admin-password") || req.query?.password) {
+      return res.status(401).json({ success: false, code: "COORDINATE_THREE_CASE_RC_BROWSER_HEADER_AUTH_REQUIRED" });
+    }
+    coordinateThreeCaseRcAdmission.authorizeAdmin(req.get("x-admin-password"));
+    const session = await coordinateThreeCaseRcBrowserHandoff.createSession({
+      visitorId: req.body?.visitorId,
+      origin: req.get("origin")
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Set-Cookie", `${session.cookieName}=${session.cookieValue}; Path=/api/coordinate-products/three-case-rc/browser-handoff; HttpOnly; Secure; SameSite=Strict`);
+    return res.status(201).json({
+      success: true,
+      csrfToken: session.csrfToken,
+      expiresAt: session.expiresAt,
+      visitorId: session.visitorId,
+      mapProvider: session.mapProvider
+    });
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_SESSION_FAILED");
+  }
+});
+
+app.post("/api/admin/coordinate-products/three-case-rc/browser-readiness", (req, res) => {
+  try {
+    if (!req.get("x-admin-password") || req.query?.password) {
+      return res.status(401).json({ success: false, code: "COORDINATE_THREE_CASE_RC_BROWSER_HEADER_AUTH_REQUIRED" });
+    }
+    coordinateThreeCaseRcAdmission.authorizeAdmin(req.get("x-admin-password"));
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({
+      success: true,
+      browserSessionReady: coordinateThreeCaseRcBrowserHandoff.hasReadySession() === true
+    });
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_READINESS_FAILED");
+  }
+});
+
+app.post("/api/admin/coordinate-products/three-case-rc/browser-handoff/register", async (req, res) => {
+  try {
+    coordinateThreeCaseRcAdmission.authorizeAdmin(req.get("x-admin-password"));
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(201).json(await coordinateThreeCaseRcBrowserHandoff.register({
+      caseId: req.body?.caseId,
+      jobId: req.body?.jobId,
+      jobAccessToken: req.body?.jobAccessToken,
+      recognitionRequestId: req.body?.recognitionRequestId
+    }));
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_HANDOFF_REGISTER_FAILED");
+  }
+});
+
+function coordinateThreeCaseRcBrowserAuth(req) {
+  return {
+    cookieHeader: req.get("cookie"),
+    csrfToken: req.get("x-coordinate-rc-csrf"),
+    origin: req.get("origin")
+  };
+}
+
+app.post("/api/coordinate-products/three-case-rc/browser-handoff/status", async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateThreeCaseRcBrowserHandoff.status(coordinateThreeCaseRcBrowserAuth(req)));
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_HANDOFF_STATUS_FAILED");
+  }
+});
+
+app.post("/api/coordinate-products/three-case-rc/browser-handoff/receive", async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateThreeCaseRcBrowserHandoff.receive(coordinateThreeCaseRcBrowserAuth(req)));
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_HANDOFF_RECEIVE_FAILED");
+  }
+});
+
+app.post("/api/coordinate-products/three-case-rc/browser-handoff/consumer-evidence", async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateThreeCaseRcBrowserHandoff.recordConsumerEvidence(
+      coordinateThreeCaseRcBrowserAuth(req),
+      req.body
+    ));
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_CONSUMER_EVIDENCE_FAILED");
+  }
+});
+
+app.get("/api/admin/coordinate-products/three-case-rc/browser-evidence", (req, res) => {
+  try {
+    if (!req.get("x-admin-password") || req.query?.password) {
+      return res.status(401).json({ success: false, code: "COORDINATE_THREE_CASE_RC_BROWSER_HEADER_AUTH_REQUIRED" });
+    }
+    coordinateThreeCaseRcAdmission.authorizeAdmin(req.get("x-admin-password"));
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateThreeCaseRcBrowserHandoff.readConsumerEvidence());
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_EVIDENCE_READ_FAILED");
+  }
 });
 
 app.post(
@@ -22154,9 +22483,10 @@ app.post(
     req.body ||= {};
     req.body.coordinateProductMode = requestedStructuredProductMode;
   }
-  if (coordinateThreeCaseRcAdmission.config.guardRequired && !coordinateThreeCasePreflight) {
+  let coordinateThreeCaseResolvedPreflight = null;
+  if (coordinateThreeCaseRcAdmission.config.guardRequired) {
     try {
-      coordinateThreeCaseRcAdmission.preflightJob({
+      coordinateThreeCaseResolvedPreflight = coordinateThreeCaseRcAdmission.preflightJob({
         caseId: coordinateThreeCaseId,
         productMode: requestedStructuredProductMode,
         recognitionRequestId,
@@ -22201,6 +22531,15 @@ app.post(
   try {
     const job = recognitionAcquisitionJobRuntime.enqueue({
       requestId: recognitionRequestId,
+      rcBinding: coordinateThreeCaseRcAdmission.config.guardRequired ? {
+        runId: coordinateThreeCaseResolvedPreflight.runId,
+        batchId: coordinateThreeCaseResolvedPreflight.batchId,
+        caseId: coordinateThreeCaseResolvedPreflight.caseId,
+        recognitionRequestId: coordinateThreeCaseResolvedPreflight.requestId,
+        visitorId: coordinateThreeCaseResolvedPreflight.visitorId,
+        imageSha256: coordinateThreeCaseResolvedPreflight.imageSha256,
+        productMode: coordinateThreeCaseResolvedPreflight.productMode
+      } : null,
       file: {
         buffer: (indonesiaStructuredRcJobSelected || coordinateThreeCaseRcAdmission.config.guardRequired)
           ? originalImageBuffer

@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 
 export const COORDINATE_THREE_CASE_RC = Object.freeze({
-  batchId: "coordinate-three-case-rc-20261011-v6",
-  runId: "coordinate-three-case-rc-20261011-r6",
-  manifestSha256: "c1a240fb28541b1739b9e4ea369877137ecbd619e1852b18c2bac38e0689cf9f",
+  batchId: "coordinate-three-case-rc-20261011-v7",
+  runId: "coordinate-three-case-rc-20261011-r7",
+  manifestSha256: "e96d02a62df84b6a68d227bc881e5da25b557daa80d08ab08606d2f852e72a81",
   rcProjectRef: "thjojitdafxfarhxhoyo",
   rcServiceName: "coordinate-kml-tool-rc",
   providerHostname: "dashscope.aliyuncs.com",
@@ -195,6 +195,7 @@ function sanitizeStatus(data) {
     runStatus: String(data?.run_status || "UNKNOWN"),
     runActivated: data?.run_activated === true,
     runClosed: data?.run_closed === true,
+    deadlineAt: typeof data?.deadline_at === "string" ? data.deadline_at : null,
     activeDispatches: integerOrNull(data?.active_dispatches),
     totalDispatched: integerOrNull(data?.total_dispatched),
     indonesiaHistoricalDispatched: integerOrNull(data?.indonesia_historical_dispatched),
@@ -392,8 +393,11 @@ export function createCoordinateThreeCaseRcAdmission({
       fail("COORDINATE_THREE_CASE_RC_JOB_PREFLIGHT_REJECTED", 422);
     }
     return Object.freeze({
+      runId: COORDINATE_THREE_CASE_RC.runId,
+      batchId: COORDINATE_THREE_CASE_RC.batchId,
       caseId: normalizedCaseId,
       requestId,
+      visitorId: String(visitorId || "").trim(),
       imageSha256: actualImageSha256,
       tokenHash: tokenHash(token),
       productMode: definition.productMode

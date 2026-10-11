@@ -49,6 +49,108 @@ function Get-CoordinateThreeCaseProviderCallObservation {
   }
 }
 
+function Test-CoordinateThreeCaseProperty {
+  param([object] $Value, [Parameter(Mandatory = $true)] [string] $Name)
+  if ($null -eq $Value) { return $false }
+  if ($Value -is [System.Collections.IDictionary]) { return $Value.Contains($Name) }
+  return $null -ne $Value.PSObject.Properties[$Name]
+}
+
+function Get-CoordinateThreeCaseOutputCapabilityObservation {
+  param([object] $Finalized, [object] $Capabilities)
+  $capabilityPresent = $null -ne $Capabilities
+  $safeResultId = ConvertTo-CoordinateThreeCaseFixedCode -Value $Finalized.resultId -Fallback ''
+  $safeGeometryHash = if ([string]$Finalized.geometryHash -match '^sha256:[0-9a-f]{64}$') {
+    [string]$Finalized.geometryHash
+  } else { '' }
+  $safeResultRevision = if ($null -ne $Finalized -and [int64]$Finalized.resultRevision -gt 0) {
+    [int64]$Finalized.resultRevision
+  } else { $null }
+  $identityPresent = $null -ne $Finalized -and
+    -not [string]::IsNullOrWhiteSpace($safeResultId) -and
+    $null -ne $safeResultRevision -and
+    -not [string]::IsNullOrWhiteSpace($safeGeometryHash)
+  $identityMatchKnown = $capabilityPresent -and $identityPresent
+  $identityMatch = $identityMatchKnown -and
+    [string]$Capabilities.resultId -eq $safeResultId -and
+    [int64]$Capabilities.resultRevision -eq $safeResultRevision -and
+    [string]$Capabilities.geometryHash -eq $safeGeometryHash
+  $capabilityTechnicalStatePresent = Test-CoordinateThreeCaseProperty -Value $Capabilities -Name 'technicallyGeneratable'
+  $finalizedTechnicalStatePresent = Test-CoordinateThreeCaseProperty -Value $Finalized -Name 'technicalKmlReady'
+  $technicalStatePresent = $capabilityTechnicalStatePresent -or $finalizedTechnicalStatePresent
+  $technicalState = if ($capabilityTechnicalStatePresent) {
+    $Capabilities.technicallyGeneratable
+  } elseif ($finalizedTechnicalStatePresent) {
+    $Finalized.technicalKmlReady
+  } else { $null }
+  $mapStatePresent = Test-CoordinateThreeCaseProperty -Value $Capabilities -Name 'mapReady'
+  $kmlStatePresent = Test-CoordinateThreeCaseProperty -Value $Capabilities -Name 'kmlReady'
+  $readinessStateComplete = $technicalStatePresent -and $mapStatePresent -and $kmlStatePresent
+  $explicitlyDenied = $capabilityPresent -and $readinessStateComplete -and (
+    $technicalState -eq $false -or
+    $Capabilities.mapReady -eq $false -or
+    $Capabilities.kmlReady -eq $false
+  )
+  $explicitlyAllowed = $capabilityPresent -and $readinessStateComplete -and
+    $technicalState -eq $true -and
+    $Capabilities.mapReady -eq $true -and
+    $Capabilities.kmlReady -eq $true
+  $state = if (-not $capabilityPresent) {
+    'MISSING'
+  } elseif (-not $identityPresent) {
+    'PRESENT_IDENTITY_UNKNOWN'
+  } elseif ($identityMatchKnown -and -not $identityMatch) {
+    'PRESENT_MISMATCH'
+  } elseif ($explicitlyDenied) {
+    'PRESENT_DENIED'
+  } elseif ($identityMatch -and $explicitlyAllowed) {
+    'PRESENT_MATCH'
+  } else {
+    'PRESENT_UNKNOWN'
+  }
+  return [ordered]@{
+    state = $state
+    present = $capabilityPresent
+    denied = if (-not $capabilityPresent -or -not $readinessStateComplete) { $null } else { $explicitlyDenied }
+    identityPresent = $identityPresent
+    identityMatchKnown = $identityMatchKnown
+    identityMatch = if ($identityMatchKnown) { $identityMatch } else { $null }
+    resultId = $safeResultId
+    resultRevision = $safeResultRevision
+    geometryHash = $safeGeometryHash
+    consumerMapReady = $state -eq 'PRESENT_MATCH' -and $Capabilities.mapReady -eq $true
+    consumerKmlReady = $state -eq 'PRESENT_MATCH' -and $Capabilities.kmlReady -eq $true
+  }
+}
+
+function Get-CoordinateThreeCaseTerminalDiagnostics {
+  param([object] $Value)
+  if ($null -eq $Value) { return $null }
+  $pointCount = 0
+  $groupCount = 0
+  $pointCountKnown = [int]::TryParse([string]$Value.candidatePointCount, [ref]$pointCount) -and $pointCount -ge 0
+  $groupCountKnown = [int]::TryParse([string]$Value.candidateGroupCount, [ref]$groupCount) -and $groupCount -ge 0
+  return [ordered]@{
+    schemaVersion = if ([string]$Value.schemaVersion -eq 'recognition_terminal_diagnostics_v1') {
+      'recognition_terminal_diagnostics_v1'
+    } else { 'UNKNOWN' }
+    failureStage = ConvertTo-CoordinateThreeCaseFixedCode -Value $Value.failureStage -Fallback 'UNKNOWN'
+    failureBranch = ConvertTo-CoordinateThreeCaseFixedCode -Value $Value.failureBranch -Fallback 'UNKNOWN'
+    unifiedTerminalReason = ConvertTo-CoordinateThreeCaseFixedCode -Value $Value.unifiedTerminalReason -Fallback 'UNKNOWN'
+    contractReasons = @(ConvertTo-CoordinateThreeCaseStringList -Value $Value.contractReasons)
+    candidatePointCount = if ($pointCountKnown) { $pointCount } else { $null }
+    candidateGroupCount = if ($groupCountKnown) { $groupCount } else { $null }
+    downstreamFamilyParserReached = if (
+      (Test-CoordinateThreeCaseProperty -Value $Value -Name 'downstreamFamilyParserReached') -and
+      $Value.downstreamFamilyParserReached -is [bool]
+    ) {
+      [bool]$Value.downstreamFamilyParserReached
+    } else { $null }
+    deterministicParserOutcome = ConvertTo-CoordinateThreeCaseFixedCode -Value $Value.deterministicParserOutcome -Fallback 'UNKNOWN'
+    detectedFamilyCue = ConvertTo-CoordinateThreeCaseFixedCode -Value $Value.detectedFamilyCue -Fallback 'UNKNOWN'
+  }
+}
+
 function Get-CoordinateThreeCaseSanitizedCaseReceipt {
   param(
     [Parameter(Mandatory = $true)] [System.Collections.IDictionary] $Definition,
@@ -57,6 +159,21 @@ function Get-CoordinateThreeCaseSanitizedCaseReceipt {
   )
   $result = $Snapshot.result
   $finalized = $result.finalizedCoordinateResult
+  $capabilities = $result.outputCapabilities
+  $capabilityObservation = Get-CoordinateThreeCaseOutputCapabilityObservation -Finalized $finalized -Capabilities $capabilities
+  $providerModelPresent = -not [string]::IsNullOrWhiteSpace([string]$result.providerModel)
+  $reportedModelPresent = -not [string]::IsNullOrWhiteSpace([string]$result.model)
+  $providerModel = if ($providerModelPresent) {
+    [string]$result.providerModel
+  } else {
+    [string]$result.model
+  }
+  $modelConflict = $providerModelPresent -and $reportedModelPresent -and
+    [string]$result.providerModel -ne [string]$result.model
+  $modelMatch = -not $modelConflict -and (
+    ($providerModelPresent -and [string]$result.providerModel -eq $ExpectedModel) -or
+    (-not $providerModelPresent -and $reportedModelPresent -and [string]$result.model -eq $ExpectedModel)
+  )
   $diagnostics = $result.indonesiaStructuredPreflightDiagnostics
   $localOcrDiagnostics = if ($diagnostics.localOcrDiagnostics) {
     $diagnostics.localOcrDiagnostics
@@ -74,14 +191,23 @@ function Get-CoordinateThreeCaseSanitizedCaseReceipt {
     success = $result.success -eq $true
     code = ConvertTo-CoordinateThreeCaseFixedCode -Value $(if ($result.code) { $result.code } elseif ($result.reason) { $result.reason } else { 'NONE' })
     reason = ConvertTo-CoordinateThreeCaseFixedReason -Value $(if ($result.reason) { $result.reason } else { 'NONE' })
-    modelMatch = [string]$result.model -eq $ExpectedModel
+    modelMatch = $modelMatch
+    modelConflict = $modelConflict
+    providerModel = ConvertTo-CoordinateThreeCaseFixedCode -Value $providerModel -Fallback 'UNKNOWN'
+    adapterLabel = ConvertTo-CoordinateThreeCaseFixedCode -Value $result.adapterLabel -Fallback 'NONE'
     providerCallCount = $providerCalls.value
     providerCallCountKnown = $providerCalls.known
     providerCallLimitExceeded = $providerCalls.limitExceeded
     providerCompletionState = ConvertTo-CoordinateThreeCaseFixedCode -Value $result.providerCompletionState -Fallback 'UNKNOWN'
     resultIdentityPresent = $identityPresent
     technicalKmlReady = $result.technicalKmlReady -eq $true -or $finalized.technicalKmlReady -eq $true
-    kmlReady = $result.kmlReady -eq $true -or $finalized.kmlReady -eq $true
+    finalizedKmlReady = $finalized.kmlReady -eq $true
+    formalAuthorizationState = 'UNKNOWN'
+    outputCapabilityState = $capabilityObservation.state
+    consumerIdentityMatch = $capabilityObservation.identityMatch
+    consumerMapReady = $capabilityObservation.consumerMapReady
+    consumerKmlReady = $capabilityObservation.consumerKmlReady
+    kmlReady = $capabilityObservation.consumerKmlReady
     geometryPresent = $null -ne $finalized.geometry
     diagnosticsPresent = $null -ne $diagnostics
     localOcrAttempted = $diagnostics.localOcrAttempted -eq $true
@@ -111,6 +237,7 @@ function Get-CoordinateThreeCaseSanitizedCaseReceipt {
     routeSelected = $diagnostics.routeSelected -eq $true
     preflightFailureCode = ConvertTo-CoordinateThreeCaseFixedCode -Value $diagnostics.preflightFailureCode
     routeFailureCode = ConvertTo-CoordinateThreeCaseFixedCode -Value $diagnostics.routeFailureCode
+    recognitionTerminalDiagnostics = Get-CoordinateThreeCaseTerminalDiagnostics -Value $result.recognitionTerminalDiagnostics
   }
 }
 
@@ -210,6 +337,20 @@ function New-CoordinateThreeCaseValidatedResultRecord {
   $result = $Snapshot.result
   $finalized = $result.finalizedCoordinateResult
   $capabilities = $result.outputCapabilities
+  $capabilityObservation = Get-CoordinateThreeCaseOutputCapabilityObservation -Finalized $finalized -Capabilities $capabilities
+  $providerModelPresent = -not [string]::IsNullOrWhiteSpace([string]$result.providerModel)
+  $reportedModelPresent = -not [string]::IsNullOrWhiteSpace([string]$result.model)
+  $providerModel = if ($providerModelPresent) {
+    [string]$result.providerModel
+  } else {
+    [string]$result.model
+  }
+  $modelConflict = $providerModelPresent -and $reportedModelPresent -and
+    [string]$result.providerModel -ne [string]$result.model
+  $modelMatch = -not $modelConflict -and (
+    ($providerModelPresent -and [string]$result.providerModel -eq $ExpectedModel) -or
+    (-not $providerModelPresent -and $reportedModelPresent -and [string]$result.model -eq $ExpectedModel)
+  )
   $diagnostics = $result.indonesiaStructuredPreflightDiagnostics
   $localOcrDiagnostics = if ($diagnostics.localOcrDiagnostics) {
     $diagnostics.localOcrDiagnostics
@@ -228,10 +369,7 @@ function New-CoordinateThreeCaseValidatedResultRecord {
     -not [string]::IsNullOrWhiteSpace($safeResultId) -and
     $null -ne $safeResultRevision -and
     -not [string]::IsNullOrWhiteSpace($safeGeometryHash)
-  $consumerIdentityMatch = $identityPresent -and $null -ne $capabilities -and
-    [string]$capabilities.resultId -eq $safeResultId -and
-    [int64]$capabilities.resultRevision -eq $safeResultRevision -and
-    [string]$capabilities.geometryHash -eq $safeGeometryHash
+  $consumerIdentityMatch = $capabilityObservation.identityMatch
   $currentRevisionMatch = $identityPresent -and (
     $null -eq $finalized.currentRevision -or
     [int64]$finalized.currentRevision -eq $safeResultRevision
@@ -246,18 +384,25 @@ function New-CoordinateThreeCaseValidatedResultRecord {
   $record = [ordered]@{
     schemaVersion = 'coordinate_three_case_validated_result_v1'
     caseId = ConvertTo-CoordinateThreeCaseFixedCode -Value $Definition.caseId -Fallback 'UNKNOWN'
+    recognitionRequestId = if ([string]$Snapshot.requestId -match '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+      [string]$Snapshot.requestId
+    } else { '' }
     imageSha256 = $safeImageSha256
     terminalStatus = ConvertTo-CoordinateThreeCaseFixedCode -Value $Snapshot.status -Fallback 'UNKNOWN'
     httpStatus = if ($httpStatusKnown) { $httpStatus } else { $null }
     success = $result.success -eq $true
     code = ConvertTo-CoordinateThreeCaseFixedCode -Value $(if ($result.code) { $result.code } elseif ($result.reason) { $result.reason } else { 'NONE' })
     reason = ConvertTo-CoordinateThreeCaseFixedReason -Value $(if ($result.reason) { $result.reason } else { 'NONE' })
-    model = if ([string]$result.model -eq $ExpectedModel) { $ExpectedModel } else { 'UNEXPECTED' }
-    modelMatch = [string]$result.model -eq $ExpectedModel
+    model = if ($modelMatch) { $ExpectedModel } else { 'UNEXPECTED' }
+    modelMatch = $modelMatch
+    modelConflict = $modelConflict
+    providerModel = ConvertTo-CoordinateThreeCaseFixedCode -Value $providerModel -Fallback 'UNKNOWN'
+    adapterLabel = ConvertTo-CoordinateThreeCaseFixedCode -Value $result.adapterLabel -Fallback 'NONE'
     providerCallCount = $providerCalls.value
     providerCallCountKnown = $providerCalls.known
     providerCallLimitExceeded = $providerCalls.limitExceeded
     providerCompletionState = ConvertTo-CoordinateThreeCaseFixedCode -Value $result.providerCompletionState -Fallback 'UNKNOWN'
+    recognitionTerminalDiagnostics = Get-CoordinateThreeCaseTerminalDiagnostics -Value $result.recognitionTerminalDiagnostics
     diagnostics = [ordered]@{
       present = $null -ne $diagnostics
       localOcrAttempted = $diagnostics.localOcrAttempted -eq $true
@@ -300,6 +445,10 @@ function New-CoordinateThreeCaseValidatedResultRecord {
       identityPresent = $identityPresent
       currentRevisionMatch = $currentRevisionMatch
       consumerIdentityMatch = $consumerIdentityMatch
+      consumerIdentityMatchKnown = $capabilityObservation.identityMatchKnown
+      outputCapabilityState = $capabilityObservation.state
+      outputCapabilityPresent = $capabilityObservation.present
+      outputCapabilityDenied = $capabilityObservation.denied
       coordinateType = ConvertTo-CoordinateThreeCaseFixedCode -Value $finalized.coordinateType -Fallback 'UNKNOWN'
       precisionMode = ConvertTo-CoordinateThreeCaseFixedCode -Value $finalized.precisionMode -Fallback 'UNKNOWN'
       family = ConvertTo-CoordinateThreeCaseFixedCode -Value $finalized.family -Fallback 'UNKNOWN'
@@ -311,8 +460,12 @@ function New-CoordinateThreeCaseValidatedResultRecord {
       decisionState = ConvertTo-CoordinateThreeCaseFixedCode -Value $finalized.decisionState -Fallback 'UNKNOWN'
       requiresReview = $finalized.requiresReview -eq $true
       technicalKmlReady = $finalized.technicalKmlReady -eq $true
-      mapReady = $capabilities.mapReady -eq $true
-      kmlReady = $capabilities.kmlReady -eq $true -and $finalized.kmlReady -eq $true
+      finalizedKmlReady = $finalized.kmlReady -eq $true
+      formalAuthorizationState = 'UNKNOWN'
+      consumerMapReady = $capabilityObservation.consumerMapReady
+      consumerKmlReady = $capabilityObservation.consumerKmlReady
+      mapReady = $capabilityObservation.consumerMapReady
+      kmlReady = $capabilityObservation.consumerKmlReady
       reasonCodes = @(ConvertTo-CoordinateThreeCaseStringList -Value $finalized.reasonCodes)
       blockingReasons = @(ConvertTo-CoordinateThreeCaseStringList -Value $finalized.blockingReasons)
       outputCapabilityBlockReasons = @(ConvertTo-CoordinateThreeCaseStringList -Value $capabilities.blockReasons)

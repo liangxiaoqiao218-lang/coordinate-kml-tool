@@ -11,8 +11,8 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-client-preflight.ps1')
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-result-artifact.ps1')
-$runId = 'coordinate-three-case-rc-20261011-r6'
-$batchId = 'coordinate-three-case-rc-20261011-v6'
+$runId = 'coordinate-three-case-rc-20261011-r7'
+$batchId = 'coordinate-three-case-rc-20261011-v7'
 $expectedModel = 'qwen3.8-flash'
 $controlledVisitorId = Resolve-CoordinateThreeCaseControlledVisitorId -VisitorId $VisitorId
 $caseDefinitions = @(
@@ -27,14 +27,19 @@ function ConvertFrom-SecureStringPlain([Security.SecureString] $secure) {
   finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
 }
 
-function Invoke-JsonRequest([Net.Http.HttpClient] $client, [string] $method, [string] $url, [object] $body = $null, [switch] $AllowErrorPayload) {
+function Invoke-JsonRequest([Net.Http.HttpClient] $client, [string] $method, [string] $url, [object] $body = $null, [switch] $AllowErrorPayload, [int] $TimeoutMilliseconds = 0) {
   $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($method), $url)
+  $cancellation = if ($TimeoutMilliseconds -gt 0) { [Threading.CancellationTokenSource]::new($TimeoutMilliseconds) } else { $null }
   try {
     if ($null -ne $body) {
       $json = $body | ConvertTo-Json -Depth 8 -Compress
       $request.Content = [Net.Http.StringContent]::new($json, [Text.Encoding]::UTF8, 'application/json')
     }
-    $response = $client.SendAsync($request).GetAwaiter().GetResult()
+    $response = if ($null -ne $cancellation) {
+      $client.SendAsync($request, $cancellation.Token).GetAwaiter().GetResult()
+    } else {
+      $client.SendAsync($request).GetAwaiter().GetResult()
+    }
     $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
     $payload = if ([string]::IsNullOrWhiteSpace($text)) { $null } else { $text | ConvertFrom-Json }
     if (-not $response.IsSuccessStatusCode -and -not $AllowErrorPayload) {
@@ -43,6 +48,7 @@ function Invoke-JsonRequest([Net.Http.HttpClient] $client, [string] $method, [st
     }
     return $payload
   } finally {
+    if ($null -ne $cancellation) { $cancellation.Dispose() }
     $request.Dispose()
   }
 }
@@ -95,7 +101,12 @@ function Invoke-RecognitionJob([Net.Http.HttpClient] $adminClient, [string] $bas
         if ($snapshot.status -in @('SUCCEEDED', 'FAILED')) { break }
       } while ([DateTimeOffset]::UtcNow -lt $deadline)
       if ($snapshot.status -notin @('SUCCEEDED', 'FAILED')) { throw 'JOB_TERMINAL_TIMEOUT' }
-      return $snapshot
+      return [pscustomobject]@{
+        snapshot = $snapshot
+        jobId = [string]$accepted.jobId
+        jobAccessToken = [string]$accepted.jobAccessToken
+        recognitionRequestId = $requestId
+      }
     } finally {
       $pollClient.Dispose()
     }
@@ -133,6 +144,15 @@ try {
   exit 4
 }
 
+$browserEvidencePath = "${resolvedEvidencePath}.browser-consumer.json"
+$browserDownloadDirectory = Join-Path $evidenceParent 'r7-browser-download'
+$kmlDownloadPath = Join-Path $browserDownloadDirectory 'coordinates.kml'
+if ((Test-Path -LiteralPath $browserEvidencePath) -or (Test-Path -LiteralPath $browserDownloadDirectory)) {
+  throw 'R7_BROWSER_CONSUMER_STALE_ARTIFACT_PRESENT'
+}
+New-Item -ItemType Directory -Path $browserDownloadDirectory | Out-Null
+Write-Host "R7_BROWSER_DOWNLOAD_DIRECTORY=$browserDownloadDirectory"
+
 $adminSecure = Read-Host '请输入 RC 管理员密码（不会显示）' -AsSecureString
 $adminPlain = ConvertFrom-SecureStringPlain $adminSecure
 $client = [Net.Http.HttpClient]::new()
@@ -142,6 +162,8 @@ $beforeCases = {
   $version = Invoke-JsonRequest $client 'GET' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/version"
   $runtimeCommit = [string]$(if ($version.runtimeIdentity.commit) { $version.runtimeIdentity.commit } else { $version.commit })
   if ($runtimeCommit -ne $ExpectedCommit) { throw 'RC_RUNTIME_COMMIT_MISMATCH' }
+  $browserReadiness = Invoke-JsonRequest $client 'POST' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/admin/coordinate-products/three-case-rc/browser-readiness" ([ordered]@{})
+  if ($browserReadiness.browserSessionReady -ne $true) { throw 'R7_BROWSER_SESSION_NOT_READY' }
 }
 $invokeCase = {
   param($definition)
@@ -152,7 +174,8 @@ $validatedResultState = [pscustomobject]@{
   LastIntegrity = $null
 }
 $convertReceipt = {
-  param($definition, $snapshot)
+  param($definition, $jobResult)
+  $snapshot = $jobResult.snapshot
   $receipt = Get-CoordinateThreeCaseSanitizedCaseReceipt -Definition $definition -Snapshot $snapshot -ExpectedModel $expectedModel
   $record = New-CoordinateThreeCaseValidatedResultRecord -Definition $definition -Snapshot $snapshot -ExpectedModel $expectedModel
   $validatedResultState.Cases.Add($record)
@@ -161,6 +184,61 @@ $convertReceipt = {
   $validatedResultState.LastIntegrity = Write-CoordinateThreeCaseValidatedResultArtifact `
     -Path $validatedResultPath -State $state
   return $receipt
+}
+$afterCase = {
+  param($definition, $jobResult, $receipt)
+  if ([string]$definition['caseId'] -ne 'indonesia') { return $true }
+  $registration = Invoke-JsonRequest $client 'POST' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/admin/coordinate-products/three-case-rc/browser-handoff/register" ([ordered]@{
+    caseId = 'indonesia'
+    jobId = [string]$jobResult.jobId
+    jobAccessToken = [string]$jobResult.jobAccessToken
+    recognitionRequestId = [string]$jobResult.recognitionRequestId
+  })
+  if ($registration.registered -ne $true) { throw 'R7_BROWSER_HANDOFF_REGISTRATION_FAILED' }
+  $handoffExpiresAt = [string]$registration.expiresAt
+  if ([string]::IsNullOrWhiteSpace($handoffExpiresAt)) { throw 'R7_BROWSER_HANDOFF_DEADLINE_MISSING' }
+  if ((Test-Path -LiteralPath $browserEvidencePath) -or (Test-Path -LiteralPath $kmlDownloadPath)) {
+    throw 'R7_BROWSER_CONSUMER_STALE_ARTIFACT_PRESENT'
+  }
+  $handoffDeadline = [DateTimeOffset]::MinValue
+  if (-not [DateTimeOffset]::TryParse($handoffExpiresAt, [Globalization.CultureInfo]::InvariantCulture,
+      [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$handoffDeadline)) {
+    throw 'R7_BROWSER_HANDOFF_DEADLINE_INVALID'
+  }
+  $browserEvidence = $null
+  while ([DateTimeOffset]::UtcNow -lt $handoffDeadline.ToUniversalTime()) {
+    $remainingRequestMilliseconds = [int][Math]::Floor(($handoffDeadline.ToUniversalTime() - [DateTimeOffset]::UtcNow).TotalMilliseconds)
+    if ($remainingRequestMilliseconds -le 0) { break }
+    $browserEvidenceReceipt = Invoke-JsonRequest -client $client -method 'GET' `
+      -url "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/admin/coordinate-products/three-case-rc/browser-evidence" `
+      -TimeoutMilliseconds ([Math]::Min(30000, $remainingRequestMilliseconds))
+    if ($browserEvidenceReceipt.ready -eq $true -and $null -ne $browserEvidenceReceipt.evidence) {
+      $browserEvidence = $browserEvidenceReceipt.evidence
+      break
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  if ($null -eq $browserEvidence) { throw 'R7_BROWSER_CONSUMER_EVIDENCE_TIMEOUT' }
+  Write-CoordinateThreeCaseBrowserConsumerEvidenceArtifact -Evidence $browserEvidence `
+    -Path $browserEvidencePath -ExpectedRunId $runId -ExpectedCaseId 'indonesia' | Out-Null
+  $gateScript = Join-Path $PSScriptRoot 'coordinate-three-case-rc-r7-browser-consumer-gate.ps1'
+  $pwshExecutable = Join-Path $PSHOME 'pwsh.exe'
+  $gateOutput = & $pwshExecutable -NoProfile -File $gateScript -BrowserEvidencePath $browserEvidencePath -ValidatedResultPath $validatedResultPath `
+    -KmlDownloadPath $kmlDownloadPath -ExpectedRunId $runId -ExpectedCaseId 'indonesia' -HandoffExpiresAt $handoffExpiresAt
+  if ($LASTEXITCODE -ne 0) { throw 'R7_BROWSER_CONSUMER_GATE_FAILED' }
+  $gateReceipt = ($gateOutput | Select-Object -Last 1) | ConvertFrom-Json
+  if ($gateReceipt.success -ne $true) { throw 'R7_BROWSER_CONSUMER_GATE_FAILED' }
+  $receipt['consumerGate'] = [ordered]@{
+    browserEvidenceAccepted = $gateReceipt.browserEvidenceAccepted -eq $true
+    mapReady = $gateReceipt.mapReady -eq $true
+    mapProvider = [string]$gateReceipt.mapProvider
+    authorityMutationCount = [int]$gateReceipt.authorityMutationCount
+    kmlParsed = $gateReceipt.kmlParsed -eq $true
+    kmlGeometryType = [string]$gateReceipt.kmlGeometryType
+    kmlGeometryMatch = $gateReceipt.kmlGeometryMatch -eq $true
+    kmlSha256 = [string]$gateReceipt.kmlSha256
+  }
+  return $true
 }
 $closeRun = {
   return Invoke-JsonRequest $client 'POST' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/admin/coordinate-products/three-case-rc/close" ([ordered]@{})
@@ -197,7 +275,7 @@ $writeEvidence = {
 try {
   $execution = Invoke-CoordinateThreeCaseControlledRun -Definitions $caseDefinitions `
     -BeforeCases $beforeCases -InvokeCase $invokeCase -ConvertReceipt $convertReceipt `
-    -CloseRun $closeRun -WriteEvidence $writeEvidence
+    -AfterCase $afterCase -CloseRun $closeRun -WriteEvidence $writeEvidence
 } finally {
   $adminPlain = $null
   $client.Dispose()

@@ -169,6 +169,41 @@ export function buildUnchargedCoordinateFailureResponse({
   const indonesiaStructuredPreflightDiagnostics = sanitizeIndonesiaStructuredPreflightDiagnostics(
     body?.indonesiaStructuredPreflightDiagnostics
   );
+  const terminalDiagnosticsSource = body?.recognitionTerminalDiagnostics;
+  const fixedTerminalCode = (candidate, fallback = "UNKNOWN") => {
+    const value = String(candidate || "").trim();
+    return /^[A-Z0-9_.:-]{1,160}$/u.test(value) ? value : fallback;
+  };
+  const terminalCount = candidate => {
+    return Number.isSafeInteger(candidate) && candidate >= 0 ? candidate : null;
+  };
+  const recognitionTerminalDiagnostics = terminalDiagnosticsSource
+    && typeof terminalDiagnosticsSource === "object"
+    ? Object.freeze({
+        schemaVersion: terminalDiagnosticsSource.schemaVersion === "recognition_terminal_diagnostics_v1"
+          ? terminalDiagnosticsSource.schemaVersion
+          : "UNKNOWN",
+        failureStage: fixedTerminalCode(terminalDiagnosticsSource.failureStage),
+        failureBranch: fixedTerminalCode(terminalDiagnosticsSource.failureBranch),
+        unifiedTerminalReason: fixedTerminalCode(terminalDiagnosticsSource.unifiedTerminalReason),
+        contractReasons: Object.freeze(Array.isArray(terminalDiagnosticsSource.contractReasons)
+          ? [...new Set(terminalDiagnosticsSource.contractReasons
+              .map(value => fixedTerminalCode(value, ""))
+              .filter(Boolean))]
+          : []),
+        candidatePointCount: terminalCount(terminalDiagnosticsSource.candidatePointCount),
+        candidateGroupCount: terminalCount(terminalDiagnosticsSource.candidateGroupCount),
+        downstreamFamilyParserReached: typeof terminalDiagnosticsSource.downstreamFamilyParserReached === "boolean"
+          ? terminalDiagnosticsSource.downstreamFamilyParserReached
+          : null,
+        deterministicParserOutcome: fixedTerminalCode(
+          terminalDiagnosticsSource.deterministicParserOutcome
+        ),
+        detectedFamilyCue: ["MGRS", "BFTM"].includes(terminalDiagnosticsSource.detectedFamilyCue)
+          ? terminalDiagnosticsSource.detectedFamilyCue
+          : "UNKNOWN"
+      })
+    : null;
   return Object.freeze({
     success: false,
     reason,
@@ -189,6 +224,7 @@ export function buildUnchargedCoordinateFailureResponse({
     candidateEvidenceStatus: candidatePointCount > 0 ? "PRESENT" : "ABSENT",
     candidatePointCount,
     ...(indonesiaStructuredPreflightDiagnostics ? { indonesiaStructuredPreflightDiagnostics } : {}),
+    ...(recognitionTerminalDiagnostics ? { recognitionTerminalDiagnostics } : {}),
     rawText: "",
     coordinates: ""
   });

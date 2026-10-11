@@ -33,6 +33,38 @@ function safeProviderCompletionState(value) {
     : "FAILED";
 }
 
+function sanitizeRecognitionTerminalDiagnostics(value) {
+  if (!value || typeof value !== "object") return null;
+  const fixedCode = (candidate, fallback = "UNKNOWN") => {
+    const code = String(candidate || "").trim();
+    return /^[A-Z0-9_.:-]{1,160}$/u.test(code) ? code : fallback;
+  };
+  const nonNegativeCount = candidate => {
+    return Number.isSafeInteger(candidate) && candidate >= 0 ? candidate : null;
+  };
+  const contractReasons = Array.isArray(value.contractReasons)
+    ? [...new Set(value.contractReasons.map(item => fixedCode(item, "")).filter(Boolean))]
+    : [];
+  return Object.freeze({
+    schemaVersion: value.schemaVersion === "recognition_terminal_diagnostics_v1"
+      ? value.schemaVersion
+      : "UNKNOWN",
+    failureStage: fixedCode(value.failureStage),
+    failureBranch: fixedCode(value.failureBranch),
+    unifiedTerminalReason: fixedCode(value.unifiedTerminalReason),
+    contractReasons: Object.freeze(contractReasons),
+    candidatePointCount: nonNegativeCount(value.candidatePointCount),
+    candidateGroupCount: nonNegativeCount(value.candidateGroupCount),
+    downstreamFamilyParserReached: typeof value.downstreamFamilyParserReached === "boolean"
+      ? value.downstreamFamilyParserReached
+      : null,
+    deterministicParserOutcome: fixedCode(value.deterministicParserOutcome),
+    detectedFamilyCue: ["MGRS", "BFTM"].includes(value.detectedFamilyCue)
+      ? value.detectedFamilyCue
+      : "UNKNOWN"
+  });
+}
+
 function buildSafeFailureResult(output, fallbackCode) {
   const source = output?.result && typeof output.result === "object" ? output.result : {};
   const reason = safeFailureCode(
@@ -61,6 +93,12 @@ function buildSafeFailureResult(output, fallbackCode) {
   }
   const localOcrDiagnostics = sanitizeLocalOcrDiagnostics(source.localOcrDiagnostics);
   if (localOcrDiagnostics) result.localOcrDiagnostics = localOcrDiagnostics;
+  const recognitionTerminalDiagnostics = sanitizeRecognitionTerminalDiagnostics(
+    source.recognitionTerminalDiagnostics
+  );
+  if (recognitionTerminalDiagnostics) {
+    result.recognitionTerminalDiagnostics = recognitionTerminalDiagnostics;
+  }
   if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(String(source.requestId || ""))) {
     result.requestId = source.requestId;
   }
@@ -108,6 +146,16 @@ export function createRecognitionAcquisitionJobRuntime({
         RECOGNITION_ACQUISITION_JOB_STATUS.FAILED
       ].includes(job.status) ? job.result : null,
       error: job.status === RECOGNITION_ACQUISITION_JOB_STATUS.FAILED ? job.error : null
+    });
+  }
+
+  function handoffSnapshot(job) {
+    const snapshot = publicSnapshot(job);
+    if (!snapshot) return null;
+    return Object.freeze({
+      ...snapshot,
+      rcBinding: job.rcBinding ? structuredClone(job.rcBinding) : null,
+      expiresAt: job.completedAt ? job.completedAt + ttlMs : null
     });
   }
 
@@ -198,6 +246,9 @@ export function createRecognitionAcquisitionJobRuntime({
         httpStatus: null,
         result: null,
         error: null,
+        rcBinding: input?.rcBinding && typeof input.rcBinding === "object"
+          ? Object.freeze(structuredClone(input.rcBinding))
+          : null,
         input
       };
       jobs.set(job.jobId, job);
@@ -212,6 +263,11 @@ export function createRecognitionAcquisitionJobRuntime({
       prune();
       const job = jobs.get(String(jobId || ""));
       return tokenMatches(job, accessToken) ? publicSnapshot(job) : null;
+    },
+    getForHandoff(jobId, accessToken) {
+      prune();
+      const job = jobs.get(String(jobId || ""));
+      return tokenMatches(job, accessToken) ? handoffSnapshot(job) : null;
     },
     get size() {
       prune();
