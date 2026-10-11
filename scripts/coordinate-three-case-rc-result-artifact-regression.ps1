@@ -29,6 +29,7 @@ $successSnapshot = @'
   "result": {
     "success": true,
     "code": "NONE",
+    "reason": "NONE",
     "model": "qwen3.8-flash",
     "providerCallCount": 1,
     "providerCompletionState": "SUCCEEDED",
@@ -108,6 +109,7 @@ $failureSnapshot = @'
   "result": {
     "success": false,
     "code": "SOURCE_EVIDENCE_REQUIRED",
+    "reason": "rc_visitor_not_authorized",
     "model": "qwen3.8-flash",
     "providerCallCount": 0,
     "providerCompletionState": "NOT_STARTED",
@@ -204,10 +206,24 @@ Assert-Case 'failed pre-provider result retains fixed diagnostics without geomet
   Require ($failureRecord.providerCallCount -eq 0) 'FAILURE_PROVIDER_COUNT_MISMATCH'
   Require ($failureRecord.providerCompletionState -eq 'NOT_STARTED') 'FAILURE_PROVIDER_STATE_MISMATCH'
   Require ($failureRecord.diagnostics.routeFailureCode -eq 'STRUCTURED_PRODUCT_UTM50S_EVIDENCE_REQUIRED') 'FAILURE_REASON_MISSING'
+  Require ($failureRecord.reason -eq 'rc_visitor_not_authorized') 'FIXED_REASON_NOT_RETAINED'
   Require ($null -eq $failureRecord.finalizedResult) 'FAILURE_FINALIZED_RESULT_LEAKED'
   $json = $failureRecord | ConvertTo-Json -Depth 30 -Compress
   Require (-not $json.Contains('forbidden-password-sentinel')) 'PASSWORD_LEAKED'
   Require (-not $json.Contains('forbidden-failure-provider-sentinel')) 'FAILURE_PROVIDER_RESPONSE_LEAKED'
+}
+
+Assert-Case 'reason whitelist preserves only fixed values and rejects free text' {
+  Require ((ConvertTo-CoordinateThreeCaseFixedReason -Value 'ai_ocr_permission_denied') -eq 'ai_ocr_permission_denied') 'ALLOWED_REASON_NOT_RETAINED'
+  Require ((ConvertTo-CoordinateThreeCaseFixedReason -Value 'sensitive arbitrary detail') -eq 'UNLISTED_FIXED_REASON') 'FREE_TEXT_REASON_NOT_REJECTED'
+  $receipt = Get-CoordinateThreeCaseSanitizedCaseReceipt -Definition $failureDefinition `
+    -Snapshot $failureSnapshot -ExpectedModel 'qwen3.8-flash'
+  Require ($receipt.reason -eq 'rc_visitor_not_authorized') 'SANITIZED_RECEIPT_REASON_NOT_RETAINED'
+  $freeTextSnapshot = $failureSnapshot | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+  $freeTextSnapshot.result.reason = 'sensitive arbitrary detail'
+  $freeTextReceipt = Get-CoordinateThreeCaseSanitizedCaseReceipt -Definition $failureDefinition `
+    -Snapshot $freeTextSnapshot -ExpectedModel 'qwen3.8-flash'
+  Require ($freeTextReceipt.reason -eq 'UNLISTED_FIXED_REASON') 'SANITIZED_RECEIPT_FREE_TEXT_NOT_REJECTED'
 }
 
 Assert-Case 'provider call observation preserves over-limit values and keeps missing values unknown' {
@@ -282,8 +298,11 @@ Assert-Case 'client writes the private artifact per terminal case and prints onl
   Require ($convertIndex -ge 0 -and $writeIndex -gt $convertIndex) 'PER_CASE_ARTIFACT_WRITE_MISSING'
   Require ($summaryIndex -gt $writeIndex) 'SANITIZED_SUMMARY_OUTPUT_MISSING'
   Require (-not $clientText.Contains('$validatedState | ConvertTo-Json')) 'PRIVATE_ARTIFACT_PRINTED'
-  Require ($clientText.Contains('modelMatch = [string]$result.model -eq $expectedModel')) 'SUMMARY_MODEL_MATCH_NOT_EXACT'
-  Require ($clientText.Contains('providerCallLimitExceeded = $providerCalls.limitExceeded')) 'SUMMARY_PROVIDER_LIMIT_EXCESS_MISSING'
+  Require ($clientText.Contains('Get-CoordinateThreeCaseSanitizedCaseReceipt')) 'SANITIZED_RECEIPT_HELPER_NOT_USED'
+  Require ($successRecord.modelMatch -eq $true) 'SUMMARY_MODEL_MATCH_NOT_EXACT'
+  $receipt = Get-CoordinateThreeCaseSanitizedCaseReceipt -Definition $definition `
+    -Snapshot $successSnapshot -ExpectedModel 'qwen3.8-flash'
+  Require ($receipt.providerCallLimitExceeded -eq $false) 'SUMMARY_PROVIDER_LIMIT_EXCESS_MISMATCH'
 }
 
 $summary = [ordered]@{

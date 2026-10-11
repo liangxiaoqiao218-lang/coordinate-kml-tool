@@ -70,6 +70,32 @@ try {
     $passwordIndex = $clientText.IndexOf("Read-Host '请输入 RC 管理员密码（不会显示）'")
     Require ($preflightIndex -ge 0 -and $passwordIndex -gt $preflightIndex) 'PASSWORD_PRECEDES_LOCAL_PREFLIGHT'
   }
+  Assert-Case 'actual client helpers bind the same controlled visitor to claim header and multipart body' {
+    $visitorId = 'controlled-rc-visitor-offline'
+    $definition = [ordered]@{ caseId = 'mgrs'; imageSha256 = ('a' * 64) }
+    $claimBody = New-CoordinateThreeCaseClaimBody -RunId 'run-offline' -BatchId 'batch-offline' `
+      -Definition $definition -RecognitionRequestId '11111111-1111-4111-8111-111111111111' -VisitorId $visitorId
+    Require ($claimBody.visitorId -eq $visitorId) 'CLAIM_VISITOR_NOT_BOUND'
+    $httpClient = [Net.Http.HttpClient]::new()
+    $form = [Net.Http.MultipartFormDataContent]::new()
+    try {
+      $bound = Add-CoordinateThreeCaseJobVisitorIdentity -Client $httpClient -Form $form -VisitorId $visitorId
+      Require ($bound -eq $visitorId) 'JOB_VISITOR_BINDING_RESULT_MISMATCH'
+      Require (($httpClient.DefaultRequestHeaders.GetValues('x-visitor-id') | Select-Object -First 1) -eq $visitorId) 'JOB_VISITOR_HEADER_MISSING'
+      $multipartText = $form.ReadAsStringAsync().GetAwaiter().GetResult()
+      Require ($multipartText.Contains('name=visitorId')) 'JOB_VISITOR_FORM_FIELD_MISSING'
+      Require ($multipartText.Contains($visitorId)) 'JOB_VISITOR_FORM_VALUE_MISSING'
+    } finally {
+      $form.Dispose()
+      $httpClient.Dispose()
+    }
+  }
+  Assert-Case 'actual client helper rejects an empty controlled visitor before network' {
+    $caught = ''
+    try { Resolve-CoordinateThreeCaseControlledVisitorId -VisitorId '   ' | Out-Null }
+    catch { $caught = [string]$_.Exception.Message }
+    Require ($caught -eq 'CONTROLLED_VISITOR_ID_INVALID') 'EMPTY_VISITOR_NOT_REJECTED'
+  }
   Assert-Case 'case failure is recorded and stops later cases' {
     $definitions = @(
       [ordered]@{ caseId = 'indonesia' },

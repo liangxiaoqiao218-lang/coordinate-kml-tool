@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory = $true)] [string] $RcBaseUrl,
   [Parameter(Mandatory = $true)] [string] $ExpectedCommit,
+  [Parameter(Mandatory = $true)] [string] $VisitorId,
   [string] $IndonesiaImagePath,
   [Parameter(Mandatory = $true)] [string] $MgrsImagePath,
   [Parameter(Mandatory = $true)] [string] $BftmImagePath,
@@ -10,9 +11,10 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-client-preflight.ps1')
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-result-artifact.ps1')
-$runId = 'coordinate-three-case-rc-20261011-r4'
-$batchId = 'coordinate-three-case-rc-20261011-v4'
+$runId = 'coordinate-three-case-rc-20261011-r5'
+$batchId = 'coordinate-three-case-rc-20261011-v5'
 $expectedModel = 'qwen3.8-flash'
+$controlledVisitorId = Resolve-CoordinateThreeCaseControlledVisitorId -VisitorId $VisitorId
 $caseDefinitions = @(
   [ordered]@{ caseId = 'indonesia'; imageSha256 = '41f2b2117667fb92f6a4eb703822b1893e29c985be2e14f7b20fbda103b66cf2'; productMode = 'indonesia_utm50s_structured_b'; path = $IndonesiaImagePath },
   [ordered]@{ caseId = 'mgrs'; imageSha256 = 'af999328e3232af304e03901c5e8d58cad794ea588ee31709aef6668974f4004'; productMode = ''; path = $MgrsImagePath },
@@ -47,10 +49,9 @@ function Invoke-JsonRequest([Net.Http.HttpClient] $client, [string] $method, [st
 
 function Invoke-RecognitionJob([Net.Http.HttpClient] $adminClient, [string] $baseUrl, [System.Collections.IDictionary] $definition) {
   $requestId = [guid]::NewGuid().ToString().ToLowerInvariant()
-  $claim = Invoke-JsonRequest $adminClient 'POST' "$baseUrl/api/admin/coordinate-products/three-case-rc/claims" ([ordered]@{
-    runId = $runId; batchId = $batchId; caseId = $definition.caseId
-    imageSha256 = $definition.imageSha256; recognitionRequestId = $requestId
-  })
+  $claimBody = New-CoordinateThreeCaseClaimBody -RunId $runId -BatchId $batchId `
+    -Definition $definition -RecognitionRequestId $requestId -VisitorId $controlledVisitorId
+  $claim = Invoke-JsonRequest $adminClient 'POST' "$baseUrl/api/admin/coordinate-products/three-case-rc/claims" $claimBody
   if ($claim.accepted -ne $true -or [string]::IsNullOrWhiteSpace([string]$claim.claimToken)) { throw 'CLAIM_CONTRACT_INVALID' }
 
   $jobClient = [Net.Http.HttpClient]::new()
@@ -61,6 +62,7 @@ function Invoke-RecognitionJob([Net.Http.HttpClient] $adminClient, [string] $bas
     $jobClient.DefaultRequestHeaders.Add('x-coordinate-rc-case-id', $definition.caseId)
     if ($definition.productMode) { $jobClient.DefaultRequestHeaders.Add('x-coordinate-product-mode', $definition.productMode) }
     $form = [Net.Http.MultipartFormDataContent]::new()
+    Add-CoordinateThreeCaseJobVisitorIdentity -Client $jobClient -Form $form -VisitorId $controlledVisitorId | Out-Null
     $stream = [IO.File]::OpenRead($definition.path)
     try {
       $image = [Net.Http.StreamContent]::new($stream)
@@ -99,45 +101,6 @@ function Invoke-RecognitionJob([Net.Http.HttpClient] $adminClient, [string] $bas
     }
   } finally {
     $jobClient.Dispose()
-  }
-}
-
-function Get-SanitizedCaseReceipt([System.Collections.IDictionary] $definition, [object] $snapshot) {
-  $result = $snapshot.result
-  $finalized = $result.finalizedCoordinateResult
-  $diagnostics = $result.indonesiaStructuredPreflightDiagnostics
-  $providerCalls = Get-CoordinateThreeCaseProviderCallObservation -Value $result.providerCallCount -Limit 1
-  $identityPresent = -not [string]::IsNullOrWhiteSpace([string]$finalized.resultId) -and
-    ([int64]$finalized.resultRevision -gt 0) -and
-    -not [string]::IsNullOrWhiteSpace([string]$finalized.geometryHash)
-  return [ordered]@{
-    caseId = $definition.caseId
-    terminalStatus = [string]$snapshot.status
-    httpStatus = [int]$snapshot.httpStatus
-    success = $result.success -eq $true
-    code = ConvertTo-CoordinateThreeCaseFixedCode -Value $(if ($result.code) { $result.code } elseif ($result.reason) { $result.reason } else { 'NONE' })
-    modelMatch = [string]$result.model -eq $expectedModel
-    providerCallCount = $providerCalls.value
-    providerCallCountKnown = $providerCalls.known
-    providerCallLimitExceeded = $providerCalls.limitExceeded
-    providerCompletionState = ConvertTo-CoordinateThreeCaseFixedCode -Value $result.providerCompletionState -Fallback 'UNKNOWN'
-    resultIdentityPresent = $identityPresent
-    technicalKmlReady = $result.technicalKmlReady -eq $true -or $finalized.technicalKmlReady -eq $true
-    kmlReady = $result.kmlReady -eq $true -or $finalized.kmlReady -eq $true
-    geometryPresent = $null -ne $finalized.geometry
-    diagnosticsPresent = $null -ne $diagnostics
-    localOcrAttempted = $diagnostics.localOcrAttempted -eq $true
-    sourceContextPresent = $diagnostics.sourceContextPresent -eq $true
-    localOcrContextPresent = $diagnostics.localOcrContextPresent -eq $true
-    explicitUtm50s = $diagnostics.explicitUtm50s -eq $true
-    projectedColumns = $diagnostics.projectedColumns -eq $true
-    controlledRcHintAuthorized = $diagnostics.controlledRcHintAuthorized -eq $true
-    controlledRcHintApplied = $diagnostics.controlledRcHintApplied -eq $true
-    preflightChecked = $diagnostics.preflightChecked -eq $true
-    preflightPassed = $diagnostics.preflightPassed -eq $true
-    routeSelected = $diagnostics.routeSelected -eq $true
-    preflightFailureCode = ConvertTo-CoordinateThreeCaseFixedCode -Value $diagnostics.preflightFailureCode
-    routeFailureCode = ConvertTo-CoordinateThreeCaseFixedCode -Value $diagnostics.routeFailureCode
   }
 }
 
@@ -190,7 +153,7 @@ $validatedResultState = [pscustomobject]@{
 }
 $convertReceipt = {
   param($definition, $snapshot)
-  $receipt = Get-SanitizedCaseReceipt $definition $snapshot
+  $receipt = Get-CoordinateThreeCaseSanitizedCaseReceipt -Definition $definition -Snapshot $snapshot -ExpectedModel $expectedModel
   $record = New-CoordinateThreeCaseValidatedResultRecord -Definition $definition -Snapshot $snapshot -ExpectedModel $expectedModel
   $validatedResultState.Cases.Add($record)
   $state = New-CoordinateThreeCaseValidatedResultState -RunId $runId -BatchId $batchId `

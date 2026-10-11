@@ -173,8 +173,14 @@ import {
   createCoordinateThreeCaseRcAdmission
 } from "./server/recognition/coordinate-three-case-rc-admission.js";
 import {
+  createCoordinateThreeCaseRcJobIngressMiddleware,
+  createCoordinateThreeCaseRcJobPreflightMiddleware,
   createCoordinateThreeCaseRcInternalBindingMiddleware,
-  createCoordinateThreeCaseRcJobForwarder
+  createCoordinateThreeCaseRcJobForwarder,
+  createCoordinateThreeCaseRcExistingUserLookup,
+  evaluateCoordinateThreeCaseRcPermissionGate,
+  executeCoordinateThreeCaseRcPermissionBoundary,
+  settleCoordinateThreeCaseRcPermissionFailure
 } from "./server/recognition/coordinate-three-case-rc-runtime.js";
 import { createRecognitionDiagnosticSession, authorizationDiagnosticBody } from "./server/recognition/recognition-diagnostics.js";
 import {
@@ -3646,7 +3652,8 @@ app.post("/api/admin/coordinate-products/three-case-rc/claims", async (req, res)
       batchId: req.body?.batchId,
       caseId: req.body?.caseId,
       imageSha256: req.body?.imageSha256,
-      recognitionRequestId: req.body?.recognitionRequestId
+      recognitionRequestId: req.body?.recognitionRequestId,
+      visitorId: req.body?.visitorId
     });
     res.setHeader("Cache-Control", "no-store");
     return res.status(201).json(claim);
@@ -15930,6 +15937,23 @@ async function recognizeCoordinatesHandler(req, res) {
   });
 
   let visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || req.query?.visitorId || "").trim();
+  if (coordinateThreeCaseRcAdmission.config.guardRequired) {
+    try {
+      visitorId = coordinateThreeCaseRcAdmission.validateVisitorEnvelope({
+        headerVisitorId: req.get("x-visitor-id"),
+        bodyVisitorId: req.body?.visitorId,
+        authorization: req.get("authorization")
+      }).visitorId;
+    } catch (error) {
+      return res.status(error?.httpStatus || 422).json({
+        success: false,
+        reason: "coordinate_three_case_rc_visitor_rejected",
+        code: error?.code || "COORDINATE_THREE_CASE_RC_VISITOR_REJECTED",
+        rawText: "",
+        coordinates: ""
+      });
+    }
+  }
   const regressionTestMode = getRegressionTestMode(req);
   const coordinateUsageSessionBinding = regressionTestMode.active
     ? null
@@ -16753,27 +16777,55 @@ async function recognizeCoordinatesHandler(req, res) {
       page: coordinateImageIdentity.page, regionId: null, tableId: null,
       regionTableIdentityStatus: "NOT_ESTABLISHED_BY_THIS_CAPTURE" });
 
-    const { adminData, user, permissions } = await runBudgetedStage("permissions", async () => {
+    const permissionBoundary = await runBudgetedStage("permissions", async () => {
+      if (coordinateThreeCaseRcAdmission.config.guardRequired) {
+        return executeCoordinateThreeCaseRcPermissionBoundary({
+          guardRequired: true,
+          visitorId,
+          readAdminData,
+          findExistingUser: createCoordinateThreeCaseRcExistingUserLookup({ supabase }),
+          ensureUser,
+          getEffectivePermissions,
+          onAuthorized: async context => context
+        });
+      }
       const currentAdminData = await readAdminData();
       const currentUser = ensureUser(currentAdminData, visitorId);
+      const currentPermissions = getEffectivePermissions(currentUser, currentAdminData.featureFlags);
+      const gate = evaluateCoordinateThreeCaseRcPermissionGate({
+        guardRequired: false,
+        visitorId,
+        user: currentUser,
+        permissions: currentPermissions
+      });
       return {
+        allowed: gate.allowed,
+        httpStatus: gate.httpStatus,
+        body: gate.body,
         adminData: currentAdminData,
         user: currentUser,
-        permissions: getEffectivePermissions(currentUser, currentAdminData.featureFlags)
+        permissions: currentPermissions
       };
     });
-
-    if (!permissions.aiOcrEnabled) {
-      if (user) {
+    const { adminData, user, permissions } = permissionBoundary;
+    if (!permissionBoundary.allowed) {
+      if (user && !coordinateThreeCaseRcAdmission.config.guardRequired) {
         await updateUserVisitMeta(user, req, adminData);
         await writeAdminData(adminData);
       }
-
-      return res.status(403).json({
-        error: "当前用户暂未开通图片识别。",
-        rawText: "",
-        coordinates: ""
-      });
+      if (coordinateThreeCaseRcAdmission.config.guardRequired) {
+        coordinateThreeCaseRcSettlementAttempted = true;
+        const settledBody = await settleCoordinateThreeCaseRcPermissionFailure({
+          admission: coordinateThreeCaseRcAdmission,
+          budget: recognitionBudget,
+          usageCommitController,
+          httpStatus: permissionBoundary.httpStatus,
+          body: permissionBoundary.body
+        });
+        res.status(permissionBoundary.httpStatus);
+        return sendRecognitionJson(settledBody);
+      }
+      return res.status(permissionBoundary.httpStatus).json(permissionBoundary.body);
     }
 
     const sr08bDeadlineScenario = regressionTestMode.active
@@ -16810,16 +16862,6 @@ async function recognizeCoordinatesHandler(req, res) {
         deadlineSignal.addEventListener("abort", resolve, { once: true });
       });
       return;
-    }
-
-    if (!visitorId) {
-      return res.status(400).json({
-        success: false,
-        reason: "missing_user",
-        error: "缺少用户信息，请刷新页面后重试。",
-        rawText: "",
-        coordinates: ""
-      });
     }
 
     if (!regressionTestMode.active) {
@@ -21963,17 +22005,27 @@ app.post(
   recognizeCoordinatesHandler
 );
 
-app.post("/api/recognize-coordinates/jobs", upload.single("image"), async (req, res) => {
+app.post(
+  "/api/recognize-coordinates/jobs",
+  upload.single("image"),
+  createCoordinateThreeCaseRcJobIngressMiddleware({ admission: coordinateThreeCaseRcAdmission }),
+  createCoordinateThreeCaseRcJobPreflightMiddleware({
+    admission: coordinateThreeCaseRcAdmission,
+    isRecognitionRequestId,
+    randomRequestId: () => crypto.randomUUID()
+  }),
+  async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, reason: "image_required" });
-  const originalImageBuffer = Buffer.from(req.file.buffer);
+  const coordinateThreeCasePreflight = req.coordinateThreeCaseRcJobPreflight || null;
+  const originalImageBuffer = coordinateThreeCasePreflight?.originalImageBuffer || Buffer.from(req.file.buffer);
   const suppliedRequestId = String(req.get("x-recognition-request-id") || "").trim().toLowerCase();
-  const recognitionRequestId = isRecognitionRequestId(suppliedRequestId)
-    ? suppliedRequestId
-    : crypto.randomUUID();
+  const recognitionRequestId = coordinateThreeCasePreflight?.recognitionRequestId
+    || (isRecognitionRequestId(suppliedRequestId) ? suppliedRequestId : crypto.randomUUID());
   const structuredModeHeader = String(req.get("x-coordinate-product-mode") || "").trim();
   const structuredModeBody = String(req.body?.coordinateProductMode || "").trim();
   const requestedStructuredProductMode = structuredModeHeader || structuredModeBody;
-  const coordinateThreeCaseId = String(req.get("x-coordinate-rc-case-id") || "").trim().toLowerCase();
+  const coordinateThreeCaseId = coordinateThreeCasePreflight?.caseId
+    || String(req.get("x-coordinate-rc-case-id") || "").trim().toLowerCase();
   const indonesiaStructuredRcClaimAttempted = indonesiaStructuredBRcAdmission.config.ready
     && [structuredModeHeader, structuredModeBody].includes(INDONESIA_STRUCTURED_B_RC.mode);
   const indonesiaStructuredRcJobSelected = indonesiaStructuredBRcAdmission.config.ready
@@ -22029,14 +22081,15 @@ app.post("/api/recognize-coordinates/jobs", upload.single("image"), async (req, 
     req.body ||= {};
     req.body.coordinateProductMode = requestedStructuredProductMode;
   }
-  if (coordinateThreeCaseRcAdmission.config.guardRequired) {
+  if (coordinateThreeCaseRcAdmission.config.guardRequired && !coordinateThreeCasePreflight) {
     try {
       coordinateThreeCaseRcAdmission.preflightJob({
         caseId: coordinateThreeCaseId,
         productMode: requestedStructuredProductMode,
         recognitionRequestId,
         imageBuffer: originalImageBuffer,
-        authorization: req.get("authorization")
+        authorization: req.get("authorization"),
+        visitorId: req.coordinateThreeCaseRcVisitorId
       });
     } catch (error) {
       return res.status(error?.httpStatus || 422).json({
@@ -22112,7 +22165,8 @@ app.post("/api/recognize-coordinates/jobs", upload.single("image"), async (req, 
       reason: error?.code || "RECOGNITION_ASYNC_JOB_FAILED"
     });
   }
-});
+  }
+);
 
 app.get("/api/recognize-coordinates/jobs/:jobId", (req, res) => {
   const job = recognitionAcquisitionJobRuntime.get(req.params.jobId, req.get("x-recognition-job-token"));

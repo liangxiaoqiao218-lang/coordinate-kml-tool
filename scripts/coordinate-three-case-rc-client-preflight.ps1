@@ -40,6 +40,47 @@ function Resolve-CoordinateThreeCaseLocalInputs {
   return $Definitions
 }
 
+function Resolve-CoordinateThreeCaseControlledVisitorId {
+  param([Parameter(Mandatory = $true)] [string] $VisitorId)
+  $normalized = $VisitorId.Trim()
+  if ([string]::IsNullOrWhiteSpace($normalized) -or $normalized.Length -gt 256 -or $normalized -match '[\x00-\x1f\x7f]') {
+    throw 'CONTROLLED_VISITOR_ID_INVALID'
+  }
+  return $normalized
+}
+
+function New-CoordinateThreeCaseClaimBody {
+  param(
+    [Parameter(Mandatory = $true)] [string] $RunId,
+    [Parameter(Mandatory = $true)] [string] $BatchId,
+    [Parameter(Mandatory = $true)] [System.Collections.IDictionary] $Definition,
+    [Parameter(Mandatory = $true)] [string] $RecognitionRequestId,
+    [Parameter(Mandatory = $true)] [string] $VisitorId
+  )
+  $controlledVisitorId = Resolve-CoordinateThreeCaseControlledVisitorId -VisitorId $VisitorId
+  return [ordered]@{
+    runId = $RunId
+    batchId = $BatchId
+    caseId = [string]$Definition['caseId']
+    imageSha256 = [string]$Definition['imageSha256']
+    recognitionRequestId = $RecognitionRequestId
+    visitorId = $controlledVisitorId
+  }
+}
+
+function Add-CoordinateThreeCaseJobVisitorIdentity {
+  param(
+    [Parameter(Mandatory = $true)] [Net.Http.HttpClient] $Client,
+    [Parameter(Mandatory = $true)] [Net.Http.MultipartFormDataContent] $Form,
+    [Parameter(Mandatory = $true)] [string] $VisitorId
+  )
+  $controlledVisitorId = Resolve-CoordinateThreeCaseControlledVisitorId -VisitorId $VisitorId
+  $Client.DefaultRequestHeaders.Remove('x-visitor-id') | Out-Null
+  $Client.DefaultRequestHeaders.Add('x-visitor-id', $controlledVisitorId)
+  $Form.Add([Net.Http.StringContent]::new($controlledVisitorId), 'visitorId')
+  return $controlledVisitorId
+}
+
 function Test-CoordinateThreeCaseReceiptAllowsNext {
   param([Parameter(Mandatory = $true)] [System.Collections.IDictionary] $Receipt)
   return [string]$Receipt['terminalStatus'] -eq 'SUCCEEDED' -and $Receipt['success'] -eq $true

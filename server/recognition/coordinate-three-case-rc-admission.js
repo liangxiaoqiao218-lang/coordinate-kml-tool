@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 
 export const COORDINATE_THREE_CASE_RC = Object.freeze({
-  batchId: "coordinate-three-case-rc-20261011-v4",
-  runId: "coordinate-three-case-rc-20261011-r4",
-  manifestSha256: "b5c0cee06a5c9b42a4cba17f7cf01b503aebac9b569537685baf2957a33d47d5",
+  batchId: "coordinate-three-case-rc-20261011-v5",
+  runId: "coordinate-three-case-rc-20261011-r5",
+  manifestSha256: "1a84785aa1e00e2b2fb4ca803764855c14de5a9cbe3f179d5e7c3061cc3c6743",
   rcProjectRef: "thjojitdafxfarhxhoyo",
   rcServiceName: "coordinate-kml-tool-rc",
   providerHostname: "dashscope.aliyuncs.com",
@@ -91,6 +91,20 @@ function integerOrNull(value) {
 function safeCaseId(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return CASE_IDS.includes(normalized) ? normalized : "";
+}
+
+function safeVisitorId(value) {
+  const normalized = String(value || "").trim();
+  return normalized.length > 0
+    && normalized.length <= 256
+    && !/[\u0000-\u001f\u007f]/u.test(normalized)
+    ? normalized
+    : "";
+}
+
+function visitorHash(value) {
+  const visitorId = safeVisitorId(value);
+  return visitorId ? crypto.createHash("sha256").update(visitorId, "utf8").digest("hex") : "";
 }
 
 function projectRefFromUrl(value) {
@@ -254,6 +268,7 @@ export function createCoordinateThreeCaseRcAdmission({
 } = {}) {
   const config = readCoordinateThreeCaseRcConfig(env);
   const sessions = new WeakMap();
+  const claimedVisitorHashes = new Map();
   let activationState = config.enabled ? "PENDING" : "DISABLED";
   let activationPromise = null;
 
@@ -294,17 +309,39 @@ export function createCoordinateThreeCaseRcAdmission({
     return activationPromise;
   }
 
-  async function claim({ adminHeader, runId, batchId, caseId, imageSha256, recognitionRequestId } = {}) {
+  function validateVisitorEnvelope({ headerVisitorId, bodyVisitorId, authorization } = {}) {
+    if (!config.guardRequired) {
+      return Object.freeze({ visitorId: safeVisitorId(headerVisitorId || bodyVisitorId), bound: false });
+    }
+    requireReady();
+    const header = safeVisitorId(headerVisitorId);
+    const body = safeVisitorId(bodyVisitorId);
+    if (!header && !body) fail("COORDINATE_THREE_CASE_RC_VISITOR_REQUIRED", 400);
+    if (!header || !body) fail("COORDINATE_THREE_CASE_RC_VISITOR_ENVELOPE_INCOMPLETE", 422);
+    if (!constantTimeTextEqual(header, body)) fail("COORDINATE_THREE_CASE_RC_VISITOR_MISMATCH", 422);
+    if (authorization !== undefined) {
+      const token = bearerToken(authorization);
+      const expectedHash = token ? claimedVisitorHashes.get(tokenHash(token)) : "";
+      if (!expectedHash || !constantTimeTextEqual(expectedHash, visitorHash(header))) {
+        fail("COORDINATE_THREE_CASE_RC_VISITOR_BINDING_REJECTED", 422);
+      }
+    }
+    return Object.freeze({ visitorId: header, bound: authorization !== undefined });
+  }
+
+  async function claim({ adminHeader, runId, batchId, caseId, imageSha256, recognitionRequestId, visitorId } = {}) {
     authorizeAdmin(adminHeader);
     await activateOnStartup();
     const normalizedCaseId = safeCaseId(caseId);
     const definition = COORDINATE_THREE_CASE_RC.cases[normalizedCaseId];
     const requestId = safeUuid(recognitionRequestId);
+    const normalizedVisitorId = safeVisitorId(visitorId);
     if (runId !== COORDINATE_THREE_CASE_RC.runId
       || batchId !== COORDINATE_THREE_CASE_RC.batchId
       || !definition
       || safeSha256(imageSha256) !== definition.imageSha256
-      || !requestId) {
+      || !requestId
+      || !normalizedVisitorId) {
       fail("COORDINATE_THREE_CASE_RC_CLAIM_BINDING_INVALID", 422);
     }
     const claimToken = randomToken();
@@ -324,6 +361,7 @@ export function createCoordinateThreeCaseRcAdmission({
     if (data.accepted !== true || data.action !== "CLAIMED") {
       fail(String(data.code || "COORDINATE_THREE_CASE_RC_CLAIM_REJECTED"), 409);
     }
+    claimedVisitorHashes.set(tokenHash(claimToken), visitorHash(normalizedVisitorId));
     return Object.freeze({
       accepted: true,
       caseId: normalizedCaseId,
@@ -333,7 +371,7 @@ export function createCoordinateThreeCaseRcAdmission({
     });
   }
 
-  function preflightJob({ caseId, productMode = "", recognitionRequestId, imageBuffer, authorization } = {}) {
+  function preflightJob({ caseId, productMode = "", recognitionRequestId, imageBuffer, authorization, visitorId } = {}) {
     requireReady();
     if (activationState !== "READY") fail("COORDINATE_THREE_CASE_RC_NOT_ACTIVATED", 503);
     const normalizedCaseId = safeCaseId(caseId);
@@ -341,11 +379,16 @@ export function createCoordinateThreeCaseRcAdmission({
     const requestId = safeUuid(recognitionRequestId);
     const actualImageSha256 = hashImage(imageBuffer);
     const token = bearerToken(authorization);
+    const expectedVisitorHash = token ? claimedVisitorHashes.get(tokenHash(token)) : "";
+    const actualVisitorHash = visitorHash(visitorId);
     if (!definition
       || !requestId
       || actualImageSha256 !== definition.imageSha256
       || String(productMode || "").trim() !== definition.productMode
-      || !token) {
+      || !token
+      || !expectedVisitorHash
+      || !actualVisitorHash
+      || !constantTimeTextEqual(expectedVisitorHash, actualVisitorHash)) {
       fail("COORDINATE_THREE_CASE_RC_JOB_PREFLIGHT_REJECTED", 422);
     }
     return Object.freeze({
@@ -476,6 +519,7 @@ export function createCoordinateThreeCaseRcAdmission({
       fail(String(data.code || "COORDINATE_THREE_CASE_RC_SETTLEMENT_REJECTED"), 503);
     }
     session.settled = true;
+    claimedVisitorHashes.delete(session.tokenHash);
     return Object.freeze({
       settled: true,
       caseId: session.caseId,
@@ -512,6 +556,7 @@ export function createCoordinateThreeCaseRcAdmission({
     if (data.accepted !== true || data.action !== "SETTLED") {
       fail(String(data.code || "COORDINATE_THREE_CASE_RC_PRE_PROVIDER_SETTLEMENT_REJECTED"), 503);
     }
+    claimedVisitorHashes.delete(preflight.tokenHash);
     return Object.freeze({ settled: true, outcome: "FAILED_PRE_PROVIDER", providerCallCount: 0 });
   }
 
@@ -545,6 +590,7 @@ export function createCoordinateThreeCaseRcAdmission({
     activateOnStartup,
     authorizeAdmin,
     claim,
+    validateVisitorEnvelope,
     preflightJob,
     bindBudget,
     dispatchForBudget,

@@ -5,6 +5,26 @@ function ConvertTo-CoordinateThreeCaseFixedCode {
   return $Fallback
 }
 
+function ConvertTo-CoordinateThreeCaseFixedReason {
+  param([object] $Value)
+  $candidate = [string]$Value
+  $allowed = @(
+    'NONE',
+    'missing_user',
+    'rc_visitor_not_authorized',
+    'ai_ocr_permission_denied',
+    'coordinate_three_case_rc_visitor_rejected',
+    'recognition_failed_closed',
+    'limit_exceeded',
+    'usage_commit_outcome_unknown',
+    'usage_commit_failed',
+    'usage_commit_unavailable',
+    'indonesia_structured_product_review_required'
+  )
+  if ($candidate -in $allowed) { return $candidate }
+  return 'UNLISTED_FIXED_REASON'
+}
+
 function ConvertTo-CoordinateThreeCaseStringList {
   param([object] $Value)
   if ($null -eq $Value) { return @() }
@@ -26,6 +46,51 @@ function Get-CoordinateThreeCaseProviderCallObservation {
     value = if ($known) { $parsed } else { $null }
     known = $known
     limitExceeded = $known -and $parsed -gt $Limit
+  }
+}
+
+function Get-CoordinateThreeCaseSanitizedCaseReceipt {
+  param(
+    [Parameter(Mandatory = $true)] [System.Collections.IDictionary] $Definition,
+    [Parameter(Mandatory = $true)] [object] $Snapshot,
+    [Parameter(Mandatory = $true)] [string] $ExpectedModel
+  )
+  $result = $Snapshot.result
+  $finalized = $result.finalizedCoordinateResult
+  $diagnostics = $result.indonesiaStructuredPreflightDiagnostics
+  $providerCalls = Get-CoordinateThreeCaseProviderCallObservation -Value $result.providerCallCount -Limit 1
+  $identityPresent = -not [string]::IsNullOrWhiteSpace([string]$finalized.resultId) -and
+    ([int64]$finalized.resultRevision -gt 0) -and
+    -not [string]::IsNullOrWhiteSpace([string]$finalized.geometryHash)
+  return [ordered]@{
+    caseId = ConvertTo-CoordinateThreeCaseFixedCode -Value $Definition.caseId -Fallback 'UNKNOWN'
+    terminalStatus = ConvertTo-CoordinateThreeCaseFixedCode -Value $Snapshot.status -Fallback 'UNKNOWN'
+    httpStatus = [int]$Snapshot.httpStatus
+    success = $result.success -eq $true
+    code = ConvertTo-CoordinateThreeCaseFixedCode -Value $(if ($result.code) { $result.code } elseif ($result.reason) { $result.reason } else { 'NONE' })
+    reason = ConvertTo-CoordinateThreeCaseFixedReason -Value $(if ($result.reason) { $result.reason } else { 'NONE' })
+    modelMatch = [string]$result.model -eq $ExpectedModel
+    providerCallCount = $providerCalls.value
+    providerCallCountKnown = $providerCalls.known
+    providerCallLimitExceeded = $providerCalls.limitExceeded
+    providerCompletionState = ConvertTo-CoordinateThreeCaseFixedCode -Value $result.providerCompletionState -Fallback 'UNKNOWN'
+    resultIdentityPresent = $identityPresent
+    technicalKmlReady = $result.technicalKmlReady -eq $true -or $finalized.technicalKmlReady -eq $true
+    kmlReady = $result.kmlReady -eq $true -or $finalized.kmlReady -eq $true
+    geometryPresent = $null -ne $finalized.geometry
+    diagnosticsPresent = $null -ne $diagnostics
+    localOcrAttempted = $diagnostics.localOcrAttempted -eq $true
+    sourceContextPresent = $diagnostics.sourceContextPresent -eq $true
+    localOcrContextPresent = $diagnostics.localOcrContextPresent -eq $true
+    explicitUtm50s = $diagnostics.explicitUtm50s -eq $true
+    projectedColumns = $diagnostics.projectedColumns -eq $true
+    controlledRcHintAuthorized = $diagnostics.controlledRcHintAuthorized -eq $true
+    controlledRcHintApplied = $diagnostics.controlledRcHintApplied -eq $true
+    preflightChecked = $diagnostics.preflightChecked -eq $true
+    preflightPassed = $diagnostics.preflightPassed -eq $true
+    routeSelected = $diagnostics.routeSelected -eq $true
+    preflightFailureCode = ConvertTo-CoordinateThreeCaseFixedCode -Value $diagnostics.preflightFailureCode
+    routeFailureCode = ConvertTo-CoordinateThreeCaseFixedCode -Value $diagnostics.routeFailureCode
   }
 }
 
@@ -161,6 +226,7 @@ function New-CoordinateThreeCaseValidatedResultRecord {
     httpStatus = if ($httpStatusKnown) { $httpStatus } else { $null }
     success = $result.success -eq $true
     code = ConvertTo-CoordinateThreeCaseFixedCode -Value $(if ($result.code) { $result.code } elseif ($result.reason) { $result.reason } else { 'NONE' })
+    reason = ConvertTo-CoordinateThreeCaseFixedReason -Value $(if ($result.reason) { $result.reason } else { 'NONE' })
     model = if ([string]$result.model -eq $ExpectedModel) { $ExpectedModel } else { 'UNEXPECTED' }
     modelMatch = [string]$result.model -eq $ExpectedModel
     providerCallCount = $providerCalls.value
