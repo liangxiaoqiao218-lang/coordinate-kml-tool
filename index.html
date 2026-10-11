@@ -5494,9 +5494,9 @@
               <div id="imagePreview" class="image-preview"></div>
               <div id="uploadMessage" class="upload-message"></div>
             </div>
-            <section id="coordinateThreeCaseRcBrowserPanel" class="upload-box compact-upload-box" hidden aria-label="R7受控结果接收">
-              <strong>R7 受控结果接收</strong>
-              <p>此入口只接收本次受控识别已经形成的服务端结果，不会从浏览器调用识别模型。</p>
+            <section id="coordinateThreeCaseRcBrowserPanel" class="upload-box compact-upload-box" hidden aria-label="受控结果接收">
+              <strong id="coordinateControlledConsumerTitle">受控结果接收</strong>
+              <p id="coordinateControlledConsumerDescription">此入口只接收受控服务端结果，不会从浏览器调用识别模型。</p>
               <label for="coordinateThreeCaseRcAdminPassword">管理员密码</label>
               <input id="coordinateThreeCaseRcAdminPassword" type="password" autocomplete="current-password" />
               <button id="coordinateThreeCaseRcAuthenticate" type="button" class="secondary">验证受控浏览器</button>
@@ -6021,7 +6021,11 @@ Au值 = 纯度 × 10 后取整数</div>
     const INDONESIA_STRUCTURED_PRODUCT_MODE = "indonesia_utm50s_structured_b";
     const COORDINATE_THREE_CASE_RC_R7_RUN_ID = "coordinate-three-case-rc-20261011-r7";
     const COORDINATE_THREE_CASE_RC_R7_VISITOR_ID = "rc-b-release-20261010-4f125a9";
+    const COORDINATE_CONSUMER_REPLAY_RUN_ID = "coordinate-indonesia-consumer-replay-20261012-r1";
+    const COORDINATE_CONSUMER_REPLAY_BATCH_ID = "coordinate-indonesia-consumer-replay-20261012-v1";
     const coordinateThreeCaseRcBrowserMode = new URLSearchParams(window.location.search).get("coordinate-three-case-rc") === "r7";
+    const coordinateConsumerReplayBrowserMode = new URLSearchParams(window.location.search).get("coordinate-consumer-replay") === "r1";
+    const controlledCoordinateConsumerBrowserMode = coordinateThreeCaseRcBrowserMode || coordinateConsumerReplayBrowserMode;
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
@@ -6043,6 +6047,8 @@ Au值 = 纯度 × 10 后取整数</div>
     const coordinateThreeCaseRcAuthenticate = document.getElementById("coordinateThreeCaseRcAuthenticate");
     const coordinateThreeCaseRcReceive = document.getElementById("coordinateThreeCaseRcReceive");
     const coordinateThreeCaseRcBrowserStatus = document.getElementById("coordinateThreeCaseRcBrowserStatus");
+    const coordinateControlledConsumerTitle = document.getElementById("coordinateControlledConsumerTitle");
+    const coordinateControlledConsumerDescription = document.getElementById("coordinateControlledConsumerDescription");
     const rcAsyncFocusSimulation = document.getElementById("rcAsyncFocusSimulation");
     const rcAsyncFocusSimulationStart = document.getElementById("rcAsyncFocusSimulationStart");
     const rcAsyncFocusSimulationStatus = document.getElementById("rcAsyncFocusSimulationStatus");
@@ -6161,36 +6167,38 @@ Au值 = 纯度 × 10 后取整数</div>
     let currentGoldPriceSource = "unavailable";
     let currentGoldPriceUpdatedAt = "";
     let goldUsageLoggedThisSession = false;
-    let visitorId = coordinateThreeCaseRcBrowserMode ? COORDINATE_THREE_CASE_RC_R7_VISITOR_ID : "";
-    if (!coordinateThreeCaseRcBrowserMode) {
+    let visitorId = controlledCoordinateConsumerBrowserMode ? COORDINATE_THREE_CASE_RC_R7_VISITOR_ID : "";
+    if (!controlledCoordinateConsumerBrowserMode) {
       try {
         visitorId = getOrCreateVisitorId();
       } catch (error) {
         console.warn("visitorId init failed", error);
       }
     }
-    const userCode = coordinateThreeCaseRcBrowserMode ? "R7-RC" : getOrCreateUserCode();
+    const userCode = controlledCoordinateConsumerBrowserMode
+      ? (coordinateConsumerReplayBrowserMode ? "REPLAY-R1" : "R7-RC")
+      : getOrCreateUserCode();
     renderPricingConfigText();
     window.addEventListener("pricing-config-updated", () => {
       renderPricingConfigText();
       syncPurchaseExamples(getOrCreateUserCode());
     });
-    if (!coordinateThreeCaseRcBrowserMode && window.loadPricingConfig) {
+    if (!controlledCoordinateConsumerBrowserMode && window.loadPricingConfig) {
       window.loadPricingConfig().catch(error => console.warn("pricing config load failed", error));
     }
-    const firstSourceInfo = coordinateThreeCaseRcBrowserMode
+    const firstSourceInfo = controlledCoordinateConsumerBrowserMode
       ? { fromSource: "", firstPage: "", landingUrl: "", referrer: "", firstVisitAt: "" }
       : captureFirstSourceInfo();
     let currentQuota = null;
     let lastQuotaPromptKey = "";
     let appConfig = {
       permissions: {
-        aiOcrEnabled: !coordinateThreeCaseRcBrowserMode,
-        xyConvertEnabled: !coordinateThreeCaseRcBrowserMode,
-        kmlExportEnabled: !coordinateThreeCaseRcBrowserMode,
-        manualSupportEnabled: !coordinateThreeCaseRcBrowserMode,
-        aiJudgeEnabled: !coordinateThreeCaseRcBrowserMode,
-        goldCalculatorEnabled: !coordinateThreeCaseRcBrowserMode
+        aiOcrEnabled: !controlledCoordinateConsumerBrowserMode,
+        xyConvertEnabled: !controlledCoordinateConsumerBrowserMode,
+        kmlExportEnabled: !controlledCoordinateConsumerBrowserMode,
+        manualSupportEnabled: !controlledCoordinateConsumerBrowserMode,
+        aiJudgeEnabled: !controlledCoordinateConsumerBrowserMode,
+        goldCalculatorEnabled: !controlledCoordinateConsumerBrowserMode
       },
       coordinateProductCandidates: {
         indonesiaUtm50StructuredB: {
@@ -6233,6 +6241,8 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeMapPreviewCacheKey = "";
     let activeCoordinateThreeCaseRcHandoff = null;
     let coordinateThreeCaseRcCsrfToken = "";
+    let coordinateConsumerReplaySessionExpiresAt = 0;
+    let coordinateConsumerReplayPollGeneration = 0;
     let agenticCoordinateController = null;
     let coordinateInputEditRevision = 0;
     let agenticCoordinateInitializationPromise = null;
@@ -6415,8 +6425,113 @@ Au值 = 纯度 × 10 后取整数</div>
       })();
     });
 
+    function controlledConsumerPath(name) {
+      if (coordinateConsumerReplayBrowserMode) {
+        const paths = {
+          session: "/api/admin/coordinate-consumer-replay/browser-session",
+          status: "/api/coordinate-consumer-replay/status",
+          receive: "/api/coordinate-consumer-replay/receive",
+          stage: "/api/coordinate-consumer-replay/stage",
+          evidence: "/api/coordinate-consumer-replay/consumer-evidence"
+        };
+        return paths[name] || "";
+      }
+      const paths = {
+        session: "/api/admin/coordinate-products/three-case-rc/browser-session",
+        status: "/api/coordinate-products/three-case-rc/browser-handoff/status",
+        receive: "/api/coordinate-products/three-case-rc/browser-handoff/receive",
+        evidence: "/api/coordinate-products/three-case-rc/browser-handoff/consumer-evidence"
+      };
+      return paths[name] || "";
+    }
+
+    function controlledConsumerCsrfHeaders(extra = {}) {
+      const headerName = coordinateConsumerReplayBrowserMode
+        ? "x-coordinate-replay-csrf"
+        : "x-coordinate-rc-csrf";
+      return { ...extra, [headerName]: coordinateThreeCaseRcCsrfToken };
+    }
+
+    async function recordCoordinateConsumerReplayStage(stage, failureCode = "", bindingDigestOverride = "") {
+      if (!coordinateConsumerReplayBrowserMode) return true;
+      const bindingDigest = bindingDigestOverride || activeCoordinateThreeCaseRcHandoff?.bindingDigest || "";
+      const failureWithoutBinding = stage === "RECEIVE_FAILED";
+      if ((!bindingDigest && !failureWithoutBinding) || !coordinateThreeCaseRcCsrfToken) {
+        throw new Error("COORDINATE_CONSUMER_REPLAY_STAGE_BINDING_MISSING");
+      }
+      const response = await fetch(controlledConsumerPath("stage"), {
+        method: "POST",
+        headers: controlledConsumerCsrfHeaders({ "content-type": "application/json" }),
+        credentials: "same-origin",
+        body: JSON.stringify({ bindingDigest, stage, ...(failureCode ? { failureCode } : {}) })
+      });
+      const receipt = await response.json().catch(() => ({}));
+      if (!response.ok || receipt.accepted !== true) {
+        throw new Error(receipt.code || "COORDINATE_CONSUMER_REPLAY_STAGE_REJECTED");
+      }
+      return true;
+    }
+
+    function markCoordinateConsumerReplayTerminalFailure(stage, failureCode, bindingDigest = "") {
+      if (!coordinateConsumerReplayBrowserMode) return;
+      const current = activeCoordinateThreeCaseRcHandoff || {};
+      activeCoordinateThreeCaseRcHandoff = {
+        ...current,
+        replayOnly: true,
+        failed: true,
+        failureStage: stage,
+        failureCode,
+        bindingDigest: bindingDigest || current.bindingDigest || ""
+      };
+      coordinateThreeCaseRcReceive.disabled = true;
+      refreshMapPreviewAction();
+    }
+
+    async function failCoordinateConsumerReplay(stage, failureCode, bindingDigest = "") {
+      if (!coordinateConsumerReplayBrowserMode) return false;
+      try {
+        await recordCoordinateConsumerReplayStage(stage, failureCode, bindingDigest);
+      } catch {
+        // The local consumer still stops even if the terminal receipt cannot be delivered.
+      }
+      markCoordinateConsumerReplayTerminalFailure(stage, failureCode, bindingDigest);
+      return true;
+    }
+
+    async function pollCoordinateConsumerReplayReadiness(generation) {
+      while (coordinateConsumerReplayBrowserMode && generation === coordinateConsumerReplayPollGeneration
+        && coordinateThreeCaseRcCsrfToken && Date.now() < coordinateConsumerReplaySessionExpiresAt) {
+        try {
+          const response = await fetch(controlledConsumerPath("status"), {
+            method: "POST",
+            headers: controlledConsumerCsrfHeaders(),
+            credentials: "same-origin"
+          });
+          const status = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(status.code || "COORDINATE_CONSUMER_REPLAY_STATUS_FAILED");
+          if (status.ready === true && status.caseId === "indonesia") {
+            coordinateThreeCaseRcReceive.disabled = false;
+            const deadline = Date.parse(String(status.expiresAt || ""));
+            coordinateThreeCaseRcBrowserStatus.textContent = Number.isFinite(deadline)
+              ? `历史结果已就绪；请在 ${new Date(deadline).toLocaleTimeString()} 前依次完成接收、地图和 KML。`
+              : "历史结果已就绪；请立即依次完成接收、地图和 KML。";
+            return;
+          }
+          coordinateThreeCaseRcBrowserStatus.textContent = "浏览器已验证，正在等待受控客户端加载历史结果…";
+        } catch (error) {
+          coordinateThreeCaseRcReceive.disabled = true;
+          coordinateThreeCaseRcBrowserStatus.textContent = `等待失败：${String(error?.message || "COORDINATE_CONSUMER_REPLAY_STATUS_FAILED")}`;
+          return;
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 500));
+      }
+      if (coordinateConsumerReplayBrowserMode && generation === coordinateConsumerReplayPollGeneration) {
+        coordinateThreeCaseRcBrowserStatus.textContent = "浏览器会话已到期；未执行历史结果消费。";
+      }
+    }
+
     async function authenticateCoordinateThreeCaseRcBrowser() {
-      if (!coordinateThreeCaseRcBrowserMode) return;
+      if (!controlledCoordinateConsumerBrowserMode) return;
       const password = String(coordinateThreeCaseRcAdminPassword?.value || "");
       if (!password) {
         coordinateThreeCaseRcBrowserStatus.textContent = "请输入管理员密码。";
@@ -6424,16 +6539,20 @@ Au值 = 纯度 × 10 后取整数</div>
       }
       coordinateThreeCaseRcAuthenticate.disabled = true;
       try {
-        const response = await fetch("/api/admin/coordinate-products/three-case-rc/browser-session", {
+        const response = await fetch(controlledConsumerPath("session"), {
           method: "POST",
           headers: { "content-type": "application/json", "x-admin-password": password },
           credentials: "same-origin",
           body: JSON.stringify({ visitorId: COORDINATE_THREE_CASE_RC_R7_VISITOR_ID })
         });
         const payload = await response.json().catch(() => ({}));
+        const expectedRunId = coordinateConsumerReplayBrowserMode
+          ? COORDINATE_CONSUMER_REPLAY_RUN_ID
+          : COORDINATE_THREE_CASE_RC_R7_RUN_ID;
         if (!response.ok || !payload.csrfToken || payload.visitorId !== COORDINATE_THREE_CASE_RC_R7_VISITOR_ID
+          || (coordinateConsumerReplayBrowserMode && payload.runId !== expectedRunId)
           || payload.mapProvider !== "OPENFREEMAP") {
-          throw new Error(payload.code || "R7_BROWSER_SESSION_REJECTED");
+          throw new Error(payload.code || "CONTROLLED_CONSUMER_BROWSER_SESSION_REJECTED");
         }
         coordinateThreeCaseRcCsrfToken = payload.csrfToken;
         appConfig = {
@@ -6448,10 +6567,19 @@ Au值 = 纯度 × 10 后取整数</div>
           }
         };
         coordinateThreeCaseRcAdminPassword.value = "";
-        coordinateThreeCaseRcReceive.disabled = false;
-        coordinateThreeCaseRcBrowserStatus.textContent = "浏览器身份已验证，可以接收已完成的印尼结果。";
+        if (coordinateConsumerReplayBrowserMode) {
+          coordinateConsumerReplaySessionExpiresAt = Date.parse(String(payload.expiresAt || ""));
+          coordinateThreeCaseRcReceive.disabled = true;
+          coordinateThreeCaseRcBrowserStatus.textContent = "浏览器身份已验证，等待受控客户端加载历史结果。";
+          coordinateConsumerReplayPollGeneration += 1;
+          void pollCoordinateConsumerReplayReadiness(coordinateConsumerReplayPollGeneration);
+        } else {
+          coordinateThreeCaseRcReceive.disabled = false;
+          coordinateThreeCaseRcBrowserStatus.textContent = "浏览器身份已验证，可以接收已完成的印尼结果。";
+        }
       } catch (error) {
         coordinateThreeCaseRcCsrfToken = "";
+        coordinateConsumerReplayPollGeneration += 1;
         coordinateThreeCaseRcReceive.disabled = true;
         coordinateThreeCaseRcBrowserStatus.textContent = `验证失败：${String(error?.message || "R7_BROWSER_SESSION_REJECTED")}`;
       } finally {
@@ -6461,28 +6589,34 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function receiveCoordinateThreeCaseRcBrowserResult() {
-      if (!coordinateThreeCaseRcBrowserMode || !coordinateThreeCaseRcCsrfToken) return;
+      if (!controlledCoordinateConsumerBrowserMode || !coordinateThreeCaseRcCsrfToken) return;
       coordinateThreeCaseRcReceive.disabled = true;
+      let replayBindingDigest = "";
       try {
-        const statusResponse = await fetch("/api/coordinate-products/three-case-rc/browser-handoff/status", {
+        const statusResponse = await fetch(controlledConsumerPath("status"), {
           method: "POST",
-          headers: { "x-coordinate-rc-csrf": coordinateThreeCaseRcCsrfToken },
+          headers: controlledConsumerCsrfHeaders(),
           credentials: "same-origin"
         });
         const status = await statusResponse.json().catch(() => ({}));
         if (!statusResponse.ok || status.ready !== true || status.caseId !== "indonesia") {
           throw new Error(status.code || "R7_HANDOFF_NOT_READY");
         }
-        const response = await fetch("/api/coordinate-products/three-case-rc/browser-handoff/receive", {
+        const response = await fetch(controlledConsumerPath("receive"), {
           method: "POST",
-          headers: { "x-coordinate-rc-csrf": coordinateThreeCaseRcCsrfToken },
+          headers: controlledConsumerCsrfHeaders(),
           credentials: "same-origin"
         });
         const handoff = await response.json().catch(() => ({}));
         const payload = handoff.result;
         const resultIdentity = handoff.resultIdentity;
         const finalizedIdentity = getFinalizedCoordinateIdentity(payload?.finalizedCoordinateResult);
-        if (!response.ok || handoff.accepted !== true || handoff.runId !== COORDINATE_THREE_CASE_RC_R7_RUN_ID
+        const expectedRunId = coordinateConsumerReplayBrowserMode
+          ? COORDINATE_CONSUMER_REPLAY_RUN_ID
+          : COORDINATE_THREE_CASE_RC_R7_RUN_ID;
+        const expectedBatchId = coordinateConsumerReplayBrowserMode ? COORDINATE_CONSUMER_REPLAY_BATCH_ID : null;
+        if (!response.ok || handoff.accepted !== true || handoff.runId !== expectedRunId
+          || (expectedBatchId && handoff.batchId !== expectedBatchId)
           || handoff.caseId !== "indonesia" || handoff.visitorId !== COORDINATE_THREE_CASE_RC_R7_VISITOR_ID
           || !finalizedIdentity
           || finalizedIdentity.resultId !== resultIdentity?.resultId
@@ -6490,16 +6624,21 @@ Au值 = 纯度 × 10 后取整数</div>
           || finalizedIdentity.geometryHash !== resultIdentity?.geometryHash) {
           throw new Error(handoff.code || "R7_HANDOFF_IDENTITY_REJECTED");
         }
-        const bindingMaterial = [
-          handoff.runId,
-          handoff.caseId,
-          handoff.recognitionRequestId,
-          resultIdentity.resultId,
-          String(resultIdentity.resultRevision),
-          resultIdentity.geometryHash
-        ].join("\n");
-        const bindingBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bindingMaterial));
-        const bindingDigest = [...new Uint8Array(bindingBytes)].map(value => value.toString(16).padStart(2, "0")).join("");
+        let bindingDigest = String(handoff.bindingDigest || "");
+        replayBindingDigest = bindingDigest;
+        if (!coordinateConsumerReplayBrowserMode) {
+          const bindingMaterial = [
+            handoff.runId,
+            handoff.caseId,
+            handoff.recognitionRequestId,
+            resultIdentity.resultId,
+            String(resultIdentity.resultRevision),
+            resultIdentity.geometryHash
+          ].join("\n");
+          const bindingBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bindingMaterial));
+          bindingDigest = [...new Uint8Array(bindingBytes)].map(value => value.toString(16).padStart(2, "0")).join("");
+        }
+        if (!/^[0-9a-f]{64}$/u.test(bindingDigest)) throw new Error("CONTROLLED_CONSUMER_BINDING_REJECTED");
         installCoordinateRecognitionWorkspaceResult({
           payload,
           engine: payload.coordinateEngineV2 || null,
@@ -6508,6 +6647,7 @@ Au值 = 纯度 × 10 后取整数</div>
           fieldConflictCount: 0,
           handoff: {
             runId: handoff.runId,
+            batchId: handoff.batchId || null,
             caseId: handoff.caseId,
             recognitionRequestId: handoff.recognitionRequestId,
             resultIdentity: { ...resultIdentity },
@@ -6517,32 +6657,52 @@ Au值 = 纯度 × 10 后取整数</div>
             recognitionUsageConsumed: typeof payload.recognitionUsageConsumed === "boolean"
               ? payload.recognitionUsageConsumed
               : null,
-            kmlUsageConsumed: false
+            kmlUsageConsumed: false,
+            replayOnly: coordinateConsumerReplayBrowserMode,
+            businessQuotaBypassed: coordinateConsumerReplayBrowserMode,
+            expiresAt: handoff.expiresAt || null,
+            failed: false
           },
           strictR7: true
         });
-        if (!isActiveCoordinateThreeCaseRcR7Identity()) throw new Error("R7_HANDOFF_PRODUCT_BINDING_REJECTED");
+        if (!isActiveControlledCoordinateConsumerIdentity()) throw new Error("CONTROLLED_CONSUMER_PRODUCT_BINDING_REJECTED");
         coordinateThreeCaseRcBrowserPanel.dataset.resultInstalled = "true";
         coordinateThreeCaseRcBrowserPanel.dataset.resultIdentityMatch = "true";
         coordinateThreeCaseRcBrowserPanel.dataset.bindingDigest = bindingDigest;
-        coordinateThreeCaseRcBrowserStatus.textContent = "印尼结果已按产品路径接入。请先打开地图并确认 READY，再下载 KML。";
-        setRecognitionStatus("R7 结果已接入，仍为待核对状态", "warning");
+        await recordCoordinateConsumerReplayStage("RESULT_INSTALLED");
+        coordinateThreeCaseRcBrowserStatus.textContent = coordinateConsumerReplayBrowserMode
+          ? "历史结果已按产品路径接入。请先打开真实地图并确认 READY，再点击产品 KML。"
+          : "印尼结果已按产品路径接入。请先打开地图并确认 READY，再下载 KML。";
+        setRecognitionStatus(coordinateConsumerReplayBrowserMode
+          ? "历史结果消费者验证：UNVERIFIED"
+          : "R7 结果已接入，仍为待核对状态", "warning");
         showMessage("受控结果保持 REVIEW_REQUIRED / UNVERIFIED；地图和 KML 必须消费同一服务端结果身份。", false, 8000);
       } catch (error) {
-        coordinateThreeCaseRcBrowserStatus.textContent = `接收失败：${String(error?.message || "R7_HANDOFF_RECEIVE_FAILED")}`;
-        coordinateThreeCaseRcReceive.disabled = false;
+        if (coordinateConsumerReplayBrowserMode) {
+          const stage = replayBindingDigest ? "RESULT_INSTALL_FAILED" : "RECEIVE_FAILED";
+          const code = replayBindingDigest ? "RESULT_INSTALL_FAILED" : "RECEIVE_FAILED";
+          await failCoordinateConsumerReplay(stage, code, replayBindingDigest);
+          coordinateThreeCaseRcBrowserStatus.textContent = `接收失败：${code}；本次隔离验证已停止。`;
+        } else {
+          coordinateThreeCaseRcBrowserStatus.textContent = `接收失败：${String(error?.message || "R7_HANDOFF_RECEIVE_FAILED")}`;
+          coordinateThreeCaseRcReceive.disabled = false;
+        }
       }
     }
 
     async function publishCoordinateThreeCaseRcBrowserConsumerEvidence() {
-      if (!isActiveCoordinateThreeCaseRcR7Identity() || !coordinateThreeCaseRcCsrfToken
+      if (!isActiveControlledCoordinateConsumerIdentity() || !coordinateThreeCaseRcCsrfToken
         || !coordinateThreeCaseRcBrowserPanel || activeCoordinateThreeCaseRcHandoff?.mapReady !== true
         || activeCoordinateThreeCaseRcHandoff?.kmlDownloadTriggered !== true) {
         throw new Error("R7_BROWSER_CONSUMER_EVIDENCE_NOT_READY");
       }
       const evidence = {
-        schemaVersion: "coordinate_three_case_rc_r7_browser_evidence_v1",
+        schemaVersion: coordinateConsumerReplayBrowserMode
+          ? "coordinate_consumer_replay_browser_evidence_v1"
+          : "coordinate_three_case_rc_r7_browser_evidence_v1",
         runId: activeCoordinateThreeCaseRcHandoff.runId,
+        ...(coordinateConsumerReplayBrowserMode ? { batchId: activeCoordinateThreeCaseRcHandoff.batchId,
+          replayOnly: true, businessQuotaBypassed: true } : {}),
         caseId: activeCoordinateThreeCaseRcHandoff.caseId,
         bindingDigest: activeCoordinateThreeCaseRcHandoff.bindingDigest,
         resultInstalled: coordinateThreeCaseRcBrowserPanel.dataset.resultInstalled === "true",
@@ -6555,26 +6715,39 @@ Au值 = 纯度 × 10 后取整数</div>
         kmlIdentityMatch: coordinateThreeCaseRcBrowserPanel.dataset.kmlIdentityMatch === "true",
         downloadFileName: coordinateThreeCaseRcBrowserPanel.dataset.kmlFileName
       };
-      const response = await fetch("/api/coordinate-products/three-case-rc/browser-handoff/consumer-evidence", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-coordinate-rc-csrf": coordinateThreeCaseRcCsrfToken },
-        credentials: "same-origin",
-        body: JSON.stringify(evidence)
-      });
-      const receipt = await response.json().catch(() => ({}));
-      if (!response.ok || receipt.accepted !== true) {
-        throw new Error(receipt.code || "R7_BROWSER_CONSUMER_EVIDENCE_REJECTED");
+      try {
+        const response = await fetch(controlledConsumerPath("evidence"), {
+          method: "POST",
+          headers: controlledConsumerCsrfHeaders({ "content-type": "application/json" }),
+          credentials: "same-origin",
+          body: JSON.stringify(evidence)
+        });
+        const receipt = await response.json().catch(() => ({}));
+        if (!response.ok || receipt.accepted !== true) {
+          throw new Error("EVIDENCE_POST_FAILED");
+        }
+      } catch (error) {
+        if (coordinateConsumerReplayBrowserMode) {
+          await failCoordinateConsumerReplay("EVIDENCE_POST_FAILED", "EVIDENCE_POST_FAILED");
+          error.coordinateReplayFailureRecorded = true;
+        }
+        throw error;
       }
       return true;
     }
 
     function initializeCoordinateThreeCaseRcBrowserMode() {
-      if (!coordinateThreeCaseRcBrowserMode) return;
+      if (!controlledCoordinateConsumerBrowserMode) return;
       coordinateThreeCaseRcBrowserPanel.hidden = false;
       coordinateUploadPanel.hidden = true;
       imageInput.disabled = true;
       coordinateThreeCaseRcAuthenticate.addEventListener("click", authenticateCoordinateThreeCaseRcBrowser);
       coordinateThreeCaseRcReceive.addEventListener("click", receiveCoordinateThreeCaseRcBrowserResult);
+      if (coordinateConsumerReplayBrowserMode) {
+        coordinateControlledConsumerTitle.textContent = "历史结果消费者验证（零模型）";
+        coordinateControlledConsumerDescription.textContent = "仅验证保存几何经过真实产品地图与 KML 的消费链；不执行识别、不扣业务配额，也不代表普通用户全链通过。";
+        coordinateThreeCaseRcReceive.textContent = "接收历史结果";
+      }
       coordinateThreeCaseRcBrowserStatus.textContent = "等待管理员在本浏览器中完成一次身份验证。";
     }
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
@@ -6625,11 +6798,11 @@ Au值 = 纯度 × 10 后取整数</div>
     coordinateFormat.addEventListener("change", convertCoordinateFormat);
     loadUserConfig();
     loadSpatialRuntimeConfig();
-    agenticCoordinateInitializationPromise = coordinateThreeCaseRcBrowserMode
+    agenticCoordinateInitializationPromise = controlledCoordinateConsumerBrowserMode
       ? Promise.resolve(false)
       : initializeAgenticCoordinateV1();
     loadUserQuota();
-    if (!coordinateThreeCaseRcBrowserMode) {
+    if (!controlledCoordinateConsumerBrowserMode) {
       cleanupJudgeHistoryStorage();
       renderJudgeRecent();
       updateGoldPriceInfo();
@@ -7062,7 +7235,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function loadUserConfig() {
-      if (coordinateThreeCaseRcBrowserMode) {
+      if (controlledCoordinateConsumerBrowserMode) {
         applyFeatureAvailability();
         return appConfig;
       }
@@ -7132,7 +7305,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function loadUserQuota() {
-      if (coordinateThreeCaseRcBrowserMode) return null;
+      if (controlledCoordinateConsumerBrowserMode) return null;
       try {
         const response = await fetch(`/api/usage/quota?visitorId=${encodeURIComponent(visitorId)}`, {
           headers: getSourceHeaders({
@@ -7622,7 +7795,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function trackEvent(eventName, extra = {}) {
-      if (coordinateThreeCaseRcBrowserMode) return;
+      if (controlledCoordinateConsumerBrowserMode) return;
       const deviceInfo = await collectDeviceInfo();
 
       fetch("/api/track", {
@@ -8268,8 +8441,34 @@ Au值 = 纯度 × 10 后取整数</div>
         && hasFiniteFinalizedGeometry(result?.geometry);
     }
 
+    function isActiveCoordinateConsumerReplayIdentity(result = activeFinalizedCoordinateResult) {
+      const current = getFinalizedCoordinateIdentity(result);
+      const expected = activeCoordinateThreeCaseRcHandoff?.resultIdentity;
+      const expiresAt = Date.parse(String(activeCoordinateThreeCaseRcHandoff?.expiresAt || ""));
+      return coordinateConsumerReplayBrowserMode
+        && activeCoordinateThreeCaseRcHandoff?.replayOnly === true
+        && activeCoordinateThreeCaseRcHandoff?.businessQuotaBypassed === true
+        && activeCoordinateThreeCaseRcHandoff?.failed !== true
+        && Number.isFinite(expiresAt) && Date.now() < expiresAt
+        && activeCoordinateThreeCaseRcHandoff?.runId === COORDINATE_CONSUMER_REPLAY_RUN_ID
+        && activeCoordinateThreeCaseRcHandoff?.batchId === COORDINATE_CONSUMER_REPLAY_BATCH_ID
+        && activeCoordinateThreeCaseRcHandoff?.caseId === "indonesia"
+        && current?.resultId === expected?.resultId
+        && current?.resultRevision === expected?.resultRevision
+        && current?.geometryHash === expected?.geometryHash
+        && result?.sourceAuthority === "historical_consumer_replay"
+        && result?.technicalKmlReady === true
+        && result?.crs?.id === "EPSG:4326"
+        && result?.crs?.axisOrder === "longitude_latitude"
+        && hasFiniteFinalizedGeometry(result?.geometry);
+    }
+
+    function isActiveControlledCoordinateConsumerIdentity(result = activeFinalizedCoordinateResult) {
+      return isActiveCoordinateThreeCaseRcR7Identity(result) || isActiveCoordinateConsumerReplayIdentity(result);
+    }
+
     function activeCoordinateThreeCaseRcR7HasUnsupportedInnerRings(result = activeFinalizedCoordinateResult) {
-      if (!isActiveCoordinateThreeCaseRcR7Identity(result)) return false;
+      if (!isActiveControlledCoordinateConsumerIdentity(result)) return false;
       if (result?.geometry?.type === "Polygon") return (result.geometry.coordinates || []).length > 1;
       if (result?.geometry?.type === "MultiPolygon") {
         return (result.geometry.coordinates || []).some(polygon => (polygon || []).length > 1);
@@ -8771,7 +8970,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function recognitionActionEnabled(action = "map") {
-      if (isActiveCoordinateThreeCaseRcR7Identity()) return true;
+      if (isActiveControlledCoordinateConsumerIdentity()) return true;
       if (!activeRecognitionAcquisitionResult) return true;
       if (action === "kml") {
         return activeRecognitionAcquisitionResult.kmlStatus === "ENABLED"
@@ -8781,7 +8980,7 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function shouldUseProvisionalCoordinateResult(action = "map") {
-      if (isActiveCoordinateThreeCaseRcR7Identity()) return false;
+      if (isActiveControlledCoordinateConsumerIdentity()) return false;
       return !coordinateRecognitionActionBlocked(action)
         && (coordinateResultNeedsReview()
           || activeFinalizedCoordinateResult?.mapReady === false
@@ -8808,6 +9007,11 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     function stopBlockedCoordinateAction(action = "map") {
+      if (coordinateConsumerReplayBrowserMode && activeCoordinateThreeCaseRcHandoff?.replayOnly === true
+        && !isActiveCoordinateConsumerReplayIdentity()) {
+        showMessage(`本次历史结果消费者验证已停止或过期，不能继续使用${action === "kml" ? "KML" : "地图"}。`, true, 7000);
+        return true;
+      }
       if (!coordinateRecognitionActionBlocked(action)) return false;
       showMessage(recognitionAuthorizationReasonMessage(action), true, 7000);
       return true;
@@ -9338,8 +9542,8 @@ Au值 = 纯度 × 10 后取整数</div>
         setSpatialSheetExpanded(!window.matchMedia("(max-width: 640px)").matches);
         await waitForSpatialLayout();
         const mapResult = await globalThis.GeoKitSatelliteMap?.open(payload);
-        const r7MapRequired = isActiveCoordinateThreeCaseRcR7Identity();
-        const r7RenderIdentityMatches = !r7MapRequired || Boolean(mapResult?.renderReceipt
+        const controlledMapRequired = isActiveControlledCoordinateConsumerIdentity();
+        const controlledRenderIdentityMatches = !controlledMapRequired || Boolean(mapResult?.renderReceipt
           && mapResult.renderReceipt.provider === "OPENFREEMAP"
           && mapResult.renderReceipt.sourceResultId === identity.resultId
           && mapResult.renderReceipt.sourceRevision === identity.resultRevision
@@ -9347,20 +9551,24 @@ Au值 = 纯度 × 10 后取整数</div>
           && mapResult.renderReceipt.authorityMutationCount === 0
           && mapResult.authorityMutationCount === 0);
         if (!mapResult
-          || (r7MapRequired ? mapResult.state !== "READY" : !["READY", "FALLBACK_LOCAL_SVG"].includes(mapResult.state))
-          || !r7RenderIdentityMatches) {
+          || (controlledMapRequired ? mapResult.state !== "READY" : !["READY", "FALLBACK_LOCAL_SVG"].includes(mapResult.state))
+          || !controlledRenderIdentityMatches) {
+          if (isActiveCoordinateConsumerReplayIdentity()) {
+            await failCoordinateConsumerReplay("MAP_FAILED", "MAP_READY_CONTRACT_FAILED");
+          }
           showPage("coordinate", "", true);
-          showMessage(r7MapRequired
-            ? "R7 地图未形成 OpenFreeMap READY 的同一结果身份，已停止后续流程。"
+          showMessage(controlledMapRequired
+            ? "受控地图未形成 OpenFreeMap READY 的同一结果身份，已停止后续流程。"
             : "地图服务暂时不可用，请稍后重试。", true, 8000);
           return;
         }
-        if (r7MapRequired && coordinateThreeCaseRcBrowserPanel) {
+        if (controlledMapRequired && coordinateThreeCaseRcBrowserPanel) {
           activeCoordinateThreeCaseRcHandoff.mapReady = true;
           coordinateThreeCaseRcBrowserPanel.dataset.mapState = "READY";
           coordinateThreeCaseRcBrowserPanel.dataset.mapProvider = "OPENFREEMAP";
           coordinateThreeCaseRcBrowserPanel.dataset.mapIdentityMatch = "true";
           coordinateThreeCaseRcBrowserPanel.dataset.authorityMutationCount = "0";
+          await recordCoordinateConsumerReplayStage("MAP_READY");
         }
         await syncSpatialMapViewport();
         if (mapResult?.authorityMutationCount > 0) {
@@ -9369,6 +9577,9 @@ Au值 = 纯度 × 10 后取整数</div>
           spatialResultDiagnostic.textContent = "地图预览已停止：检测到结果身份变化。";
         }
       } catch (error) {
+        if (isActiveCoordinateConsumerReplayIdentity()) {
+          await failCoordinateConsumerReplay("MAP_FAILED", "MAP_PRODUCT_PATH_FAILED");
+        }
         if (pages.spatialResult?.classList.contains("active")) {
           spatialMapFailure.hidden = false;
           spatialResultDiagnostic.hidden = true;
@@ -9772,7 +9983,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function shouldBlockFinalizedCoordinateKml() {
       if (!activeFinalizedCoordinateResult) return false;
-      if (isActiveCoordinateThreeCaseRcR7Identity()) return finalizedCoordinateDirty;
+      if (isActiveControlledCoordinateConsumerIdentity()) return finalizedCoordinateDirty;
       return finalizedCoordinateDirty || activeFinalizedCoordinateResult.kmlReady !== true;
     }
 
@@ -14891,7 +15102,7 @@ Au值 = ${formatGoldNumber(result.purity)} × 10 ≈ Au${result.auValue}`;
     function getAuthorizedFinalizedGeometryKmlSource() {
       if (activeCoordinateThreeCaseRcR7HasUnsupportedInnerRings()) return null;
       return getFinalizedGeometryCoordinateSource(activeFinalizedCoordinateResult, {
-        requireKmlReady: !isActiveCoordinateThreeCaseRcR7Identity()
+        requireKmlReady: !isActiveControlledCoordinateConsumerIdentity()
       });
     }
 
@@ -15864,11 +16075,17 @@ ${placemarks}
       } catch (error) {
         clearKmlGenerationProgress();
         console.error("KML generation or download failed:", error);
+        if (coordinateConsumerReplayBrowserMode && activeCoordinateThreeCaseRcHandoff?.replayOnly === true
+          && activeCoordinateThreeCaseRcHandoff?.failed !== true) {
+          await failCoordinateConsumerReplay("KML_FAILED", "KML_FAILED");
+        }
         showKmlFailure({
           code: "KML_DOWNLOAD_FAILED",
           title: "KML 生成失败",
           reason: sanitizeUserFacingTechMessage(error?.message) || "生成或下载 KML 文件时发生异常。",
-          suggestion: "请重试；如果仍然失败，请复制识别详情联系管理员。"
+          suggestion: coordinateConsumerReplayBrowserMode
+            ? "本次隔离验证已停止，请关闭入口；不得重试。"
+            : "请重试；如果仍然失败，请复制识别详情联系管理员。"
         });
         return null;
       } finally {
@@ -15971,7 +16188,17 @@ ${placemarks}
 
       const finalizedGeometrySource = getAuthorizedFinalizedGeometryKmlSource();
       if (finalizedGeometrySource) {
-        if (isActiveCoordinateThreeCaseRcR7Identity()) {
+        if (isActiveCoordinateConsumerReplayIdentity()) {
+          if (activeCoordinateThreeCaseRcHandoff.businessQuotaBypassed !== true) {
+            showKmlFailure({
+              code: "CONSUMER_REPLAY_QUOTA_BOUNDARY_REJECTED",
+              title: "隔离消费者身份无效",
+              reason: "当前结果未绑定零模型、零业务扣次的隔离消费者合同。",
+              suggestion: "请停止本次验证并关闭隔离入口。"
+            });
+            return;
+          }
+        } else if (isActiveCoordinateThreeCaseRcR7Identity()) {
           if (activeCoordinateThreeCaseRcHandoff.recognitionUsageConsumed === null) {
             showKmlFailure({
               code: "KML_USAGE_STATE_UNKNOWN",
@@ -16007,12 +16234,13 @@ ${placemarks}
         } else {
           placemarks = groups.map((group, index) => buildPolygonKml(group, index + 1)).join("\n");
         }
-        const r7Unverified = isActiveCoordinateThreeCaseRcR7Identity();
+        const replayUnverified = isActiveCoordinateConsumerReplayIdentity();
+        const r7Unverified = !replayUnverified && isActiveCoordinateThreeCaseRcR7Identity();
         const kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
-    <name>${r7Unverified ? "GeoKit Lab R7 Review Required Geometry" : "GeoKit Lab Authorized Geometry"}</name>
-    <description>${r7Unverified ? "REVIEW_REQUIRED / UNVERIFIED. Generated from the current identity-bound EPSG:4326 result for controlled review." : "Generated from the current server-authoritative finalized EPSG:4326 geometry."}</description>
+    <name>${replayUnverified ? "GeoKit Lab Historical Consumer Replay Geometry" : r7Unverified ? "GeoKit Lab R7 Review Required Geometry" : "GeoKit Lab Authorized Geometry"}</name>
+    <description>${replayUnverified ? "HISTORICAL RESULT / CONSUMER-ONLY / UNVERIFIED / NO RECOGNITION. Generated only to verify product Map and KML consumers against the current replay identity." : r7Unverified ? "REVIEW_REQUIRED / UNVERIFIED. Generated from the current identity-bound EPSG:4326 result for controlled review." : "Generated from the current server-authoritative finalized EPSG:4326 geometry."}</description>
 ${placemarks}
   </Document>
 </kml>`;
@@ -16025,11 +16253,12 @@ ${placemarks}
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        if (isActiveCoordinateThreeCaseRcR7Identity() && coordinateThreeCaseRcBrowserPanel) {
+        if (isActiveControlledCoordinateConsumerIdentity() && coordinateThreeCaseRcBrowserPanel) {
           activeCoordinateThreeCaseRcHandoff.kmlDownloadTriggered = true;
           coordinateThreeCaseRcBrowserPanel.dataset.kmlDownloadTriggered = "true";
           coordinateThreeCaseRcBrowserPanel.dataset.kmlFileName = "coordinates.kml";
           coordinateThreeCaseRcBrowserPanel.dataset.kmlIdentityMatch = "true";
+          await recordCoordinateConsumerReplayStage("KML_TRIGGERED");
           await publishCoordinateThreeCaseRcBrowserConsumerEvidence();
         }
         trackEvent("kml_download_click", {

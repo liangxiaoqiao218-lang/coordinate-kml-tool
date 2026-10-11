@@ -176,6 +176,10 @@ import {
 } from "./server/recognition/coordinate-three-case-rc-admission.js";
 import { createCoordinateThreeCaseRcBrowserHandoff } from "./server/recognition/coordinate-three-case-rc-browser-handoff.js";
 import {
+  COORDINATE_CONSUMER_REPLAY,
+  createCoordinateConsumerReplay
+} from "./server/recognition/coordinate-consumer-replay.js";
+import {
   createCoordinateThreeCaseRcJobIngressMiddleware,
   createCoordinateThreeCaseRcJobPreflightMiddleware,
   createCoordinateThreeCaseRcInternalBindingMiddleware,
@@ -286,6 +290,8 @@ const aliyunBaseURL = process.env.ALIYUN_BASE_URL || process.env.DASHSCOPE_BASE_
 const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || COORDINATE_PROVIDER_MODELS.VISION;
 const aliyunOcrModel = process.env.ALIYUN_OCR_MODEL || process.env.DASHSCOPE_OCR_MODEL || COORDINATE_PROVIDER_MODELS.OCR;
 const indonesiaStructuredProductEnabled = process.env.INDONESIA_STRUCTURED_B_PRODUCT_ENABLED === "true";
+const coordinateConsumerReplayEnabled = process.env.COORDINATE_CONSUMER_REPLAY_RC_ENABLED === "true"
+  && process.env.COORDINATE_CONSUMER_REPLAY_RUN_ID === COORDINATE_CONSUMER_REPLAY.runId;
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const agenticCoordinateApi = createAgenticCoordinateApi({
   modelName: aliyunVisionModel,
@@ -346,6 +352,7 @@ const coordinateThreeCaseRcAdmission = createCoordinateThreeCaseRcAdmission({
   env: process.env
 });
 let coordinateThreeCaseRcBrowserHandoff = null;
+let coordinateConsumerReplay = null;
 const indonesiaStructuredProductUiAvailable = process.env.NODE_ENV !== "production"
   && indonesiaStructuredProductEnabled
   && !indonesiaStructuredBRcAdmission.config.guardRequired;
@@ -1403,6 +1410,11 @@ app.get("/api/version", (req, res) => {
       spatialResultEnabled: isSpatialResultEnabled(),
       regressionTestMode: process.env.REGRESSION_TEST_MODE === "true",
       rcAsyncFocusSimulationEnabled: isRcAsyncFocusSimulationEnabled(),
+      coordinateConsumerReplay: {
+        enabled: coordinateConsumerReplayEnabled,
+        runId: coordinateConsumerReplayEnabled ? COORDINATE_CONSUMER_REPLAY.runId : null,
+        evidenceClass: coordinateConsumerReplayEnabled ? "HISTORICAL_RESULT_CONSUMER_REPLAY_ONLY" : null
+      },
       recognitionHardDeadlineMs: getRecognitionHardDeadlineMs(),
       workingTreeDirty: process.env.WORKING_TREE_DIRTY === "true"
         ? true
@@ -14821,6 +14833,10 @@ app.post("/api/map-preview", enforceSpatialApiEnabled, (req, res) => {
     resultRevision: Number(req.body?.resultRevision),
     geometryHash: String(req.body?.geometryHash || "")
   };
+  const replayIdentity = coordinateConsumerReplay.inspectIdentity(identity);
+  if (replayIdentity.matched && replayIdentity.ok !== true) {
+    return res.status(replayIdentity.httpStatus).json({ success: false, code: replayIdentity.code });
+  }
   const current = validateFinalizedCoordinateIdentity(identity);
   if (!current.ok) {
     return res.status(current.httpStatus).json({ success: false, code: current.code });
@@ -22258,6 +22274,27 @@ coordinateThreeCaseRcBrowserHandoff = createCoordinateThreeCaseRcBrowserHandoff(
   selectedMapProvider: getConfiguredSpatialMapProvider
 });
 
+coordinateConsumerReplay = createCoordinateConsumerReplay({
+  enabled: coordinateConsumerReplayEnabled,
+  expectedOrigin: "https://coordinate-kml-tool-rc.onrender.com",
+  readExistingUserAccess: readCoordinateThreeCaseRcBrowserAccess,
+  selectedMapProvider: getConfiguredSpatialMapProvider,
+  registerFinalizedResult: result => coordinateConfirmationRuntime.register(result),
+  revokeFinalizedResult: identity => coordinateConfirmationRuntime.records.delete(String(identity?.resultId || ""))
+});
+
+function authorizeCoordinateConsumerReplayAdmin(value) {
+  const received = Buffer.from(String(value || ""), "utf8");
+  const expected = Buffer.from(String(adminPassword || ""), "utf8");
+  if (!expected.length || received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) {
+    const error = new Error("COORDINATE_CONSUMER_REPLAY_ADMIN_REQUIRED");
+    error.code = "COORDINATE_CONSUMER_REPLAY_ADMIN_REQUIRED";
+    error.httpStatus = 401;
+    throw error;
+  }
+  return true;
+}
+
 function coordinateThreeCaseRcBrowserError(res, error, fallbackCode) {
   res.setHeader("Cache-Control", "no-store");
   return res.status(Number(error?.httpStatus) || 503).json({
@@ -22369,6 +22406,119 @@ app.get("/api/admin/coordinate-products/three-case-rc/browser-evidence", (req, r
     return res.json(coordinateThreeCaseRcBrowserHandoff.readConsumerEvidence());
   } catch (error) {
     return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_EVIDENCE_READ_FAILED");
+  }
+});
+
+function coordinateConsumerReplayBrowserAuth(req) {
+  return {
+    cookieHeader: req.get("cookie"),
+    csrfToken: req.get("x-coordinate-replay-csrf"),
+    origin: req.get("origin")
+  };
+}
+
+app.post("/api/admin/coordinate-consumer-replay/browser-session", async (req, res) => {
+  try {
+    if (!req.get("x-admin-password") || req.query?.password) {
+      return res.status(401).json({ success: false, code: "COORDINATE_CONSUMER_REPLAY_HEADER_AUTH_REQUIRED" });
+    }
+    authorizeCoordinateConsumerReplayAdmin(req.get("x-admin-password"));
+    const session = await coordinateConsumerReplay.createSession({
+      visitorId: req.body?.visitorId,
+      origin: req.get("origin")
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Set-Cookie", `${session.cookieName}=${session.cookieValue}; Path=/api/coordinate-consumer-replay; HttpOnly; Secure; SameSite=Strict`);
+    return res.status(201).json({
+      success: true,
+      csrfToken: session.csrfToken,
+      expiresAt: session.expiresAt,
+      visitorId: session.visitorId,
+      mapProvider: session.mapProvider,
+      runId: COORDINATE_CONSUMER_REPLAY.runId,
+      evidenceClass: "HISTORICAL_RESULT_CONSUMER_REPLAY_ONLY"
+    });
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_CONSUMER_REPLAY_BROWSER_SESSION_FAILED");
+  }
+});
+
+app.post("/api/admin/coordinate-consumer-replay/browser-readiness", (req, res) => {
+  try {
+    authorizeCoordinateConsumerReplayAdmin(req.get("x-admin-password"));
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ success: true, browserSessionReady: coordinateConsumerReplay.hasReadySession() === true });
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_CONSUMER_REPLAY_BROWSER_READINESS_FAILED");
+  }
+});
+
+app.post("/api/admin/coordinate-consumer-replay/register", (req, res) => {
+  try {
+    authorizeCoordinateConsumerReplayAdmin(req.get("x-admin-password"));
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(201).json(coordinateConsumerReplay.register({
+      artifactBase64: req.body?.artifactBase64,
+      artifactSha256: req.body?.artifactSha256
+    }));
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_CONSUMER_REPLAY_REGISTER_FAILED");
+  }
+});
+
+app.post("/api/coordinate-consumer-replay/status", (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateConsumerReplay.status(coordinateConsumerReplayBrowserAuth(req)));
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_CONSUMER_REPLAY_STATUS_FAILED");
+  }
+});
+
+app.post("/api/coordinate-consumer-replay/receive", (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateConsumerReplay.receive(coordinateConsumerReplayBrowserAuth(req)));
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_CONSUMER_REPLAY_RECEIVE_FAILED");
+  }
+});
+
+app.post("/api/coordinate-consumer-replay/stage", (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateConsumerReplay.recordStage(coordinateConsumerReplayBrowserAuth(req), req.body));
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_CONSUMER_REPLAY_STAGE_FAILED");
+  }
+});
+
+app.post("/api/coordinate-consumer-replay/consumer-evidence", (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateConsumerReplay.recordConsumerEvidence(coordinateConsumerReplayBrowserAuth(req), req.body));
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_CONSUMER_REPLAY_EVIDENCE_FAILED");
+  }
+});
+
+app.get("/api/admin/coordinate-consumer-replay/evidence", (req, res) => {
+  try {
+    authorizeCoordinateConsumerReplayAdmin(req.get("x-admin-password"));
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateConsumerReplay.readConsumerEvidence());
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_CONSUMER_REPLAY_EVIDENCE_READ_FAILED");
+  }
+});
+
+app.post("/api/admin/coordinate-consumer-replay/close", (req, res) => {
+  try {
+    authorizeCoordinateConsumerReplayAdmin(req.get("x-admin-password"));
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(coordinateConsumerReplay.close());
+  } catch (error) {
+    return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_CONSUMER_REPLAY_CLOSE_FAILED");
   }
 });
 
