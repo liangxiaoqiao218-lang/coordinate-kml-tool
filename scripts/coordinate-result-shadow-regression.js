@@ -13,6 +13,8 @@ import { extractProviderProjectedCoordinateEvidence } from '../server/evidence-a
 import { normalizeProviderDmsReviewResult } from '../server/recognition/recognition-review-result.js';
 import { bindProjectedEvidenceToSourceContext } from '../server/recognition/projected-source-evidence.js';
 import { bindProviderRepresentationsToSource } from '../server/recognition/multi-representation-source-evidence.js';
+import { COORDINATE_QUALITY_GATE_STATUS, FINALIZED_COORDINATE_CRS,
+  finalizeCoordinateResult } from '../server/coordinate-finalizer/index.js';
 import { buildRecognitionAcquisitionEvidence as currentAcquisition, buildPreD1RecognitionAcquisitionEvidence,
   evaluateUnifiedRecognitionAcquisition, evaluateUnifiedRecognitionFinalAuthorization } from '../server/recognition/recognition-first-acquisition.js';
 import { utmToWgs84 } from '../server/projection/utm.js';
@@ -83,7 +85,7 @@ async function capture({ text, context = table.mixed, contextProvenance = proven
     const body = authorizationDiagnosticBody({});
     const final = record('evaluateUnifiedRecognitionFinalAuthorization', evaluateUnifiedRecognitionFinalAuthorization, [{ body, evidence, decision }]);
     runtime.buildExplicitProjectedBoundaryAutoReleaseEngine({ evidence: projectedOverride || bound, diagnostics: observer });
-    return { input, evidence, final, projected, bound };
+    return { input, evidence, decision, final, projected, bound };
   }, { retainSourceText: true, origin: 'SYNTHETIC', sourceDigest: fingerprint.digest });
   return { ...captured, bundle: makeReplayBundle(captured.diagnostics) };
 }
@@ -99,15 +101,34 @@ function checkProjection(record, name) {
   assert.equal(JSON.stringify(record.bundle), before, 'adapter/replay cannot mutate evidence');
   assert.ok(comparison.operations.length >= 7);
   assert.ok(comparison.operations.every(o => o.status === 'MATCH'));
-  assert.deepEqual(record.value.evidence, oldAcquisition.buildRecognitionAcquisitionEvidence(record.value.input), 'exact baseline/current acquisition');
+  const historicalEvidence = oldAcquisition.buildRecognitionAcquisitionEvidence(record.value.input);
+  record.historicalEvidence = historicalEvidence;
+  assert.equal(historicalEvidence.authority, 'EVIDENCE_ONLY', 'historical acquisition remains evidence-only');
+  assert.equal(record.value.evidence.authority, 'EVIDENCE_ONLY', 'current acquisition remains evidence-only');
+  assert.equal(record.value.evidence.acquisitionStatus,
+    record.value.evidence.candidateCoordinates.length > 0 ? 'COMPLETED'
+      : String(record.value.input.rawText || '').trim() ? 'NO_COORDINATE_EVIDENCE' : 'EMPTY');
+  assert.equal(record.value.evidence.authorizationStatus,
+    record.value.evidence.candidateCoordinates.length > 0 ? 'REVIEW_REQUIRED' : 'NOT_ESTABLISHED');
+  assert.equal(record.value.decision.mapStatus, 'CLOSED', 'acquisition evidence cannot authorize Map');
+  assert.equal(record.value.decision.kmlStatus, 'CLOSED', 'acquisition evidence cannot authorize KML');
+  assert.equal(record.value.final.authorized, false, 'synthetic evidence cannot gain formal authority');
+  assert.equal(record.value.final.mapReady, false, 'no finalized geometry means no Map capability');
+  assert.equal(record.value.final.kmlReady, false, 'no finalized geometry means no KML capability');
   assert.deepEqual(record.value.evidence, buildRecognitionAcquisitionEvidence(record.value.input), 'diagnostics off/current equivalence');
   const s = adapted.sessions[0];
   const rows = s.rowSets.find(r => r.representation === 'UNIFIED_CANDIDATES').rows;
+  const candidateStageEvent = record.diagnostics.sessions[0].events.find(event => [
+    'adaptRecognitionTableCandidates',
+    'extractRecognitionCandidateEvidence'
+  ].includes(event.operation));
+  assert.ok(candidateStageEvent, 'candidate rows retain their actual emitting stage');
+  const expectedCandidateStage = candidateStageEvent.operation;
   assert.equal(rows.length, record.value.evidence.candidateCoordinates.length);
   rows.forEach((row, i) => {
     for (const [key, value] of Object.entries(record.value.evidence.candidateCoordinates[i])) {
       assert.deepEqual(row.fields[key].value, value, `row ${i} ${key} preserved without repair`);
-      assert.equal(row.fields[key].source.stage, 'extractRecognitionCandidateEvidence');
+      assert.equal(row.fields[key].source.stage, expectedCandidateStage);
     }
     assert.equal(row.rawCharacterSpan.status, 'UNKNOWN');
   });
@@ -141,14 +162,24 @@ try {
   for (const [name, text] of variants) await test(name, async () => {
     const record = await capture({ text, context: name === 'xy_missing_crs' ? 'No | X | Y' : table.mixed });
     const adapted = checkProjection(record, name);
-    if (name === 'plain_dms') complete = record;
+    if (name === 'plain_dms') {
+      complete = record;
+      const historicalEvidence = record.historicalEvidence;
+      assert.equal(historicalEvidence.authority, 'EVIDENCE_ONLY');
+      assert.equal(record.value.evidence.candidateCoordinates.length, 16, 'current approved contract retains all DMS candidates');
+      assert.equal(record.value.evidence.acquisitionStatus, 'COMPLETED');
+      assert.equal(record.value.evidence.authorizationStatus, 'REVIEW_REQUIRED');
+      assert.equal(record.value.decision.authorizationStatus, 'REVIEW_REQUIRED');
+      assert.equal(record.value.decision.resultStatus, 'needs_review');
+    }
     if (['plain_dms', 'mixed_xy_dms', 'markdown_mixed'].includes(name)) assert.equal(record.value.evidence.candidateCoordinates.length, table.rows.length);
     if (['json_compact', 'json_verbose'].includes(name)) {
-      // Existing raw candidate parser has no JSON entry. Keep the coverage gap
-      // visible, not falsely treat grouped-parser success as acquisition success.
-      assert.equal(record.value.evidence.candidateCoordinates.length, 0);
+      // The merged D1 table adapter closes the earlier JSON acquisition gap
+      // while retaining the adapter as the exact source stage.
+      assert.equal(record.value.evidence.candidateCoordinates.length, table.rows.length);
       assert.equal(adapted.sessions[0].rowSets.find(r => r.representation === 'DMS_GROUP').rows.length, table.rows.length);
-      assert.ok(compareShadow(record.bundle).findings.some(f => f.condition === 'PARSER_COVERAGE_DIFFERS'));
+      assert.ok(adapted.sessions[0].rowSets.find(r => r.representation === 'UNIFIED_CANDIDATES').rows
+        .every(row => Object.values(row.fields).every(field => field.source.stage === 'adaptRecognitionTableCandidates')));
     }
     if (name === 'missing_row') assert.ok(record.value.evidence.reviewReasons.includes('SOURCE_LABELS_NONCONTIGUOUS'));
     if (name === 'duplicate_label') assert.ok(record.value.evidence.reviewReasons.includes('SOURCE_LABELS_DUPLICATE'));
@@ -191,23 +222,28 @@ try {
   }
   await test('separate_decisions_and_delivered_revision', async () => {
     const points = [[3,18], [3.01,18], [3.01,18.01], [3,18.01], [3,18]];
-    const body = { finalizedCoordinateResult: { coordinateType: 'dms', requiresReview: true,
-      decisionState: 'REVIEW_REQUIRED', qualityGateStatus: 'review_required', confirmationStatus: 'pending',
-      sourceAuthority: 'ocr', geometry: { type: 'Polygon', coordinates: [points] },
-      crs: { id: 'EPSG:4326', axisOrder: 'longitude_latitude' }, mapReady: true, kmlReady: true, technicalKmlReady: true } };
     // The authority must be a real product constant, not an invented success value.
     const { FINALIZED_COORDINATE_SOURCE_AUTHORITIES } = await import('../server/coordinate-finalizer/reason-codes.js');
-    body.finalizedCoordinateResult.sourceAuthority = FINALIZED_COORDINATE_SOURCE_AUTHORITIES[0];
+    const finalizedCoordinateResult = finalizeCoordinateResult({
+      resultId: 'synthetic-result', resultRevision: 1,
+      coordinateType: 'dms', family: 'dms', precisionMode: 'synthetic-review',
+      requiresReview: true, qualityGateStatus: COORDINATE_QUALITY_GATE_STATUS.REVIEW_REQUIRED,
+      confirmationStatus: 'pending', sourceAuthority: FINALIZED_COORDINATE_SOURCE_AUTHORITIES[0],
+      geometry: { type: 'Polygon', coordinates: [points] }, crs: FINALIZED_COORDINATE_CRS,
+      mapReady: true, kmlReady: true, technicalKmlReady: true
+    }, { clock: () => '2026-10-02T00:00:00.000Z' });
+    const body = { finalizedCoordinateResult };
     const copy = structuredClone(complete.bundle);
     const events = copy.diagnostics.sessions[0].events;
     const prior = events.find(e => e.operation === 'evaluateUnifiedRecognitionFinalAuthorization');
-    prior.data.args[0].body = authorizationDiagnosticBody(body);
+    prior.data.args[0].body = body;
     prior.data.result = plain(evaluateUnifiedRecognitionFinalAuthorization(prior.data.args[0]));
     assert.equal(prior.data.result.authorized, false);
-    assert.equal(prior.data.result.mapReady, true);
-    assert.equal(prior.data.result.kmlReady, true);
+    assert.equal(prior.data.result.mapReady, true, JSON.stringify(prior.data.result.outputCapabilities));
+    assert.equal(prior.data.result.kmlReady, true, JSON.stringify(prior.data.result.outputCapabilities));
     events.push({ sequence: events.length + 1, stage: 'delivered_result', operation: null, retention: 'COMPLETE', withheld: [], data: {
-      resultId: 'synthetic-result', resultRevision: 1, geometryHash: 'synthetic-geometry',
+      resultId: finalizedCoordinateResult.resultId, resultRevision: finalizedCoordinateResult.resultRevision,
+      geometryHash: finalizedCoordinateResult.geometryHash,
       mapReady: true, kmlReady: true, userUsageConsumed: true, finalCrs: body.finalizedCoordinateResult.crs } });
     const adapted = adaptDiagnosticBundle(copy), decision = adapted.sessions[0].decision;
     assert.equal(decision.formalAuthorization.authorized.value, false);
