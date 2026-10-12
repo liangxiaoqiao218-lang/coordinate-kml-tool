@@ -267,7 +267,7 @@ test("frontend uses a fixed allowlist instead of provider safe_message", () => {
 // Incremental acceptance: execute the actual route, transport and browser handler.
 // Only external I/O is replaced. No server startup, network, database or file writes.
 const recoveryServer = fs.readFileSync(path.join(root, "server.js"), "utf8");
-const recoveryHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
+const recoveryHtml = fs.readFileSync(process.env.MINING_UI_HTML_PATH || path.join(root, "index.html"), "utf8");
 function recoverySection(source, start, end) {
   const from = source.indexOf(start);
   const to = source.indexOf(end, from + start.length);
@@ -551,6 +551,73 @@ function miningQualityContext() {
 }
 
 const qualityForbidden = /【(?:等级|潜力评分|判读可信度|一句话总结|结论)】|(?:45|65)分|等级\s*[BCD]|可信度\s*(?:<[^>]+>)*高|开始有点意思|风险偏高别重投入|老采坑环境|黄铁矿感|当前最高|新高！/;
+
+// Run only these presentation increments with --test-name-pattern='mining confirmed UI:'.
+// Reuse the existing three processed texts; never dispatch a recognition request.
+test("mining confirmed UI: compact summary leaves complete evidence in detail exactly once", () => {
+  const { context, effects } = miningQualityContext();
+  for (const fixture of miningQualityCases) {
+    const view = context.buildMiningEvidenceView(fixture.text);
+    context.judgeResult.value = fixture.text;
+    context.renderJudgeDecisionCard(fixture.text);
+    context.renderJudgeDetail(fixture.text);
+    const summary = context.judgeDecisionCard.innerHTML;
+    const detail = context.judgeResult.innerHTML;
+    assert.doesNotMatch(summary, /<h3>|<ul>|<li>/);
+    assert.ok(summary.includes(context.escapeHtml(view.status)));
+    assert.ok(summary.includes(context.escapeHtml(view.conflict ? "分类待核对" : view.objectType + " · " + view.sceneType)));
+    for (const value of [...view.features, ...view.limitations, ...view.actions, ...view.notes, ...view.issues]) {
+      assert.ok(detail.includes(context.escapeJudgeDetailHtml(value)), value);
+      assert.ok(!summary.includes(context.escapeHtml(value)), "full evidence must not be duplicated in summary");
+    }
+    for (const title of ["结果状态", "对象类型", "场景分类"]) assert.ok(!detail.includes(`<h3>${title}</h3>`));
+    assert.ok(detail.includes(context.escapeJudgeDetailHtml(view.imageReadability)));
+    assert.doesNotMatch(summary + detail, qualityForbidden);
+    assert.equal(context.buildJudgeCopyText(), context.formatMiningEvidenceView(view));
+  }
+  assert.deepEqual(effects, { network: 0, historyWrites: 0 });
+});
+
+test("mining confirmed UI: approved dimensions are mining-scoped and long detail is not clipped", () => {
+  const css = recoverySection(recoveryHtml, "    /* MINING_CONFIRMED_LAYOUT_START", "    /* MINING_CONFIRMED_LAYOUT_END");
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g);
+  for (const [, selectors] of rules) {
+    for (const selector of selectors.split(/,(?![^()]*\))/)) assert.ok(selector.trim().startsWith("#judgePage"), selector);
+  }
+  assert.match(css, /#judgePage \.page-nav \{ position: static;/);
+  assert.match(css, /grid-template-columns: 92px minmax\(0, 1fr\)/);
+  assert.match(css, /\.judge-detail-content \{[^}]*min-height: 0; max-height: none; overflow: visible;/);
+  assert.match(css, /\.judge-result-tools \{ position: static;/);
+  assert.match(css, /\.judge-detail-content h3 \{[^}]*font-size: 16px; font-weight: 700;/);
+  assert.match(css, /\.judge-detail-content ul \{[^}]*font-size: 16px; font-weight: 500; line-height: 1\.5;/);
+  const { context, effects } = miningQualityContext();
+  context.renderJudgeDetail(miningQualityCases[0].text);
+  assert.match(context.judgeResult.innerHTML, /补拍带比例物的清晰近景和原地环境/);
+  assert.deepEqual(effects, { network: 0, historyWrites: 0 });
+});
+
+test("mining confirmed UI: upload and existing actions retain their identities without new submission wiring", () => {
+  const page = recoverySection(recoveryHtml, '    <section id="judgePage"', '    <section id="goldPage"');
+  for (const id of ["judgeImageInput", "judgeQuickUpload", "judgeUploadCard", "judgeImagePreview", "judgeResult", "judgeDecisionCard", "judgeQuotaStatus"]) {
+    assert.equal(page.split(`id="${id}"`).length - 1, 1, id);
+  }
+  assert.match(page, /上传矿地图片，查看初步判读/);
+  assert.match(page, /结果仅供参考，不能替代现场采样、检测与专业判断/);
+  assert.match(page, /onclick="clearJudgeResult\(\)"/);
+  assert.match(page, /onclick="copyJudgeResult\(\)"/);
+  assert.match(page, /onclick="document\.getElementById\('judgeImageInput'\)\?\.click\(\)">📷 上传图片/);
+  assert.doesNotMatch(page, /analyzeMiningImage\(|fetch\(|示例图片|补充图片/);
+});
+
+test("mining confirmed UI: composed inline scripts parse without execution or network", () => {
+  let parsed = 0;
+  for (const [, attrs, source] of recoveryHtml.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+    if (/\bsrc=|application\/ld\+json|\btype=["']module/.test(attrs) || !source.trim()) continue;
+    new vm.Script(source);
+    parsed++;
+  }
+  assert.ok(parsed > 0);
+});
 
 test("mining quality: only the three historical processed texts are replayed", () => {
   assert.equal(miningQualityCases.length, 3);

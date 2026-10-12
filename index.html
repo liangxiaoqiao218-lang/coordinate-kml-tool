@@ -5149,6 +5149,61 @@
     .rc-async-focus-simulation-checks output[data-result="fail"] {
       color: #b42318;
     }
+    /* MINING_CONFIRMED_LAYOUT_START
+       2026-10-08 approved upload v3 / summary v1 / detail v2.
+       Presentation only; retain the 945699c evidence contract and submission path. */
+    #judgePage { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif; }
+    #judgePage .page-nav { position: static; top: auto; z-index: auto; }
+    #judgePage .judge-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+    #judgePage h1 { margin: 0; font-size: clamp(24px, 6vw, 30px); line-height: 1.25; }
+    #judgePage .judge-title-row .quota-entry-row { margin: 0; flex: 0 0 auto; }
+    #judgePage .intro { margin: 0 0 6px; font-size: 16px; font-weight: 500; line-height: 1.5; }
+    #judgePage .judge-scope-note { margin: 0 0 16px; color: #475569; font-size: 14px; line-height: 1.5; font-weight: 500; }
+    #judgePage .judge-panel { display: grid; gap: 14px; padding: 0; border: 0; background: transparent; box-shadow: none; }
+    #judgePage .judge-upload-layer { min-width: 0; padding: 0; border: 0; background: transparent; }
+    #judgePage .judge-upload-controls { min-width: 0; }
+    #judgePage .judge-upload-card { min-height: 112px; padding: 13px; margin: 0; box-shadow: none; }
+    #judgePage .judge-upload-title { font-size: 18px; font-weight: 700; line-height: 1.5; }
+    #judgePage .judge-upload-subtitle { font-size: 14px; font-weight: 500; line-height: 1.5; }
+    #judgePage .judge-upload-controls:has(.image-preview-row) { display: grid; grid-template-columns: 92px minmax(0, 1fr) 40px; gap: 8px 12px; padding: 12px; border: 1px solid #bbf7d0; border-radius: 14px; background: #f7fbf9; }
+    #judgePage .judge-upload-controls:has(.image-preview-row) .image-preview,
+    #judgePage .judge-upload-controls .image-preview-row { display: contents !important; }
+    #judgePage .judge-upload-controls .preview-button { grid-column: 1; grid-row: 1 / 3; width: 92px; min-width: 0; padding: 0; border: 0; box-shadow: none; }
+    #judgePage .judge-upload-controls .preview-button img { display: block; width: 92px; height: 104px; border-radius: 10px; object-fit: cover; }
+    #judgePage .judge-upload-controls .preview-file-name { grid-column: 2; grid-row: 1; align-self: center; min-width: 0; width: 100%; margin: 0; padding: 0; color: #334155; text-align: left; background: transparent; border: 0; box-shadow: none; }
+    #judgePage .judge-upload-controls .preview-file-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 500; line-height: 1.5; }
+    #judgePage .judge-upload-controls .preview-file-name span { font-size: 14px; font-weight: 500; line-height: 1.5; }
+    #judgePage .judge-upload-controls .remove-image { position: static; grid-column: 3; grid-row: 1; width: 40px; min-height: 40px; margin: 0; padding: 0; border: 1px solid #fecaca; border-radius: 9px; color: #991b1b; background: #fff; font-size: 22px; font-weight: 500; box-shadow: none; }
+    #judgePage .judge-quick-upload { grid-column: 2 / 4; grid-row: 2; width: 100%; min-height: 46px; margin: 0; padding: 10px 14px; border: 1px solid #166534; border-radius: 10px; color: #fff; background: #166534; font-size: 16px; font-weight: 700; line-height: 1.4; }
+    #judgePage .judge-progress-visual.active { display: flex; color: #166534; background: #f0fdf4; border-color: #bbf7d0; font-size: 16px; font-weight: 500; }
+    #judgePage .message { font-size: 16px; font-weight: 500; line-height: 1.5; }
+    #judgePage .message.error { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+    #judgePage .judge-result-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+    #judgePage .judge-result-wrap:has(.judge-detail-placeholder) { display: none; }
+    #judgePage .judge-layer-title { margin: 0 0 8px; color: #0f172a; font-size: 18px; font-weight: 700; line-height: 1.5; }
+    #judgePage .judge-summary-layer { padding: 0; border: 0; background: transparent; box-shadow: none; }
+    #judgePage .judge-decision-card { padding: 13px; border: 1px solid #cbd5e1; border-radius: 14px; background: #fff; box-shadow: none; }
+    #judgePage .judge-decision-card[hidden] { display: none; }
+    #judgePage .judge-official-card { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+    #judgePage .judge-decision-card .judge-official-head { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; align-items: center; padding: 0; border: 0; }
+    #judgePage .judge-decision-card .judge-official-head.without-image { grid-template-columns: minmax(0, 1fr); }
+    #judgePage .judge-decision-card .judge-export-image { width: 92px; height: 92px; border-radius: 10px; object-fit: cover; }
+    #judgePage .judge-official-content { min-width: 0; overflow-wrap: anywhere; }
+    #judgePage .judge-official-object-type { font-size: 18px; font-weight: 700; line-height: 1.45; }
+    #judgePage .judge-official-verdict { margin: 6px 0 0; font-size: 16px; font-weight: 500; line-height: 1.5; }
+    #judgePage .judge-official-note { margin: 11px 0 0; padding: 10px 0 0; border-top: 1px solid #e2e8f0; color: #475569; font-size: 14px; font-weight: 500; line-height: 1.5; }
+    #judgePage .judge-detail-wrap { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 13px; border: 1px solid #cbd5e1; border-radius: 14px; background: #fff; }
+    #judgePage .judge-detail-title { grid-column: 1; grid-row: 1; align-self: center; margin: 0; font-size: 20px; font-weight: 700; line-height: 1.4; }
+    #judgePage .judge-result-tools { position: static; grid-column: 2; grid-row: 1; gap: 8px; z-index: auto; }
+    #judgePage .judge-result-tools .icon-button { width: 40px; min-height: 40px; padding: 0; border-radius: 10px; font-size: 18px; }
+    #judgePage .judge-detail-content { grid-column: 1 / -1; grid-row: 2; min-width: 0; min-height: 0; max-height: none; overflow: visible; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; font-size: 16px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+    #judgePage .judge-detail-content section + section { margin-top: 14px; padding-top: 14px; border-top: 1px solid #e2e8f0; }
+    #judgePage .judge-detail-content h3 { margin: 0 0 8px; font-size: 16px; font-weight: 700; line-height: 1.5; }
+    #judgePage .judge-detail-content p,
+    #judgePage .judge-detail-content ul { margin: 0; color: #334155; font-size: 16px; font-weight: 500; line-height: 1.5; }
+    #judgePage .judge-detail-content ul { padding-left: 20px; }
+    #judgePage .judge-detail-content li { margin: 4px 0; font-size: 16px; font-weight: 500; line-height: 1.5; }
+    /* MINING_CONFIRMED_LAYOUT_END */
   </style>
   <script src="pricing-config.js"></script>
   <link rel="stylesheet" href="/assets/spatial-map/spatial-map.css" />
@@ -5424,19 +5479,22 @@
       </div>
       <div class="page-title-row judge-title-row">
         <h1>矿地快判</h1>
+        <div class="quota-entry-row">
+          <div id="judgeQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
+          <button id="judgeQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
+        </div>
       </div>
-      <p class="intro">上传现场图做保守初筛；结果不能替代采样和检测。</p>
-      <div class="quota-entry-row">
-        <div id="judgeQuotaStatus" class="quota-status" hidden role="button" tabindex="0" onclick="openAccountModal()" onkeydown="handleQuotaStatusKey(event)"></div>
-        <button id="judgeQuotaAction" type="button" class="inline-account-action" hidden onclick="openAccountModal()">加次数</button>
-      </div>
+      <p class="intro">上传矿地图片，查看初步判读</p>
+      <p class="judge-scope-note">结果仅供参考，不能替代现场采样、检测与专业判断</p>
 
       <div class="panel judge-panel">
+        <section class="judge-upload-layer" aria-label="上传矿地图片">
         <div id="judgeMessage" class="message"></div>
         <div id="judgeProgressVisual" class="judge-progress-visual" aria-live="polite">
           <span class="judge-progress-icon" aria-hidden="true"></span>
           <span id="judgeProgressText">正在分析图片信息...</span>
         </div>
+        <div class="judge-upload-controls">
         <label id="judgeQuickUpload" for="judgeImageInput" class="judge-quick-upload" hidden>上传图片</label>
         <label id="judgeUploadCard" for="judgeImageInput" class="judge-upload-card">
           <span class="judge-upload-icon" aria-hidden="true">+</span>
@@ -5445,8 +5503,13 @@
         </label>
         <input id="judgeImageInput" class="judge-file-input" type="file" accept="image/*" />
         <div id="judgeImagePreview" class="image-preview"></div>
+        </div>
+        </section>
         <div class="judge-result-wrap">
+          <section class="judge-summary-layer" aria-labelledby="judgeSummaryLayerTitle">
+          <div id="judgeSummaryLayerTitle" class="judge-layer-title">结果摘要</div>
           <div id="judgeDecisionCard" class="judge-decision-card" hidden></div>
+          </section>
           <div class="judge-detail-wrap">
             <div class="judge-detail-title">快判详情</div>
             <article id="judgeResult" class="judge-detail-content" aria-label="快判详情">
@@ -5463,7 +5526,7 @@
               <div class="judge-feedback-actions">
                 <button type="button" onclick="submitJudgeFeedback('helpful')">👍 有帮助</button>
                 <button type="button" onclick="submitJudgeFeedback('wrong')">👎 不准确</button>
-                <button type="button" onclick="submitJudgeFeedback('need_more_image')">📷 我补图</button>
+                <button type="button" onclick="document.getElementById('judgeImageInput')?.click()">📷 上传图片</button>
                 <button type="button" onclick="submitJudgeFeedback('field_verified')">📍 已现场验证</button>
               </div>
               <div id="judgeFeedbackFieldPanel" class="judge-feedback-field" hidden>
@@ -10303,7 +10366,10 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      const sections = parseJudgeDetailSections(formatMiningEvidenceView(buildMiningEvidenceView(rawText)));
+      // Classification and status are already shown in the compact summary.
+      // Keep all evidence, limitations, readability and source notes in the detail.
+      const sections = parseJudgeDetailSections(formatMiningEvidenceView(buildMiningEvidenceView(rawText)))
+        .filter(section => !["结果状态", "对象类型", "场景分类"].includes(section.title));
       if (!sections.length) {
         judgeResult.innerHTML = `<p>${escapeJudgeDetailHtml(rawText)}</p>`;
         return;
@@ -10429,23 +10495,16 @@ function renderJudgeDecisionCard(text, comparison = null) {
   if (!judgeDecisionCard || !String(text || "").trim()) { clearJudgeDecisionCard(); return null; }
   const view = buildJudgeOfficialCardMeta(text);
   const imageSrc = comparison?.image || comparison?.item?.image || getCurrentJudgeImageDataUrl();
-  const list = values => values.length ? "<ul>" + values.map(value => "<li>" + escapeHtml(value) + "</li>").join("") + "</ul>" : "<p>未返回，待补证。</p>";
   judgeDecisionCard.hidden = false;
   judgeDecisionCard.className = "judge-decision-card";
   judgeDecisionCard.innerHTML = `
-    <div class="judge-official-card"><div class="judge-official-head">
-      <div class="judge-export-image-wrap">${imageSrc ? `<img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" onclick="openJudgeResultImage(event)" />` : ""}</div>
+    <div class="judge-official-card"><div class="judge-official-head${imageSrc ? "" : " without-image"}">
+      ${imageSrc ? `<div class="judge-export-image-wrap"><img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" onclick="openJudgeResultImage(event)" /></div>` : ""}
       <div class="judge-official-content">
         <div class="judge-official-object-type">${escapeHtml(view.conflict ? "分类待核对" : view.objectType + " · " + view.sceneType)}</div>
         <div class="judge-official-verdict">${escapeHtml(view.status)}</div>
-        <p>图像可判读性：${escapeHtml(view.imageReadability)}</p>
       </div></div>
-      <h3>可见特征（模型描述，待核对）</h3>${list(view.features)}
-      <h3>证据限制</h3>${list(view.limitations)}
-      <h3>补证动作</h3>${list(view.actions)}
-      ${view.issues.length ? "<h3>待核对事项</h3>" + list(view.issues) : ""}
-      ${view.notes.length ? "<h3>来源说明</h3>" + list(view.notes) : ""}
-      <div class="judge-official-note">仅供外观初筛；不提供未经校准的潜力分或投入等级。</div></div>`;
+      <div class="judge-official-note">仅供外观初筛；可见特征、证据限制和补证动作见下方详情。</div></div>`;
   return view;
 }
 
