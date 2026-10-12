@@ -1092,6 +1092,40 @@
       pointer-events: none;
     }
 
+    .coordinate-product-candidate-control {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      max-width: 520px;
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid rgba(37, 99, 235, 0.24);
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .coordinate-product-candidate-control[hidden] {
+      display: none;
+    }
+
+    .coordinate-product-candidate-control input {
+      width: auto;
+      min-height: 0;
+      margin: 2px 0 0;
+      flex: 0 0 auto;
+    }
+
+    .coordinate-product-candidate-control label {
+      margin: 0;
+      color: inherit;
+      font-size: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
     .compact-upload-box {
       max-height: none;
       overflow: visible;
@@ -5287,6 +5321,12 @@
                 <span class="coordinate-upload-subtitle">点击选择坐标图片</span>
               </label>
               <input id="imageInput" class="coordinate-file-input" type="file" accept="image/*" />
+              <div id="indonesiaStructuredProductModeControl" class="coordinate-product-candidate-control" hidden>
+                <input id="indonesiaStructuredProductMode" type="checkbox" />
+                <label for="indonesiaStructuredProductMode">
+                  UTM 50S 坐标表（仅在原图明确显示坐标系与 X/Y 列时使用）
+                </label>
+              </div>
               <div id="imagePreview" class="image-preview"></div>
               <div id="uploadMessage" class="upload-message"></div>
             </div>
@@ -5790,6 +5830,7 @@ Au值 = 纯度 × 10 后取整数</div>
 
   <script>
     const APP_VERSION = "v1.0.2";
+    const INDONESIA_STRUCTURED_PRODUCT_MODE = "indonesia_utm50s_structured_b";
     const input = document.getElementById("coordinateInput");
     const coordinateFormat = document.getElementById("coordinateFormat");
     const coordinateOrder = document.getElementById("coordinateOrder");
@@ -5799,6 +5840,8 @@ Au值 = 纯度 × 10 后取整数</div>
     const cadastralGridBadge = document.getElementById("cadastralGridBadge");
     const cadastralGridSelection = document.getElementById("cadastralGridSelection");
     const imageInput = document.getElementById("imageInput");
+    const indonesiaStructuredProductModeControl = document.getElementById("indonesiaStructuredProductModeControl");
+    const indonesiaStructuredProductMode = document.getElementById("indonesiaStructuredProductMode");
     const message = document.getElementById("message");
     const toast = document.getElementById("toast");
     const uploadMessage = document.getElementById("uploadMessage");
@@ -5947,6 +5990,11 @@ Au值 = 纯度 × 10 后取整数</div>
         manualSupportEnabled: true,
         aiJudgeEnabled: true,
         goldCalculatorEnabled: true
+      },
+      coordinateProductCandidates: {
+        indonesiaUtm50StructuredB: {
+          available: false
+        }
       }
     };
     const historyStack = [];
@@ -5970,6 +6018,8 @@ Au值 = 纯度 × 10 后取整数</div>
     let activeCoordinateEngineV2 = null;
     let activeCoordinateFieldConflictCount = 0;
     let activeFinalizedCoordinateResult = null;
+    let activeRecognitionUsageBinding = null;
+    let activeRecognitionUsageIdentity = null;
     let activeRecognitionAcquisitionResult = null;
     let activePointGeometryIntentReview = null;
     let activeRecognitionSummaryMeta = null;
@@ -6663,8 +6713,35 @@ Au值 = 纯度 × 10 后取整数</div>
         && appConfig?.featureFlags?.goldCalculatorEnabled !== false;
     }
 
+    function isIndonesiaStructuredProductModeAvailable(config = appConfig) {
+      return config?.coordinateProductCandidates?.indonesiaUtm50StructuredB?.available === true;
+    }
+
+    function resolveIndonesiaStructuredProductMode({
+      available = isIndonesiaStructuredProductModeAvailable(),
+      selected = indonesiaStructuredProductMode?.checked === true
+    } = {}) {
+      return available && selected ? INDONESIA_STRUCTURED_PRODUCT_MODE : "";
+    }
+
+    function appendIndonesiaStructuredProductMode(formData, options = {}) {
+      const requestedMode = resolveIndonesiaStructuredProductMode(options);
+      if (requestedMode) formData.append("coordinateProductMode", requestedMode);
+      return requestedMode;
+    }
+
     function applyFeatureAvailability() {
       const goldEnabled = isGoldCalculatorEnabled();
+      const indonesiaStructuredModeAvailable = isIndonesiaStructuredProductModeAvailable();
+
+      if (indonesiaStructuredProductModeControl) {
+        indonesiaStructuredProductModeControl.hidden = !indonesiaStructuredModeAvailable;
+      }
+
+      if (indonesiaStructuredProductMode) {
+        if (!indonesiaStructuredModeAvailable) indonesiaStructuredProductMode.checked = false;
+        indonesiaStructuredProductMode.disabled = !indonesiaStructuredModeAvailable;
+      }
 
       if (homeGoldEntry) {
         homeGoldEntry.hidden = !goldEnabled;
@@ -7807,6 +7884,96 @@ Au值 = 纯度 × 10 后取整数</div>
       };
     }
 
+    const RECOGNITION_USAGE_BINDING_STATUS = Object.freeze({
+      NOT_APPLICABLE: "NOT_APPLICABLE",
+      VERIFIED: "VERIFIED",
+      UNVERIFIED: "UNVERIFIED"
+    });
+
+    function finalizedCoordinateIdentityEquals(left, right) {
+      return Boolean(left && right)
+        && left.resultId === right.resultId
+        && left.resultRevision === right.resultRevision
+        && left.geometryHash === right.geometryHash;
+    }
+
+    function rememberCommittedRecognitionUsageBinding({ requestId, result } = {}) {
+      const normalizedRequestId = String(requestId || "").trim().toLowerCase();
+      const identity = getFinalizedCoordinateIdentity(result);
+      activeRecognitionUsageIdentity = identity
+        ? Object.freeze({ ...identity })
+        : null;
+      activeRecognitionUsageBinding = isRecognitionRequestId(normalizedRequestId) && identity
+        ? Object.freeze({
+            requestId: normalizedRequestId,
+            identity: Object.freeze({ ...identity })
+          })
+        : null;
+      return Boolean(activeRecognitionUsageBinding);
+    }
+
+    async function verifyCommittedRecognitionUsageBindingForCurrentResult() {
+      const binding = activeRecognitionUsageBinding;
+      const currentIdentity = getFinalizedCoordinateIdentity();
+      if (!currentIdentity
+        || !finalizedCoordinateIdentityEquals(activeRecognitionUsageIdentity, currentIdentity)) {
+        return RECOGNITION_USAGE_BINDING_STATUS.NOT_APPLICABLE;
+      }
+      if (!binding || !finalizedCoordinateIdentityEquals(binding.identity, currentIdentity)) {
+        return RECOGNITION_USAGE_BINDING_STATUS.UNVERIFIED;
+      }
+
+      try {
+        const currentVisitorId = ensureVisitorId();
+        const recovered = await recoverCommittedCoordinateResult(binding.requestId, currentVisitorId);
+        const recoveredIdentity = getFinalizedCoordinateIdentity(recovered.data?.finalizedCoordinateResult);
+        const serverVerified = recovered.response?.ok === true
+          && recovered.data?.success === true
+          && recovered.data?.recovered === true
+          && recovered.data?.usageConsumed === true
+          && recovered.data?.requestId === binding.requestId
+          && finalizedCoordinateIdentityEquals(binding.identity, recoveredIdentity)
+          && finalizedCoordinateIdentityEquals(currentIdentity, recoveredIdentity);
+        return serverVerified
+          ? RECOGNITION_USAGE_BINDING_STATUS.VERIFIED
+          : RECOGNITION_USAGE_BINDING_STATUS.UNVERIFIED;
+      } catch (_) {
+        return RECOGNITION_USAGE_BINDING_STATUS.UNVERIFIED;
+      }
+    }
+
+    function recognitionUsageVerificationStillCurrent({ identity, inputRevision, sourceText } = {}) {
+      const currentIdentity = getFinalizedCoordinateIdentity();
+      const currentSourceText = String(input?.value || "");
+      return Boolean(identity && currentIdentity)
+        && finalizedCoordinateIdentityEquals(identity, currentIdentity)
+        && Number(inputRevision) === coordinateInputEditRevision
+        && String(sourceText || "") === currentSourceText
+        && finalizedCoordinateDirty === false
+        && finalizedCoordinateTextSnapshot === currentSourceText;
+    }
+
+    function restoreCommittedRecognitionUsageBindingFromSnapshot(snapshot, result) {
+      const currentIdentity = getFinalizedCoordinateIdentity(result);
+      const recognitionUsage = snapshot?.recognitionUsage;
+      const recognizedIdentity = recognitionUsage?.identity;
+      const binding = recognitionUsage?.binding;
+      if (!currentIdentity || !finalizedCoordinateIdentityEquals(recognizedIdentity, currentIdentity)) {
+        activeRecognitionUsageIdentity = null;
+        activeRecognitionUsageBinding = null;
+        return false;
+      }
+      activeRecognitionUsageIdentity = Object.freeze({ ...recognizedIdentity });
+      activeRecognitionUsageBinding = isRecognitionRequestId(binding?.requestId)
+        && finalizedCoordinateIdentityEquals(binding?.identity, currentIdentity)
+        ? Object.freeze({
+            requestId: String(binding.requestId).toLowerCase(),
+            identity: Object.freeze({ ...currentIdentity })
+          })
+        : null;
+      return Boolean(activeRecognitionUsageBinding);
+    }
+
     function cloneIdentityBoundValue(value) {
       if (value === undefined) return undefined;
       try {
@@ -7893,6 +8060,14 @@ Au值 = 纯度 × 10 后取整数</div>
           allowed: result.kmlReady === true,
           technicalKmlReady: result.technicalKmlReady === true
         },
+        recognitionUsage: finalizedCoordinateIdentityEquals(activeRecognitionUsageIdentity, identity)
+          ? cloneIdentityBoundValue({
+              identity: activeRecognitionUsageIdentity,
+              binding: finalizedCoordinateIdentityEquals(activeRecognitionUsageBinding?.identity, identity)
+                ? activeRecognitionUsageBinding
+                : null
+            })
+          : null,
         finalizedResult
       };
       if (!finalizedResultMatchesIdentityBoundSnapshot(finalizedResult, snapshot)) return null;
@@ -7946,6 +8121,7 @@ Au值 = 纯度 × 10 后取整数</div>
       activeCoordinateEngineV2 = cloneIdentityBoundValue(snapshot.engineContext);
       activeCoordinateFieldConflictCount = Number(snapshot.fieldConflictContext?.count || 0);
       activeCoordinatePrecisionMode = snapshot.precisionMode || "";
+      restoreCommittedRecognitionUsageBindingFromSnapshot(snapshot, serverResult);
       invalidateSpatialPreview();
       syncCoordinateReviewConfirmationState(activeCoordinateEngineV2, activeFinalizedCoordinateResult);
       finalizedCoordinateTextSnapshot = snapshot.sourceText;
@@ -14755,11 +14931,47 @@ ${placemarks}
 
       showRecognitionProgress("正在生成 KML 文件...", "loading");
 
-      const finalizedGeometrySource = getAuthorizedFinalizedGeometryKmlSource();
+      let finalizedGeometrySource = getAuthorizedFinalizedGeometryKmlSource();
       if (finalizedGeometrySource) {
-        const usageAllowed = await consumeUsage("convert");
-        if (!usageAllowed) {
-          showKmlPermissionFailure();
+        const usageVerificationSnapshot = {
+          identity: getFinalizedCoordinateIdentity(),
+          inputRevision: coordinateInputEditRevision,
+          sourceText: String(input.value || "")
+        };
+        const recognitionUsageBindingStatus = await verifyCommittedRecognitionUsageBindingForCurrentResult();
+        if (!recognitionUsageVerificationStillCurrent(usageVerificationSnapshot)) {
+          showKmlFailure({
+            code: "KML_RESULT_CHANGED_DURING_USAGE_VERIFICATION",
+            title: "坐标已更新",
+            reason: "扣次状态核验期间坐标或结果版本发生了变化，本次未生成 KML。",
+            suggestion: "请核对当前坐标后重新下载。"
+          });
+          return;
+        }
+        if (recognitionUsageBindingStatus === RECOGNITION_USAGE_BINDING_STATUS.UNVERIFIED) {
+          showKmlFailure({
+            code: "KML_RECOGNITION_USAGE_BINDING_UNVERIFIED",
+            title: "识别扣次状态暂时无法确认",
+            reason: "当前结果的服务端扣次身份无法安全恢复；为避免重复扣次，本次未生成 KML。",
+            suggestion: "请稍后重试；不要重新上传同一图片。"
+          });
+          return;
+        }
+        if (recognitionUsageBindingStatus === RECOGNITION_USAGE_BINDING_STATUS.NOT_APPLICABLE) {
+          const usageAllowed = await consumeUsage("convert");
+          if (!usageAllowed) {
+            showKmlPermissionFailure();
+            return;
+          }
+        }
+        finalizedGeometrySource = getAuthorizedFinalizedGeometryKmlSource();
+        if (!finalizedGeometrySource) {
+          showKmlFailure({
+            code: "KML_RESULT_CHANGED_DURING_USAGE_VERIFICATION",
+            title: "坐标已更新",
+            reason: "当前坐标结果已不再具备导出资格，本次未生成 KML。",
+            suggestion: "请核对当前坐标后重新下载。"
+          });
           return;
         }
         const groups = finalizedGeometrySource.groups;
@@ -15612,6 +15824,7 @@ ${placemarks}
       }
 
       imageInput.disabled = true;
+      if (indonesiaStructuredProductMode) indonesiaStructuredProductMode.disabled = true;
       supportPanel.style.display = "none";
       clearUploadMessage();
       activeCoordinatePrecisionMode = "";
@@ -15680,6 +15893,7 @@ ${placemarks}
           formData.append("image", file);
           formData.append("visitorId", currentVisitorId);
           formData.append("userCode", userCode);
+          appendIndonesiaStructuredProductMode(formData);
           appendDebug("正在查找坐标区域…");
           showMessage("正在调用识别接口……", false, COORDINATE_RECOGNITION_MESSAGE_MS);
           showRecognitionProgress("正在识别坐标...", "loading");
@@ -16077,6 +16291,10 @@ ${placemarks}
           ? data.handwrittenVisionRouting.fieldConflicts.length
           : 0;
         activeFinalizedCoordinateResult = data.finalizedCoordinateResult || null;
+        rememberCommittedRecognitionUsageBinding({
+          requestId: data.requestId || recognitionRequestId,
+          result: activeFinalizedCoordinateResult
+        });
         activeRecognitionAcquisitionResult = createRecognitionAuthorizationState(data);
         activePointGeometryIntentReview = data.pointGeometryIntentReview || null;
         const responseFileName = String(data.recognitionFileName || "").replace(/[\r\n\t]+/gu, " ").trim();
@@ -16239,6 +16457,9 @@ ${placemarks}
       } finally {
         setDebugRunning(false);
         imageInput.disabled = false;
+        if (indonesiaStructuredProductMode) {
+          indonesiaStructuredProductMode.disabled = !isIndonesiaStructuredProductModeAvailable();
+        }
         if (!preserveSelectedImageAfterStop) imageInput.value = "";
       }
     }
