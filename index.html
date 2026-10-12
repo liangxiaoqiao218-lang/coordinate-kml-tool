@@ -10303,7 +10303,7 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      const sections = parseJudgeDetailSections(rawText);
+      const sections = parseJudgeDetailSections(formatMiningEvidenceView(buildMiningEvidenceView(rawText)));
       if (!sections.length) {
         judgeResult.innerHTML = `<p>${escapeJudgeDetailHtml(rawText)}</p>`;
         return;
@@ -10349,655 +10349,105 @@ Au值 = 纯度 × 10 后取整数</div>
       return (match?.[1] || "").trim();
     }
 
-    function getJudgeGrade(text) {
-      const gradeText = getJudgeSection(text, "等级") || text;
-      const match = String(gradeText || "").match(/\b([ABCD])\b|([ABCD])\s*[：:]/i);
-      return (match?.[1] || match?.[2] || "C").toUpperCase();
-    }
+// Mining evidence presentation only: never infer mineral value from prose keywords.
+function buildMiningEvidenceView(text, options = {}) {
+  const source = String(text || "").trim();
+  const sections = {};
+  const issues = [];
+  for (const match of source.matchAll(/【([^】\n]+)】\s*([\s\S]*?)(?=【[^】\n]+】|$)/g)) {
+    const name = match[1].trim();
+    if (Object.prototype.hasOwnProperty.call(sections, name)) issues.push("重复字段：" + name);
+    else sections[name] = match[2].trim();
+  }
+  const legacy = !Object.prototype.hasOwnProperty.call(sections, "可见特征");
+  const exactType = (value, allowed) => {
+    const first = String(value || "").split(/[。．:：\s]/)[0];
+    return allowed.includes(first) ? first : "";
+  };
+  const objectType = exactType(sections["对象类型"], ["金属块", "矿石", "河道", "卫星图", "地表环境", "人工熔炼物", "地图截图", "设备照片", "其它"]);
+  const sceneType = exactType(sections["场景分类"], ["原矿石", "矿化岩石", "河道沉积", "卫星图", "老鼠洞", "自然金块", "砂金金块", "人工熔炼金属", "其他"]);
+  if (!objectType) issues.push("对象类型缺失或不明确");
+  if (!sceneType) issues.push("场景分类缺失或不明确");
+  const allowedScenes = {
+    "矿石": ["原矿石", "矿化岩石", "其他"],
+    "金属块": ["自然金块", "砂金金块", "人工熔炼金属", "其他"],
+    "人工熔炼物": ["人工熔炼金属", "其他"],
+    "河道": ["河道沉积", "其他"],
+    "卫星图": ["卫星图", "其他"],
+    "地图截图": ["卫星图", "其他"],
+    "设备照片": ["其他"],
+    "地表环境": ["河道沉积", "老鼠洞", "其他"]
+  };
+  const conflict = Boolean(objectType && sceneType && allowedScenes[objectType] && !allowedScenes[objectType].includes(sceneType));
+  if (conflict) issues.push("对象与场景冲突，不能确认分类");
+  const lines = value => String(value || "").split(/\r?\n/).map(line => line.replace(/^\s*[-*\d.、)）]+\s*/, "").trim()).filter(Boolean);
+  const features = lines(sections["可见特征"] || sections["关键依据"]);
+  const limitations = lines(sections["证据限制"] || sections["主要风险"]);
+  const actions = lines(sections["补证动作"] || sections["下一步"]);
+  for (const [name, values] of [["可见特征", features], ["证据限制", limitations], ["补证动作", actions]]) {
+    if (!values.length) issues.push(name + "未返回");
+  }
+  if (options.finishReason && options.finishReason !== "stop") issues.push("模型输出未正常结束：" + options.finishReason);
+  if (legacy && sections["一句话总结"] && !/[。！？.!?]$/.test(sections["一句话总结"])) issues.push("历史文本尾句可能不完整");
+  const previousIssues = lines(sections["待核对事项"]);
+  issues.push(...previousIssues);
+  const notes = legacy
+    ? ["历史记录为加工后文本，模型原文未取得；以下描述和动作的来源尚未逐项核对。"]
+    : lines(sections["来源说明"]);
+  const scope = "单张照片不能确认矿物成分、含金性、品位、储量或经济价值。";
+  if (!limitations.includes(scope)) limitations.unshift(scope);
+  const imageReadability = sections["图像可判读性"] || "未单独记录；旧“判读可信度”不作为矿业结论可信度。";
+  return {
+    status: conflict ? "分类冲突，待核对" : issues.length ? "结果不完整，待核对" : "外观描述，待核对",
+    objectType: objectType || "未确定",
+    sceneType: sceneType || "未确定",
+    conflict, imageReadability, features, limitations, actions,
+    notes, issues: [...new Set(issues)]
+  };
+}
 
-    function clampNumber(value, min, max) {
-      return Math.min(max, Math.max(min, Number(value || 0)));
-    }
+function formatMiningEvidenceView(view) {
+  const block = (name, value) => "【" + name + "】\n" + (Array.isArray(value) ? value.join("\n") : value);
+  return [
+    block("结果状态", view.status),
+    block("对象类型", view.objectType),
+    block("场景分类", view.sceneType),
+    block("图像可判读性", view.imageReadability),
+    block("可见特征", view.features),
+    block("证据限制", view.limitations),
+    block("补证动作", view.actions),
+    view.notes.length ? block("来源说明", view.notes) : "",
+    view.issues.length ? block("待核对事项", view.issues) : ""
+  ].filter(Boolean).join("\n\n");
+}
 
-    function extractJudgeScore(text, grade) {
-      const scoreText = getJudgeSection(text, "潜力评分");
-      const match = scoreText.match(/(\d{1,3})\s*(?:分|\/\s*100)?/);
-      const ranges = {
-        A: [80, 95],
-        B: [60, 79],
-        C: [35, 59],
-        D: [0, 34]
-      };
-      const [min, max] = ranges[grade] || ranges.C;
-      if (scoreText && match) {
-        return Math.round(clampNumber(match[1], min, max));
-      }
-
-      const source = String(text || "");
-      let score = Math.round((min + max) / 2);
-      const plusRules = [
-        [/明显|值得继续|继续观察价值|有继续观察价值|有潜力|有机会/g, 6],
-        [/沉积条件|沉积空间|矿化线索|石英脉|氧化铁|硫化物|河道弯曲|汇流|阶地|老河道/g, 5],
-        [/主体明确|结构清楚|纹理清晰|依据充分/g, 3]
-      ];
-      const minusRules = [
-        [/信息不足|模糊|清晰度有限|看不清|缺少尺度|缺少参照|缺少环境|单张图/g, -5],
-        [/风险较大|不建议投入太多|谨慎|无法稳定判断/g, -7],
-        [/直接排除|无关图片|不建议|价值有限|普通矿物|普通围岩/g, -12]
-      ];
-
-      [...plusRules, ...minusRules].forEach(([pattern, delta]) => {
-        const hits = source.match(pattern);
-        if (hits) {
-          score += delta * Math.min(hits.length, 2);
-        }
-      });
-
-      const variationSeed = Array.from(source.slice(0, 160)).reduce((sum, char) => sum + char.charCodeAt(0), 0);
-      score += (variationSeed % 7) - 3;
-      return Math.round(clampNumber(score, min, max));
-    }
-
-    function extractJudgeConfidence(text) {
-      const confidenceText = getJudgeSection(text, "判读可信度") || "";
-      const explicit = confidenceText.match(/[高中低]/)?.[0];
-      if (explicit) {
-        return explicit;
-      }
-
-      const source = String(text || "");
-      if (/模糊|看不清|信息不足|无关图片|无法稳定判断|无法判断/.test(source)) {
-        return "低";
-      }
-      if (/缺少尺度|缺少参照|缺少角度|缺少环境|单张图|清晰度有限/.test(source)) {
-        return "中";
-      }
-      if (/清晰|主体明确|依据充分|结构清楚|直接排除|明显/.test(source)) {
-        return "高";
-      }
-      return "中";
-    }
-
-    function getJudgeDecisionMeta(grade, text) {
-      const summary = getJudgeSection(text, "一句话总结") || getJudgeSection(text, "结论");
-      const sourceText = String(text || "");
-      const confidence = extractJudgeConfidence(sourceText);
-      const score = extractJudgeScore(sourceText, grade);
-      const map = {
-        A: {
-          worth: "🔥 值得继续（有机会）",
-          confidence,
-          score,
-          summary: "👉 再试一张，这张可能没拍到关键点。"
-        },
-        B: {
-          worth: "👍 有点意思（可以再看）",
-          confidence,
-          score,
-          summary: "👉 换个角度，结果可能完全不同。"
-        },
-        C: {
-          worth: "⚠ 风险偏高（别重投入）",
-          confidence,
-          score,
-          summary: "👉 拍断面或加比例物，判断更准。"
-        },
-        D: {
-          worth: "❌ 不建议（直接换）",
-          confidence,
-          score,
-          summary: "👉 更像普通目标，直接换下一张更省时间。"
-        }
-      };
-      const fallback = map[grade] || map.C;
-
-      return {
-        ...fallback,
-        summary: summary ? `👉 ${summary.replace(/^👉\s*/, "")}` : fallback.summary
-      };
-    }
-
-    function cleanupJudgeHistoryStorage() {
-      OLD_JUDGE_HISTORY_KEYS.forEach(key => localStorage.removeItem(key));
-      const items = getJudgeRecentItems();
-      if (items.length === 0) {
-        localStorage.removeItem(JUDGE_HISTORY_KEY);
-      }
-    }
-
-    function getJudgeBestScore() {
-      const best = getJudgeHistoryBest(getJudgeRecentItems());
-      return Math.max(0, Number(best?.score || 0));
-    }
-
-    function updateJudgeBestScore(score) {
-      const current = getJudgeBestScore();
-      return Math.max(current, Number(score || 0));
-    }
-
-    function getJudgeDecisionText(grade, text, meta) {
-      const decision = meta?.worth || getJudgeDecisionMeta(grade, text).worth || "";
-      return String(decision)
-        .replace(/^[🔥👍⚠❌✔✖]\s*/, "")
-        .replace(/[()（）]/g, "")
-        .trim() || "可以回看";
-    }
-
-    const FAST_JUDGE_COPY = {
-      mineral: {
-        A: ["这个值得继续看。", "已经不像普通误判。", "这张可以认真看。"],
-        B: ["开始有点意思了。", "至少不像典型误判。", "这张先留着看。"],
-        C: ["有点像，但还不够。", "能看，但别上头。", "目前证据还偏弱。"],
-        D: ["这种误判太常见。", "先排除，别急着投入。", "亮得太均匀，风险很高。", "只有颜色，没有结构。"]
-      },
-      river: {
-        A: ["河道条件值得看。", "这个河段可以跟。", "先圈这段重点看。"],
-        B: ["河道成立，继续看。", "有沉积环境，先跟。", "这段可以补现场。"],
-        C: ["河道有，但还不够。", "能看，别急下结论。", "只看河道还不够。"],
-        D: ["河道线索不强。", "先别急着下场。", "这段暂时不优先。"]
-      },
-      satellite: {
-        A: ["结构值得圈出来。", "这段可以重点看。", "图上有可追线索。"],
-        B: ["地貌有点意思。", "先圈重点段。", "适合继续初筛。"],
-        C: ["图上只能看方向。", "还要落到现场。", "先别直接下场。"],
-        D: ["图上线索不强。", "不适合直接下场。", "先换区域再看。"]
-      },
-      environment: {
-        A: ["环境可以再补图。", "先补地貌关系。", "这张只能作参考。"],
-        B: ["环境有点信息。", "继续补现场图。", "还要看上下文。"],
-        C: ["这不是典型场景。", "环境照还不够。", "不能直接判断有金。"],
-        D: ["这张先不成立。", "环境信息不够。", "别凭这张下结论。"]
-      },
-      metal: {
-        A: ["像成品金，去测。", "外观看着有戏。", "先测成色再说。"],
-        B: ["外观看着像。", "可以先做成色测试。", "别只看颜色。"],
-        C: ["像，但不能替检测。", "先测成色，别猜。", "外观只能作参考。"],
-        D: ["别只看颜色。", "外观支撑不够。", "先检测再判断。"]
-      },
-      neutral: {
-        A: ["这张可以继续看。", "先补关键照片。", "可以再验证。"],
-        B: ["有点信息，继续补。", "先留着看。", "换角度再拍。"],
-        C: ["信息还不够。", "需要更多角度。", "暂不直接判断。"],
-        D: ["先别急着判断。", "这张信息不够。", "先补图再说。"]
-      }
-    };
-
-    const FAST_JUDGE_REASON_COPY = {
-      mineral: {
-        A: ["不像单纯靠颜色。", "关键位置有看头。"],
-        B: ["没那么像普通误判。", "有点东西，但不够硬。"],
-        C: ["颜色不等于价值。", "亮点有，但不够稳。", "看着像，还差一口气。"],
-        D: ["反光太整，容易误判。", "没看到赋存关系。", "只有颜色，没有说服力。"]
-      },
-      river: {
-        A: ["沉积位置有看头。", "上下游关系要跟。"],
-        B: ["有沉积环境。", "先看上下游。"],
-        C: ["缺少采挖痕迹。", "沉积位置还不明确。", "上下游还没对上。"],
-        D: ["河道条件不突出。", "没看到明显采挖痕迹。"]
-      },
-      satellite: {
-        A: ["地貌结构有看头。", "适合圈重点段。"],
-        B: ["河道形态能看。", "先做范围初筛。"],
-        C: ["图上只能看方向。", "还要现场验证。"],
-        D: ["地貌线索不够强。", "不适合直接圈区。"]
-      },
-      environment: {
-        A: ["还要补位置关系。", "先看周边地貌。"],
-        B: ["环境能参考。", "缺少关键位置。"],
-        C: ["不是典型砂金图。", "缺少地貌关系。"],
-        D: ["不能凭环境照判断。", "没有直接金线索。"]
-      },
-      metal: {
-        A: ["看熔融和密实感。", "下一步测成色。"],
-        B: ["外观可以看。", "还要测纯度。"],
-        C: ["外观不能替检测。", "先测成色。"],
-        D: ["颜色不能当结论。", "外观证据不够。"]
-      },
-      neutral: {
-        A: ["还要补关键照片。"],
-        B: ["信息还要补。"],
-        C: ["角度还不够。"],
-        D: ["信息不足。"]
-      }
-    };
-
-    const FAST_JUDGE_ACTION_COPY = {
-      mineral: {
-        A: ["建议继续验证。", "补现场图再定。", "可以往下追。"],
-        B: ["继续补结构。", "换角度再拍。", "先小步验证。"],
-        C: ["先别急着投入。", "补图再说。", "别重投入。"],
-        D: ["先别浪费时间。", "直接换下一张。", "不用急着下场。"]
-      },
-      river: {
-        A: ["继续看上下游。", "补采挖痕迹图。", "先圈重点河段。"],
-        B: ["补上下游对比。", "看沉积厚度。", "找采挖痕迹。"],
-        C: ["先补现场河床。", "别急着投入。", "再看上下游。"],
-        D: ["先换河段看。", "不急着下场。", "补图再判断。"]
-      },
-      satellite: {
-        A: ["圈重点段验证。", "落到现场看。", "补近景环境图。"],
-        B: ["先圈区初筛。", "补现场照片。", "沿河道再看。"],
-        C: ["落地验证再说。", "别只看地图。", "补现场图。"],
-        D: ["先换区域看。", "不建议直接下场。", "再找地貌线索。"]
-      },
-      environment: {
-        A: ["补地貌关系图。", "补现场近景。"],
-        B: ["继续补位置图。", "加上下游照片。"],
-        C: ["先补关键角度。", "别直接判断。"],
-        D: ["换图再判。", "先补有效照片。"]
-      },
-      metal: {
-        A: ["直接测成色。", "复称复检。", "别只看照片。"],
-        B: ["先测成色。", "看密度和重量。"],
-        C: ["检测后再说。", "别只凭外观。"],
-        D: ["先做检测。", "别按颜色判断。"]
-      },
-      neutral: {
-        A: ["继续补图验证。"],
-        B: ["换角度再拍。"],
-        C: ["先补图再说。"],
-        D: ["先别下结论。"]
-      }
-    };
-
-    function pickFastJudgeCopy(list, seedText = "") {
-      const items = Array.isArray(list) && list.length ? list : ["先谨慎处理。"];
-      const seed = String(seedText || "");
-      let hash = 0;
-      for (let index = 0; index < seed.length; index += 1) {
-        hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
-      }
-      return items[hash % items.length];
-    }
-
-    function getFastJudgeSceneKey(sceneType, text = "") {
-      const source = String(text || "");
-      if (sceneType === "河道沉积") return "river";
-      if (sceneType === "卫星图") return "satellite";
-      if (sceneType === "自然金块" || sceneType === "砂金金块") return "metal";
-      if (sceneType === "人工熔炼金属") return "metal";
-      if (sceneType === "金豆/熔炼物") return "metal";
-      if (sceneType === "原矿石" || sceneType === "矿化岩石") return "mineral";
-      if (/海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) return "environment";
-      return "neutral";
-    }
-
-    function getSceneCopyGroup(library, sceneKey, grade) {
-      const sceneGroup = library[sceneKey] || library.neutral || {};
-      return sceneGroup[grade] || sceneGroup.C || library.neutral?.[grade] || library.neutral?.C || [];
-    }
-
-    function getFastJudgeConclusion(grade, text, meta, sceneKey = "neutral") {
-      const source = `${sceneKey}|${grade}|${meta?.score || ""}|${text || ""}`;
-      return pickFastJudgeCopy(getSceneCopyGroup(FAST_JUDGE_COPY, sceneKey, grade), source);
-    }
-
-    function getFastJudgeReason(grade, text, fallbackReasons = [], sceneKey = "neutral") {
-      const fastReason = pickFastJudgeCopy(getSceneCopyGroup(FAST_JUDGE_REASON_COPY, sceneKey, grade), `${sceneKey}|${grade}|${text || ""}`);
-      const fallback = fallbackReasons.find(reason => String(reason || "").trim());
-      return compactJudgeText(fastReason || fallback || "先补关键照片再判断。", 18);
-    }
-
-    function getFastJudgeAction(grade, text, sceneKey = "neutral") {
-      return pickFastJudgeCopy(getSceneCopyGroup(FAST_JUDGE_ACTION_COPY, sceneKey, grade), `${sceneKey}|${text || ""}|${grade}|action`);
-    }
-
-    function getJudgeHistoryBest(items = getJudgeRecentItems()) {
-      return items.reduce((best, item) => {
-        const score = Number(item?.score || 0);
-        return !best || score > Number(best.score || 0) ? item : best;
-      }, null);
-    }
-
-    function getFirstMeaningfulLine(text, fallback = "") {
-      return String(text || "")
-        .split(/\r?\n/)
-        .map(line => line.replace(/^\d+[.、]\s*/, "").trim())
-        .filter(Boolean)[0] || fallback;
-    }
-
-    function getJudgeReasonLines(text) {
-      const sections = [
-        getJudgeSection(text, "关键依据"),
-        getJudgeSection(text, "主要风险"),
-        getJudgeSection(text, "结论")
-      ].filter(Boolean).join("\n");
-      const lines = sections
-        .split(/\r?\n/)
-        .map(line => line.replace(/^\d+[.、]\s*/, "").trim())
-        .filter(Boolean);
-      return lines.slice(0, 2);
-    }
-
-    function compactJudgeText(text, maxLength = 20) {
-      const value = String(text || "")
-        .replace(/^👉\s*/, "")
-        .replace(/[。！？；;,.，、\s]+$/g, "")
-        .trim();
-      if (value.length <= maxLength) {
-        return value;
-      }
-
-      const sentence = value
-        .split(/[。！？；;，,]/)
-        .map(part => part.trim())
-        .find(part => part && part.length <= maxLength);
-      if (sentence) {
-        return sentence;
-      }
-
-      const conciseRules = [
-        [/裂隙|构造控制|结构控制/, "缺少裂隙控制"],
-        [/石英脉/, "未见石英脉关系"],
-        [/赋存|局部集中/, "缺少赋存关系"],
-        [/金属光泽|反光|发亮/, "金属光泽不等于黄金"],
-        [/黄铁矿/, "黄铁矿感明显"],
-        [/云母/, "云母感明显"],
-        [/模糊|不清晰|清晰度/, "图片清晰度有限"],
-        [/尺度|比例/, "缺少比例参照"],
-        [/沉积|河道|阶地/, "需看沉积位置"],
-        [/信息不足|证据不足/, "证据不足，需补图"]
-      ];
-      const rule = conciseRules.find(([, pattern]) => pattern.test(value));
-      return rule ? rule[1] : "";
-    }
-
-    function getCompactJudgeConclusion(text, meta) {
-      const sectionConclusion = getFirstMeaningfulLine(getJudgeSection(text, "结论"), "");
-      const summary = getFirstMeaningfulLine(getJudgeSection(text, "一句话总结"), "");
-      const fallback = meta?.summary?.replace(/^👉\s*/, "") || "证据不足，暂不建议投入。";
-      return compactJudgeText(sectionConclusion || summary || fallback, 20) || "证据不足，暂不建议投入";
-    }
-
-    const JUDGE_SCENE_ENUM = [
-      "河道沉积",
-      "原矿石",
-      "矿化岩石",
-      "卫星图",
-      "老鼠洞",
-      "自然金块",
-      "砂金金块",
-      "人工熔炼金属",
-      "金豆/熔炼物",
-      "其他"
-    ];
-
-    function normalizeJudgeSceneName(text) {
-      const source = String(text || "");
-      if (!source.trim()) {
-        return "其他";
-      }
-
-      if (/卫星图|卫星|地图|遥感|航拍|俯视|截图|底图|比例尺|图层|坐标网格|地图界面|google|earth|satellite|map/i.test(source)) {
-        return "卫星图";
-      }
-      if (/海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) {
-        return "其他";
-      }
-      // Stable judge rule: smelted-metal cues must stay ahead of natural-gold cues.
-      // Regress natural nugget and smelted gold-bean samples together before changing this order.
-      if (/人工熔炼金属|熔炼金豆|熔炼块|熔炼后|熔炼形成|熔炼金属|熔融流动|熔炼纹理|铸块|倒模|模具|金条|熔滴|液态金属|凝固|圆饼|圆豆|半球|滴状|圆滑.*边|圆滑凝固边|整体圆滑|扁平面|蜂窝|气孔|冷却皱褶|凝固纹|手掌.*金属块|高度相似/i.test(source)) {
-        return "人工熔炼金属";
-      }
-      if (/自然金块|砂金金块|河道采挖自然金|砂金|自然金|金粒|金豆|不规则金块|自然颗粒/i.test(source)
-        && !/熔融流动|熔炼纹理|铸块|倒模|模具|金条|熔滴|人工加工|高度相似/i.test(source)) {
-        return /砂金|河道|冲积|沖積/i.test(source) ? "砂金金块" : "自然金块";
-      }
-      if (/人工熔炼金属|熔炼金属|金豆\/熔炼物|熔炼|熔融|成品金|已提炼金属|铸块|倒模|模具|金条|熔滴/i.test(source)) {
-        return "人工熔炼金属";
-      }
-      if (/矿化岩石|矿化|石英脉|氧化带/i.test(source)) {
-        return "矿化岩石";
-      }
-      if (/老鼠洞|洞采|矿洞|盗洞/i.test(source)) {
-        return "老鼠洞";
-      }
-      if (/河道沉积|河道|溪流|河床|河流|冲沟|砂滩|沉积|阶地|老河道/i.test(source)) {
-        return "河道沉积";
-      }
-      if (/原矿石|矿石|样本|岩石/i.test(source)) {
-        return "原矿石";
-      }
-      return "其他";
-    }
-
-    function getJudgeSceneType(text) {
-      const source = String(text || "");
-      const explicitText = [
-        getJudgeSection(source, "场景分类"),
-        getJudgeSection(source, "图像类型"),
-        getJudgeSection(source, "图片类型")
-      ].filter(Boolean).join("\n");
-
-      const sourceScene = normalizeJudgeSceneName(source);
-      if (sourceScene === "卫星图") {
-        return "卫星图";
-      }
-      if (sourceScene === "其他" && /海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) {
-        return "其他";
-      }
-
-      if (explicitText.trim()) {
-        const exact = JUDGE_SCENE_ENUM.find(scene => explicitText.includes(scene));
-        return exact || normalizeJudgeSceneName(explicitText);
-      }
-
-      return sourceScene;
-    }
-
-    function displaySceneName(scene, text = "") {
-      const source = String(text || "");
-      if (/海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) {
-        return "环境照片";
-      }
-      const displayMap = {
-        "河道沉积": "河道照片",
-        "原矿石": "原矿样本",
-        "矿化岩石": "矿化岩石",
-        "卫星图": "卫星图",
-        "老鼠洞": "老鼠洞",
-        "自然金块": "自然金块",
-        "砂金金块": "砂金金块",
-        "人工熔炼金属": "人工熔炼金属",
-        "金豆/熔炼物": "人工熔炼金属",
-        "其他": "待确认样本"
-      };
-      return displayMap[scene] || "待确认样本";
-    }
-
-    function extractJudgeFieldValue(text, fieldNames = []) {
-      const source = String(text || "");
-      for (const fieldName of fieldNames) {
-        const escaped = String(fieldName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const match = source.match(new RegExp(`["']?${escaped}["']?\\s*[:：=]\\s*["']?([^"'\\n，,。；;]+)`, "i"));
-        if (match?.[1]) {
-          return match[1].trim();
-        }
-      }
-      return "";
-    }
-
-    function getJudgeObjectType(text, sceneType = "") {
-      const source = String(text || "");
-      const explicitText = [
-        extractJudgeFieldValue(source, ["scene", "type", "category", "objectType", "object_type"]),
-        getJudgeSection(source, "对象类型"),
-        getJudgeSection(source, "样本类型"),
-        getJudgeSection(source, "场景分类"),
-        getJudgeSection(source, "图像类型"),
-        getJudgeSection(source, "图片类型")
-      ].filter(Boolean).join("\n");
-      const target = explicitText || source;
-      const objectRules = [
-        ["石英脉样本", /石英脉|石英 vein|quartz/i],
-        ["河道黑砂", /黑砂|重砂|磁铁矿砂|河道.*砂|砂滩.*黑/i],
-        ["人工熔炼金属", /人工熔炼金属|熔炼金豆|熔炼块|熔炼后|熔炼形成|熔炼金属|熔炼|熔融|成品金|已提炼金属|铸块|倒模|模具|金条|熔滴|圆饼|圆豆|半球|滴状|凝固|蜂窝|气孔|冷却皱褶|凝固纹/i],
-        ["自然金块", /自然金块|不规则金块|自然金|河道采挖自然金/i],
-        ["砂金金块", /砂金金块|砂金|淘金|金砂|金粒|冲积.*金|沖積.*金/i],
-        ["疑似硫化物", /硫化物|黄铁矿|黄铜矿|金属硫化|pyrite/i],
-        ["氧化带样本", /氧化带|铁帽|褐铁矿|赤铁矿|氧化色/i],
-        ["老采坑环境", /老采坑|采坑|矿洞|老鼠洞|洞采|盗洞/i],
-        ["河道沉积环境", /河道沉积|河床|溪流|冲沟|阶地|河漫滩|冲积/i],
-        ["现场矿区照片", /矿区|采场|露头|现场|矿点|矿山/i],
-        ["矿化岩石", /矿化岩石|矿化|蚀变|裂隙控制|构造控制/i],
-        ["普通岩石", /普通岩石|围岩|非矿化|无矿化|一般岩石/i],
-        ["卫星图", /卫星|遥感|地图|航拍|俯视|satellite|map/i]
-      ];
-      const matched = objectRules.find(([, pattern]) => pattern.test(target));
-      if (matched) {
-        return matched[0];
-      }
-      if (sceneType === "河道沉积") {
-        return "河道样本";
-      }
-      if (sceneType === "卫星图" || /现场|环境|矿区|采坑|河道|海岸/i.test(source)) {
-        return "现场照片";
-      }
-      return "矿石样本";
-    }
-
-    function filterJudgeObjectiveTags(tags) {
-      const blocked = /不足|缺少|未见|不明|待看|风险|建议|证据|投入|观察|继续|偏弱|偏高|可信|需/;
-      return [...new Set((tags || []).filter(tag => tag && !blocked.test(tag)))].slice(0, 5);
-    }
-
-    function getJudgeMisjudgeTags(text, sceneType = "") {
-      const source = String(text || "");
-      if (sceneType === "卫星图") {
-        const remoteTags = [
-          ["遥感图", /卫星|遥感|地图|航拍|俯视|截图|图层|底图/i],
-          ["河道结构", /河道|水系|弯曲|汇流|沟谷|冲沟/i],
-          ["沉积空间", /沉积|砂洲|阶地|河漫滩|冲积/i],
-          ["地貌线索", /地貌|坡度|山脊|谷地|构造|线性/i]
-        ].filter(([, pattern]) => pattern.test(source)).map(([tag]) => tag);
-        return filterJudgeObjectiveTags(remoteTags.length ? remoteTags : ["遥感图"]);
-      }
-      if (sceneType === "河道沉积") {
-        const riverTags = [
-          ["河道环境", /河道|溪流|河床|河流|冲沟|水系/i],
-          ["沉积空间", /沉积|砂滩|砂洲|阶地|河漫滩|冲积/i],
-          ["黑砂富集", /黑砂|重砂|富集/i],
-          ["河道沉积", /上下游|上游|下游|沉积|冲积/i]
-        ].filter(([, pattern]) => pattern.test(source)).map(([tag]) => tag);
-        return filterJudgeObjectiveTags(riverTags.length ? riverTags : ["河道环境", "沉积空间"]);
-      }
-      if (sceneType === "自然金块" || sceneType === "砂金金块") {
-        const naturalGoldTags = [
-          ["自然金形态", /自然金|自然金块|砂金|金粒|金豆|不规则/i],
-          ["河道采挖", /河道|采挖|淘金|冲积|沖積/i],
-          ["称重照片", /电子秤|称重|重量|克|g\b/i],
-          ["不规则颗粒", /不规则|大小不一|颗粒|凹凸|孔洞|磨圆/i],
-          ["泥土残留", /泥土|残留|氧化|附着/i]
-        ].filter(([, pattern]) => pattern.test(source)).map(([tag]) => tag);
-        return filterJudgeObjectiveTags(naturalGoldTags.length ? naturalGoldTags : ["自然金形态", "外观参考"]);
-      }
-      if (/海岸|海边|海滩|沙滩|海水|海浪|岸线|潮汐|礁石|滩涂/i.test(source)) {
-        return ["环境照片", "海岸沉积"];
-      }
-      if (sceneType === "金豆/熔炼物" || sceneType === "人工熔炼金属") {
-        const metalTags = [
-          ["熔炼外观", /熔炼|熔融|金豆|成品金|已提炼|凝固|圆滑|圆饼|半球|滴状/i],
-          ["圆滑凝固边", /凝固|圆滑.*边|圆边|扁平面|流痕/i],
-          ["疑似人工金属块", /人工|熔炼|圆饼|圆豆|半球|滴状|手掌/i],
-          ["需检测确认", /检测|确认|XRF|火试金|密度/i],
-          ["成色线索", /成色|纯度|检测|复检|密度/i],
-          ["外观参考", /外观|颜色|金属|密实|纹理/i]
-        ].filter(([, pattern]) => pattern.test(source)).map(([tag]) => tag);
-        return filterJudgeObjectiveTags(metalTags.length ? metalTags : ["熔炼外观", "金属外观"]);
-      }
-      const tagRules = [
-        ["云母感", /云母|片状反光|片状/i],
-        ["黄铁矿感", /黄铁矿|硫化物|金属硫化/i],
-        ["金属膜感", /金属膜|薄膜|表面膜/i],
-        ["整面统一反光", /整体发亮|整面|大面积|统一反光|镜面反光/i],
-        ["裂隙控制", /裂隙|裂缝|构造控制|结构控制/i],
-        ["石英脉", /石英脉|石英/i],
-        ["氧化带", /氧化带|铁帽|褐铁矿|赤铁矿|氧化色/i],
-        ["河道沉积", /河道|沉积|砂滩|冲积/i],
-        ["黑砂富集", /黑砂|重砂|富集/i]
-      ];
-      const tags = tagRules
-        .filter(([, pattern]) => pattern.test(source))
-        .map(([tag]) => tag);
-      return filterJudgeObjectiveTags(tags);
-    }
-
-    function buildJudgeOfficialCardMeta(text, meta, grade) {
-      const reasonLines = getJudgeReasonLines(text);
-      const compactReasons = reasonLines.map(line => compactJudgeText(line, 22)).filter(Boolean).slice(0, 2);
-      const sceneType = getJudgeSceneType(text);
-      const sceneKey = getFastJudgeSceneKey(sceneType, text);
-      const reasons = [getFastJudgeReason(grade, text, compactReasons, sceneKey)].filter(Boolean);
-      const tags = getJudgeMisjudgeTags(text, sceneType);
-      const sceneTags = getJudgeMisjudgeTags(text, sceneType);
-      const sampleType = getJudgeObjectType(text, sceneType);
-      return {
-        title: "快判结果",
-        brand: "GeoKit Lab · Geo Tool",
-        grade,
-        conclusion: getFastJudgeConclusion(grade, text, meta, sceneKey),
-        reasons,
-        action: getFastJudgeAction(grade, text, sceneKey),
-        tags: filterJudgeObjectiveTags(sceneTags.length ? sceneTags : tags),
-        sceneType,
-        sampleType,
-        confidence: meta?.confidence || "中",
-        score: Number(meta?.score || 0)
-      };
-    }
-
-    function renderJudgeDecisionCard(text, comparison = null) {
-      console.log("AI判读移动端状态：renderResultCard 开始", {
-        hasText: Boolean(String(text || "").trim()),
-        recentResultsLength: getJudgeRecentItems().length
-      });
-      if (!judgeDecisionCard || !String(text || "").trim()) {
-        clearJudgeDecisionCard();
-        return null;
-      }
-
-      const grade = getJudgeGrade(text);
-      const meta = getJudgeDecisionMeta(grade, text);
-      const official = buildJudgeOfficialCardMeta(text, meta, grade);
-      const bestScore = updateJudgeBestScore(meta.score);
-      const imageSrc = comparison?.image || comparison?.item?.image || getCurrentJudgeImageDataUrl();
-      judgeDecisionCard.hidden = false;
-      judgeDecisionCard.className = `judge-decision-card grade-${grade.toLowerCase()}`;
-      judgeDecisionCard.innerHTML = `
-        <div class="judge-official-card">
-          <div class="judge-official-head">
-            <div class="judge-export-image-wrap">
-              ${imageSrc ? `<img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" onclick="openJudgeResultImage(event)" title="点击查看大图" />` : `<div class="judge-export-image" aria-label="无图片"></div>`}
-              <span class="judge-image-label">${escapeHtml(official.sampleType)}</span>
-            </div>
-            <div class="judge-official-content">
-              <div class="judge-official-object-type">${escapeHtml(official.sampleType)}</div>
-              <div class="judge-official-verdict">${escapeHtml(official.conclusion)}</div>
-              <div class="judge-official-reason-list">
-                ${official.reasons.map(reason => `<div class="judge-official-reason">· ${escapeHtml(reason)}</div>`).join("")}
-                <div class="judge-official-reason">· ${escapeHtml(official.action)}</div>
-              </div>
-              <div class="judge-official-tags">
-                ${(official.tags.length ? official.tags : [official.sampleType]).slice(0, 5).map(tag => `<span class="judge-official-tag">${escapeHtml(tag)}</span>`).join("")}
-              </div>
-            </div>
-          </div>
-          <div class="judge-official-main">
-            <span class="judge-decision-metric"><strong>等级 ${escapeHtml(grade)}</strong></span>
-            <span class="judge-decision-metric"><strong>${escapeHtml(String(official.score))}分</strong></span>
-            <span class="judge-decision-metric">可信度 <strong>${escapeHtml(official.confidence)}</strong></span>
-            <span class="judge-decision-metric">建议 <strong>${escapeHtml(getJudgeDecisionText(grade, text, meta))}</strong></span>
-          </div>
-          <div class="judge-official-note">快判结果仅供初筛参考，需结合现场与检测结果确认。</div>
-        </div>`;
-      console.log("AI判读移动端状态：renderResultCard 完成", {
-        grade,
-        score: official.score,
-        sceneType: official.sceneType,
-        recentResultsLength: getJudgeRecentItems().length
-      });
-      return { grade, bestScore, ...meta };
-    }
+function cleanupJudgeHistoryStorage() {
+  // Preserve existing history; no score is consumed by the evidence-only UI.
+}
+function buildJudgeOfficialCardMeta(text) { return buildMiningEvidenceView(text); }
+function renderJudgeDecisionCard(text, comparison = null) {
+  if (!judgeDecisionCard || !String(text || "").trim()) { clearJudgeDecisionCard(); return null; }
+  const view = buildJudgeOfficialCardMeta(text);
+  const imageSrc = comparison?.image || comparison?.item?.image || getCurrentJudgeImageDataUrl();
+  const list = values => values.length ? "<ul>" + values.map(value => "<li>" + escapeHtml(value) + "</li>").join("") + "</ul>" : "<p>未返回，待补证。</p>";
+  judgeDecisionCard.hidden = false;
+  judgeDecisionCard.className = "judge-decision-card";
+  judgeDecisionCard.innerHTML = `
+    <div class="judge-official-card"><div class="judge-official-head">
+      <div class="judge-export-image-wrap">${imageSrc ? `<img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" onclick="openJudgeResultImage(event)" />` : ""}</div>
+      <div class="judge-official-content">
+        <div class="judge-official-object-type">${escapeHtml(view.conflict ? "分类待核对" : view.objectType + " · " + view.sceneType)}</div>
+        <div class="judge-official-verdict">${escapeHtml(view.status)}</div>
+        <p>图像可判读性：${escapeHtml(view.imageReadability)}</p>
+      </div></div>
+      <h3>可见特征（模型描述，待核对）</h3>${list(view.features)}
+      <h3>证据限制</h3>${list(view.limitations)}
+      <h3>补证动作</h3>${list(view.actions)}
+      ${view.issues.length ? "<h3>待核对事项</h3>" + list(view.issues) : ""}
+      ${view.notes.length ? "<h3>来源说明</h3>" + list(view.notes) : ""}
+      <div class="judge-official-note">仅供外观初筛；不提供未经校准的潜力分或投入等级。</div></div>`;
+  return view;
+}
 
     function getJudgeRecentItems() {
       try {
@@ -11013,12 +10463,10 @@ Au值 = 纯度 × 10 后取整数</div>
 
     function setJudgeRecentItems(items) {
       const normalized = items.slice(0, 3).map(item => ({
+        ...item,
         id: item.id || `judge-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         image: item.image || item.thumb || "",
         result: item.result || "",
-        grade: item.grade || "C",
-        score: Number(item.score || 0),
-        decisionText: item.decisionText || getJudgeDecisionText(item.grade || "C", item.result || ""),
         time: item.time || Date.now()
       }));
       if (normalized.length === 0) {
@@ -11029,40 +10477,21 @@ Au值 = 纯度 × 10 后取整数</div>
       localStorage.setItem(JUDGE_HISTORY_KEY, JSON.stringify(normalized));
     }
 
-    function renderJudgeRecent(newHighItem = null) {
-      if (!judgeRecentPanel || !judgeRecentList) {
-        return;
-      }
 
+    function renderJudgeRecent() {
+      if (!judgeRecentPanel || !judgeRecentList) return;
       const items = getJudgeRecentItems();
       judgeRecentPanel.hidden = items.length === 0;
-      if (items.length === 0) {
-        judgeRecentList.innerHTML = "";
-        if (judgeRecentBest) {
-          judgeRecentBest.classList.remove("is-new-high");
-          judgeRecentBest.textContent = "";
-        }
-        return;
-      }
-      if (judgeRecentBest) {
-        const best = getJudgeHistoryBest(items);
-        judgeRecentBest.classList.toggle("is-new-high", Boolean(newHighItem));
-        judgeRecentBest.textContent = newHighItem
-          ? "新高！这张目前最值得继续看"
-          : best
-            ? `当前最高：${best.grade || "C"} · ${Number(best.score || 0)}分`
-            : "";
-      }
-      judgeRecentList.innerHTML = items.map((item, index) => `
-        <div class="judge-recent-item" role="button" tabindex="0" onclick="restoreJudgeRecent(${index})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();restoreJudgeRecent(${index});}">
+      if (judgeRecentBest) { judgeRecentBest.classList.remove("is-new-high"); judgeRecentBest.textContent = ""; }
+      judgeRecentList.innerHTML = items.map((item, index) => {
+        const view = buildMiningEvidenceView(item.result);
+        return `<div class="judge-recent-item" role="button" tabindex="0" onclick="restoreJudgeRecent(${index})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();restoreJudgeRecent(${index});}">
           <button type="button" class="judge-recent-delete" onclick="deleteJudgeRecent(event, ${index})" aria-label="删除该条最近判读">×</button>
           <img src="${escapeHtml(item.image || item.thumb || "")}" alt="最近判读缩略图" onclick="openJudgeHistoryImage(event, ${index})" />
-          <span>
-            <strong>${escapeHtml(item.grade || "C")} · ${escapeHtml(String(item.score || 0))}分</strong>
-            <span class="judge-recent-decision">${escapeHtml(item.decisionText || getJudgeDecisionText(item.grade || "C", item.result || ""))}</span>
-            <span>${escapeHtml(formatJudgeRecentTime(item.time))}</span>
-          </span>
-        </div>`).join("");
+          <span><strong>${escapeHtml(view.conflict ? "分类待核对" : view.objectType + " · " + view.sceneType)}</strong>
+          <span class="judge-recent-decision">${escapeHtml(view.status)}</span>
+          <span>${escapeHtml(formatJudgeRecentTime(item.time))}</span></span></div>`;
+      }).join("");
     }
 
     function formatJudgeRecentTime(time) {
@@ -11075,35 +10504,14 @@ Au值 = 纯度 × 10 后取整数</div>
       return currentJudgeImageDataUrl || image?.src || "";
     }
 
-    function saveJudgeResultToRecent(text, meta) {
-      const result = String(text || "").trim();
-      if (!result) {
-        return { saved: false };
-      }
 
-      const previousItems = getJudgeRecentItems();
-      const previousBest = getJudgeHistoryBest(previousItems);
-      const grade = meta?.grade || getJudgeGrade(result);
-      const score = Number(meta?.score || getJudgeDecisionMeta(grade, result).score || 0);
-      const item = {
-        id: `judge-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        image: getCurrentJudgeImageDataUrl(),
-        result,
-        grade,
-        score,
-        decisionText: getJudgeDecisionText(grade, result, meta),
-        time: Date.now()
-      };
-      const isNewHigh = !previousBest || score > Number(previousBest.score || 0);
-      setJudgeRecentItems([item, ...previousItems].slice(0, 3));
-      renderJudgeRecent(isNewHigh ? item : null);
-      console.log("AI判读移动端状态：recentResults 已写入", {
-        recentResultsLength: getJudgeRecentItems().length,
-        currentGrade: grade,
-        currentScore: score,
-        hasImage: Boolean(item.image)
-      });
-      return { saved: true, isNewHigh, previousBest, item };
+    function saveJudgeResultToRecent(text) {
+      const result = String(text || "").trim();
+      if (!result) return { saved: false };
+      const item = { id: `judge-${Date.now()}-${Math.random().toString(36).slice(2)}`, image: getCurrentJudgeImageDataUrl(), result, time: Date.now() };
+      setJudgeRecentItems([item, ...getJudgeRecentItems()].slice(0, 3));
+      renderJudgeRecent();
+      return { saved: true, item };
     }
 
     function restoreJudgeRecent(index) {
@@ -11115,7 +10523,6 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeResult.value = item.result || "";
       renderJudgeDecisionCard(judgeResult.value, {
         restored: true,
-        previousBest: getJudgeHistoryBest(getJudgeRecentItems()),
         item,
         image: item.image || item.thumb || ""
       });
@@ -11135,7 +10542,6 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeResult.value = item.result || "";
       renderJudgeDecisionCard(judgeResult.value, {
         restored: true,
-        previousBest: getJudgeHistoryBest(getJudgeRecentItems()),
         item,
         image: item.image || item.thumb || ""
       });
@@ -11453,36 +10859,10 @@ Au值 = 纯度 × 10 后取整数</div>
       showJudgeMessage("判读结果已清除。");
     }
 
+
     function buildJudgeCopyText() {
-      const resultText = String(judgeResult?.value || "").trim();
-      if (!resultText) {
-        return "";
-      }
-
-      const allowedSections = ["结论", "等级", "判读可信度", "潜力评分", "关键依据", "主要风险", "下一步", "一句话总结"];
-      const sections = allowedSections
-        .map(name => {
-          const value = getJudgeSection(resultText, name);
-          return value ? `【${name}】\n${value}` : "";
-        })
-        .filter(Boolean);
-      const grade = getJudgeGrade(resultText);
-      const meta = getJudgeDecisionMeta(grade, resultText);
-      const decisionText = [
-        "【核心判断】",
-        `是否值得继续：${meta.worth}`,
-        `判断等级：${grade}`,
-        `判读可信度：${meta.confidence}`,
-        `本次评分：${meta.score}`
-      ].join("\n");
-      const text = [decisionText, sections.join("\n\n") || resultText].join("\n\n").trim();
-
-      return text
-        .split(/\r?\n/)
-        .filter(line => !/^\s*git\s+(add|commit|push|status)\b/i.test(line))
-        .filter(line => !/::git-(stage|commit|push|create-branch|create-pr)\b/i.test(line))
-        .join("\n")
-        .trim();
+      const text = String(judgeResult?.value || "").trim();
+      return text ? formatMiningEvidenceView(buildMiningEvidenceView(text)) : "";
     }
 
     function copyJudgeResult() {

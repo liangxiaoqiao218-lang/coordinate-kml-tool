@@ -2494,105 +2494,23 @@ async function writeSourceVisitLog(userId, req) {
   });
 }
 
-function extractJudgeCaseGrade(text = "") {
-  const source = String(text || "");
-  const gradeLine = source.match(/(?:銆愮瓑绾с€?|【等级】|等级|判读等级)[^\nA-D]*([ABCD])/i);
-  if (gradeLine) {
-    return gradeLine[1].toUpperCase();
-  }
-
-  const loose = source.match(/\b([ABCD])\s*(?:级|級|建议|可以|谨慎|排除)/i);
-  return loose ? loose[1].toUpperCase() : null;
+function extractJudgeCaseGrade() {
+  // Potential/investment grades are not calibrated and must not be derived.
+  return null;
 }
 
 function extractJudgeCaseImageType(text = "") {
-  const source = String(text || "");
-  if (/卫星|衛星|地图|地圖|遥感|遙感|Google\s*Earth|奥维|奧維|俯视|俯視|航拍/i.test(source)) {
-    return "卫星图";
-  }
-  if (/河道|河床|溪流|沟谷|溝谷|坡脚|坡腳|沉积|沉積|采坑|采挖|採挖|矿洞|礦洞|扰动|擾動|老鼠洞|地貌|现场|現場/i.test(source)) {
-    return "矿地照片";
-  }
-  if (/矿石|礦石|原矿|原礦|矿化|礦化|岩石|黄铁矿|黃鐵礦|云母|雲母|自然金|砂金|金块|金粒|金豆|熔炼|熔煉|成品金|样本|樣本/i.test(source)) {
-    return "矿石";
-  }
-  return "未确定";
+  return buildMiningEvidenceView(text).objectType;
 }
 
-function extractJudgeCaseKeywords(text = "") {
-  const source = String(text || "");
-  const dictionary = [
-    "黄铁矿感",
-    "云母感",
-    "整面反光",
-    "金属膜感",
-    "石英脉",
-    "裂隙控制",
-    "氧化带",
-    "赋存关系",
-    "河道结构",
-    "沉积空间",
-    "采坑",
-    "老矿洞",
-    "人工扰动",
-    "卫星图",
-    "地貌线索",
-    "老鼠洞",
-    "自然金块",
-    "砂金金块",
-    "熔炼外观",
-    "圆滑凝固边",
-    "疑似人工金属块",
-    "需检测确认",
-    "成色检测",
-    "补拍断面",
-    "上下游",
-    "现场验证"
-  ];
-
-  const aliases = {
-    "黄铁矿感": /黄铁矿|黃鐵礦|硫化物/i,
-    "云母感": /云母|雲母|片状反光|片狀反光/i,
-    "整面反光": /整面反光|整体反光|整體反光|镜面|鏡面|大面积.*亮/i,
-    "金属膜感": /金属膜|金屬膜|膜感/i,
-    "石英脉": /石英脉|石英脈|白色脉|白色脈/i,
-    "裂隙控制": /裂隙|裂缝|裂縫|结构控制|構造控制/i,
-    "氧化带": /氧化带|氧化帶|铁染|鐵染/i,
-    "赋存关系": /赋存|賦存|局部集中/i,
-    "河道结构": /河道|河床|溪流|沟谷|溝谷/i,
-    "沉积空间": /沉积|沉積|阶地|階地|弯道|彎道/i,
-    "采坑": /采坑|採坑|试挖|試挖|小坑/i,
-    "老矿洞": /老矿洞|老礦洞|矿洞|礦洞/i,
-    "人工扰动": /人工扰动|人工擾動|扰动|擾動|裸土|便道/i,
-    "卫星图": /卫星|衛星|遥感|遙感|地图|地圖|Google\s*Earth|奥维|奧維/i,
-    "地貌线索": /地貌|坡脚|坡腳|线性|線性|山脊/i,
-    "老鼠洞": /老鼠洞/i,
-    "自然金块": /自然金|金块|金粒|金豆|砂金/i,
-    "砂金金块": /砂金|河道.*金|冲积.*金|沖積.*金/i,
-    "熔炼外观": /熔炼|熔煉|成品金|熔融|铸块|鑄塊|倒模|圆饼|圆豆|半球|滴状/i,
-    "圆滑凝固边": /圆滑|凝固|圆边|扁平|流痕/i,
-    "疑似人工金属块": /人工|熔炼|熔煉|熔融|铸块|鑄塊|倒模|模具|手掌/i,
-    "需检测确认": /需检测|需檢測|检测确认|檢測確認|XRF|火试金|密度/i,
-    "成色检测": /成色|纯度|純度|检测|檢測/i,
-    "补拍断面": /补拍|補拍|断面|斷面|敲开|敲開/i,
-    "上下游": /上游|下游|上下游/i,
-    "现场验证": /现场|現場|验证|驗證|复核|複核/i
-  };
-
-  const keywords = dictionary.filter(keyword => aliases[keyword]?.test(source));
-  return [...new Set(keywords)].slice(0, 8);
+function extractJudgeCaseKeywords() {
+  // Do not turn negated/risk/context phrases into asserted mineral tags.
+  return [];
 }
 
 function extractJudgeCaseSuggestedNextImage(text = "") {
-  const source = String(text || "");
-  const section = source.match(/(?:銆愪笅涓€姝ャ€?|【下一步】|下一步)([\s\S]*?)(?:\n\s*(?:銆愬|【)|$)/);
-  const block = section ? section[1] : source;
-  const line = block
-    .split(/\r?\n/)
-    .map(item => item.replace(/^\s*[-*0-9.、)）]+\s*/, "").trim())
-    .find(item => /补拍|補拍|上传|上傳|敲开|敲開|比例|断面|斷面|环境|環境|上下游|卫星|衛星|现场|現場/.test(item));
-
-  return line ? line.slice(0, 300) : "";
+  // Read only the explicit action field; never derive an action from risk prose.
+  return (buildMiningEvidenceView(text).actions[0] || "").slice(0, 300);
 }
 
 function hashJudgeCaseImage(file) {
@@ -11141,234 +11059,91 @@ function buildCoordinateEngineV2ShadowResult(payload = {}, options = {}) {
   }
 }
 
-function normalizeJudgeOutput(text) {
-  const raw = String(text || "").trim();
-  const sectionNames = [
-    "对象类型",
-    "场景分类",
-    "结论",
-    "等级",
-    "判读可信度",
-    "潜力评分",
-    "关键依据",
-    "主要风险",
-    "下一步",
-    "一句话总结"
-  ];
-  const defaults = {
-    "对象类型": "其它",
-    "场景分类": "原矿石",
-    "结论": "目前证据不足，不建议投入。",
-    "等级": "D 排除或暂不投入",
-    "判读可信度": "中",
-    "潜力评分": "25分",
-    "关键依据": "1. 未看到明确裂隙控制。\n2. 未看到清楚的石英脉或局部赋存关系。\n3. 表面反光不能作为黄金依据。",
-    "主要风险": "1. 金黄色或金属反光容易误判为云母、黄铁矿或金属膜。\n2. 缺少断面和结构关系，不能支撑继续投入。",
-    "下一步": "1. 敲开样本拍断面。\n2. 补拍带比例物的清晰近景和原地环境。",
-    "一句话总结": "先按误判图处理，补到结构证据后再看。"
+// Mining evidence presentation only: never infer mineral value from prose keywords.
+function buildMiningEvidenceView(text, options = {}) {
+  const source = String(text || "").trim();
+  const sections = {};
+  const issues = [];
+  for (const match of source.matchAll(/【([^】\n]+)】\s*([\s\S]*?)(?=【[^】\n]+】|$)/g)) {
+    const name = match[1].trim();
+    if (Object.prototype.hasOwnProperty.call(sections, name)) issues.push("重复字段：" + name);
+    else sections[name] = match[2].trim();
+  }
+  const legacy = !Object.prototype.hasOwnProperty.call(sections, "可见特征");
+  const exactType = (value, allowed) => {
+    const first = String(value || "").split(/[。．:：\s]/)[0];
+    return allowed.includes(first) ? first : "";
   };
-
-  if (!raw) {
-    return sectionNames.map(name => `【${name}】\n${defaults[name]}`).join("\n\n");
+  const objectType = exactType(sections["对象类型"], ["金属块", "矿石", "河道", "卫星图", "地表环境", "人工熔炼物", "地图截图", "设备照片", "其它"]);
+  const sceneType = exactType(sections["场景分类"], ["原矿石", "矿化岩石", "河道沉积", "卫星图", "老鼠洞", "自然金块", "砂金金块", "人工熔炼金属", "其他"]);
+  if (!objectType) issues.push("对象类型缺失或不明确");
+  if (!sceneType) issues.push("场景分类缺失或不明确");
+  const allowedScenes = {
+    "矿石": ["原矿石", "矿化岩石", "其他"],
+    "金属块": ["自然金块", "砂金金块", "人工熔炼金属", "其他"],
+    "人工熔炼物": ["人工熔炼金属", "其他"],
+    "河道": ["河道沉积", "其他"],
+    "卫星图": ["卫星图", "其他"],
+    "地图截图": ["卫星图", "其他"],
+    "设备照片": ["其他"],
+    "地表环境": ["河道沉积", "老鼠洞", "其他"]
+  };
+  const conflict = Boolean(objectType && sceneType && allowedScenes[objectType] && !allowedScenes[objectType].includes(sceneType));
+  if (conflict) issues.push("对象与场景冲突，不能确认分类");
+  const lines = value => String(value || "").split(/\r?\n/).map(line => line.replace(/^\s*[-*\d.、)）]+\s*/, "").trim()).filter(Boolean);
+  const features = lines(sections["可见特征"] || sections["关键依据"]);
+  const limitations = lines(sections["证据限制"] || sections["主要风险"]);
+  const actions = lines(sections["补证动作"] || sections["下一步"]);
+  for (const [name, values] of [["可见特征", features], ["证据限制", limitations], ["补证动作", actions]]) {
+    if (!values.length) issues.push(name + "未返回");
   }
-
-  const values = {};
-
-  for (let index = 0; index < sectionNames.length; index += 1) {
-    const current = sectionNames[index];
-    const next = sectionNames[index + 1];
-    const pattern = next
-      ? new RegExp(`【${current}】([\\s\\S]*?)(?=【${next}】)`)
-      : new RegExp(`【${current}】([\\s\\S]*)`);
-    const match = raw.match(pattern);
-    values[current] = (match?.[1] || "").trim();
-  }
-
-  if (!values["结论"] && !values["等级"] && !values["关键依据"]) {
-    const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    values["场景分类"] = defaults["场景分类"];
-    values["结论"] = lines[0] || defaults["结论"];
-    values["等级"] = defaults["等级"];
-    values["关键依据"] = lines.slice(1, 4).map((line, index) => `${index + 1}. ${line.replace(/^\d+[.、]\s*/, "")}`).join("\n") || defaults["关键依据"];
-    values["主要风险"] = defaults["主要风险"];
-    values["下一步"] = defaults["下一步"];
-    values["一句话总结"] = defaults["一句话总结"];
-  }
-
-  const normalized = sectionNames
-    .map(name => `【${name}】\n${values[name] || defaults[name]}`)
-    .join("\n\n");
-
-  const protectedObjectType = applyJudgeObjectTypeConsistencyProtection(normalized);
-  if (protectedObjectType.check.forcedDowngrade) {
-    return protectedObjectType.text;
-  }
-
-  const protectedNaturalGold = protectNaturalGoldJudgeOutput(normalized);
-  return applyJudgeObjectTypeConsistencyProtection(protectedNaturalGold).text;
+  if (options.finishReason && options.finishReason !== "stop") issues.push("模型输出未正常结束：" + options.finishReason);
+  if (legacy && sections["一句话总结"] && !/[。！？.!?]$/.test(sections["一句话总结"])) issues.push("历史文本尾句可能不完整");
+  const previousIssues = lines(sections["待核对事项"]);
+  issues.push(...previousIssues);
+  const notes = legacy
+    ? ["历史记录为加工后文本，模型原文未取得；以下描述和动作的来源尚未逐项核对。"]
+    : lines(sections["来源说明"]);
+  const scope = "单张照片不能确认矿物成分、含金性、品位、储量或经济价值。";
+  if (!limitations.includes(scope)) limitations.unshift(scope);
+  const imageReadability = sections["图像可判读性"] || "未单独记录；旧“判读可信度”不作为矿业结论可信度。";
+  return {
+    status: conflict ? "分类冲突，待核对" : issues.length ? "结果不完整，待核对" : "外观描述，待核对",
+    objectType: objectType || "未确定",
+    sceneType: sceneType || "未确定",
+    conflict, imageReadability, features, limitations, actions,
+    notes, issues: [...new Set(issues)]
+  };
 }
 
-function extractJudgeSection(text = "", sectionName = "") {
-  const source = String(text || "");
-  const escapedName = String(sectionName || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return source.match(new RegExp(`【${escapedName}】\\s*([\\s\\S]*?)(?=\\n【|\\n\\n【|$)`))?.[1]?.trim() || "";
+function formatMiningEvidenceView(view) {
+  const block = (name, value) => "【" + name + "】\n" + (Array.isArray(value) ? value.join("\n") : value);
+  return [
+    block("结果状态", view.status),
+    block("对象类型", view.objectType),
+    block("场景分类", view.sceneType),
+    block("图像可判读性", view.imageReadability),
+    block("可见特征", view.features),
+    block("证据限制", view.limitations),
+    block("补证动作", view.actions),
+    view.notes.length ? block("来源说明", view.notes) : "",
+    view.issues.length ? block("待核对事项", view.issues) : ""
+  ].filter(Boolean).join("\n\n");
 }
 
-function normalizeJudgeObjectType(value = "") {
-  const source = String(value || "");
-  if (/人工熔炼物|熔炼物|熔炼金属|熔煉|熔融|铸块|鑄塊|金豆/i.test(source)) return "人工熔炼物";
-  if (/金属块|金屬塊|金块|金塊|金粒|自然金|砂金/i.test(source)) return "金属块";
-  if (/矿石|礦石|岩石|原矿|原礦|矿化|礦化/i.test(source)) return "矿石";
-  if (/河道|河床|溪流|沟谷|溝谷|水系|河流|河漫滩|河漫灘/i.test(source)) return "河道";
-  if (/卫星|衛星|遥感|遙感|Google\s*Earth|航拍|俯视|俯視/i.test(source)) return "卫星图";
-  if (/地图|地圖|奥维|奧維|坐标|坐標|KML|截图|截圖/i.test(source)) return "地图截图";
-  if (/设备|設備|机器|機器|洗矿机|洗礦機|挖机|挖掘机|工具/i.test(source)) return "设备照片";
-  if (/地表|现场|現場|地貌|坡面|采坑|採坑|老鼠洞|矿区环境|礦區環境/i.test(source)) return "地表环境";
-  return "其它";
-}
-
-function inferJudgeObjectType(text = "") {
-  const objectSection = extractJudgeSection(text, "对象类型");
-  const normalizedObjectSection = objectSection ? normalizeJudgeObjectType(objectSection) : "";
-  if (normalizedObjectSection && normalizedObjectSection !== "其它") return normalizedObjectSection;
-  const sceneSection = extractJudgeSection(text, "场景分类");
-  if (/河道|河床|溪流|沟谷|溝谷|河流|河漫滩|河漫灘/i.test(sceneSection)) return "河道";
-  if (/卫星|衛星|遥感|遙感|Google\s*Earth|航拍|俯视|俯視/i.test(sceneSection)) return "卫星图";
-  if (/地图|地圖|奥维|奧維|坐标|坐標|KML|截图|截圖/i.test(sceneSection)) return "地图截图";
-  return normalizeJudgeObjectType(`${sceneSection}\n${text}`);
-}
-
-function extractJudgeSceneType(text = "") {
-  const sceneSection = extractJudgeSection(text, "场景分类");
-  return sceneSection.split(/[:：\n]/)[0]?.trim() || sceneSection.trim() || "未确定";
-}
-
-function stripNegatedJudgeClaims(text = "") {
-  return String(text || "")
-    .replace(/(?:不能|不可|不宜|无法|不要|禁止|未见|未发现|无明显|没有|并非|不是|不具备|缺少|需补充|需要补充|需检测|需要检测|仅凭图片不能)[^。\n；;]*(?:金块|金粒|自然金|砂金金块|熔炼|熔融|熔炼金属|熔炼物|金豆|矿体|矿化带|矿石|矿物)[^。\n；;]*/gi, "")
-    .replace(/(?:金块|金粒|自然金|砂金金块|熔炼|熔融|熔炼金属|熔炼物|金豆|矿体|矿化带|矿石|矿物)[^。\n；;]*(?:不能|不可|不宜|无法|不要|禁止|未见|未发现|无明显|没有|并非|不是|不具备|缺少|需补充|需要补充|需检测|需要检测|仅凭图片不能)[^。\n；;]*/gi, "");
+function normalizeJudgeOutput(text, options = {}) {
+  return formatMiningEvidenceView(buildMiningEvidenceView(text, options));
 }
 
 function checkJudgeObjectTypeConsistency(text = "") {
-  const source = String(text || "");
-  const objectType = inferJudgeObjectType(source);
-  const sceneType = extractJudgeSceneType(source);
-  const sceneSection = extractJudgeSection(source, "场景分类");
-  const conclusionSection = extractJudgeSection(source, "结论");
-  const positiveJudgementText = stripNegatedJudgeClaims(`${sceneType}\n${sceneSection}\n${conclusionSection}`);
-  const hasNaturalGold = /自然金块|砂金金块|河道采挖自然金|金块|金粒/i.test(positiveJudgementText);
-  const hasSmelt = /熔炼金属|人工熔炼|熔炼金豆|熔炼物|熔煉|熔融/i.test(positiveJudgementText);
-  const hasMineralJudgement = /原矿石|矿化岩石|矿体|矿化带|矿石|矿物|黄铁矿|石英脉|裂隙控制|氧化带|自然金块|砂金金块|熔炼/i.test(positiveJudgementText);
-  let conflictReason = "";
-
-  if (/对象识别冲突|对象类型冲突/.test(source)) {
-    conflictReason = "object_type_conflict_already_downgraded";
-  } else if (objectType === "河道" && (hasNaturalGold || hasSmelt)) {
-    conflictReason = "object_river_conflicts_with_gold_or_smelt_scene";
-  } else if (objectType === "卫星图" && (hasNaturalGold || hasSmelt || hasMineralJudgement)) {
-    conflictReason = "object_satellite_conflicts_with_gold_smelt_or_mineral_scene";
-  } else if (objectType === "地图截图" && hasMineralJudgement) {
-    conflictReason = "object_map_conflicts_with_mineral_judgement";
-  } else if (objectType === "设备照片" && (hasNaturalGold || hasSmelt || hasMineralJudgement)) {
-    conflictReason = "object_equipment_conflicts_with_mineral_or_gold_judgement";
-  }
-
+  const view = buildMiningEvidenceView(text);
   return {
-    objectType,
-    sceneType,
-    consistencyCheck: conflictReason ? "conflict" : "pass",
-    forcedDowngrade: Boolean(conflictReason),
-    conflictReason
+    objectType: view.objectType,
+    sceneType: view.sceneType,
+    consistencyCheck: view.conflict ? "conflict" : view.issues.length ? "unverified" : "pass",
+    forcedDowngrade: false,
+    conflictReason: view.conflict ? "object_scene_conflict_requires_review" : ""
   };
-}
-
-function applyJudgeObjectTypeConsistencyProtection(text = "") {
-  const source = String(text || "");
-  const check = checkJudgeObjectTypeConsistency(source);
-
-  if (!check.forcedDowngrade) {
-    return { text: source, check };
-  }
-
-  const conflictConclusion = check.objectType === "设备照片"
-    ? "仅为设备或称重照片，不能判断矿体或矿化带，请补充矿石/河道/现场近景。"
-    : "对象识别冲突，请补充近景。";
-  const conflictRisk = check.objectType === "设备照片"
-    ? "1. 设备或称重照片只能说明拍摄对象/使用场景，不能直接判断矿体、矿化带或金块形态。\n2. 继续按矿体或矿物判断会造成误判。"
-    : "1. 远景、河道、卫星图或地图截图不能直接判断金块形态。\n2. 继续按金块判断会造成误判。";
-
-  const protectedText = source
-    .replace(/【对象类型】[\s\S]*?(?=\n\n【场景分类】|【场景分类】)/, `【对象类型】\n${check.objectType}`)
-    .replace(/【场景分类】[\s\S]*?(?=\n\n【结论】|【结论】)/, `【场景分类】\n${check.objectType}：对象类型与原场景判断冲突。`)
-    .replace(/【结论】[\s\S]*?(?=\n\n【等级】|【等级】)/, `【结论】\n${conflictConclusion}`)
-    .replace(/【等级】[\s\S]*?(?=\n\n【判读可信度】|【判读可信度】)/, "【等级】\nD 对象类型冲突，暂不判断。")
-    .replace(/【判读可信度】[\s\S]*?(?=\n\n【潜力评分】|【潜力评分】)/, "【判读可信度】\n低")
-    .replace(/【潜力评分】[\s\S]*?(?=\n\n【关键依据】|【关键依据】)/, "【潜力评分】\n0分")
-    .replace(/【关键依据】[\s\S]*?(?=\n\n【主要风险】|【主要风险】)/, `【关键依据】\n1. Stage 0 对象识别为${check.objectType}。\n2. 场景分类输出为${check.sceneType}，存在对象类型冲突。\n3. 当前图片不适合作为金块或矿物近景判断。`)
-    .replace(/【主要风险】[\s\S]*?(?=\n\n【下一步】|【下一步】)/, `【主要风险】\n${conflictRisk}`)
-    .replace(/【下一步】[\s\S]*?(?=\n\n【一句话总结】|【一句话总结】)/, "【下一步】\n1. 补充目标物近景照片。\n2. 同时补充现场环境图用于位置判断。")
-    .replace(/【一句话总结】[\s\S]*$/, "【一句话总结】\n对象识别冲突，请补充近景。");
-
-  return { text: protectedText, check };
-}
-
-function protectNaturalGoldJudgeOutput(text) {
-  const source = String(text || "");
-  const sceneSection = source.match(/【场景分类】\s*([\s\S]*?)(?=\n【|\n\n【|$)/)?.[1] || "";
-  const explicitNaturalGoldScene = /自然金块|砂金金块|河道采挖自然金/i.test(sceneSection);
-  const explicitArtificialSmeltScene = /人工熔炼金属|熔炼金豆|熔炼块/i.test(sceneSection);
-  // Stable judge rule: natural gold and smelted metal must be tuned together.
-  // Any future change must regress both natural nugget samples and smelted gold-bean samples.
-  const artificialCueText = source
-    .replace(/(?:无|没有|未见|不具备|不符合|缺少|并非)[^。\n；;]*(?:熔炼|熔融|圆饼|半球|滴状|圆滑|凝固|气孔|皱褶|流痕|倒模|模具|熔滴)[^。\n；;]*/g, "");
-  const smeltShapeCue = /圆饼|圆豆|半球|滴状|圆形金块|圆块|块状凝固体/i.test(artificialCueText);
-  const smeltEdgeCue = /圆滑.*(?:边|边缘|圆边|凝固边)|整体圆滑|边缘.*圆滑|圆润.*边|液态金属冷却/i.test(artificialCueText);
-  const smeltSurfaceCue = /蜂窝状气孔|蜂窝|气孔|冷却皱褶|熔融皱褶|凝固纹|熔融流动|熔炼纹理|流痕|凹坑/i.test(artificialCueText);
-  const smeltFlatCue = /扁平面|平整冷却面|底面.*平|边缘.*平整/i.test(artificialCueText);
-  const smeltBatchCue = /多个[^。\n；;]*(?:形态|外形)[^。\n；;]*(?:相似|接近)|同一批熔炼|分块/i.test(artificialCueText);
-  const handDisplayCue = /手掌|手心|掌心|手上|手里|手持/i.test(artificialCueText);
-  const artificialCueScore = [smeltShapeCue, smeltEdgeCue, smeltSurfaceCue].filter(Boolean).length;
-  const forceArtificialSmeltCue = artificialCueScore >= 2 || (handDisplayCue && [smeltShapeCue, smeltEdgeCue, smeltSurfaceCue, smeltFlatCue, smeltBatchCue].filter(Boolean).length >= 2);
-  const strongArtificialSmeltCue = explicitArtificialSmeltScene || forceArtificialSmeltCue || (
-    !explicitNaturalGoldScene
-    && /圆饼|半球|滴状|圆滑.*边|整体圆滑|扁平面|蜂窝状气孔|冷却皱褶|熔融流动|熔炼纹理|铸块|鑄塊|倒模|模具|金条|熔滴|液态金属/i.test(artificialCueText)
-  );
-
-  if (strongArtificialSmeltCue) {
-    return source
-      .replace(/【场景分类】[\s\S]*?(?=\n\n【结论】|【结论】)/, "【场景分类】\n人工熔炼金属：外观更接近熔炼后形成的金属块，需检测确认。")
-      .replace(/【下一步】[\s\S]*?(?=\n\n【一句话总结】|【一句话总结】)/, "【下一步】\n1. 做吊水密度测试，先检测密度。\n2. 做XRF光谱或火试金，检测成分和纯度。")
-      .replace(/自然金块|砂金金块|河道采挖自然金/g, "人工熔炼金属")
-      .replace(/外观具备自然金块特征/g, "外观更接近熔炼后形成的金属块")
-      .replace(/金豆\/熔炼物/g, "人工熔炼金属")
-      .replace(/确认[^。\n；;]*(?:黄金|纯金|高密度金属|密度标准)/g, "检测成分和纯度")
-      .replace(/是否为(?:黄金|纯金|高密度金属)/g, "检测成分和纯度")
-      .replace(/确定[^。\n；;]*(?:黄金|纯金|纯黄金)/g, "检测成分和纯度")
-      .replace(/确认纯度/g, "检测纯度")
-      .replace(/确认是否符合黄金密度标准/g, "检测密度并结合成分校核")
-      .replace(/确认密度是否符合黄金标准/g, "检测密度并结合成分校核")
-      .replace(/外观还不够硬/g, "外观只能作为形态参考");
-  }
-
-  const naturalGoldCue = /自然金|砂金|河道采挖|淘金|冲积|沖積|电子秤|称重|金粒|金豆状|不规则金块|大小不一|自然颗粒|自然磨圆|泥土残留|氧化残留|凹凸|孔洞/i.test(source);
-
-  if (!naturalGoldCue) {
-    return source;
-  }
-
-  const scene = /河道|砂金|冲积|沖積|淘金/i.test(source) ? "砂金金块" : "自然金块";
-  return source
-    .replace(/【场景分类】[\s\S]*?(?=\n\n【结论】|【结论】)/, `【场景分类】\n${scene}：外观具备自然金块形态特征，仍需检测确认。`)
-    .replace(/金豆\/熔炼物/g, scene)
-    .replace(/熔炼金属/g, "自然金块")
-    .replace(/已提炼金属/g, "自然金块")
-    .replace(/确认[^。\n；;]*(?:黄金|纯金|高密度金属|密度标准)/g, "检测成分和纯度")
-    .replace(/是否为(?:黄金|纯金|高密度金属)/g, "检测成分和纯度")
-    .replace(/确定[^。\n；;]*(?:黄金|纯金|纯黄金)/g, "检测成分和纯度")
-    .replace(/确认纯度/g, "检测纯度")
-    .replace(/确认是否符合黄金密度标准/g, "检测密度并结合成分校核")
-    .replace(/确认密度是否符合黄金标准/g, "检测密度并结合成分校核")
-    .replace(/外观还不够硬/g, "外观只能作为形态参考");
 }
 
 function stripMarkdownCodeBlock(content) {
@@ -13682,121 +13457,23 @@ B 可以观察
         url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`
       }
     }));
-    const prompt = `你是“砂金快判”风格的现场快判助手。任何实质矿业分析之前，必须先判断图片能否可靠判读。
-
+    const prompt = `你是图片外观初筛助手。先判断图片能否看清目标，再描述可见证据；不判断矿业价值。
 【可判读性合同：必须首先输出】
-第一段只能是：
-【可判读性】
-JUDGEABLE
-或
-【可判读性】
-FAILED
-
-第二段只能是：
-【可判读性原因】
-JUDGEABLE
-或以下固定失败码之一：ANNOTATION_OCCLUDED / UI_OCCLUDED / CLOUD_OBSCURED / TARGET_OCCLUDED / RESOLUTION_TOO_LOW / TARGET_NOT_IDENTIFIABLE / INSUFFICIENT_SPATIAL_CONTEXT。
-
-若目标区被不透明 Polygon、填充面、批注、标注、菜单、弹窗、图例、云层或其他内容遮挡，或分辨率、目标身份、周边空间语境不足，必须输出 FAILED 和对应失败码，并立即停止；不得继续输出矿业类型、采坑、河道、扰动、Score、Grade、Confidence 或投入建议。
-只有目标和支撑结论所需的视觉证据均清晰可见时，才可输出 JUDGEABLE / JUDGEABLE，并继续以下 Stage 0 和10段结果。
-
-Stage 0 必须先做【对象类型】识别，再做【场景分类】，最后选择对应判读模式；不要把所有图片都套进原矿石逻辑。
-
-场景分类只能选一个：原矿石 / 矿化岩石 / 河道沉积 / 卫星图 / 老鼠洞 / 自然金块 / 砂金金块 / 人工熔炼金属 / 其他。
-
-【Stage 0 对象类型识别：必须先执行】
-对象类型只能选一个：金属块 / 矿石 / 河道 / 卫星图 / 地表环境 / 人工熔炼物 / 地图截图 / 设备照片 / 其它。
-先判断图片主体是什么，不要先判断有没有金。
-如果对象类型=河道：禁止输出自然金块、砂金金块、熔炼金属；只能按河道沉积或地貌环境判断。
-如果对象类型=卫星图：禁止输出金块、熔炼物；只能按卫星图/地貌/人工扰动判断。
-如果对象类型=地图截图：禁止输出矿物判断；只能说明这是地图/坐标/地貌参考图。
-如果对象类型与场景分类冲突，必须降级为D，可信度写低，结论写：对象识别冲突，请补充近景。
-
-【原矿石、矿化岩石模式：极度保守】
-任务不是寻找黄金，而是优先排除误判。大多数矿石/样本图默认按C或D处理；不要因为金黄色、金属反光、大面积发亮就提高评分。
-强力扣分特征：大面积整体金属反光、整面一起亮、片状反光、云母感、黄铁矿感、金属膜感、镜面反光、无裂隙控制、无石英脉、无局部赋存关系。只要主要依据只是“颜色像黄金/很亮/金属光泽”，通常给D，最多C。
-允许提高等级的证据只包括：明确裂隙控制、石英脉关系明确、局部集中赋存、有氧化带、有结构边界、有明显矿化关系。没有这些结构证据，不要说“值得继续”。
-
-【自然金块 / 熔炼金属判断顺序】
-第一优先级永远是人工熔炼特征。如果符合“圆饼/圆豆/半球/滴状外形 + 圆滑凝固边 + 熔融表面”三类里的任意两类，必须直接判为“人工熔炼金属 / 熔炼金豆”，不能判为自然金块。
-人工熔炼优先特征：形态接近圆饼、圆豆、半球、滴状、块状凝固体；边缘整体圆滑，有液态金属凝固后的圆边；表面有熔融冷却后的皱褶、蜂窝状气孔、凹坑、流痕、凝固纹；底部或局部呈扁平面，像倒在平面上冷却形成；多个金块形态相似，像同一批熔炼出来；图片场景是手掌展示，而不是河道、溜槽、淘洗盘、矿区采挖现场；缺少天然砂金常见的冲刷磨圆、石英/黑砂/泥土附着、自然裂隙和不规则边界。
-出现这些特征时，场景分类优先写“人工熔炼金属”或“熔炼金豆”，结论写：外观更接近熔炼后形成的金属块，不宜直接当自然金块判断。
-典型熔炼金豆例子：手掌上两块黄色金属，形态像圆饼/半球/圆豆，边缘整体圆滑，表面有蜂窝状凹坑、冷却皱褶或凝固面，即使背景在户外，也必须归为人工熔炼金属 / 熔炼金豆。关键词标签应包含：熔炼外观、圆滑凝固边、疑似人工金属块、需检测确认。
-
-第二优先级才是自然金块。只有不具备明显熔炼特征，并且同时具备明显不规则天然边界、边缘不是整体圆滑凝固边、表面有自然磨蚀/冲刷/凹凸结构，可能有泥土/氧化物/黑砂/石英残留，并且处在河道采挖、砂金清洗、溜槽、淘洗盘、矿区现场语境中，才优先归为“自然金块”或“砂金金块”。
-自然金块必须使用类似表达：疑似自然金块 / 河道采挖自然金，外观具备自然金形态特征，但纯度仍需通过密度、XRF或火试金确认。
-电子秤上的多块大小不一、不规则、长片状或颗粒状金属，即使表面较干净、缺少泥土/黑砂残留，只要没有整体圆饼/半球/滴状凝固边和熔融流痕，也不要归人工熔炼金属，应归自然金块或砂金金块。
-
-第三优先级是无法判断。如果两边特征都有，输出“疑似金属块，需检测确认”，不要强判自然金块。
-
-【人工熔炼金属模式】
-不要再用石英脉、裂隙、结构控制来扣分；这些只适用于原矿石。
-人工熔炼金属只看：熔融边缘、延展感、捶打感、非晶体感、金属密实感、熔炼纹理、表面流动痕、颜色均匀度、夹杂物、气孔、是否像黄铜/铜合金/镀层。
-成品金也要保守：图片只能判断外观特征，不能证明纯度；但不能因为“缺少石英脉”直接判D。
-
-【自然金块禁用表达】
-当图片更像河道自然金、砂金金粒、自然金块时，禁止输出“熔炼金属”“金豆/熔炼物”“外观还不够硬”。不要把自然磨圆的不规则金块说成熔炼物。
-当图片更像圆滑熔炼块、熔炼金豆，尤其是手掌展示的圆饼状/半球状金属块时，禁止输出“自然金块”“砂金金块”“河道采挖”“自然金形态”。不要仅凭颜色判断为自然金。
-
-【河道沉积、卫星图、老鼠洞模式】
-重点看沉积空间、弯道、收窄、汇流、阶地、老河道、开挖痕迹、坡脚/沟谷位置；不要套用矿石反光规则。
-
-【卫星图 / 奥维截图 / Google Earth / 地貌俯视图：人工扰动优先】
-如果场景分类为卫星图、奥维地图、Google Earth、地图截图、遥感图或地貌俯视图，必须先检查人工扰动和采矿痕迹，不能只说“缺少地面证据”。
-重点识别：密集小坑、椭圆形/圆形坑洞、蜂窝状凹坑群、连续浅坑带、局部裸土斑块、山坡不规则浅色扰动区、老矿洞、手工采坑、试挖点、顺坡小坑群、沿沟谷/坡脚/山脊边缘分布的扰动点、采挖道路、便道、矿区临时路。
-必须说明位置关系：扰动是否位于坡脚、沟谷、古水道边、山体转折处；是否沿线性结构分布；是否与浅色裸露带、氧化带、疑似石英脉露头重合；是否存在上游/下游连续开采痕迹。
-如果看到明显人工扰动，要明确写出：可见人工扰动 / 疑似采坑 / 疑似老矿洞 / 疑似手工采挖痕迹，并说明分布方式：点状、带状、片状、沿沟谷、沿坡面、沿道路。
-判断意义：人工扰动说明该位置曾被关注或开采过，这是卫星图里的重要证据；但不等于一定有稳定品位，仍需地面照片、露头、矿洞位置和试挖结果验证。
-等级规则：卫星图中出现明显密集采坑、老矿洞、人工扰动带时，最低不得直接判D。零散扰动给C或C+；扰动密集且沿沟谷、坡脚或线性结构连续分布，可给B-或B。没有扰动或只是地貌颜色，才可按证据不足降到D。
-卫星图输出禁止忽略明显采坑/矿洞/人工扰动；保守不是忽略明显证据。
-
-等级倾向：D=默认排除或证据不成立；C=可观察但不建议投入太多；B=有明确线索但需要验证；A=极少出现，必须有强证据。
-
-语气要求：不要鼓励式AI；不要轻易说“值得继续”；结论要像人工快判，直接、保守、可执行。不预测含量/储量/金点；不要默认怀疑AI图；少用“可能、疑似、信息不足”，除非确实看不清。
-
-快判文案风格：顶部卡片会只取“人话判断”，所以【结论】和【一句话总结】必须短、狠、像人在现场下判断。不要写论文式长句，不要写百科说明。专业解释只放在【关键依据】【主要风险】里。可参考这些口吻：
-D级：这种误判太常见。/ 先排除，别急着投入。/ 亮得太均匀，风险很高。/ 只有颜色，没有结构。
-C级：有点像，但还不够。/ 能继续观察，但别太上头。/ 目前证据还偏弱。
-B级：开始有点意思了。/ 至少不像典型误判。/ 可以继续补结构。
-A级：这个值得认真看。/ 已经不像普通误判。/ 可以继续验证。
-不要每次固定同一句，要根据图片内容和等级换一种短句表达。
-
-只输出下面10段，不要长篇解释：
-
-【对象类型】
-只写一个对象类型，并用一句话说明主体是什么。
-
-【场景分类】
-只写分类名，并用一句话说明为什么归为该类。
-
-【结论】
-1句话，必须明确判断。控制在16个字以内，像快判口吻，不要写长分析，不要出现“结构证据、赋存关系、弱线索”等专业词。原矿石偏误判排除；自然金块/砂金金块写外观具备自然金块特征但需检测确认；人工熔炼金属按人工熔炼外观判断，不套石英脉/裂隙标准。
-
-【等级】
-A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可观察但不成立；D=默认排除或暂不投入。
-
-【判读可信度】
-高 / 中 / 低。它表示“本次图片是否足够支撑判断”，不是好坏程度。清晰、主体明确、依据充分=高；可判断但缺少尺度/角度/环境=中；模糊、无关、信息不足=低。
-
-【潜力评分】
-0-100分。它表示“是否值得继续投入时间”。D通常0-34，C通常35-59，B通常60-79，A通常82-96。原矿石若只有金黄色/金属反光/整体发亮且无裂隙、石英脉、局部赋存关系，给10-30分；自然金块/砂金金块按自然形态、清晰度、称重/采挖语境评分，通常C或B；人工熔炼金属按熔炼与金属外观证据评分，不因缺少矿石结构扣分；不要固定模板分。
-
-【关键依据】
-1.
-2.
-3.
-每条一句，必须符合场景分类。原矿石写误判排除点和结构证据；自然金块/砂金金块写不规则形态、自然磨圆、凹凸孔洞、泥土/氧化残留、称重或河道采挖语境；人工熔炼金属写熔融边缘、延展感、密实感、纹理或夹杂；不写“需要专业鉴定”。
-
-【主要风险】
-1.
-2.
-每条一句，必须贴合场景。原矿石点出云母/黄铁矿/金属膜/镜面反光/缺少结构关系；自然金块/砂金金块点出图片只能判断形态、不能确认纯度、需排除黄铜/镀层/低成色金属；人工熔炼金属点出黄铜/铜合金/镀层/夹杂/无法判断纯度等风险。
-
-【下一步】
-给2条具体动作。自然金块/砂金金块优先写吊水密度测试、XRF光谱、火试金；人工熔炼金属也写吊水密度测试、XRF光谱、火试金。只能写检测密度、成分和纯度，不要写“确认是否为黄金”“确认是否为纯金”“确认密度是否符合黄金标准”这类照片外观导向确认的表述。原矿石可写敲开看断面、加比例物拍照、补拍原地环境或河道上下游图。
-
-【一句话总结】
-用一句人话告诉用户：这张图现在是否值得继续投入时间；默认偏保守。控制在20个字以内，避免论文腔。`;
+第一段【可判读性】只能写 JUDGEABLE 或 FAILED。
+第二段【可判读性原因】只能写 JUDGEABLE 或以下失败码之一：
+ANNOTATION_OCCLUDED / UI_OCCLUDED / CLOUD_OBSCURED / TARGET_OCCLUDED / RESOLUTION_TOO_LOW / TARGET_NOT_IDENTIFIABLE / INSUFFICIENT_SPATIAL_CONTEXT。
+目标被不透明 Polygon、填充、批注、菜单、云层等遮挡，或分辨率、目标身份、必要空间语境不足，输出 FAILED 和失败码后立即停止。不得继续输出矿业类型、采坑、河道、扰动、Score、Grade、Confidence 或投入建议。
+JUDGEABLE 仅表示可描述外观，不表示能确认矿物、含金性或矿业价值。
+Stage 0 必须先做【对象类型】识别，再做【场景分类】。两个字段各只写一个分类名，不在字段内附解释。
+对象类型：金属块 / 矿石 / 河道 / 卫星图 / 地表环境 / 人工熔炼物 / 地图截图 / 设备照片 / 其它。
+场景分类：原矿石 / 矿化岩石 / 河道沉积 / 卫星图 / 老鼠洞 / 自然金块 / 砂金金块 / 人工熔炼金属 / 其他。
+这些是待核对的外观分类，不是成分认定；不能确认就写其它/其他。不从背景提及或否定词推断主体类别。
+再按顺序输出以下四段，每段最多两条短句，总输出保持简短：
+【图像可判读性】只描述清晰、遮挡、尺度/环境是否具备，不输出高/中/低可信度。
+【可见特征】只写直接可见的颜色、形态、纹理、相对位置；保留“未见”“无法判断”等否定和限制。不得把外观直接等同矿物成分、热液成因或含金证据。
+【证据限制】说明照片不能支持的判断和缺少的信息。不能以照片清晰替代证据充分。
+【补证动作】针对缺口给具体补拍/检测动作，不给投入、开采或经济价值建议。
+不得输出等级、潜力分、可信度分、投资判断或鼓励话术；缺信息就明确未确定，不补造事实。`;
 
     const aliyunStartedAt = Date.now();
     console.log("AI判读调用阿里云开始：", {
@@ -13873,7 +13550,7 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       });
       return res.status(judgeabilityGate.statusCode).json(judgeabilityGate.payload);
     }
-    const normalizedOutput = normalizeJudgeOutput(rawOutput);
+    const normalizedOutput = normalizeJudgeOutput(rawOutput, { finishReason: response?.choices?.[0]?.finish_reason || "" });
     const objectConsistency = checkJudgeObjectTypeConsistency(normalizedOutput);
     console.log("AI判读对象一致性检查：", {
       ObjectType: objectConsistency.objectType,

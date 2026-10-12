@@ -320,7 +320,7 @@ function miningRecoveryRuntime(options = {}) {
     recoverySection(recoveryServer, "function extractProviderMessageText(", "function buildProviderMessageDiagnostic("),
     recoverySection(recoveryServer, "function getAliyunChatCompletionsUrl(", "async function callAliyunProductionLayoutQualificationProbe("),
     recoverySection(recoveryServer, "async function callAliyunVision(", "function getHandwrittenDmsTranscriptionPrompt("),
-    recoverySection(recoveryServer, "function normalizeJudgeOutput(", 'app.get("/api/config"'),
+    recoverySection(recoveryServer, "// Mining evidence presentation only:", 'app.get("/api/config"'),
     recoverySection(recoveryServer, 'app.post("/api/analyze-mining-image"', 'app.post("/api/regression/parse-coordinate-text"')
   ].join("\n"), context);
   return {
@@ -341,7 +341,7 @@ test("mining recovery: real route uses dedicated model once and settles once", a
   const result = await runtime.run();
   assert.equal(result.statusCode, 200);
   assert.equal(result.body.success, true);
-  assert.match(result.body.result, /仅作外观初筛/);
+  assert.match(result.body.result, /外观描述，待核对|结果不完整，待核对/);
   assert.equal(runtime.calls.fetch, 1);
   assert.equal(runtime.calls.charge, 1);
   assert.equal(runtime.calls.caseWrite, 1);
@@ -483,5 +483,192 @@ test("mining recovery: actual browser entry never retries failure and renders fi
     assert.equal(seen.history, 0);
     assert.ok(seen.messages.some(message => /请勿重复上传/.test(message)));
     assert.equal(JSON.stringify(seen).includes("PRIVATE_SYNTHETIC_MARKER"), false);
+  }
+});
+
+
+// Incremental quality acceptance. These are the THREE EXISTING PROCESSED records,
+// not raw Provider responses, new photos, new calls, or mineral ground truth.
+// No server startup, network, database, or persistent browser writes are allowed.
+const miningQualityCases = [
+  {
+    "caseId": "78ac3123-dbde-4ccf-9973-cb263cbd5bf6",
+    "uploadSha256": "0d4c95e8bfb863d4953437dad6fc64c95bce641757060da807d1b02d445c686c",
+    "oldGrade": "B",
+    "oldScore": 65,
+    "text": "【对象类型】\n矿石。图片主体为一块手持的岩石样本，表面可见明显的矿物结晶和氧化痕迹。\n\n【场景分类】\n矿化岩石。岩石表面有灰白色脉状物质穿插在褐黄色基岩中，符合矿化蚀变特征。\n\n【结论】\n石英脉穿插明显，值得敲开看。\n\n【等级】\nB。有明确的脉石结构和蚀变现象，具备找矿线索，但未见肉眼金。\n\n【判读可信度】\n高。样本清晰，结构关系明确，背景无干扰。\n\n【潜力评分】\n65分。属于典型的硅化/铁染构造，是常见的载金围岩环境，有一定观察价值。\n\n【关键依据】\n1. 灰白色条带（疑似石英或方解石）呈网状充填裂隙，说明有过热液活动。\n2. 基岩呈现明显的褐铁矿化（黄褐色），这是硫化物氧化的典型特征。\n3. 整体结构松散，断口粗糙，非单一金属块，符合野外采掘的原生矿石特征。\n\n【主要风险】\n1. 这种“铁帽”和石英脉虽然常见于金矿，但也大量存在于无经济价值的普通硅化带。\n2. 目前仅看到构造，未见到具体的金属硫化物（如黄铁矿、毒砂等），需警惕只是普通的废石。\n\n【下一步】\n1. 敲开样本拍断面。\n2. 补拍带比例物的清晰近景和原地环境。\n\n【一句话总结】\n先按误判图处理，补到结构证据后再看。"
+  },
+  {
+    "caseId": "aa557ac8-3b31-4392-87d7-b215769f9718",
+    "uploadSha256": "abac27f12f45d9aa0b56e304086ccf84c899a450b1f9fe7d3762c5a05e5671d8",
+    "oldGrade": "C",
+    "oldScore": 45,
+    "text": "【对象类型】\n矿石。主体是一块被手持的、带有明显氧化铁染色的白色脉石矿物标本。\n\n【场景分类】\n自然金块：外观具备自然金块形态特征，仍需检测确认。\n\n【结论】\n有石英和褐铁矿，未见金。\n\n【等级】\nC。具备典型的蚀变围岩特征（石英+褐铁矿），是常见的找矿指示物，但肉眼未见自然金颗粒。\n\n【判读可信度】\n高。图片清晰度高，对焦准确，能清楚分辨矿物结构和表面纹理。\n\n【潜力评分】\n45分。属于正常的矿化线索，值得留意但不能直接作为见金依据。\n\n【关键依据】\n1. 基质主要为乳白色石英，具有油脂光泽或玻璃光泽。\n2. 表面覆盖大量红褐色/黄褐色物质，为典型的褐铁矿化（铁帽）现象。\n3. 整体形态呈不规则棱角状，断口粗糙，无金属延展性或熔炼痕迹。\n\n【主要风险】\n1. 容易将表面的黄褐色氧化铁误认为是黄金。\n2. 仅凭外观无法排除内部包裹极细小微粒金的可能，但也可能完全无金。\n\n【下一步】\n1. 敲开石头观察新鲜断面，看是否有裂隙控制的金线或硫化物。\n2. 使用放大镜仔细检查石英与褐铁矿交界处是否有片状或粒状金属反光。\n\n【一句话总结】\n典型铁染石英，看着像那么回事，但没"
+  },
+  {
+    "caseId": "c1bff339-6077-4db6-af31-e4dbcb18f889",
+    "uploadSha256": "0d4c95e8bfb863d4953437dad6fc64c95bce641757060da807d1b02d445c686c",
+    "oldGrade": "C",
+    "oldScore": 45,
+    "text": "【对象类型】\n矿石。图片主体为一块手持的岩石样本，表面可见明显的矿物脉体与围岩结构。\n\n【场景分类】\n矿化岩石。岩石表面有清晰的浅色细脉（疑似石英或碳酸盐脉）穿插在褐黄色风化基岩中，属于典型的野外露头/采坑取样特征。\n\n【结论】\n有脉体穿插，但未见明显金点。\n\n【等级】\nC。具备一定构造特征（细脉），可作为找矿线索观察，但缺乏直接的高价值金属赋存证据。\n\n【判读可信度】\n高。目标清晰，纹理、裂隙及颜色对比度高，足以支撑初步地质判断。\n\n【潜力评分】\n45分。有脉不代表有金，目前仅能看出是含脉体的硅化/铁染岩石，需进一步验证。\n\n【关键依据】\n1. 存在明确的浅色细脉穿插于褐黄色基岩中，说明该处经历过热液活动或构造破碎充填。\n2. 岩石整体呈现强烈的褐铁矿化（铁染）特征，这是硫化物氧化后的常见现象。\n3. 脉体较细且未见到明显的“大肚子”膨胀段，也未见肉眼可见的金属硫化物（如黄铁矿颗粒）。\n\n【主要风险】\n1. 常见的误判：将普通的石英细脉或方解石脉当成含金脉体。\n2. 强铁染可能掩盖了内部真实的矿物成分，导致漏看细微的硫化物共生关系。\n\n【下一步】\n1. 敲开样本拍断面。\n2. 补拍带比例物的清晰近景和原地环境。\n\n【一句话总结】\n先按误判图处理，补到结构证据后再看。"
+  }
+];
+
+function miningQualityContext() {
+  const effects = { network: 0, historyWrites: 0 };
+  const stored = new Map();
+  const stopNetwork = () => { effects.network++; throw new Error("OFFLINE_QUALITY_NETWORK_FORBIDDEN"); };
+  const escape = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const context = vm.createContext({
+    console: { log() {}, warn() {}, error() {} },
+    fetch: stopNetwork, XMLHttpRequest: stopNetwork, WebSocket: stopNetwork,
+    escapeHtml: escape, judgeResult: { value: "", innerHTML: "" },
+    judgeDecisionCard: { hidden: true, innerHTML: "", className: "" },
+    judgeRecentPanel: { hidden: true }, judgeRecentList: { innerHTML: "" },
+    judgeRecentBest: { textContent: "", classList: { remove() {} } },
+    currentJudgeImageDataUrl: "", judgeImagePreview: null,
+    JUDGE_HISTORY_KEY: "offline-existing-texts",
+    localStorage: {
+      getItem: key => stored.get(key) || null,
+      setItem: (key, value) => { effects.historyWrites++; stored.set(key, value); },
+      removeItem: key => { effects.historyWrites++; stored.delete(key); }
+    },
+    clearJudgeDecisionCard() {}, showJudgeMessage() {}
+  });
+  const sharedStart = "// Mining evidence presentation only:";
+  vm.runInContext([
+    recoverySection(recoveryHtml, sharedStart, "    function getJudgeRecentItems("),
+    recoverySection(recoveryHtml, "    function getJudgeRecentItems(", "    function removeJudgeRecentByCurrentImage("),
+    recoverySection(recoveryHtml, "    function escapeJudgeDetailHtml(", "    function handleJudgeabilityFailure("),
+    recoverySection(recoveryHtml, "    function buildJudgeCopyText(", "    function copyJudgeResult(")
+  ].join("\n"), context);
+  const backend = vm.createContext({ fetch: stopNetwork });
+  vm.runInContext([
+    recoverySection(recoveryServer, sharedStart, "function stripMarkdownCodeBlock("),
+    recoverySection(recoveryServer, "function extractJudgeCaseGrade(", "function hashJudgeCaseImage(")
+  ].join("\n"), backend);
+  return { context, backend, effects, stored };
+}
+
+const qualityForbidden = /【(?:等级|潜力评分|判读可信度|一句话总结|结论)】|(?:45|65)分|等级\s*[BCD]|可信度\s*(?:<[^>]+>)*高|开始有点意思|风险偏高别重投入|老采坑环境|黄铁矿感|当前最高|新高！/;
+
+test("mining quality: only the three historical processed texts are replayed", () => {
+  assert.equal(miningQualityCases.length, 3);
+  assert.equal(miningQualityCases[0].uploadSha256, miningQualityCases[2].uploadSha256);
+  assert.notEqual(miningQualityCases[0].uploadSha256, miningQualityCases[1].uploadSha256);
+  assert.match(miningQualityCases[0].text, /65分/);
+  assert.match(miningQualityCases[1].text, /自然金块/);
+  assert.match(miningQualityCases[2].text, /采坑取样/);
+  const { backend, effects } = miningQualityContext();
+  for (const fixture of miningQualityCases) {
+    const result = backend.normalizeJudgeOutput(fixture.text);
+    assert.doesNotMatch(result, qualityForbidden);
+    assert.match(result, /模型原文未取得/);
+    assert.match(result, /单张照片不能确认矿物成分/);
+    const view = backend.buildMiningEvidenceView(result);
+    assert.equal(view.objectType, "矿石");
+    assert.equal(backend.extractJudgeCaseGrade(result), null);
+    assert.deepEqual(Array.from(backend.extractJudgeCaseKeywords(result)), []);
+    assert.equal(backend.extractJudgeCaseImageType(result), "矿石");
+    assert.equal(backend.extractJudgeCaseSuggestedNextImage(result), backend.buildMiningEvidenceView(result).actions[0]);
+    assert.equal(backend.normalizeJudgeOutput(result), result, "format must be idempotent");
+  }
+  assert.equal(effects.network, 0);
+});
+
+test("mining quality: backend and frontend use the identical evidence parser", () => {
+  const from = "// Mining evidence presentation only:";
+  assert.equal(
+    recoverySection(recoveryServer, from, "function normalizeJudgeOutput(").trim(),
+    recoverySection(recoveryHtml, from, "function cleanupJudgeHistoryStorage(").trim()
+  );
+  const { context, backend, effects } = miningQualityContext();
+  for (const fixture of miningQualityCases) {
+    assert.equal(JSON.stringify(context.buildMiningEvidenceView(fixture.text)), JSON.stringify(backend.buildMiningEvidenceView(fixture.text)));
+    assert.equal(context.formatMiningEvidenceView(context.buildMiningEvidenceView(fixture.text)), backend.normalizeJudgeOutput(fixture.text));
+  }
+  assert.equal(effects.network, 0);
+});
+
+test("mining quality: explicit rock classification survives context and negation", () => {
+  const { context, backend, effects } = miningQualityContext();
+  for (const fixture of [miningQualityCases[0], miningQualityCases[2]]) {
+    const view = context.buildMiningEvidenceView(fixture.text);
+    assert.equal(view.objectType, "矿石");
+    assert.equal(view.sceneType, "矿化岩石");
+    assert.equal(view.conflict, false);
+    context.renderJudgeDecisionCard(fixture.text);
+    assert.match(context.judgeDecisionCard.innerHTML, /矿石 · 矿化岩石/);
+    assert.doesNotMatch(context.judgeDecisionCard.innerHTML, /老采坑环境|黄铁矿感/);
+    assert.equal(backend.checkJudgeObjectTypeConsistency(backend.normalizeJudgeOutput(fixture.text)).forcedDowngrade, false);
+  }
+  assert.match(context.buildMiningEvidenceView(miningQualityCases[2].text).features.join("\n"), /也未见肉眼可见的金属硫化物/);
+  assert.equal(effects.network, 0);
+});
+
+test("mining quality: conflicting and incomplete second result is not repaired into a claim", () => {
+  const { context, backend, effects } = miningQualityContext();
+  const fixture = miningQualityCases[1];
+  const view = backend.buildMiningEvidenceView(fixture.text);
+  assert.equal(view.conflict, true);
+  assert.equal(view.objectType, "矿石");
+  assert.equal(view.sceneType, "自然金块", "retain the recorded conflicting field instead of guessing a replacement");
+  assert.match(view.issues.join("\n"), /尾句可能不完整/);
+  const result = backend.normalizeJudgeOutput(fixture.text);
+  const check = backend.checkJudgeObjectTypeConsistency(result);
+  assert.equal(check.consistencyCheck, "conflict");
+  assert.equal(check.forcedDowngrade, false);
+  context.renderJudgeDecisionCard(result);
+  assert.match(context.judgeDecisionCard.innerHTML, /分类待核对/);
+  assert.match(context.judgeDecisionCard.innerHTML, /无金属延展性或熔炼痕迹/);
+  assert.doesNotMatch(context.judgeDecisionCard.innerHTML, qualityForbidden);
+  assert.equal(effects.network, 0);
+});
+
+test("mining quality: card detail copy recent restore and save cannot reintroduce scoring", () => {
+  const { context, backend, effects, stored } = miningQualityContext();
+  const history = miningQualityCases.map((item, i) => ({ id: item.caseId, result: item.text, grade: item.oldGrade, score: item.oldScore, time: 1791802934000 + i * 60000 }));
+  stored.set("offline-existing-texts", JSON.stringify(history));
+  context.cleanupJudgeHistoryStorage();
+  assert.equal(effects.historyWrites, 0, "do not erase original history during cleanup");
+  for (let i = 0; i < miningQualityCases.length; i++) {
+    const fixture = miningQualityCases[i];
+    for (const text of [fixture.text, backend.normalizeJudgeOutput(fixture.text)]) {
+      context.judgeResult.value = text;
+      context.renderJudgeDecisionCard(text);
+      context.renderJudgeDetail(text);
+      context.renderJudgeRecent();
+      const surfaces = [context.judgeDecisionCard.innerHTML, context.judgeResult.innerHTML, context.judgeRecentList.innerHTML, context.buildJudgeCopyText()];
+      for (const surface of surfaces) {
+        assert.doesNotMatch(surface, qualityForbidden);
+        assert.doesNotMatch(surface, /值得继续投入|有点意思可以再看/);
+      }
+      assert.match(context.judgeResult.innerHTML, /证据限制/);
+      assert.match(context.buildJudgeCopyText(), /【补证动作】/);
+    }
+    context.restoreJudgeRecent(i);
+    assert.doesNotMatch(context.judgeDecisionCard.innerHTML, qualityForbidden);
+  }
+  const before = stored.get("offline-existing-texts");
+  assert.equal(before, JSON.stringify(history), "presentation must not rewrite historical evidence");
+  context.saveJudgeResultToRecent(backend.normalizeJudgeOutput(miningQualityCases[0].text));
+  const saved = JSON.parse(stored.get("offline-existing-texts"))[0];
+  for (const field of ["grade", "score", "decisionText"]) assert.equal(field in saved, false);
+  assert.equal(effects.historyWrites, 1, "only simulated in-memory history persistence");
+  assert.equal(effects.network, 0);
+});
+
+test("mining quality: request wiring preserves model budget and makes no stronger quality claim", () => {
+  const start = recoveryServer.indexOf("    const prompt = `你是图片外观初筛助手");
+  assert.ok(start > 0);
+  const end = recoveryServer.indexOf("    const aliyunStartedAt", start);
+  const prompt = recoveryServer.slice(start, end);
+  assert.match(prompt, /不得输出等级、潜力分、可信度分、投资判断/);
+  assert.match(prompt, /JUDGEABLE 仅表示可描述外观/);
+  assert.match(recoveryServer, /finishReason: response\?\.choices\?\.\[0\]\?\.finish_reason/);
+  assert.match(recoveryServer.slice(end, end + 1400), /maxTokens: 360/);
+  assert.match(recoveryServer.slice(end, end + 1400), /temperature: 0\.3/);
+  for (const removed of ["function protectNaturalGoldJudgeOutput", "function extractJudgeScore", "FAST_JUDGE_COPY", "variationSeed", "pickFastJudgeCopy"]) {
+    assert.equal((recoveryServer + recoveryHtml).includes(removed), false, removed);
   }
 });
