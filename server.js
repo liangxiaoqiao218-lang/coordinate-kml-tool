@@ -11069,31 +11069,33 @@ function buildMiningEvidenceView(text, options = {}) {
     if (Object.prototype.hasOwnProperty.call(sections, name)) issues.push("重复字段：" + name);
     else sections[name] = match[2].trim();
   }
-  const legacy = !Object.prototype.hasOwnProperty.call(sections, "可见特征");
+  const legacy = !Object.prototype.hasOwnProperty.call(sections, "可见特征") && !Object.prototype.hasOwnProperty.call(sections, "可见事实");
   const exactType = (value, allowed) => {
     const first = String(value || "").split(/[。．:：\s]/)[0];
     return allowed.includes(first) ? first : "";
   };
   const objectType = exactType(sections["对象类型"], ["金属块", "矿石", "河道", "卫星图", "地表环境", "人工熔炼物", "地图截图", "设备照片", "其它"]);
-  const sceneType = exactType(sections["场景分类"], ["原矿石", "矿化岩石", "河道沉积", "卫星图", "老鼠洞", "自然金块", "砂金金块", "人工熔炼金属", "其他"]);
+  const sceneType = exactType(sections["场景分类"], ["原矿石", "矿化岩石", "河道沉积", "人工采坑", "河道施工", "普通地表", "卫星图", "老鼠洞", "自然金块", "砂金金块", "人工熔炼金属", "其他"]);
   if (!objectType) issues.push("对象类型缺失或不明确");
   if (!sceneType) issues.push("场景分类缺失或不明确");
   const allowedScenes = {
     "矿石": ["原矿石", "矿化岩石", "其他"],
     "金属块": ["自然金块", "砂金金块", "人工熔炼金属", "其他"],
     "人工熔炼物": ["人工熔炼金属", "其他"],
-    "河道": ["河道沉积", "其他"],
+    "河道": ["河道沉积", "人工采坑", "河道施工", "其他"],
     "卫星图": ["卫星图", "其他"],
     "地图截图": ["卫星图", "其他"],
-    "设备照片": ["其他"],
-    "地表环境": ["河道沉积", "老鼠洞", "其他"]
+    "设备照片": ["河道施工", "其他"],
+    "地表环境": ["河道沉积", "人工采坑", "河道施工", "普通地表", "老鼠洞", "其他"]
   };
   const conflict = Boolean(objectType && sceneType && allowedScenes[objectType] && !allowedScenes[objectType].includes(sceneType));
   if (conflict) issues.push("对象与场景冲突，不能确认分类");
   const lines = value => String(value || "").split(/\r?\n/).map(line => line.replace(/^\s*[-*\d.、)）]+\s*/, "").trim()).filter(Boolean);
-  const features = lines(sections["可见特征"] || sections["关键依据"]);
+  const features = lines(sections["可见事实"] || sections["可见特征"] || sections["关键依据"]);
+  // Never reuse legacy investment conclusions as evidence-linked interpretation.
+  const judgments = lines(sections["专业判断"]);
   const limitations = lines(sections["证据限制"] || sections["主要风险"]);
-  const actions = lines(sections["补证动作"] || sections["下一步"]);
+  const actions = lines(sections["下一步行动"] || sections["补证动作"] || sections["下一步"]);
   for (const [name, values] of [["可见特征", features], ["证据限制", limitations], ["补证动作", actions]]) {
     if (!values.length) issues.push(name + "未返回");
   }
@@ -11111,7 +11113,7 @@ function buildMiningEvidenceView(text, options = {}) {
     status: conflict ? "分类冲突，待核对" : issues.length ? "结果不完整，待核对" : "外观描述，待核对",
     objectType: objectType || "未确定",
     sceneType: sceneType || "未确定",
-    conflict, imageReadability, features, limitations, actions,
+    conflict, imageReadability, features, judgments, limitations, actions,
     notes, issues: [...new Set(issues)]
   };
 }
@@ -11123,7 +11125,8 @@ function formatMiningEvidenceView(view) {
     block("对象类型", view.objectType),
     block("场景分类", view.sceneType),
     block("图像可判读性", view.imageReadability),
-    block("可见特征", view.features),
+    block("可见事实", view.features),
+    block("专业判断", view.judgments.length ? view.judgments : ["本记录未单独提供证据支持的专业判断；不从旧评分或背景关键词补写。"]),
     block("证据限制", view.limitations),
     block("补证动作", view.actions),
     view.notes.length ? block("来源说明", view.notes) : "",
@@ -13466,13 +13469,15 @@ ANNOTATION_OCCLUDED / UI_OCCLUDED / CLOUD_OBSCURED / TARGET_OCCLUDED / RESOLUTIO
 JUDGEABLE 仅表示可描述外观，不表示能确认矿物、含金性或矿业价值。
 Stage 0 必须先做【对象类型】识别，再做【场景分类】。两个字段各只写一个分类名，不在字段内附解释。
 对象类型：金属块 / 矿石 / 河道 / 卫星图 / 地表环境 / 人工熔炼物 / 地图截图 / 设备照片 / 其它。
-场景分类：原矿石 / 矿化岩石 / 河道沉积 / 卫星图 / 老鼠洞 / 自然金块 / 砂金金块 / 人工熔炼金属 / 其他。
+场景分类：原矿石 / 矿化岩石 / 河道沉积 / 人工采坑 / 河道施工 / 普通地表 / 卫星图 / 老鼠洞 / 自然金块 / 砂金金块 / 人工熔炼金属 / 其他。
 这些是待核对的外观分类，不是成分认定；不能确认就写其它/其他。不从背景提及或否定词推断主体类别。
-再按顺序输出以下四段，每段最多两条短句，总输出保持简短：
+再按顺序输出以下五段，每段一条短句，优先完整覆盖各段，不重复描述：
 【图像可判读性】只描述清晰、遮挡、尺度/环境是否具备，不输出高/中/低可信度。
-【可见特征】只写直接可见的颜色、形态、纹理、相对位置；保留“未见”“无法判断”等否定和限制。不得把外观直接等同矿物成分、热液成因或含金证据。
+【可见事实】只写直接可见的颜色、形态、纹理、相对位置；保留“未见”“无法判断”等否定和限制。不得把外观直接等同矿物成分、热液成因或含金证据。
+【专业判断】用“可见特征→有限含义”解释最重要的一点，需明确依据；不能判断时直说，不凭常识补造现场事实。
 【证据限制】说明照片不能支持的判断和缺少的信息。不能以照片清晰替代证据充分。
 【补证动作】针对缺口给具体补拍/检测动作，不给投入、开采或经济价值建议。
+按主体选择重点：河流看河道位置、沉积空间、砾石、岸层及旧河槽线索；采坑看坑壁层序、覆盖层、积水、深度测量和取样条件；施工看可见设备、作业方式、道路水源排水与风险。看不到的只能列为待核查，不写成事实。普通地表不强行矿化解读。矿石只做可见结构的有限判断，未见金点不等于无金。下一步要指出补拍位置、比例尺、层位或需验证的问题；不能从照片保证坑壁安全、推算品位或开采价值。
 不得输出等级、潜力分、可信度分、投资判断或鼓励话术；缺信息就明确未确定，不补造事实。`;
 
     const aliyunStartedAt = Date.now();

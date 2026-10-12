@@ -454,6 +454,9 @@ async function runMiningBrowserFailure(mode) {
   const seen = { fetch: 0, messages: [], history: 0 };
   const context = vm.createContext({
     console: { log() {}, warn() {}, error() {} },
+    judgeOperationVersion: 0, judgeRequestInFlight: false, judgeSubmissionBlocked: false,
+    updateJudgeUploadControls() {}, getCurrentJudgeImageDataUrl: () => "",
+    showJudgeProgressVisual() {},
     selectedJudgeImageFiles: [{ size: 100, type: "image/jpeg" }], judgeImageInput: { files: [] },
     loadUserConfig: async () => {}, canUse: () => true, startJudgeProgress: () => 1,
     clearInterval() {}, compressJudgeImage: async file => file, trackEvent() {},
@@ -521,6 +524,8 @@ function miningQualityContext() {
   const escape = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const context = vm.createContext({
     console: { log() {}, warn() {}, error() {} },
+    judgeDetailAnimations: [], judgeOperationVersion: 0, judgeRequestInFlight: false,
+    updateJudgeUploadControls() {},
     fetch: stopNetwork, XMLHttpRequest: stopNetwork, WebSocket: stopNetwork,
     escapeHtml: escape, judgeResult: { value: "", innerHTML: "" },
     judgeDecisionCard: { hidden: true, innerHTML: "", className: "" },
@@ -568,7 +573,9 @@ test("mining confirmed UI: compact summary leaves complete evidence in detail ex
     assert.ok(summary.includes(context.escapeHtml(view.conflict ? "分类待核对" : view.objectType + " · " + view.sceneType)));
     for (const value of [...view.features, ...view.limitations, ...view.actions, ...view.notes, ...view.issues]) {
       assert.ok(detail.includes(context.escapeJudgeDetailHtml(value)), value);
-      assert.ok(!summary.includes(context.escapeHtml(value)), "full evidence must not be duplicated in summary");
+      if (value !== view.features[0] && value !== view.actions[0]) {
+        assert.ok(!summary.includes(context.escapeHtml(value)), "only the leading evidence/action may be summarized");
+      }
     }
     for (const title of ["结果状态", "对象类型", "场景分类"]) assert.ok(!detail.includes(`<h3>${title}</h3>`));
     assert.ok(detail.includes(context.escapeJudgeDetailHtml(view.imageReadability)));
@@ -605,7 +612,7 @@ test("mining confirmed UI: upload and existing actions retain their identities w
   assert.match(page, /结果仅供参考，不能替代现场采样、检测与专业判断/);
   assert.match(page, /onclick="clearJudgeResult\(\)"/);
   assert.match(page, /onclick="copyJudgeResult\(\)"/);
-  assert.match(page, /onclick="document\.getElementById\('judgeImageInput'\)\?\.click\(\)">📷 上传图片/);
+  assert.match(page, /onclick="chooseJudgeReplacement\(\)">更换图片/);
   assert.doesNotMatch(page, /analyzeMiningImage\(|fetch\(|示例图片|补充图片/);
 });
 
@@ -738,4 +745,283 @@ test("mining quality: request wiring preserves model budget and makes no stronge
   for (const removed of ["function protectNaturalGoldJudgeOutput", "function extractJudgeScore", "FAST_JUDGE_COPY", "variationSeed", "pickFastJudgeCopy"]) {
     assert.equal((recoveryServer + recoveryHtml).includes(removed), false, removed);
   }
+});
+
+// Only this new increment is executed for the 2026-10-13 result-value repair.
+// Photo-derived notes below are manual fixture text, NEVER a provider result or mobile pass.
+const riverbankMaterial = {
+  imageSha256: "39cacb80c6453c211c1c95e84f45b1f36ae18619c0e42f8c8ebe26f4104e7b24",
+  evidenceClass: "MANUAL_PHOTO_NOTES_NOT_MODEL_OUTPUT",
+  text: "【对象类型】\n地表环境\n【场景分类】\n人工采坑\n【图像可判读性】\n可见坑壁和河道，缺比例尺。\n【可见事实】\n前景土坑含砾石，底部积水，后方有河道，画面边缘可见挖斗。\n【专业判断】\n可见土砾剖面可作为记录层位的观察点；不能由此认定含矿层。\n【证据限制】\n积水来源、层厚及是否采矿未确定；不确认坑壁安全。\n【补证动作】\n在安全位置补拍带比例尺的完整坑壁及其与河道的相对位置，记录各层深度；不进入未确认安全的坑内。"
+};
+
+function miningValueRuntime(options = {}) {
+  const seen = { requests: 0, messages: [], saved: [], quota: 0, renderOrder: [] };
+  const context = vm.createContext({
+    console: { log() {}, warn() {}, error() {} },
+    judgeOperationVersion: 1, judgeRequestInFlight: false, judgeSubmissionBlocked: false,
+    selectedJudgeImageFiles: [{ name: "existing-fixture.jpg", size: 13209022, type: "image/jpeg" }],
+    judgeImageInput: { files: [], value: "" }, judgeType: { value: "mine-land" },
+    currentJudgeImageDataUrl: "data:image/jpeg;base64,INPUT_A",
+    getCurrentJudgeImageDataUrl() { return context.currentJudgeImageDataUrl; },
+    updateJudgeUploadControls() {}, loadUserConfig: async () => {}, canUse: () => true,
+    startJudgeProgress() {}, clearInterval() {}, showJudgeProgressVisual() {}, hideJudgeProgressVisual() {},
+    trackEvent() {}, resetJudgeFeedback() {}, showJudgeFeedback() {},
+    judgeResult: { value: "" }, clearJudgeDecisionCard() {},
+    getJudgeRecentItems: () => [],
+    renderJudgeDecisionCard(text, binding) { seen.renderOrder.push(["summary", text, binding?.image || binding?.item?.image]); },
+    revealJudgeDetail() { seen.renderOrder.push(["animation"]); },
+    saveJudgeResultToRecent(text, image) { seen.saved.push({ text, image }); return { item: { text, image } }; },
+    updateQuotaDisplay() { seen.quota++; }, loadUserQuota() { seen.quota++; },
+    showJudgeMessage(text, isError = false) { seen.messages.push({ text, isError }); },
+    sanitizeUserFacingTechMessage: text => text, showQuotaModal() {}, handleJudgeabilityFailure() {},
+    visitorId: "offline", userCode: "offline", FormData: class { append() {} },
+    getSourceHeaders: headers => headers,
+    compressJudgeImage: options.compress || (async () => ({ size: 75000, type: "image/jpeg" })),
+    fetch: async () => {
+      seen.requests++;
+      if (options.fetch) return options.fetch();
+      return { ok: true, status: 200, clone: () => ({ json: async () => ({ success: true, result: miningQualityCases[0].text, quota: {} }) }) };
+    }
+  });
+  vm.runInContext(recoverySection(recoveryHtml, "    function getMiningFailureMessage(", "    async function copyText("), context);
+  return { context, seen };
+}
+
+test("mining value UI: successful large-original compression has no false size warning and one dispatch", async () => {
+  const { context, seen } = miningValueRuntime();
+  await context.analyzeMiningImage();
+  assert.equal(seen.requests, 1, "stubbed local transport only");
+  assert.equal(seen.saved.length, 1);
+  assert.equal(seen.saved[0].image, "data:image/jpeg;base64,INPUT_A");
+  assert.ok(!seen.messages.some(item => item.isError || /图片过大/.test(item.text)));
+  assert.equal(context.judgeRequestInFlight, false);
+  assert.equal(context.judgeSubmissionBlocked, false);
+  assert.equal(seen.quota, 1);
+});
+
+test("mining value UI: local failures never fall back to the original or dispatch", async () => {
+  for (const reason of ["image_invalid", "image_decode_failed", "image_dimensions_invalid", "image_processing_failed", "image_compressed_too_large"]) {
+    const { context, seen } = miningValueRuntime({ compress: async () => { throw Object.assign(new Error("private"), { reason }); } });
+    await context.analyzeMiningImage();
+    assert.equal(seen.requests, 0, reason);
+    assert.equal(seen.saved.length, 0);
+    assert.equal(context.judgeRequestInFlight, false);
+    assert.equal(context.judgeSubmissionBlocked, false);
+    assert.ok(seen.messages.some(item => item.text === context.getMiningFailureMessage(reason) && item.isError));
+    assert.ok(!JSON.stringify(seen).includes("private"));
+  }
+});
+
+test("mining value UI: compressor keeps byte limits and reports decode dimensions encoding separately", async () => {
+  for (const scenario of ["valid", "decode", "dimensions", "encoding", "oversized"]) {
+    const canvas = () => ({
+      getContext: () => ({ fillRect() {}, drawImage() {} }),
+      toBlob(callback) { callback(scenario === "encoding" ? null : { size: scenario === "oversized" ? 1048577 : 75000 }); }
+    });
+    const context = vm.createContext({
+      console: { log() {}, warn() {} },
+      isUnsupportedJudgeImage: () => false,
+      getMiningFailureMessage: reason => reason,
+      loadImageForCompression: async () => {
+        if (scenario === "decode") throw new Error("decode");
+        return { naturalWidth: scenario === "dimensions" ? 0 : 5712, naturalHeight: 4284 };
+      },
+      document: { createElement: canvas },
+      File: class { constructor(blobs, name, options) { this.size = blobs[0].size; this.type = options.type; this.name = name; } }
+    });
+    vm.runInContext(recoverySection(recoveryHtml, "    function judgeImageError(", "    function syncJudgeImageInputFiles("), context);
+    const file = { size: 13209022, type: "image/jpeg" };
+    if (scenario === "valid") assert.equal((await context.compressJudgeImage(file)).size, 75000);
+    else {
+      const reason = { decode: "image_decode_failed", dimensions: "image_dimensions_invalid", encoding: "image_processing_failed", oversized: "image_compressed_too_large" }[scenario];
+      await assert.rejects(context.compressJudgeImage(file), error => error.reason === reason);
+    }
+  }
+});
+
+test("mining value UI: concurrent duplicate cannot dispatch and late completion retains captured image", async () => {
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const { context, seen } = miningValueRuntime({ fetch: () => pending });
+  const first = context.analyzeMiningImage();
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+  assert.equal(seen.requests, 1);
+  await context.analyzeMiningImage();
+  assert.equal(seen.requests, 1);
+  context.currentJudgeImageDataUrl = "data:image/jpeg;base64,INPUT_B";
+  context.judgeOperationVersion++;
+  release({ ok: true, status: 200, clone: () => ({ json: async () => ({ success: true, result: miningQualityCases[2].text, quota: {} }) }) });
+  await first;
+  assert.equal(seen.saved.length, 1);
+  assert.equal(seen.saved[0].image, "data:image/jpeg;base64,INPUT_A");
+  assert.equal(seen.renderOrder.length, 0, "late result cannot overwrite the newer view");
+  assert.equal(seen.quota, 1);
+});
+
+test("mining value UI: ambiguous dispatched failure blocks another submission without retry", async () => {
+  for (const mode of ["network", "settlement", "parse"]) {
+    const { context, seen } = miningValueRuntime({ fetch: async () => {
+      if (mode === "network") throw new Error("offline network simulation");
+      return { ok: mode === "parse", status: mode === "parse" ? 200 : 502, clone: () => ({ json: async () => {
+        if (mode === "parse") throw new Error("parse");
+        return { success: false, reason: "MINING_SETTLEMENT_UNKNOWN" };
+      } }) };
+    } });
+    await context.analyzeMiningImage();
+    await context.analyzeMiningImage();
+    assert.equal(seen.requests, 1);
+    assert.equal(context.judgeSubmissionBlocked, true);
+    assert.equal(seen.saved.length, 0);
+    assert.ok(seen.messages.some(item => /请勿重复上传/.test(item.text)));
+  }
+});
+
+test("mining value UI: newest local selection wins and clears old text before file reading", async () => {
+  const reads = [];
+  const dispatches = [];
+  let cancelled = 0;
+  const context = vm.createContext({
+    console: { log() {}, warn() {} }, selectedJudgeImageFiles: [], selectedJudgeImageUrls: [],
+    currentJudgeImageDataUrl: "OLD", judgeOperationVersion: 0, judgeRequestInFlight: false, judgeSubmissionBlocked: false,
+    judgeImageInput: { files: [], value: "" }, judgeImagePreview: { style: {}, innerHTML: "" },
+    judgeResult: { value: "OLD RESULT" }, cancelJudgeDetailAnimation() { cancelled++; },
+    clearJudgeDecisionCard() {}, resetJudgeFeedback() {}, hideJudgeProgressVisual() {}, closeImageModal() {},
+    updateJudgeUploadControls() {}, syncJudgeImageInputFiles() {}, showJudgeMessage() {},
+    getJudgeRecentItems: () => [], isImageUpload: () => true, isUnsupportedJudgeImage: () => false,
+    URL: { createObjectURL: file => "blob:" + file.name, revokeObjectURL() {} },
+    fileToDataUrl: file => new Promise(resolve => reads.push({ name: file.name, resolve })),
+    analyzeMiningImage: async operation => dispatches.push({ operation, image: context.currentJudgeImageDataUrl })
+  });
+  vm.runInContext(recoverySection(recoveryHtml, "    async function showJudgeSelectedImage(", "    function openJudgeSelectedImage("), context);
+  context.judgeImageInput.files = [{ name: "A.jpg" }];
+  const a = context.handleJudgeImageChange();
+  assert.equal(context.judgeResult.value, "");
+  context.judgeImageInput.files = [{ name: "B.jpg" }];
+  const b = context.handleJudgeImageChange();
+  reads[1].resolve("IMAGE_B"); await b;
+  reads[0].resolve("IMAGE_A"); await a;
+  assert.equal(context.currentJudgeImageDataUrl, "IMAGE_B");
+  assert.equal(dispatches.length, 1);
+  assert.equal(dispatches[0].image, "IMAGE_B");
+  assert.equal(context.judgeImagePreview.innerHTML, "");
+  assert.equal(context.judgeImagePreview.style.display, "none");
+  assert.ok(cancelled >= 2);
+});
+
+test("mining value UI: historical records keep provenance and four layers without inventing score or interpretation", () => {
+  const { context, backend, effects } = miningQualityContext();
+  for (const fixture of miningQualityCases) {
+    const normalized = backend.normalizeJudgeOutput(fixture.text);
+    assert.equal(backend.normalizeJudgeOutput(normalized), normalized);
+    assert.equal(context.formatMiningEvidenceView(context.buildMiningEvidenceView(fixture.text)), normalized);
+    context.judgeResult.value = normalized;
+    context.renderJudgeDecisionCard(normalized, { image: "data:image/jpeg;base64,EXISTING" });
+    context.renderJudgeDetail(normalized);
+    const card = context.judgeDecisionCard.innerHTML;
+    assert.match(card, /评分 \/ 等级：未评估/);
+    assert.match(card, /结论可信度：未校准/);
+    assert.match(card, /历史描述（未核）/);
+    assert.match(card, /历史描述和动作尚未逐项核对/);
+    assert.match(card, /下一步/);
+    assert.match(card, /更换图片/);
+    assert.equal((card.match(/<img /g) || []).length, 1);
+    assert.doesNotMatch(card, qualityForbidden);
+    assert.match(normalized, /本记录未单独提供证据支持的专业判断/);
+    assert.match(normalized, /模型原文未取得/);
+    for (const section of ["可见事实", "专业判断", "证据限制", "补证动作"]) assert.ok(context.judgeResult.innerHTML.includes(section));
+    assert.equal(context.buildJudgeCopyText(), normalized);
+  }
+  assert.deepEqual(effects, { network: 0, historyWrites: 0 });
+});
+
+test("mining value UI: riverbank manual material is not a model pass and conditional interpretation survives both renderers", () => {
+  assert.equal(riverbankMaterial.evidenceClass, "MANUAL_PHOTO_NOTES_NOT_MODEL_OUTPUT");
+  const { context, backend, effects } = miningQualityContext();
+  const view = backend.buildMiningEvidenceView(riverbankMaterial.text);
+  assert.equal(view.objectType, "地表环境");
+  assert.equal(view.sceneType, "人工采坑");
+  assert.equal(view.conflict, false);
+  assert.equal(JSON.stringify(context.buildMiningEvidenceView(riverbankMaterial.text)), JSON.stringify(view));
+  context.renderJudgeDecisionCard(riverbankMaterial.text);
+  context.renderJudgeDetail(riverbankMaterial.text);
+  assert.match(context.judgeDecisionCard.innerHTML, /不能由此认定含矿层/);
+  assert.match(context.judgeResult.innerHTML, /不进入未确认安全的坑内/);
+  assert.match(context.judgeResult.innerHTML, /是否采矿未确定/);
+  assert.doesNotMatch(context.judgeDecisionCard.innerHTML, /grade-[ABCD]|\d+分|可信度：高/);
+  assert.deepEqual(effects, { network: 0, historyWrites: 0 });
+});
+
+test("mining value UI: restored result keeps first-upload entry hidden with no duplicate upload control", () => {
+  const context = vm.createContext({
+    selectedJudgeImageFiles: [], judgeAddImageButton: { disabled: false },
+    judgeImageCount: {}, judgeUploadCard: { hidden: false }, judgeQuickUpload: { hidden: false },
+    judgeImageInput: { disabled: false }, judgeDecisionCard: { hidden: false },
+    judgeRequestInFlight: false, judgeSubmissionBlocked: false
+  });
+  vm.runInContext(recoverySection(recoveryHtml, "    function updateJudgeUploadControls(", "    function chooseJudgeReplacement("), context);
+  context.updateJudgeUploadControls();
+  assert.equal(context.judgeUploadCard.hidden, true);
+  assert.equal(context.judgeQuickUpload.hidden, true);
+  context.judgeDecisionCard.hidden = true;
+  context.updateJudgeUploadControls();
+  assert.equal(context.judgeUploadCard.hidden, false);
+  context.selectedJudgeImageFiles = [{}];
+  context.updateJudgeUploadControls();
+  assert.equal(context.judgeQuickUpload.hidden, false);
+  context.judgeRequestInFlight = true;
+  context.updateJudgeUploadControls();
+  assert.equal(context.judgeImageInput.disabled, true);
+});
+
+test("mining value UI: paragraph animation is short cancellable and respects reduced motion", () => {
+  const { context } = miningQualityContext();
+  const animations = [];
+  let reduced = false;
+  const paragraphs = Array.from({ length: 9 }, () => ({
+    animate(frames, options) { const item = { frames, options, cancelled: false, cancel() { this.cancelled = true; } }; animations.push(item); return item; }
+  }));
+  const listeners = [];
+  context.window = { matchMedia: () => ({ matches: reduced }) };
+  context.judgeResult.querySelectorAll = () => paragraphs;
+  context.judgeResult.addEventListener = (event, fn) => listeners.push({ event, fn });
+  context.revealJudgeDetail();
+  assert.equal(animations.length, 9);
+  assert.ok(animations.every(a => a.options.duration + a.options.delay <= 370));
+  listeners.find(item => item.event === "pointerdown").fn();
+  assert.ok(animations.every(a => a.cancelled));
+  reduced = true;
+  context.revealJudgeDetail();
+  assert.equal(animations.length, 9);
+  context.renderJudgeDetail("");
+  assert.match(context.judgeResult.innerHTML, /judge-detail-placeholder/);
+});
+
+test("mining value UI: scoped layout and scripts remain parseable without execution", () => {
+  const css = recoverySection(recoveryHtml, "    /* MINING_CONFIRMED_LAYOUT_START", "    /* MINING_CONFIRMED_LAYOUT_END");
+  for (const [, selectors] of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    for (const selector of selectors.split(/,(?![^()]*\))/)) assert.ok(selector.trim().startsWith("#judgePage"));
+  }
+  assert.match(css, /#judgePage \.page-nav \{ position: static;/);
+  assert.match(css, /max-height: none; overflow: visible/);
+  assert.match(css, /\.message.error \{ color: #785b24; background: #fffbeb;/);
+  assert.match(css, /\.judge-change-image \{[^}]*min-height: 44px/);
+  const preview = recoverySection(recoveryHtml, "    async function showJudgeSelectedImage(", "    async function handleJudgeImageChange(");
+  assert.doesNotMatch(preview, /<img|preview-button|image-preview-row/);
+  for (const [, attrs, source] of recoveryHtml.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+    if (/\bsrc=|application\/ld\+json|\btype=["']module/.test(attrs) || !source.trim()) continue;
+    new vm.Script(source);
+  }
+});
+
+test("mining value UI: shared parser parity prompt boundaries and frozen provider settings", () => {
+  const marker = "// Mining evidence presentation only:";
+  assert.equal(recoverySection(recoveryServer, marker, "function normalizeJudgeOutput(").trim(),
+    recoverySection(recoveryHtml, marker, "function cleanupJudgeHistoryStorage(").trim());
+  const prompt = recoverySection(recoveryServer, "    const prompt = `你是图片外观初筛助手", "    const aliyunEndedAt");
+  for (const phrase of ["可见事实", "专业判断", "证据限制", "补证动作", "未见金点不等于无金", "普通地表不强行矿化解读", "不得输出等级"]) assert.ok(prompt.includes(phrase));
+  assert.match(prompt, /maxTokens: 360/);
+  assert.match(prompt, /temperature: 0\.3/);
+  assert.match(prompt, /modelName: aliyunMiningModel/);
+  assert.match(prompt, /timeoutMs: 35000/);
 });

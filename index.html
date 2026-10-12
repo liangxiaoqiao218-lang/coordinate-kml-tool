@@ -5174,10 +5174,23 @@
     #judgePage .judge-upload-controls .preview-file-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 500; line-height: 1.5; }
     #judgePage .judge-upload-controls .preview-file-name span { font-size: 14px; font-weight: 500; line-height: 1.5; }
     #judgePage .judge-upload-controls .remove-image { position: static; grid-column: 3; grid-row: 1; width: 40px; min-height: 40px; margin: 0; padding: 0; border: 1px solid #fecaca; border-radius: 9px; color: #991b1b; background: #fff; font-size: 22px; font-weight: 500; box-shadow: none; }
-    #judgePage .judge-quick-upload { grid-column: 2 / 4; grid-row: 2; width: 100%; min-height: 46px; margin: 0; padding: 10px 14px; border: 1px solid #166534; border-radius: 10px; color: #fff; background: #166534; font-size: 16px; font-weight: 700; line-height: 1.4; }
+    #judgePage .judge-quick-upload,
+    #judgePage .judge-change-image { width: auto; min-height: 44px; margin: 0; padding: 6px 8px; border: 0; border-radius: 8px; color: #166534; background: transparent; font-size: 14px; font-weight: 500; line-height: 1.4; box-shadow: none; }
+    #judgePage .judge-image-open { display: block; width: 92px; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; box-shadow: none; }
+    #judgePage .judge-export-image-wrap { width: 92px; }
+    #judgePage .judge-change-image { display: block; width: 100%; }
+    #judgePage .judge-key-judgment { margin: 5px 0 0; font-size: 15px; line-height: 1.5; }
+    #judgePage .judge-summary-evidence,
+    #judgePage .judge-summary-action { margin-top: 8px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+    #judgePage .judge-summary-evidence span,
+    #judgePage .judge-summary-action span { font-weight: 700; }
+    #judgePage .judge-key-judgment { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+    #judgePage .judge-metrics-unavailable { margin-top: 8px; color: #64748b; font-size: 12px; line-height: 1.5; }
+    #judgePage .judge-evidence-context { margin-top: 12px; color: #475569; }
+    #judgePage .judge-evidence-context summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 14px; }
     #judgePage .judge-progress-visual.active { display: flex; color: #166534; background: #f0fdf4; border-color: #bbf7d0; font-size: 16px; font-weight: 500; }
     #judgePage .message { font-size: 16px; font-weight: 500; line-height: 1.5; }
-    #judgePage .message.error { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+    #judgePage .message.error { color: #785b24; background: #fffbeb; border-color: #f1e4bd; }
     #judgePage .judge-result-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
     #judgePage .judge-result-wrap:has(.judge-detail-placeholder) { display: none; }
     #judgePage .judge-layer-title { margin: 0 0 8px; color: #0f172a; font-size: 18px; font-weight: 700; line-height: 1.5; }
@@ -5495,7 +5508,7 @@
           <span id="judgeProgressText">正在分析图片信息...</span>
         </div>
         <div class="judge-upload-controls">
-        <label id="judgeQuickUpload" for="judgeImageInput" class="judge-quick-upload" hidden>上传图片</label>
+        <button id="judgeQuickUpload" type="button" onclick="chooseJudgeReplacement()" class="judge-quick-upload" hidden>更换图片</button>
         <label id="judgeUploadCard" for="judgeImageInput" class="judge-upload-card">
           <span class="judge-upload-icon" aria-hidden="true">+</span>
           <span class="judge-upload-title">上传矿石 / 河道 / 卫星图开始快判</span>
@@ -5526,7 +5539,7 @@
               <div class="judge-feedback-actions">
                 <button type="button" onclick="submitJudgeFeedback('helpful')">👍 有帮助</button>
                 <button type="button" onclick="submitJudgeFeedback('wrong')">👎 不准确</button>
-                <button type="button" onclick="document.getElementById('judgeImageInput')?.click()">📷 上传图片</button>
+                <button type="button" onclick="chooseJudgeReplacement()">更换图片</button>
                 <button type="button" onclick="submitJudgeFeedback('field_verified')">📍 已现场验证</button>
               </div>
               <div id="judgeFeedbackFieldPanel" class="judge-feedback-field" hidden>
@@ -5956,6 +5969,10 @@ Au值 = 纯度 × 10 后取整数</div>
     let selectedJudgeImageUrls = [];
     let selectedJudgeImageFiles = [];
     let currentJudgeImageDataUrl = "";
+    let judgeOperationVersion = 0;
+    let judgeRequestInFlight = false;
+    let judgeSubmissionBlocked = false;
+    let judgeDetailAnimations = [];
     let recognitionProgressHideTimer = null;
     let internalNormalizedCoordinateGroups = null;
     let internalKmlSourceDirty = false;
@@ -9611,19 +9628,28 @@ Au值 = 纯度 × 10 后取整数</div>
       });
     }
 
+    function judgeImageError(reason) {
+      const error = new Error(getMiningFailureMessage(reason));
+      error.reason = reason;
+      return error;
+    }
+
     async function compressJudgeImage(file) {
       if (!file) {
-        throw new Error("请先选择要判读的图片。");
+        throw judgeImageError("image_missing");
       }
 
       if (isUnsupportedJudgeImage(file)) {
-        throw new Error("当前图片格式不支持，请截图后上传或转为 JPG。");
+        throw judgeImageError("image_invalid");
       }
 
       try {
-        const image = await loadImageForCompression(file);
+        const image = await loadImageForCompression(file).catch(() => { throw judgeImageError("image_decode_failed"); });
         const sourceWidth = image.naturalWidth || image.width;
         const sourceHeight = image.naturalHeight || image.height;
+        if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || sourceWidth <= 0 || sourceHeight <= 0) {
+          throw judgeImageError("image_dimensions_invalid");
+        }
         const longestSide = Math.max(sourceWidth, sourceHeight);
         const maxSide = 900;
         const scale = longestSide > maxSide ? maxSide / longestSide : 1;
@@ -9633,6 +9659,7 @@ Au值 = 纯度 × 10 后取整数</div>
         canvas.width = width;
         canvas.height = height;
         const context = canvas.getContext("2d", { alpha: false });
+        if (!context) throw judgeImageError("image_processing_failed");
         context.fillStyle = "#ffffff";
         context.fillRect(0, 0, width, height);
         context.drawImage(image, 0, 0, width, height);
@@ -9646,6 +9673,7 @@ Au值 = 纯度 × 10 后取整数</div>
           retryCanvas.width = Math.max(1, Math.round(width * retryScale));
           retryCanvas.height = Math.max(1, Math.round(height * retryScale));
           const retryContext = retryCanvas.getContext("2d", { alpha: false });
+          if (!retryContext) throw judgeImageError("image_processing_failed");
           retryContext.fillStyle = "#ffffff";
           retryContext.fillRect(0, 0, retryCanvas.width, retryCanvas.height);
           retryContext.drawImage(canvas, 0, 0, retryCanvas.width, retryCanvas.height);
@@ -9655,7 +9683,7 @@ Au值 = 纯度 × 10 后取整数</div>
         }
 
         if (!blob) {
-          throw new Error("图片标准化失败，请重新选择截图或 JPG 图片。");
+          throw judgeImageError("image_processing_failed");
         }
 
         if (blob.size > 800 * 1024) {
@@ -9668,7 +9696,7 @@ Au值 = 纯度 × 10 后取整数</div>
         }
 
         if (blob.size > 1024 * 1024) {
-          throw new Error("图片过大，当前图片处理失败，请截图后重新上传。");
+          throw judgeImageError("image_compressed_too_large");
         }
 
         const outputFile = new File([blob], "judge-upload.jpg", {
@@ -9683,16 +9711,8 @@ Au值 = 纯度 × 10 后取整数</div>
         });
         return outputFile;
       } catch (error) {
-        console.warn("AI判读图片标准化失败", error);
-        if (/image\/(jpeg|jpg|png|webp)/i.test(file.type || "")) {
-          console.warn("AI判读图片压缩失败，改用原图兜底上传", {
-            name: file.name,
-            type: file.type,
-            size: file.size
-          });
-          return file;
-        }
-        throw new Error(error.message || "图片处理失败，请重新选择截图或 JPG 图片。");
+        // Never bypass the existing compressed-byte limit by uploading the original.
+        throw error.reason ? error : judgeImageError("image_processing_failed");
       }
     }
 
@@ -9714,17 +9734,27 @@ Au值 = 纯度 × 10 后取整数</div>
       }
 
       if (judgeAddImageButton) {
-        judgeAddImageButton.disabled = false;
+        judgeAddImageButton.disabled = judgeRequestInFlight || judgeSubmissionBlocked;
         judgeAddImageButton.textContent = count ? "更换图片" : "选择图片";
       }
 
       if (judgeUploadCard) {
-        judgeUploadCard.hidden = count > 0;
+        judgeUploadCard.hidden = count > 0 || !judgeDecisionCard.hidden;
       }
 
       if (judgeQuickUpload) {
-        judgeQuickUpload.hidden = count === 0;
+        judgeQuickUpload.hidden = count === 0 || !judgeDecisionCard.hidden;
+        judgeQuickUpload.disabled = judgeRequestInFlight || judgeSubmissionBlocked;
       }
+      if (judgeImageInput) judgeImageInput.disabled = judgeRequestInFlight || judgeSubmissionBlocked;
+    }
+
+    function chooseJudgeReplacement() {
+      if (judgeRequestInFlight || judgeSubmissionBlocked) {
+        showJudgeMessage(judgeSubmissionBlocked ? "上次请求状态待核实，请勿重复上传。" : "当前图片正在处理，请等待结果后再更换。");
+        return;
+      }
+      judgeImageInput.click();
     }
 
     function openSelectedImage() {
@@ -9780,7 +9810,7 @@ Au值 = 纯度 × 10 后取整数</div>
       showMessage("已删除上传图片");
     }
 
-    async function showJudgeSelectedImage(files) {
+    async function showJudgeSelectedImage(files, operation = judgeOperationVersion) {
       console.log("AI判读移动端状态：上传开始", {
         fileCount: files?.length || 0,
         previousHistoryLength: getJudgeRecentItems().length,
@@ -9803,7 +9833,9 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      judgeImagePreview.style.display = "block";
+      // Only the summary owns a thumbnail; the upload area keeps no duplicate image.
+      judgeImagePreview.style.display = "none";
+      judgeImagePreview.innerHTML = "";
       let imageDataUrls = [];
       try {
         imageDataUrls = await Promise.all(selectedJudgeImageFiles.map(fileToDataUrl));
@@ -9811,17 +9843,8 @@ Au值 = 纯度 × 10 后取整数</div>
         console.warn("AI判读移动端状态：预览读取失败，使用 objectURL 兜底", error);
         imageDataUrls = [];
       }
+      if (operation !== judgeOperationVersion) return;
       currentJudgeImageDataUrl = imageDataUrls[0] || selectedJudgeImageUrls[0] || "";
-      judgeImagePreview.innerHTML = selectedJudgeImageFiles.map((file, index) => `
-        <div class="image-preview-row">
-          <button type="button" class="preview-button" onclick="openJudgeSelectedImage(${index})" title="点击查看上传图片">
-            <img src="${escapeHtml(imageDataUrls[index] || selectedJudgeImageUrls[index] || "")}" alt="已上传判读图片预览" />
-          </button>
-          <button type="button" class="preview-file-name" onclick="openJudgeSelectedImage(${index})" title="点击查看上传图片">
-            <strong>${escapeHtml(file.name)}</strong><span>${Math.round(file.size / 1024)} KB</span>
-          </button>
-          <button type="button" class="remove-image" onclick="event.stopPropagation(); clearJudgeSelectedImage(${index})" title="删除图片" aria-label="删除图片">×</button>
-        </div>`).join("");
       updateJudgeUploadControls();
       console.log("AI判读移动端状态：图片预览完成", {
         hasPreviewDataUrl: Boolean(imageDataUrls[0]),
@@ -9837,17 +9860,41 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
+      if (judgeRequestInFlight || judgeSubmissionBlocked) {
+        judgeImageInput.value = "";
+        chooseJudgeReplacement();
+        return;
+      }
+      const operation = ++judgeOperationVersion;
+      cancelJudgeDetailAnimation();
+      judgeResult.value = "";
+      clearJudgeDecisionCard();
+      resetJudgeFeedback();
+      hideJudgeProgressVisual();
+      currentJudgeImageDataUrl = "";
+      selectedJudgeImageFiles = [];
+      selectedJudgeImageUrls.forEach(url => URL.revokeObjectURL(url));
+      selectedJudgeImageUrls = [];
+      closeImageModal();
+      updateJudgeUploadControls();
+
       if (files.some(isUnsupportedJudgeImage)) {
         judgeImageInput.value = "";
-        showJudgeMessage("当前图片格式不支持，请截图后上传或转为 JPG。", true);
+        showJudgeMessage(getMiningFailureMessage("image_invalid"), true);
         return;
       }
 
       const validFiles = files.filter(isImageUpload);
-      await showJudgeSelectedImage(validFiles.slice(0, 1));
+      if (!validFiles.length) {
+        judgeImageInput.value = "";
+        showJudgeMessage(getMiningFailureMessage("image_invalid"), true);
+        return;
+      }
+      await showJudgeSelectedImage(validFiles.slice(0, 1), operation);
+      if (operation !== judgeOperationVersion) return;
       judgeImageInput.value = "";
       showJudgeMessage("");
-      setTimeout(() => analyzeMiningImage(), 0);
+      await analyzeMiningImage(operation);
     }
 
     function openJudgeSelectedImage(index = 0) {
@@ -9883,6 +9930,9 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function clearJudgeSelectedImage(index = -1) {
+      if (judgeRequestInFlight) return;
+      ++judgeOperationVersion;
+      cancelJudgeDetailAnimation();
       const currentImageBeforeDelete = getCurrentJudgeImageDataUrl();
       if (index >= 0) {
         const url = selectedJudgeImageUrls[index];
@@ -10355,7 +10405,30 @@ Au值 = 纯度 × 10 后取整数</div>
         .filter(section => section.items.length);
     }
 
+    function cancelJudgeDetailAnimation() {
+      judgeDetailAnimations.forEach(animation => animation.cancel());
+      judgeDetailAnimations = [];
+    }
+
+    function revealJudgeDetail() {
+      cancelJudgeDetailAnimation();
+      if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+      // Full text/layout already exists: copying, scrolling and selection never wait.
+      const paragraphs = Array.from(judgeResult.querySelectorAll("section"));
+      paragraphs.forEach((paragraph, index) => {
+        if (typeof paragraph.animate !== "function") return;
+        judgeDetailAnimations.push(paragraph.animate(
+          [{ opacity: 0.35, transform: "translateY(2px)" }, { opacity: 1, transform: "none" }],
+          { duration: 150, delay: Math.min(index * 55, 220) }
+        ));
+      });
+      judgeResult.addEventListener("pointerdown", cancelJudgeDetailAnimation, { once: true });
+      judgeResult.addEventListener("keydown", cancelJudgeDetailAnimation, { once: true });
+      judgeResult.addEventListener("wheel", cancelJudgeDetailAnimation, { once: true, passive: true });
+    }
+
     function renderJudgeDetail(text) {
+      cancelJudgeDetailAnimation();
       if (!judgeResult) {
         return;
       }
@@ -10375,14 +10448,18 @@ Au值 = 纯度 × 10 后取整数</div>
         return;
       }
 
-      judgeResult.innerHTML = sections.map(section => {
+      const renderSection = section => {
         const title = `<h3>${escapeJudgeDetailHtml(section.title)}</h3>`;
         const useList = section.items.length > 1 || /依据|风险|下一步|建议|观察/.test(section.title);
         const body = useList
           ? `<ul>${section.items.map(item => `<li>${escapeJudgeDetailHtml(item)}</li>`).join("")}</ul>`
           : `<p>${escapeJudgeDetailHtml(section.items[0])}</p>`;
         return `<section>${title}${body}</section>`;
-      }).join("");
+      };
+      const secondary = ["图像可判读性", "来源说明", "待核对事项"];
+      judgeResult.innerHTML = sections.filter(section => !secondary.includes(section.title)).map(renderSection).join("")
+        + '<details class="judge-evidence-context"><summary>图片条件与待核对项</summary>'
+        + sections.filter(section => secondary.includes(section.title)).map(renderSection).join("") + "</details>";
     }
 
     function handleJudgeabilityFailure(data = {}) {
@@ -10425,31 +10502,33 @@ function buildMiningEvidenceView(text, options = {}) {
     if (Object.prototype.hasOwnProperty.call(sections, name)) issues.push("重复字段：" + name);
     else sections[name] = match[2].trim();
   }
-  const legacy = !Object.prototype.hasOwnProperty.call(sections, "可见特征");
+  const legacy = !Object.prototype.hasOwnProperty.call(sections, "可见特征") && !Object.prototype.hasOwnProperty.call(sections, "可见事实");
   const exactType = (value, allowed) => {
     const first = String(value || "").split(/[。．:：\s]/)[0];
     return allowed.includes(first) ? first : "";
   };
   const objectType = exactType(sections["对象类型"], ["金属块", "矿石", "河道", "卫星图", "地表环境", "人工熔炼物", "地图截图", "设备照片", "其它"]);
-  const sceneType = exactType(sections["场景分类"], ["原矿石", "矿化岩石", "河道沉积", "卫星图", "老鼠洞", "自然金块", "砂金金块", "人工熔炼金属", "其他"]);
+  const sceneType = exactType(sections["场景分类"], ["原矿石", "矿化岩石", "河道沉积", "人工采坑", "河道施工", "普通地表", "卫星图", "老鼠洞", "自然金块", "砂金金块", "人工熔炼金属", "其他"]);
   if (!objectType) issues.push("对象类型缺失或不明确");
   if (!sceneType) issues.push("场景分类缺失或不明确");
   const allowedScenes = {
     "矿石": ["原矿石", "矿化岩石", "其他"],
     "金属块": ["自然金块", "砂金金块", "人工熔炼金属", "其他"],
     "人工熔炼物": ["人工熔炼金属", "其他"],
-    "河道": ["河道沉积", "其他"],
+    "河道": ["河道沉积", "人工采坑", "河道施工", "其他"],
     "卫星图": ["卫星图", "其他"],
     "地图截图": ["卫星图", "其他"],
-    "设备照片": ["其他"],
-    "地表环境": ["河道沉积", "老鼠洞", "其他"]
+    "设备照片": ["河道施工", "其他"],
+    "地表环境": ["河道沉积", "人工采坑", "河道施工", "普通地表", "老鼠洞", "其他"]
   };
   const conflict = Boolean(objectType && sceneType && allowedScenes[objectType] && !allowedScenes[objectType].includes(sceneType));
   if (conflict) issues.push("对象与场景冲突，不能确认分类");
   const lines = value => String(value || "").split(/\r?\n/).map(line => line.replace(/^\s*[-*\d.、)）]+\s*/, "").trim()).filter(Boolean);
-  const features = lines(sections["可见特征"] || sections["关键依据"]);
+  const features = lines(sections["可见事实"] || sections["可见特征"] || sections["关键依据"]);
+  // Never reuse legacy investment conclusions as evidence-linked interpretation.
+  const judgments = lines(sections["专业判断"]);
   const limitations = lines(sections["证据限制"] || sections["主要风险"]);
-  const actions = lines(sections["补证动作"] || sections["下一步"]);
+  const actions = lines(sections["下一步行动"] || sections["补证动作"] || sections["下一步"]);
   for (const [name, values] of [["可见特征", features], ["证据限制", limitations], ["补证动作", actions]]) {
     if (!values.length) issues.push(name + "未返回");
   }
@@ -10467,7 +10546,7 @@ function buildMiningEvidenceView(text, options = {}) {
     status: conflict ? "分类冲突，待核对" : issues.length ? "结果不完整，待核对" : "外观描述，待核对",
     objectType: objectType || "未确定",
     sceneType: sceneType || "未确定",
-    conflict, imageReadability, features, limitations, actions,
+    conflict, imageReadability, features, judgments, limitations, actions,
     notes, issues: [...new Set(issues)]
   };
 }
@@ -10479,7 +10558,8 @@ function formatMiningEvidenceView(view) {
     block("对象类型", view.objectType),
     block("场景分类", view.sceneType),
     block("图像可判读性", view.imageReadability),
-    block("可见特征", view.features),
+    block("可见事实", view.features),
+    block("专业判断", view.judgments.length ? view.judgments : ["本记录未单独提供证据支持的专业判断；不从旧评分或背景关键词补写。"]),
     block("证据限制", view.limitations),
     block("补证动作", view.actions),
     view.notes.length ? block("来源说明", view.notes) : "",
@@ -10494,17 +10574,25 @@ function buildJudgeOfficialCardMeta(text) { return buildMiningEvidenceView(text)
 function renderJudgeDecisionCard(text, comparison = null) {
   if (!judgeDecisionCard || !String(text || "").trim()) { clearJudgeDecisionCard(); return null; }
   const view = buildJudgeOfficialCardMeta(text);
-  const imageSrc = comparison?.image || comparison?.item?.image || getCurrentJudgeImageDataUrl();
+  const imageSrc = comparison?.image ?? comparison?.item?.image ?? getCurrentJudgeImageDataUrl();
+  const legacySource = view.notes.some(note => note.includes("历史记录为加工后文本"));
+  const judgment = view.judgments[0] && !view.judgments[0].startsWith("本记录未单独")
+    ? view.judgments[0] : "仅有外观证据，尚不足以形成矿业结论。";
   judgeDecisionCard.hidden = false;
   judgeDecisionCard.className = "judge-decision-card";
   judgeDecisionCard.innerHTML = `
     <div class="judge-official-card"><div class="judge-official-head${imageSrc ? "" : " without-image"}">
-      ${imageSrc ? `<div class="judge-export-image-wrap"><img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" onclick="openJudgeResultImage(event)" /></div>` : ""}
+      ${imageSrc ? `<div class="judge-export-image-wrap"><button type="button" class="judge-image-open" onclick="openImageModal(this.querySelector('img').src)" aria-label="放大查看本次图片"><img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" /></button><button type="button" class="judge-change-image" onclick="chooseJudgeReplacement()">更换图片</button></div>` : ""}
       <div class="judge-official-content">
         <div class="judge-official-object-type">${escapeHtml(view.conflict ? "分类待核对" : view.objectType + " · " + view.sceneType)}</div>
         <div class="judge-official-verdict">${escapeHtml(view.status)}</div>
+        <p class="judge-key-judgment">${escapeHtml(view.conflict ? "对象与场景存在冲突，先核对原图。" : judgment)}</p>
       </div></div>
-      <div class="judge-official-note">仅供外观初筛；可见特征、证据限制和补证动作见下方详情。</div></div>`;
+      <div class="judge-summary-evidence"><span>${legacySource ? "历史描述（未核）" : "依据"}</span> ${escapeHtml(view.features[0] || "未返回可见依据")}</div>
+      <div class="judge-summary-action"><span>下一步</span> ${escapeHtml(view.actions[0] || "补充目标近景、比例尺及周边环境后再核对。")}</div>
+      <div class="judge-metrics-unavailable">评分 / 等级：未评估 · 结论可信度：未校准</div>
+      <div class="judge-official-note">${legacySource ? "历史描述和动作尚未逐项核对；" : ""}外观线索不代表含矿、品位或价值；证据限制见详情。</div></div>`;
+  updateJudgeUploadControls();
   return view;
 }
 
@@ -10564,16 +10652,19 @@ function renderJudgeDecisionCard(text, comparison = null) {
     }
 
 
-    function saveJudgeResultToRecent(text) {
+    function saveJudgeResultToRecent(text, image = getCurrentJudgeImageDataUrl()) {
       const result = String(text || "").trim();
       if (!result) return { saved: false };
-      const item = { id: `judge-${Date.now()}-${Math.random().toString(36).slice(2)}`, image: getCurrentJudgeImageDataUrl(), result, time: Date.now() };
+      const item = { id: `judge-${Date.now()}-${Math.random().toString(36).slice(2)}`, image, result, time: Date.now() };
       setJudgeRecentItems([item, ...getJudgeRecentItems()].slice(0, 3));
       renderJudgeRecent();
       return { saved: true, item };
     }
 
     function restoreJudgeRecent(index) {
+      if (judgeRequestInFlight) { showJudgeMessage("当前请求仍在处理，完成后可查看历史；不会追加提交。"); return; }
+      ++judgeOperationVersion;
+      cancelJudgeDetailAnimation();
       const item = getJudgeRecentItems()[index];
       if (!item) {
         return;
@@ -10589,6 +10680,9 @@ function renderJudgeDecisionCard(text, comparison = null) {
     }
 
     function activateJudgeRecentItem(item, message = "") {
+      if (judgeRequestInFlight) return;
+      ++judgeOperationVersion;
+      cancelJudgeDetailAnimation();
       if (!item) {
         judgeResult.value = "";
         clearJudgeDecisionCard();
@@ -10658,20 +10752,8 @@ function renderJudgeDecisionCard(text, comparison = null) {
     }
 
     function startJudgeProgress(fileCount) {
-      const steps = [
-        "正在分析结构...",
-        "正在排除常见误判...",
-        "正在识别赋存关系...",
-        "正在生成快判结果..."
-      ];
-      let index = 0;
-
-      showJudgeProgressVisual(steps[index]);
-
-      return setInterval(() => {
-        index = Math.min(index + 1, steps.length - 1);
-        showJudgeProgressVisual(steps[index]);
-      }, 1200);
+      showJudgeProgressVisual("正在准备图片…");
+      return null;
     }
 
     function getMiningFailureMessage(reason) {
@@ -10688,7 +10770,11 @@ function renderJudgeDecisionCard(text, comparison = null) {
         MINING_INTERNAL_ERROR: "矿地快判处理失败；本次已停止，请联系管理员。",
         image_missing: "未收到图片，请检查选择的图片。",
         image_invalid: "图片格式不支持，请使用 JPG 或 PNG 图片。",
-        image_too_large: "图片过大，压缩后仍超过上传限制。",
+        image_too_large: "服务拒绝了超出文件体积限制的图片；请裁剪目标区域或导出较小的 JPG。",
+        image_compressed_too_large: "压缩后文件体积仍超过限制，本次未上传；请裁剪目标区域或导出较小的 JPG。",
+        image_decode_failed: "图片无法解码，本次未上传；请检查文件能否正常打开，或重新导出 JPG / PNG。",
+        image_dimensions_invalid: "无法读取有效像素尺寸，本次未上传；请重新导出 JPG 或 PNG。",
+        image_processing_failed: "图片解码或压缩失败，本次未上传；请使用可正常打开的 JPG 或 PNG。",
         timeout: "矿地快判等待超时，处理状态待核实；请勿重复上传。",
         network_failed: "网络连接中断，处理和扣次状态待核实；请勿重复上传。",
         config_missing: "矿地快判服务暂未配置，请联系管理员。",
@@ -10698,53 +10784,43 @@ function renderJudgeDecisionCard(text, comparison = null) {
         : "矿地快判未完成，处理和扣次状态待核实；请勿重复上传，请联系管理员。";
     }
 
-    async function analyzeMiningImage() {
+    async function analyzeMiningImage(operation = judgeOperationVersion) {
+      if (judgeRequestInFlight || judgeSubmissionBlocked || operation !== judgeOperationVersion) return;
+      judgeRequestInFlight = true;
+      updateJudgeUploadControls();
+      let progressTimer = null;
+      let requestSent = false;
+      let requestImage = "";
+      try {
       let files = selectedJudgeImageFiles.length > 0
-        ? selectedJudgeImageFiles
+        ? selectedJudgeImageFiles.slice(0, 1)
         : Array.from(judgeImageInput.files || []).filter(isImageUpload).slice(0, 1);
 
       if (selectedJudgeImageFiles.length === 0 && files.length > 0) {
         await showJudgeSelectedImage(files);
         files = selectedJudgeImageFiles;
       }
+      if (operation !== judgeOperationVersion) return;
+      requestImage = getCurrentJudgeImageDataUrl();
 
       if (files.length === 0) {
         showJudgeMessage("请先选择要判读的图片。", true);
         return;
       }
 
-      if (files.some(file => Number(file.size || 0) > 5 * 1024 * 1024)) {
-        showJudgeMessage("图片过大，建议截图后上传（识别更稳定）。", true);
-      }
-
+      showJudgeMessage("");
       await loadUserConfig();
+      if (operation !== judgeOperationVersion) return;
 
       if (!canUse("aiJudgeEnabled", "当前用户暂未开通矿地快判功能。")) {
         showJudgeMessage("当前用户暂未开通矿地快判功能，请联系管理员开通。", true);
         return;
       }
 
-      const progressTimer = startJudgeProgress(files.length);
+      progressTimer = startJudgeProgress(files.length);
 
-      try {
-        const compressedFiles = await Promise.all(files.slice(0, 1).map(async (file) => {
-          try {
-            const compressed = await compressJudgeImage(file);
-            console.log("AI判读移动端状态：图片压缩完成", {
-              originalSize: file.size,
-              outputType: compressed.type,
-              outputSize: compressed.size
-            });
-            return compressed;
-          } catch (error) {
-            console.warn("AI判读移动端状态：图片压缩失败，使用原图兜底", {
-              type: file.type,
-              size: file.size,
-              message: error.message
-            });
-            return file;
-          }
-        }));
+        const compressedFiles = await Promise.all(files.slice(0, 1).map(compressJudgeImage));
+        if (operation !== judgeOperationVersion) return;
         console.log("AI判读即将上传：", compressedFiles.map(file => ({
           type: file.type,
           size: file.size
@@ -10794,6 +10870,8 @@ function renderJudgeDecisionCard(text, comparison = null) {
           }
         };
 
+        requestSent = true;
+        showJudgeProgressVisual("图片已提交，正在等待快判结果…");
         const { response, data } = await sendJudgeRequest();
         console.log("AI判读前端收到后端响应", { status: response.status, success: data?.success === true });
 
@@ -10822,6 +10900,8 @@ function renderJudgeDecisionCard(text, comparison = null) {
         }
 
         if (!response.ok || data?.success === false || !(data?.result || data?.analysis || data?.message || data?.content || data?.rawOutput)) {
+          // An ambiguous dispatched outcome must never invite a second submission.
+          judgeSubmissionBlocked = !["image_too_large", "image_invalid", "image_missing"].includes(data?.reason);
           const error = new Error(getMiningFailureMessage(data?.reason));
           error.reason = data?.reason || "unknown";
           throw error;
@@ -10832,7 +10912,6 @@ function renderJudgeDecisionCard(text, comparison = null) {
         showJudgeProgressVisual("快判完成", "done");
         showJudgeMessage("");
         resetJudgeFeedback();
-        await new Promise(resolve => setTimeout(resolve, 350));
         const judgeText = data.result || data.analysis || data.message || data.content || data.rawOutput || "";
         console.log("AI判读最终展示文本", judgeText);
         if (!judgeText) {
@@ -10843,15 +10922,24 @@ function renderJudgeDecisionCard(text, comparison = null) {
             message: data.message || ""
           });
         }
+        if (operation !== judgeOperationVersion) {
+          saveJudgeResultToRecent(judgeText, requestImage);
+          if (data.quota) updateQuotaDisplay(data.quota);
+          else loadUserQuota();
+          showJudgeMessage("已结束的请求返回结果，已按原图片保存到最近判读；没有追加提交。");
+          return;
+        }
+        // Complete summary first; detail is progressive presentation, not a new request.
+        renderJudgeDecisionCard(judgeText, { image: requestImage });
         judgeResult.value = judgeText || "未返回判读结果。";
         console.log("AI判读移动端状态：currentResult 写入", {
           resultLength: judgeResult.value.length,
           recentResultsLength: getJudgeRecentItems().length
         });
         try {
-          const decisionMeta = renderJudgeDecisionCard(judgeResult.value);
-          const recentSave = saveJudgeResultToRecent(judgeResult.value, decisionMeta);
+          const recentSave = saveJudgeResultToRecent(judgeResult.value, requestImage);
           renderJudgeDecisionCard(judgeResult.value, recentSave);
+          revealJudgeDetail();
         } catch (renderError) {
           console.error("AI判读结果附加渲染失败，已保留文本结果：", renderError);
         }
@@ -10872,6 +10960,7 @@ function renderJudgeDecisionCard(text, comparison = null) {
           judgeType: judgeType.value
         });
       } catch (error) {
+        if (requestSent && !["image_too_large", "image_invalid", "image_missing"].includes(error.reason)) judgeSubmissionBlocked = true;
         clearInterval(progressTimer);
         hideJudgeProgressVisual();
         if (!String(judgeResult.value || "").trim()) {
@@ -10883,6 +10972,11 @@ function renderJudgeDecisionCard(text, comparison = null) {
           message,
           judgeType: judgeType.value
         });
+      } finally {
+        judgeRequestInFlight = false;
+        clearInterval(progressTimer);
+        hideJudgeProgressVisual();
+        updateJudgeUploadControls();
       }
     }
 
@@ -10911,11 +11005,14 @@ function renderJudgeDecisionCard(text, comparison = null) {
     }
 
     function clearJudgeResult() {
+      ++judgeOperationVersion;
+      cancelJudgeDetailAnimation();
       judgeResult.value = "";
       clearJudgeDecisionCard();
       resetJudgeFeedback();
       hideJudgeProgressVisual();
       showJudgeMessage("判读结果已清除。");
+      updateJudgeUploadControls();
     }
 
 
