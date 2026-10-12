@@ -1415,6 +1415,10 @@ app.get("/api/version", (req, res) => {
         runId: coordinateConsumerReplayEnabled ? COORDINATE_CONSUMER_REPLAY.runId : null,
         evidenceClass: coordinateConsumerReplayEnabled ? "HISTORICAL_RESULT_CONSUMER_REPLAY_ONLY" : null
       },
+      coordinateThreeCaseRc: {
+        enabled: coordinateThreeCaseRcAdmission.config.ready,
+        runId: coordinateThreeCaseRcAdmission.config.ready ? COORDINATE_THREE_CASE_RC.runId : null
+      },
       recognitionHardDeadlineMs: getRecognitionHardDeadlineMs(),
       workingTreeDirty: process.env.WORKING_TREE_DIRTY === "true"
         ? true
@@ -3698,8 +3702,10 @@ app.get("/api/admin/coordinate-products/three-case-rc/status", async (req, res) 
 app.post("/api/admin/coordinate-products/three-case-rc/close", async (req, res) => {
   try {
     res.setHeader("Cache-Control", "no-store");
-    const result = await coordinateThreeCaseRcAdmission.close({ adminHeader: req.get("x-admin-password") });
-    coordinateThreeCaseRcBrowserHandoff?.revoke?.();
+    coordinateThreeCaseRcAdmission.authorizeAdmin(req.get("x-admin-password"));
+    let result;
+    try { result = await coordinateThreeCaseRcAdmission.close({ adminHeader: req.get("x-admin-password") }); }
+    finally { coordinateThreeCaseRcBrowserHandoff?.revoke?.(); }
     return res.json(result);
   } catch (error) {
     const status = error instanceof CoordinateThreeCaseRcAdmissionError ? error.httpStatus : 503;
@@ -17139,9 +17145,17 @@ async function recognizeCoordinatesHandler(req, res) {
     const coordinateEngineV2ContextHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || req.body?.country || req.body?.projectCountry || "");
     const coordinateRawHint = String(req.body?.rawHint || req.body?.hint || req.body?.context || "");
     const handwrittenDmsUploadContext = hasExplicitHandwrittenDmsUploadContext(req.file, coordinateRawHint);
-    const oneShotFamilyClassification = await runLocalOcrFamilyClassification({
-      imageBuffer: req.file.buffer,
-      imageIdentity: coordinateImageIdentity
+    const r8WholeImageOnly = coordinateThreeCaseRcAdmission.getControlledModelCrsAcquisitionAuthorization({
+      budget: recognitionBudget, caseId: "indonesia",
+      productMode: String(req.get("x-coordinate-product-mode") || req.body?.coordinateProductMode || "").trim()
+    }).authorized === true;
+    const oneShotFamilyClassification = r8WholeImageOnly ? (() => {
+      const route = classifyOneShotStructuredFamily();
+      return { attempted: false, route, contract: createOneShotAcquisitionContract({ route }),
+        layoutLines: [], sourceText: "", sourceContextText: "", axisEvidenceText: "",
+        localOcrDiagnostics: { phase: "NOT_REQUESTED", outcome: "NOT_REQUESTED" } };
+    })() : await runLocalOcrFamilyClassification({
+      imageBuffer: req.file.buffer, imageIdentity: coordinateImageIdentity
     });
     oneShotLocalOcrAttempted = oneShotFamilyClassification.attempted === true;
     oneShotLocalOcrLayoutLines = oneShotFamilyClassification.layoutLines;
@@ -22261,6 +22275,8 @@ coordinateThreeCaseRcBrowserHandoff = createCoordinateThreeCaseRcBrowserHandoff(
   batchId: COORDINATE_THREE_CASE_RC.batchId,
   expectedOrigin: "https://coordinate-kml-tool-rc.onrender.com",
   caseDefinitions: COORDINATE_THREE_CASE_RC.cases,
+  claimUpload: binding => coordinateThreeCaseRcAdmission.claim({ ...binding, adminHeader: adminPassword,
+    runId: COORDINATE_THREE_CASE_RC.runId, batchId: COORDINATE_THREE_CASE_RC.batchId }),
   readRunStatus: () => coordinateThreeCaseRcAdmission.status({ adminHeader: adminPassword }),
   readExistingUserAccess: readCoordinateThreeCaseRcBrowserAccess,
   readJob: (jobId, jobAccessToken) => recognitionAcquisitionJobRuntime.getForHandoff(jobId, jobAccessToken),
@@ -22314,10 +22330,11 @@ app.post("/api/admin/coordinate-products/three-case-rc/browser-session", async (
       origin: req.get("origin")
     });
     res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Set-Cookie", `${session.cookieName}=${session.cookieValue}; Path=/api/coordinate-products/three-case-rc/browser-handoff; HttpOnly; Secure; SameSite=Strict`);
+    res.setHeader("Set-Cookie", `${session.cookieName}=${session.cookieValue}; Path=/api/; HttpOnly; Secure; SameSite=Strict`);
     return res.status(201).json({
       success: true,
       csrfToken: session.csrfToken,
+      runId: COORDINATE_THREE_CASE_RC.runId,
       expiresAt: session.expiresAt,
       visitorId: session.visitorId,
       mapProvider: session.mapProvider
@@ -22347,12 +22364,7 @@ app.post("/api/admin/coordinate-products/three-case-rc/browser-handoff/register"
   try {
     coordinateThreeCaseRcAdmission.authorizeAdmin(req.get("x-admin-password"));
     res.setHeader("Cache-Control", "no-store");
-    return res.status(201).json(await coordinateThreeCaseRcBrowserHandoff.register({
-      caseId: req.body?.caseId,
-      jobId: req.body?.jobId,
-      jobAccessToken: req.body?.jobAccessToken,
-      recognitionRequestId: req.body?.recognitionRequestId
-    }));
+    return res.status(409).json({ success: false, code: "RC_R8_EXTERNAL_REGISTRATION_DISABLED" });
   } catch (error) {
     return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_HANDOFF_REGISTER_FAILED");
   }
@@ -22369,7 +22381,7 @@ function coordinateThreeCaseRcBrowserAuth(req) {
 app.post("/api/coordinate-products/three-case-rc/browser-handoff/status", async (req, res) => {
   try {
     res.setHeader("Cache-Control", "no-store");
-    return res.json(coordinateThreeCaseRcBrowserHandoff.status(coordinateThreeCaseRcBrowserAuth(req)));
+    return res.json(await coordinateThreeCaseRcBrowserHandoff.status(coordinateThreeCaseRcBrowserAuth(req)));
   } catch (error) {
     return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_HANDOFF_STATUS_FAILED");
   }
@@ -22408,6 +22420,43 @@ app.get("/api/admin/coordinate-products/three-case-rc/browser-evidence", (req, r
     return coordinateThreeCaseRcBrowserError(res, error, "COORDINATE_THREE_CASE_RC_BROWSER_EVIDENCE_READ_FAILED");
   }
 });
+
+app.post("/api/coordinate-products/three-case-rc/browser-handoff/failure", (req, res) => {
+  try { return res.json(coordinateThreeCaseRcBrowserHandoff.reportFailure(coordinateThreeCaseRcBrowserAuth(req))); }
+  catch (error) { return coordinateThreeCaseRcBrowserError(res, error, "RC_R8_FAILURE_REPORT_REJECTED"); }
+});
+
+app.post("/api/admin/coordinate-products/three-case-rc/release-upload", async (req, res) => {
+  try {
+    coordinateThreeCaseRcAdmission.authorizeAdmin(req.get("x-admin-password"));
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(await coordinateThreeCaseRcBrowserHandoff.releaseUpload({ expiresAt: req.body?.expiresAt }));
+  } catch (error) { return coordinateThreeCaseRcBrowserError(res, error, "RC_R8_RELEASE_FAILED"); }
+});
+
+app.get("/api/admin/coordinate-products/three-case-rc/fresh-result", async (req, res) => {
+  try {
+    coordinateThreeCaseRcAdmission.authorizeAdmin(req.get("x-admin-password"));
+    res.setHeader("Cache-Control", "no-store");
+    return res.json(await coordinateThreeCaseRcBrowserHandoff.readFreshResult());
+  } catch (error) { return coordinateThreeCaseRcBrowserError(res, error, "RC_R8_RESULT_READ_FAILED"); }
+});
+
+async function admitCoordinateRcBrowserUpload(req, res, next) {
+  if (!coordinateThreeCaseRcAdmission.config.guardRequired) return next();
+  try {
+    const binding = await coordinateThreeCaseRcBrowserHandoff.beginUpload(coordinateThreeCaseRcBrowserAuth(req), {
+      imageBuffer: req.file?.buffer, recognitionRequestId: req.get("x-recognition-request-id"), visitorId: req.body?.visitorId
+    });
+    req.headers.authorization = binding.authorization;
+    req.headers["x-coordinate-rc-case-id"] = binding.caseId;
+    req.headers["x-coordinate-product-mode"] = binding.productMode;
+    req.headers["x-visitor-id"] = coordinateThreeCaseRcBrowserHandoff.exactVisitorId;
+    req.body.coordinateProductMode = binding.productMode;
+    req.coordinateRcBrowserUpload = true;
+    return next();
+  } catch (error) { return coordinateThreeCaseRcBrowserError(res, error, "RC_R8_UPLOAD_FAILED"); }
+}
 
 function coordinateConsumerReplayBrowserAuth(req) {
   return {
@@ -22560,6 +22609,7 @@ app.post(
 app.post(
   "/api/recognize-coordinates/jobs",
   upload.single("image"),
+  admitCoordinateRcBrowserUpload,
   createCoordinateThreeCaseRcJobIngressMiddleware({ admission: coordinateThreeCaseRcAdmission }),
   createCoordinateThreeCaseRcJobPreflightMiddleware({
     admission: coordinateThreeCaseRcAdmission,
@@ -22700,6 +22750,10 @@ app.post(
       body: { ...req.body },
       forwardHeaders
     });
+    if (req.coordinateRcBrowserUpload) {
+      coordinateThreeCaseRcBrowserHandoff.attachJob(job, recognitionRequestId);
+      return res.status(202).json({ success: true, async: true, requestId: recognitionRequestId });
+    }
     res.setHeader("Location", `/api/recognize-coordinates/jobs/${job.jobId}`);
     return res.status(202).json({
       success: true,

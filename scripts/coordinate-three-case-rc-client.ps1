@@ -1,286 +1,195 @@
 param(
-  [Parameter(Mandatory = $true)] [string] $RcBaseUrl,
-  [Parameter(Mandatory = $true)] [string] $ExpectedCommit,
-  [Parameter(Mandatory = $true)] [string] $VisitorId,
+  [string] $RcBaseUrl,
+  [string] $ExpectedCommit,
   [string] $IndonesiaImagePath,
-  [Parameter(Mandatory = $true)] [string] $MgrsImagePath,
-  [Parameter(Mandatory = $true)] [string] $BftmImagePath,
-  [Parameter(Mandatory = $true)] [string] $EvidencePath
+  [string] $EvidencePath,
+  [switch] $LibraryOnly
 )
-
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'coordinate-three-case-rc-client-preflight.ps1')
+$r8Parameters = @{ RcBaseUrl=$RcBaseUrl; ExpectedCommit=$ExpectedCommit; IndonesiaImagePath=$IndonesiaImagePath; EvidencePath=$EvidencePath; LibraryOnly=$LibraryOnly }
+# Reuse accepted R2 lifecycle helpers, not its historical replay protocol.
+. (Join-Path $PSScriptRoot 'coordinate-consumer-replay-client.ps1') -LibraryOnly
+. (Join-Path $PSScriptRoot 'coordinate-three-case-rc-r7-browser-consumer-gate.ps1') -LibraryOnly
 . (Join-Path $PSScriptRoot 'coordinate-three-case-rc-result-artifact.ps1')
-$runId = 'coordinate-three-case-rc-20261011-r7'
-$batchId = 'coordinate-three-case-rc-20261011-v7'
-$expectedModel = 'qwen3.8-flash'
-$controlledVisitorId = Resolve-CoordinateThreeCaseControlledVisitorId -VisitorId $VisitorId
-$caseDefinitions = @(
-  [ordered]@{ caseId = 'indonesia'; imageSha256 = '41f2b2117667fb92f6a4eb703822b1893e29c985be2e14f7b20fbda103b66cf2'; productMode = 'indonesia_utm50s_structured_b'; path = $IndonesiaImagePath },
-  [ordered]@{ caseId = 'mgrs'; imageSha256 = 'af999328e3232af304e03901c5e8d58cad794ea588ee31709aef6668974f4004'; productMode = ''; path = $MgrsImagePath },
-  [ordered]@{ caseId = 'bftm'; imageSha256 = '4567ce9889c47d65414b19e543c06b5322b86c53b76bb53e87da761bc0988e1d'; productMode = ''; path = $BftmImagePath }
-)
+$RcBaseUrl=$r8Parameters.RcBaseUrl; $ExpectedCommit=$r8Parameters.ExpectedCommit
+$IndonesiaImagePath=$r8Parameters.IndonesiaImagePath; $EvidencePath=$r8Parameters.EvidencePath
+$LibraryOnly=$r8Parameters.LibraryOnly
+$script:ReplayRunId='coordinate-three-case-rc-20261012-r8'
+$script:ReplayBatchId='coordinate-three-case-rc-20261012-v8'
+$script:R8ImageSha='41f2b2117667fb92f6a4eb703822b1893e29c985be2e14f7b20fbda103b66cf2'
 
-function ConvertFrom-SecureStringPlain([Security.SecureString] $secure) {
-  $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
-}
-
-function Invoke-JsonRequest([Net.Http.HttpClient] $client, [string] $method, [string] $url, [object] $body = $null, [switch] $AllowErrorPayload, [int] $TimeoutMilliseconds = 0) {
-  $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($method), $url)
-  $cancellation = if ($TimeoutMilliseconds -gt 0) { [Threading.CancellationTokenSource]::new($TimeoutMilliseconds) } else { $null }
+function Invoke-R8ClientEntrypoint {
+  param([hashtable] $StateContext, [string] $Commit, [scriptblock] $WaitForRelease,
+    [scriptblock] $ReadVersion, [scriptblock] $FlushInput, [scriptblock] $ReadPassword,
+    [scriptblock] $RunProtocol,
+    [scriptblock] $PersistState={ param($path,$value,$nonce) Write-ReplayAtomicJson $path $value $nonce },
+    [scriptblock] $Now={ [DateTimeOffset]::UtcNow })
+  $receipt=[ordered]@{ schemaVersion='coordinate_r8_client_receipt_v1'; runId=$script:ReplayRunId;
+    batchId=$script:ReplayBatchId; success=$false; phase='PREPARING'; failureCode=''; releaseAccepted=$false;
+    runtimeCommitMatch=$false; uploadReleaseCount=0; providerCallCount=$null; recognitionUsageConsumed=$null; failureStage='';
+    consumerGateCount=0; closeRequestCount=0; runClosed=$false; resultArtifact=$null; consumer=$null;
+    clientExpiresAt=$StateContext.deadline.ToUniversalTime().ToString('O') }
+  $transition={ param($phase)
+    $receipt.phase=$phase
+    Set-ReplayClientState -Context $StateContext -Phase $phase -Persist $PersistState -Now $Now
+  }.GetNewClosure()
+  $secure=$null
   try {
-    if ($null -ne $body) {
-      $json = $body | ConvertTo-Json -Depth 8 -Compress
-      $request.Content = [Net.Http.StringContent]::new($json, [Text.Encoding]::UTF8, 'application/json')
+    & $transition 'PREPARING'
+    Get-ReplayRemainingMilliseconds $StateContext.deadline $Now | Out-Null
+    & $transition 'WAITING_RELEASE'
+    & $WaitForRelease | Out-Null
+    Get-ReplayRemainingMilliseconds $StateContext.deadline $Now | Out-Null
+    $receipt.releaseAccepted=$true
+    & $transition 'RUNTIME_CHECK'
+    $version=& $ReadVersion (Get-ReplayRemainingMilliseconds $StateContext.deadline $Now)
+    $runtime=$version.runtimeIdentity
+    if ($runtime.commit -cne $Commit -or $runtime.coordinateThreeCaseRc.enabled -ne $true -or
+        $runtime.coordinateThreeCaseRc.runId -cne $script:ReplayRunId -or
+        $runtime.coordinateConsumerReplay.enabled -ne $false) { throw 'RC_R8_RUNTIME_IDENTITY_REJECTED' }
+    $receipt.runtimeCommitMatch=$true
+    & $FlushInput
+    Get-ReplayRemainingMilliseconds $StateContext.deadline $Now | Out-Null
+    & $transition 'WAITING_PASSWORD'
+    $secure=& $ReadPassword $StateContext.deadline
+    Get-ReplayRemainingMilliseconds $StateContext.deadline $Now | Out-Null
+    if ($secure -isnot [Security.SecureString] -or $secure.Length -eq 0) { throw 'RC_R8_PASSWORD_UNAVAILABLE' }
+    & $transition 'RUNNING'
+    & $RunProtocol $secure $receipt $StateContext.deadline $transition | Out-Null
+    if (-not $receipt.success -or -not $receipt.runClosed) { throw 'RC_R8_DELIVERY_OR_CLOSE_INCOMPLETE' }
+    & $transition 'COMPLETED'
+  } catch {
+    $receipt.success=$false
+    if (-not $receipt.failureStage) { $receipt.failureStage=$receipt.phase }
+    $receipt.failureCode='RC_R8_' + $receipt.failureStage + '_FAILED'
+    if (-not $StateContext.writeFailed -and $StateContext.phase -notin @('FAILED','COMPLETED')) {
+      try { Set-ReplayClientState -Context $StateContext -Phase 'FAILED' -FailureCode 'CONSUMER_REPLAY_HTTP_FAILED' -Persist $PersistState -Now $Now } catch {}
     }
-    $response = if ($null -ne $cancellation) {
-      $client.SendAsync($request, $cancellation.Token).GetAwaiter().GetResult()
-    } else {
-      $client.SendAsync($request).GetAwaiter().GetResult()
-    }
-    $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-    $payload = if ([string]::IsNullOrWhiteSpace($text)) { $null } else { $text | ConvertFrom-Json }
-    if (-not $response.IsSuccessStatusCode -and -not $AllowErrorPayload) {
-      $code = if ($payload.code) { [string]$payload.code } elseif ($payload.reason) { [string]$payload.reason } else { 'HTTP_FAILURE' }
-      throw "HTTP_$([int]$response.StatusCode)_$code"
-    }
-    return $payload
-  } finally {
-    if ($null -ne $cancellation) { $cancellation.Dispose() }
-    $request.Dispose()
-  }
-}
-
-function Invoke-RecognitionJob([Net.Http.HttpClient] $adminClient, [string] $baseUrl, [System.Collections.IDictionary] $definition) {
-  $requestId = [guid]::NewGuid().ToString().ToLowerInvariant()
-  $claimBody = New-CoordinateThreeCaseClaimBody -RunId $runId -BatchId $batchId `
-    -Definition $definition -RecognitionRequestId $requestId -VisitorId $controlledVisitorId
-  $claim = Invoke-JsonRequest $adminClient 'POST' "$baseUrl/api/admin/coordinate-products/three-case-rc/claims" $claimBody
-  if ($claim.accepted -ne $true -or [string]::IsNullOrWhiteSpace([string]$claim.claimToken)) { throw 'CLAIM_CONTRACT_INVALID' }
-
-  $jobClient = [Net.Http.HttpClient]::new()
-  $jobClient.Timeout = [TimeSpan]::FromSeconds(190)
-  try {
-    $jobClient.DefaultRequestHeaders.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', [string]$claim.claimToken)
-    $jobClient.DefaultRequestHeaders.Add('x-recognition-request-id', $requestId)
-    $jobClient.DefaultRequestHeaders.Add('x-coordinate-rc-case-id', $definition.caseId)
-    if ($definition.productMode) { $jobClient.DefaultRequestHeaders.Add('x-coordinate-product-mode', $definition.productMode) }
-    $form = [Net.Http.MultipartFormDataContent]::new()
-    Add-CoordinateThreeCaseJobVisitorIdentity -Client $jobClient -Form $form -VisitorId $controlledVisitorId | Out-Null
-    $stream = [IO.File]::OpenRead($definition.path)
-    try {
-      $image = [Net.Http.StreamContent]::new($stream)
-      $image.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new('image/jpeg')
-      $form.Add($image, 'image', [IO.Path]::GetFileName($definition.path))
-      if ($definition.productMode) { $form.Add([Net.Http.StringContent]::new($definition.productMode), 'coordinateProductMode') }
-      $response = $jobClient.PostAsync("$baseUrl/api/recognize-coordinates/jobs", $form).GetAwaiter().GetResult()
-      $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-      $accepted = $text | ConvertFrom-Json
-      if (-not $response.IsSuccessStatusCode) {
-        $code = if ($accepted.code) { [string]$accepted.code } elseif ($accepted.reason) { [string]$accepted.reason } else { 'JOB_CREATE_FAILED' }
-        throw "HTTP_$([int]$response.StatusCode)_$code"
-      }
-    } finally {
-      $form.Dispose()
-      $stream.Dispose()
-    }
-    if ([string]::IsNullOrWhiteSpace([string]$accepted.jobId) -or [string]::IsNullOrWhiteSpace([string]$accepted.jobAccessToken)) {
-      throw 'JOB_ACCEPTANCE_CONTRACT_INVALID'
-    }
-
-    $pollClient = [Net.Http.HttpClient]::new()
-    $pollClient.Timeout = [TimeSpan]::FromSeconds(15)
-    $pollClient.DefaultRequestHeaders.Add('x-recognition-job-token', [string]$accepted.jobAccessToken)
-    try {
-      $deadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
-      do {
-        Start-Sleep -Seconds 2
-        $snapshot = Invoke-JsonRequest $pollClient 'GET' "$baseUrl/api/recognize-coordinates/jobs/$($accepted.jobId)" $null -AllowErrorPayload
-        if ($snapshot.status -in @('SUCCEEDED', 'FAILED')) { break }
-      } while ([DateTimeOffset]::UtcNow -lt $deadline)
-      if ($snapshot.status -notin @('SUCCEEDED', 'FAILED')) { throw 'JOB_TERMINAL_TIMEOUT' }
-      return [pscustomobject]@{
-        snapshot = $snapshot
-        jobId = [string]$accepted.jobId
-        jobAccessToken = [string]$accepted.jobAccessToken
-        recognitionRequestId = $requestId
-      }
-    } finally {
-      $pollClient.Dispose()
-    }
-  } finally {
-    $jobClient.Dispose()
-  }
-}
-
-$baseUri = [Uri]$RcBaseUrl
-if ($baseUri.Scheme -ne 'https' -or $baseUri.Host -ne 'coordinate-kml-tool-rc.onrender.com' -or $baseUri.Query -or $baseUri.Fragment) {
-  throw 'RC_BASE_URL_REJECTED'
-}
-$resolvedEvidencePath = [IO.Path]::GetFullPath($EvidencePath)
-if ($resolvedEvidencePath.StartsWith((Get-Location).Path, [StringComparison]::OrdinalIgnoreCase)) { throw 'EVIDENCE_PATH_MUST_BE_OUTSIDE_REPOSITORY' }
-$validatedResultPath = "${resolvedEvidencePath}.validated-results.json"
-$evidenceParent = Split-Path -Parent $resolvedEvidencePath
-if (-not (Test-Path -LiteralPath $evidenceParent)) { New-Item -ItemType Directory -Path $evidenceParent | Out-Null }
-try {
-  $caseDefinitions = @(Resolve-CoordinateThreeCaseLocalInputs -Definitions $caseDefinitions)
-} catch {
-  $preflightEvidence = [ordered]@{
-    schemaVersion = 2
-    runId = $runId
-    runtimeCommitMatch = $false
-    executionCount = 1
-    automaticRetries = 0
-    providerCallLimit = 3
-    phase = 'LOCAL_PREFLIGHT'
-    cases = @([ordered]@{ caseId = 'local-preflight'; terminalStatus = 'CLIENT_STOP'; code = [string]$_.Exception.Message })
-    runClosed = $false
-    generatedAt = [DateTimeOffset]::UtcNow.ToString('O')
-  }
-  $preflightEvidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedEvidencePath -Encoding UTF8
-  $preflightEvidence | ConvertTo-Json -Depth 8
-  exit 4
-}
-
-$browserEvidencePath = "${resolvedEvidencePath}.browser-consumer.json"
-$browserDownloadDirectory = Join-Path $evidenceParent 'r7-browser-download'
-$kmlDownloadPath = Join-Path $browserDownloadDirectory 'coordinates.kml'
-if ((Test-Path -LiteralPath $browserEvidencePath) -or (Test-Path -LiteralPath $browserDownloadDirectory)) {
-  throw 'R7_BROWSER_CONSUMER_STALE_ARTIFACT_PRESENT'
-}
-New-Item -ItemType Directory -Path $browserDownloadDirectory | Out-Null
-Write-Host "R7_BROWSER_DOWNLOAD_DIRECTORY=$browserDownloadDirectory"
-
-$adminSecure = Read-Host '请输入 RC 管理员密码（不会显示）' -AsSecureString
-$adminPlain = ConvertFrom-SecureStringPlain $adminSecure
-$client = [Net.Http.HttpClient]::new()
-$client.Timeout = [TimeSpan]::FromSeconds(30)
-$client.DefaultRequestHeaders.Add('x-admin-password', $adminPlain)
-$beforeCases = {
-  $version = Invoke-JsonRequest $client 'GET' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/version"
-  $runtimeCommit = [string]$(if ($version.runtimeIdentity.commit) { $version.runtimeIdentity.commit } else { $version.commit })
-  if ($runtimeCommit -ne $ExpectedCommit) { throw 'RC_RUNTIME_COMMIT_MISMATCH' }
-  $browserReadiness = Invoke-JsonRequest $client 'POST' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/admin/coordinate-products/three-case-rc/browser-readiness" ([ordered]@{})
-  if ($browserReadiness.browserSessionReady -ne $true) { throw 'R7_BROWSER_SESSION_NOT_READY' }
-}
-$invokeCase = {
-  param($definition)
-  return Invoke-RecognitionJob $client $baseUri.AbsoluteUri.TrimEnd('/') $definition
-}
-$validatedResultState = [pscustomobject]@{
-  Cases = [Collections.Generic.List[object]]::new()
-  LastIntegrity = $null
-}
-$convertReceipt = {
-  param($definition, $jobResult)
-  $snapshot = $jobResult.snapshot
-  $receipt = Get-CoordinateThreeCaseSanitizedCaseReceipt -Definition $definition -Snapshot $snapshot -ExpectedModel $expectedModel
-  $record = New-CoordinateThreeCaseValidatedResultRecord -Definition $definition -Snapshot $snapshot -ExpectedModel $expectedModel
-  $validatedResultState.Cases.Add($record)
-  $state = New-CoordinateThreeCaseValidatedResultState -RunId $runId -BatchId $batchId `
-    -ExpectedCommit $ExpectedCommit -Cases $validatedResultState.Cases -RuntimeCommitMatch $true
-  $validatedResultState.LastIntegrity = Write-CoordinateThreeCaseValidatedResultArtifact `
-    -Path $validatedResultPath -State $state
+  } finally { if ($secure -is [Security.SecureString]) { $secure.Dispose() } }
+  $receipt['clientStateWriteCount']=$StateContext.writeCount
+  $receipt['generatedAt']=(& $Now).ToUniversalTime().ToString('O')
   return $receipt
 }
-$afterCase = {
-  param($definition, $jobResult, $receipt)
-  if ([string]$definition['caseId'] -ne 'indonesia') { return $true }
-  $registration = Invoke-JsonRequest $client 'POST' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/admin/coordinate-products/three-case-rc/browser-handoff/register" ([ordered]@{
-    caseId = 'indonesia'
-    jobId = [string]$jobResult.jobId
-    jobAccessToken = [string]$jobResult.jobAccessToken
-    recognitionRequestId = [string]$jobResult.recognitionRequestId
-  })
-  if ($registration.registered -ne $true) { throw 'R7_BROWSER_HANDOFF_REGISTRATION_FAILED' }
-  $handoffExpiresAt = [string]$registration.expiresAt
-  if ([string]::IsNullOrWhiteSpace($handoffExpiresAt)) { throw 'R7_BROWSER_HANDOFF_DEADLINE_MISSING' }
-  if ((Test-Path -LiteralPath $browserEvidencePath) -or (Test-Path -LiteralPath $kmlDownloadPath)) {
-    throw 'R7_BROWSER_CONSUMER_STALE_ARTIFACT_PRESENT'
-  }
-  $handoffDeadline = [DateTimeOffset]::MinValue
-  if (-not [DateTimeOffset]::TryParse($handoffExpiresAt, [Globalization.CultureInfo]::InvariantCulture,
-      [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$handoffDeadline)) {
-    throw 'R7_BROWSER_HANDOFF_DEADLINE_INVALID'
-  }
-  $browserEvidence = $null
-  while ([DateTimeOffset]::UtcNow -lt $handoffDeadline.ToUniversalTime()) {
-    $remainingRequestMilliseconds = [int][Math]::Floor(($handoffDeadline.ToUniversalTime() - [DateTimeOffset]::UtcNow).TotalMilliseconds)
-    if ($remainingRequestMilliseconds -le 0) { break }
-    $browserEvidenceReceipt = Invoke-JsonRequest -client $client -method 'GET' `
-      -url "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/admin/coordinate-products/three-case-rc/browser-evidence" `
-      -TimeoutMilliseconds ([Math]::Min(30000, $remainingRequestMilliseconds))
-    if ($browserEvidenceReceipt.ready -eq $true -and $null -ne $browserEvidenceReceipt.evidence) {
-      $browserEvidence = $browserEvidenceReceipt.evidence
-      break
+
+function Invoke-R8FreshConsumerProtocol {
+  param([scriptblock] $Request, [System.Collections.IDictionary] $Receipt, [DateTimeOffset] $Deadline,
+    [scriptblock] $Transition, [string] $Commit, [string] $ResultPath, [string] $BrowserPath,
+    [string] $DownloadPath,
+    [scriptblock] $Delay={ Start-Sleep -Milliseconds 1500 },
+    [scriptblock] $Now={ [DateTimeOffset]::UtcNow },
+    [scriptblock] $WriteResult={ param($path,$state) Write-CoordinateThreeCaseValidatedResultArtifact -Path $path -State $state },
+    [scriptblock] $WriteBrowser={ param($path,$value) Write-ReplayAtomicJson $path $value ([guid]::NewGuid().ToString('N')) },
+    [scriptblock] $Gate={ param($browser,$result,$download,$run,$expires)
+      Invoke-R7BrowserConsumerGate -EvidencePath $browser -ResultPath $result -DownloadPath $download -RunId $run -CaseId 'indonesia' -ExpiresAt $expires -WaitSeconds 480 })
+  $base='/api/admin/coordinate-products/three-case-rc'
+  $stage='BROWSER_READINESS'
+  try {
+    $ready=& $Request 'POST' "$base/browser-readiness" $null (Get-ReplayRemainingMilliseconds $Deadline $Now)
+    if ($ready.browserSessionReady -ne $true) { throw 'RC_R8_BROWSER_NOT_READY' }
+    $Receipt.uploadReleaseCount=1
+    $stage='UPLOAD_RELEASE'
+    $release=& $Request 'POST' "$base/release-upload" @{expiresAt=$Deadline.ToUniversalTime().ToString('O')} (Get-ReplayRemainingMilliseconds $Deadline $Now)
+    if ($release.released -ne $true -or $release.runId -cne $script:ReplayRunId) { throw 'RC_R8_UPLOAD_RELEASE_FAILED' }
+    Write-Host 'R8_UPLOAD_READY：请在已认证的 RC 页面上传原印尼图一次；勿刷新或重复上传。'
+    $stage='FRESH_RECOGNITION'
+    do {
+      $fresh=& $Request 'GET' "$base/fresh-result" $null (Get-ReplayRemainingMilliseconds $Deadline $Now)
+      if ($fresh.stage -eq 'FAILED') { throw 'RC_R8_RECOGNITION_FAILED' }
+      if (-not $fresh.ready) { & $Delay }
+    } while (-not $fresh.ready)
+    $record=New-CoordinateThreeCaseValidatedResultRecord -Definition @{caseId='indonesia';imageSha256=$script:R8ImageSha} -Snapshot $fresh.snapshot -ExpectedModel 'qwen3.8-flash'
+    if ($record.success -ne $true -or $record.modelMatch -ne $true -or $record.providerCallCount -ne 1 -or
+        $record.finalizedResult.consumerIdentityMatch -ne $true -or $record.finalizedResult.technicalKmlReady -ne $true -or
+        $fresh.snapshot.result.recognitionUsageConsumed -isnot [bool]) { throw 'RC_R8_NEW_RESULT_CONTRACT_FAILED' }
+    $stage='RESULT_RETENTION'
+    $Receipt.providerCallCount=$record.providerCallCount
+    $Receipt.recognitionUsageConsumed=$fresh.snapshot.result.recognitionUsageConsumed
+    $state=New-CoordinateThreeCaseValidatedResultState -RunId $script:ReplayRunId -BatchId $script:ReplayBatchId -ExpectedCommit $Commit -Cases @($record) -RuntimeCommitMatch $true
+    $Receipt.resultArtifact=& $WriteResult $ResultPath $state
+    $handoffDeadline=[DateTimeOffset]$fresh.expiresAt
+    if ($handoffDeadline -gt $Deadline) { throw 'RC_R8_HANDOFF_DEADLINE_REJECTED' }
+    $stage='MAP_OR_DOWNLOAD'
+    do {
+      $browser=& $Request 'GET' "$base/browser-evidence" $null (Get-ReplayRemainingMilliseconds $handoffDeadline $Now)
+      if (-not $browser.ready) { & $Delay }
+    } while (-not $browser.ready)
+    & $WriteBrowser $BrowserPath $browser.evidence | Out-Null
+    $Receipt.consumerGateCount=1
+    $stage='PHYSICAL_KML'
+    $Receipt.consumer=& $Gate $BrowserPath $ResultPath $DownloadPath $script:ReplayRunId $fresh.expiresAt
+    if ($Receipt.consumer.success -ne $true) { throw 'RC_R8_PHYSICAL_DOWNLOAD_NOT_VERIFIED' }
+    $Receipt.success=$true
+  } catch {
+    $Receipt.failureStage=$stage
+    throw
+  } finally {
+    try { & $Transition 'CLOSING' } finally {
+      $Receipt.closeRequestCount=1
+      try {
+        $closed=& $Request 'POST' "$base/close" @{} 30000
+        $Receipt.runClosed=$closed.closed -eq $true
+      } catch { $Receipt.runClosed=$false }
+      if (-not $Receipt.runClosed) {
+        $Receipt.success=$false
+        if (-not $Receipt.failureStage) { $Receipt.failureStage='CLOSING' }
+      }
     }
-    Start-Sleep -Milliseconds 500
   }
-  if ($null -eq $browserEvidence) { throw 'R7_BROWSER_CONSUMER_EVIDENCE_TIMEOUT' }
-  Write-CoordinateThreeCaseBrowserConsumerEvidenceArtifact -Evidence $browserEvidence `
-    -Path $browserEvidencePath -ExpectedRunId $runId -ExpectedCaseId 'indonesia' | Out-Null
-  $gateScript = Join-Path $PSScriptRoot 'coordinate-three-case-rc-r7-browser-consumer-gate.ps1'
-  $pwshExecutable = Join-Path $PSHOME 'pwsh.exe'
-  $gateOutput = & $pwshExecutable -NoProfile -File $gateScript -BrowserEvidencePath $browserEvidencePath -ValidatedResultPath $validatedResultPath `
-    -KmlDownloadPath $kmlDownloadPath -ExpectedRunId $runId -ExpectedCaseId 'indonesia' -HandoffExpiresAt $handoffExpiresAt
-  if ($LASTEXITCODE -ne 0) { throw 'R7_BROWSER_CONSUMER_GATE_FAILED' }
-  $gateReceipt = ($gateOutput | Select-Object -Last 1) | ConvertFrom-Json
-  if ($gateReceipt.success -ne $true) { throw 'R7_BROWSER_CONSUMER_GATE_FAILED' }
-  $receipt['consumerGate'] = [ordered]@{
-    browserEvidenceAccepted = $gateReceipt.browserEvidenceAccepted -eq $true
-    mapReady = $gateReceipt.mapReady -eq $true
-    mapProvider = [string]$gateReceipt.mapProvider
-    authorityMutationCount = [int]$gateReceipt.authorityMutationCount
-    kmlParsed = $gateReceipt.kmlParsed -eq $true
-    kmlGeometryType = [string]$gateReceipt.kmlGeometryType
-    kmlGeometryMatch = $gateReceipt.kmlGeometryMatch -eq $true
-    kmlSha256 = [string]$gateReceipt.kmlSha256
-  }
-  return $true
-}
-$closeRun = {
-  return Invoke-JsonRequest $client 'POST' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/admin/coordinate-products/three-case-rc/close" ([ordered]@{})
-}
-$writeEvidence = {
-  param($sequenceReceipts, $sequenceCloseReceipt, $failureCode, $runtimeReady)
-  $validatedState = New-CoordinateThreeCaseValidatedResultState -RunId $runId -BatchId $batchId `
-    -ExpectedCommit $ExpectedCommit -Cases $validatedResultState.Cases -RuntimeCommitMatch ($runtimeReady -eq $true) `
-    -RunClosed ($sequenceCloseReceipt.closed -eq $true) -ClientFailureCode ([string]$failureCode)
-  $validatedResultState.LastIntegrity = Write-CoordinateThreeCaseValidatedResultArtifact `
-    -Path $validatedResultPath -State $validatedState
-  $evidence = [ordered]@{
-    schemaVersion = 2
-    runId = $runId
-    runtimeCommitMatch = $runtimeReady -eq $true
-    executionCount = 1
-    automaticRetries = 0
-    providerCallLimit = 3
-    cases = $sequenceReceipts
-    runClosed = $sequenceCloseReceipt.closed -eq $true
-    clientFailurePresent = -not [string]::IsNullOrWhiteSpace([string]$failureCode)
-    validatedResultArtifact = [ordered]@{
-      present = $true
-      verified = $validatedResultState.LastIntegrity.verified -eq $true
-      caseCount = [int]$validatedResultState.LastIntegrity.caseCount
-      sha256 = [string]$validatedResultState.LastIntegrity.sha256
-    }
-    generatedAt = [DateTimeOffset]::UtcNow.ToString('O')
-  }
-  $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedEvidencePath -Encoding UTF8
-  return $evidence
 }
 
-try {
-  $execution = Invoke-CoordinateThreeCaseControlledRun -Definitions $caseDefinitions `
-    -BeforeCases $beforeCases -InvokeCase $invokeCase -ConvertReceipt $convertReceipt `
-    -AfterCase $afterCase -CloseRun $closeRun -WriteEvidence $writeEvidence
-} finally {
-  $adminPlain = $null
-  $client.Dispose()
+if ($LibraryOnly) { return }
+$processStarted=[DateTimeOffset](Get-Process -Id $PID).StartTime.ToUniversalTime()
+$deadline=$processStarted.AddMinutes(15)
+$clock=[Diagnostics.Stopwatch]::StartNew()
+$baseUri=[Uri]$RcBaseUrl
+if ($baseUri.Scheme -cne 'https' -or $baseUri.Host -cne 'coordinate-kml-tool-rc.onrender.com' -or
+    $baseUri.Port -ne 443 -or $baseUri.UserInfo -or $baseUri.AbsolutePath -ne '/' -or $baseUri.Query -or $baseUri.Fragment -or
+    $ExpectedCommit -cnotmatch '^[0-9a-f]{40}$' -or
+    (Get-FileHash -LiteralPath $IndonesiaImagePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $script:R8ImageSha) { throw 'RC_R8_PREFLIGHT_REJECTED' }
+$receiptPath=[IO.Path]::GetFullPath($EvidencePath)
+$statePath="$receiptPath.state.json"; $releasePath="$receiptPath.release.json"
+$resultPath="$receiptPath.validated-results.json"; $browserPath="$receiptPath.browser.json"
+$downloadDirectory=Join-Path (Split-Path -Parent $receiptPath) 'r8-browser-download'
+$downloadPath=Join-Path $downloadDirectory 'coordinates.kml'
+foreach ($path in @($receiptPath,$statePath,$releasePath,$resultPath,$browserPath)) {
+  if (Test-Path -LiteralPath $path) { throw 'RC_R8_EXISTING_RECEIPT_REJECTED' }
 }
-
-$execution.evidence | ConvertTo-Json -Depth 8
-if (-not $execution.evidence.runClosed) { exit 2 }
-if (-not [string]::IsNullOrWhiteSpace([string]$execution.failureCode)) { exit 3 }
+# Prepared before launch, no prior downloads may be adopted.
+if (-not (Test-Path -LiteralPath $downloadDirectory -PathType Container) -or
+    @(Get-ChildItem -LiteralPath $downloadDirectory -Force).Count -ne 0) { throw 'RC_R8_DOWNLOAD_DIRECTORY_NOT_PREPARED' }
+$nonce=[guid]::NewGuid().ToString('N')
+$context=New-ReplayClientStateContext $statePath $ExpectedCommit $PID $processStarted $nonce
+$wait={
+  Write-Host 'R8_CLIENT_STATE=WAITING_RELEASE（暂不输入密码）'
+  Write-Host "R8_DOWNLOAD_DIRECTORY=$downloadDirectory"
+  Write-Host "R8_CLIENT_STATE_PATH=$statePath"
+  Write-Host "R8_RELEASE_CONTROL_PATH=$releasePath"
+  Write-Host "R8_CLIENT_DEADLINE=$($deadline.ToString('O'))"
+  Wait-ReplayReleaseManifest -Path $releasePath -ExpectedCommit $ExpectedCommit -InstanceNonce $nonce -ProcessId $PID -ProcessStartedAt $processStarted.ToUniversalTime().ToString('O') -PreparationExpiresAt $deadline -PreparationClock $clock
+}.GetNewClosure()
+$version={ param($timeout)
+  $client=[Net.Http.HttpClient]::new()
+  try { Invoke-ReplayJsonRequest $client 'GET' "$($baseUri.AbsoluteUri.TrimEnd('/'))/api/version" $null $timeout }
+  finally { $client.Dispose() }
+}.GetNewClosure()
+$protocol={ param($secure,$receipt,$expires,$transition)
+  $client=[Net.Http.HttpClient]::new()
+  try {
+    $plain=ConvertFrom-ReplaySecureString $secure
+    $client.DefaultRequestHeaders.Add('x-admin-password',$plain)
+    $plain=$null
+    $request={ param($method,$path,$body,$timeout)
+      Invoke-ReplayJsonRequest $client $method "$($baseUri.AbsoluteUri.TrimEnd('/'))$path" $body $timeout
+    }.GetNewClosure()
+    Invoke-R8FreshConsumerProtocol -Request $request -Receipt $receipt -Deadline $expires -Transition $transition -Commit $ExpectedCommit -ResultPath $resultPath -BrowserPath $browserPath -DownloadPath $downloadPath
+  } finally { $plain=$null; $client.Dispose() }
+}.GetNewClosure()
+$receipt=Invoke-R8ClientEntrypoint -StateContext $context -Commit $ExpectedCommit -WaitForRelease $wait -ReadVersion $version -FlushInput { Clear-ReplayConsoleInputBuffer } -ReadPassword {
+  param($expires)
+  $oldControlC=[Console]::TreatControlCAsInput
+  try { [Console]::TreatControlCAsInput=$true; Read-ReplayPassword -Deadline $expires }
+  finally { [Console]::TreatControlCAsInput=$oldControlC }
+} -RunProtocol $protocol
+Write-ReplayAtomicJson -Path $receiptPath -Value $receipt -InstanceNonce $nonce
+$receipt | ConvertTo-Json -Depth 8
+if (-not $receipt.success) { exit 3 }

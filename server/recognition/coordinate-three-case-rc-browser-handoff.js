@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-const SESSION_COOKIE = "geokit_rc_r7";
+const SESSION_COOKIE = "geokit_rc_r8";
 const HANDOFF_TTL_MS = 8 * 60 * 1000;
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const RESULT_MAX_AGE_MS = 8 * 60 * 1000;
@@ -152,10 +152,104 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
   readExistingUserAccess = async () => null,
   readJob = () => null,
   validateFinalizedIdentity = () => ({ ok: false }),
-  selectedMapProvider = () => "UNKNOWN"
+  selectedMapProvider = () => "UNKNOWN",
+  claimUpload = async () => fail("RC_R8_CLAIM_UNAVAILABLE", 503)
 } = {}) {
   const sessions = new Map();
   const handoffs = new Map();
+  let sessionCreated = false;
+  let releaseAttempted = false;
+  let clientDeadline = null;
+  let upload = null;
+  let refreshPromise = null;
+  let stopped = false;
+
+  function assertOpen() {
+    if (stopped || (clientDeadline !== null && now() >= clientDeadline)) fail("RC_R8_CLOSED_OR_EXPIRED", 410);
+    if (upload?.stage === "FAILED") fail(upload.failureCode || "RC_R8_FAILED", 409);
+  }
+
+  async function releaseUpload({ expiresAt } = {}) {
+    assertOpen();
+    const deadline = safeDeadline(expiresAt, now());
+    if (releaseAttempted || !hasReadySession() || !deadline || deadline > now() + 15 * 60 * 1000) {
+      fail("RC_R8_RELEASE_REJECTED", 409);
+    }
+    releaseAttempted = true;
+    const run = await readRunStatus();
+    assertOpen();
+    if (run?.runStatus !== "ACTIVE" || run?.runClosed || !safeDeadline(run?.deadlineAt, now())) fail("RC_R8_RUN_NOT_ACTIVE", 409);
+    clientDeadline = Math.min(deadline, Date.parse(run.deadlineAt));
+    return Object.freeze({ released: true, runId, expiresAt: new Date(clientDeadline).toISOString() });
+  }
+
+  // The browser never receives the RC claim capability. The existing jobs route
+  // consumes the single multipart upload and forwards that capability internally.
+  async function beginUpload(auth, { imageBuffer, recognitionRequestId, visitorId } = {}) {
+    const session = authenticate(auth);
+    const requestId = safeUuid(recognitionRequestId);
+    if (!clientDeadline || upload || !Buffer.isBuffer(imageBuffer) || !requestId
+      || visitorId !== exactVisitorId || session.visitorId !== exactVisitorId
+      || crypto.createHash("sha256").update(imageBuffer).digest("hex") !== caseDefinitions?.indonesia?.imageSha256) {
+      fail("RC_R8_UPLOAD_REJECTED", 409);
+    }
+    upload = { requestId, stage: "CLAIMING", job: null, failureCode: null };
+    try {
+      const claim = await claimUpload({ caseId: "indonesia", imageSha256: caseDefinitions.indonesia.imageSha256,
+        recognitionRequestId: requestId, visitorId: exactVisitorId });
+      assertOpen();
+      if (!claim?.claimToken) fail("RC_R8_CLAIM_REJECTED", 409);
+      upload.stage = "UPLOADED";
+      return { authorization: `Bearer ${claim.claimToken}`, caseId: "indonesia", productMode: caseDefinitions.indonesia.productMode };
+    } catch (error) {
+      upload.stage = "FAILED";
+      upload.failureCode = "RC_R8_UPLOAD_ADMISSION_FAILED";
+      throw error;
+    }
+  }
+
+  function attachJob(job, requestId) {
+    assertOpen();
+    if (!upload || upload.stage !== "UPLOADED" || upload.requestId !== requestId
+      || !job?.jobId || !job?.jobAccessToken) fail("RC_R8_JOB_BINDING_REJECTED", 409);
+    upload.job = { jobId: job.jobId, jobAccessToken: job.jobAccessToken };
+    upload.stage = "RUNNING";
+  }
+
+  async function refreshUpload() {
+    assertOpen();
+    if (!upload?.job || upload.stage !== "RUNNING") return;
+    if (refreshPromise) return refreshPromise;
+    refreshPromise = (async () => {
+      const job = readJob(upload.job.jobId, upload.job.jobAccessToken);
+      if (!job) fail("RC_R8_JOB_UNAVAILABLE", 410);
+      if (["QUEUED", "RUNNING"].includes(job.status)) return;
+      if (job.status !== "SUCCEEDED") fail("RC_R8_RECOGNITION_FAILED", 422);
+      await register({ caseId: "indonesia", ...upload.job, recognitionRequestId: upload.requestId });
+      assertOpen();
+      upload.stage = "RESULT_READY";
+    })().catch(error => {
+      upload.stage = "FAILED";
+      upload.failureCode = /^[A-Z0-9_]+$/u.test(error?.code || "") ? error.code : "RC_R8_RESULT_FAILED";
+    }).finally(() => { refreshPromise = null; });
+    return refreshPromise;
+  }
+
+  async function readFreshResult() {
+    await refreshUpload();
+    const stage = upload?.stage || (clientDeadline ? "WAITING_UPLOAD" : "WAITING_RELEASE");
+    if (stage !== "RESULT_READY") return { ready: false, stage, code: upload?.failureCode || null };
+    const job = readJob(upload.job.jobId, upload.job.jobAccessToken);
+    const terminal = terminalJobResult(job);
+    if (!terminal) fail("RC_R8_RESULT_UNAVAILABLE", 410);
+    return { ready: true, stage, expiresAt: new Date(handoffs.get(`${runId}:indonesia`).expiresAt).toISOString(),
+      snapshot: { status: job.status, httpStatus: job.httpStatus, requestId: upload.requestId,
+        result: { ...browserResultPayload(terminal.response, terminal.finalized),
+          providerModel: safeText(terminal.response.providerModel || terminal.response.model, 80),
+          model: safeText(terminal.response.model || terminal.response.providerModel, 80),
+          providerCallCount: terminal.response.providerCallCount,
+          providerCompletionState: safeText(terminal.response.providerCompletionState, 80) } } };
+  }
 
   function prune() {
     const current = now();
@@ -163,6 +257,8 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
   }
 
   async function createSession({ visitorId, origin } = {}) {
+    assertOpen();
+    if (sessionCreated) fail("RC_R8_BROWSER_AUTH_ALREADY_USED", 409);
     prune();
     if (safeText(visitorId) !== exactVisitorId) fail("COORDINATE_THREE_CASE_RC_BROWSER_VISITOR_REJECTED", 403);
     if (!expectedOrigin || safeText(origin, 512) !== expectedOrigin) {
@@ -171,6 +267,7 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
     if (String(selectedMapProvider() || "").toUpperCase() !== "OPENFREEMAP") {
       fail("COORDINATE_THREE_CASE_RC_BROWSER_MAP_PROVIDER_REJECTED", 503);
     }
+    sessionCreated = true;
     const access = await readExistingUserAccess(exactVisitorId);
     if (!access?.existingUser || access?.permissions?.aiOcrEnabled !== true
       || access?.permissions?.kmlExportEnabled !== true
@@ -181,6 +278,7 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
     if (status?.runStatus !== "ACTIVE" || status?.runClosed === true) {
       fail("COORDINATE_THREE_CASE_RC_BROWSER_RUN_NOT_ACTIVE", 409);
     }
+    assertOpen();
     const current = now();
     const runDeadline = safeDeadline(status?.deadlineAt, current);
     if (!runDeadline) fail("COORDINATE_THREE_CASE_RC_BROWSER_RUN_DEADLINE_UNAVAILABLE", 503);
@@ -205,6 +303,7 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
   }
 
   function authenticate({ cookieHeader, csrfToken, origin } = {}) {
+    assertOpen();
     prune();
     const cookieToken = parseCookies(cookieHeader)[SESSION_COOKIE] || "";
     const session = sessions.get(sha256(cookieToken));
@@ -217,6 +316,7 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
   }
 
   function hasReadySession() {
+    if (stopped || (clientDeadline !== null && now() >= clientDeadline)) return false;
     prune();
     const current = now();
     return [...sessions.values()].some(session => session.visitorId === exactVisitorId
@@ -225,6 +325,7 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
   }
 
   async function register({ caseId, jobId, jobAccessToken, recognitionRequestId } = {}) {
+    assertOpen();
     prune();
     if (safeText(caseId) !== "indonesia" || !safeText(jobId, 160) || !safeText(jobAccessToken, 256)) {
       fail("COORDINATE_THREE_CASE_RC_BROWSER_HANDOFF_BINDING_INVALID");
@@ -246,6 +347,7 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
       fail("COORDINATE_THREE_CASE_RC_BROWSER_REQUEST_IDENTITY_MISMATCH", 409);
     }
     const status = await readRunStatus();
+    assertOpen();
     const current = now();
     if (status?.runStatus !== "ACTIVE" || status?.runClosed === true) {
       fail("COORDINATE_THREE_CASE_RC_BROWSER_RUN_NOT_ACTIVE", 409);
@@ -266,7 +368,8 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
     if (!Number.isFinite(registryDeadline) || registryDeadline <= current) {
       fail("COORDINATE_THREE_CASE_RC_BROWSER_FINALIZED_IDENTITY_DEADLINE_UNAVAILABLE", 503);
     }
-    const expiresAt = Math.min(current + HANDOFF_TTL_MS, runDeadline, jobDeadline, resultDeadline, registryDeadline);
+    const expiresAt = Math.min(current + HANDOFF_TTL_MS, runDeadline, jobDeadline, resultDeadline, registryDeadline,
+      clientDeadline ?? Infinity);
     if (!Number.isFinite(expiresAt) || expiresAt <= current) fail("COORDINATE_THREE_CASE_RC_BROWSER_HANDOFF_DEADLINE_UNAVAILABLE", 503);
     const key = `${runId}:indonesia`;
     if (handoffs.has(key)) fail("COORDINATE_THREE_CASE_RC_BROWSER_HANDOFF_ALREADY_REGISTERED", 409);
@@ -282,12 +385,16 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
     return Object.freeze({ registered: true, caseId: "indonesia", expiresAt: new Date(expiresAt).toISOString() });
   }
 
-  function status(auth) {
+  async function status(auth) {
     authenticate(auth);
+    await refreshUpload();
     const entry = handoffs.get(`${runId}:indonesia`);
     return Object.freeze({
       ready: Boolean(entry && !entry.consumed && entry.expiresAt > now()),
-      caseId: entry ? "indonesia" : null
+      caseId: entry ? "indonesia" : null,
+      stage: upload?.stage || (clientDeadline ? "WAITING_UPLOAD" : "WAITING_RELEASE"),
+      code: upload?.failureCode || null,
+      expiresAt: new Date(clientDeadline || authenticate(auth).expiresAt).toISOString()
     });
   }
 
@@ -310,6 +417,7 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
       visitorId: session.visitorId,
       recognitionRequestId: entry.recognitionRequestId,
       resultIdentity: structuredClone(entry.identity),
+      expiresAt: new Date(entry.expiresAt).toISOString(),
       result: browserResultPayload(entry.payload, currentFinalized.result)
     });
   }
@@ -362,6 +470,7 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
   }
 
   function readConsumerEvidence() {
+    assertOpen();
     const entry = handoffs.get(`${runId}:indonesia`);
     if (!entry || entry.expiresAt <= now() || !entry.consumerEvidence) {
       return Object.freeze({ ready: false });
@@ -370,14 +479,29 @@ export function createCoordinateThreeCaseRcBrowserHandoff({
   }
 
   function revoke() {
+    stopped = true;
     sessions.clear();
     handoffs.clear();
+  }
+
+  function reportFailure(auth) {
+    authenticate(auth);
+    if (!upload) upload = { requestId: "", job: null };
+    upload.stage = "FAILED";
+    upload.failureCode = "RC_R8_BROWSER_CONSUMER_FAILED";
+    handoffs.clear();
+    return { accepted: true };
   }
 
   return Object.freeze({
     cookieName: SESSION_COOKIE,
     exactVisitorId,
     createSession,
+    releaseUpload,
+    beginUpload,
+    attachJob,
+    readFreshResult,
+    reportFailure,
     hasReadySession,
     authenticate,
     register,

@@ -6019,11 +6019,16 @@ Au值 = 纯度 × 10 后取整数</div>
   <script>
     const APP_VERSION = "v1.0.2";
     const INDONESIA_STRUCTURED_PRODUCT_MODE = "indonesia_utm50s_structured_b";
-    const COORDINATE_THREE_CASE_RC_R7_RUN_ID = "coordinate-three-case-rc-20261011-r7";
+    const COORDINATE_THREE_CASE_RC_R7_RUN_ID = "coordinate-three-case-rc-20261012-r8";
     const COORDINATE_THREE_CASE_RC_R7_VISITOR_ID = "rc-b-release-20261010-4f125a9";
     const COORDINATE_CONSUMER_REPLAY_RUN_ID = "coordinate-indonesia-consumer-replay-20261012-r2";
     const COORDINATE_CONSUMER_REPLAY_BATCH_ID = "coordinate-indonesia-consumer-replay-20261012-v2";
-    const coordinateThreeCaseRcBrowserMode = new URLSearchParams(window.location.search).get("coordinate-three-case-rc") === "r7";
+    const coordinateThreeCaseRcBrowserMode = new URLSearchParams(window.location.search).get("coordinate-three-case-rc") === "r8";
+    let coordinateR8UploadAllowed = false;
+    let coordinateR8UploadAttempted = false;
+    let coordinateR8RequestId = "";
+    let coordinateR8Stopped = false;
+    let coordinateR8FailureReported = false;
     const coordinateConsumerReplayBrowserMode = new URLSearchParams(window.location.search).get("coordinate-consumer-replay") === "r2";
     const controlledCoordinateConsumerBrowserMode = coordinateThreeCaseRcBrowserMode || coordinateConsumerReplayBrowserMode;
     const input = document.getElementById("coordinateInput");
@@ -6550,7 +6555,7 @@ Au值 = 纯度 × 10 后取整数</div>
           ? COORDINATE_CONSUMER_REPLAY_RUN_ID
           : COORDINATE_THREE_CASE_RC_R7_RUN_ID;
         if (!response.ok || !payload.csrfToken || payload.visitorId !== COORDINATE_THREE_CASE_RC_R7_VISITOR_ID
-          || (coordinateConsumerReplayBrowserMode && payload.runId !== expectedRunId)
+          || payload.runId !== expectedRunId
           || payload.mapProvider !== "OPENFREEMAP") {
           throw new Error(payload.code || "CONTROLLED_CONSUMER_BROWSER_SESSION_REJECTED");
         }
@@ -6574,8 +6579,9 @@ Au值 = 纯度 × 10 后取整数</div>
           coordinateConsumerReplayPollGeneration += 1;
           void pollCoordinateConsumerReplayReadiness(coordinateConsumerReplayPollGeneration);
         } else {
-          coordinateThreeCaseRcReceive.disabled = false;
-          coordinateThreeCaseRcBrowserStatus.textContent = "浏览器身份已验证，可以接收已完成的印尼结果。";
+          coordinateThreeCaseRcReceive.disabled = true;
+          coordinateThreeCaseRcBrowserStatus.textContent = "浏览器身份已验证；等待终端放行后上传原印尼图一次。";
+          void pollCoordinateR8Upload(Date.parse(String(payload.expiresAt || "")));
         }
       } catch (error) {
         coordinateThreeCaseRcCsrfToken = "";
@@ -6584,7 +6590,7 @@ Au值 = 纯度 × 10 后取整数</div>
         coordinateThreeCaseRcBrowserStatus.textContent = `验证失败：${String(error?.message || "R7_BROWSER_SESSION_REJECTED")}`;
       } finally {
         coordinateThreeCaseRcAdminPassword.value = "";
-        coordinateThreeCaseRcAuthenticate.disabled = false;
+        coordinateThreeCaseRcAuthenticate.disabled = coordinateThreeCaseRcBrowserMode;
       }
     }
 
@@ -6614,9 +6620,10 @@ Au值 = 纯度 × 10 后取整数</div>
         const expectedRunId = coordinateConsumerReplayBrowserMode
           ? COORDINATE_CONSUMER_REPLAY_RUN_ID
           : COORDINATE_THREE_CASE_RC_R7_RUN_ID;
-        const expectedBatchId = coordinateConsumerReplayBrowserMode ? COORDINATE_CONSUMER_REPLAY_BATCH_ID : null;
+        const expectedBatchId = coordinateConsumerReplayBrowserMode ? COORDINATE_CONSUMER_REPLAY_BATCH_ID : "coordinate-three-case-rc-20261012-v8";
         if (!response.ok || handoff.accepted !== true || handoff.runId !== expectedRunId
           || (expectedBatchId && handoff.batchId !== expectedBatchId)
+          || (coordinateThreeCaseRcBrowserMode && handoff.recognitionRequestId !== coordinateR8RequestId)
           || handoff.caseId !== "indonesia" || handoff.visitorId !== COORDINATE_THREE_CASE_RC_R7_VISITOR_ID
           || !finalizedIdentity
           || finalizedIdentity.resultId !== resultIdentity?.resultId
@@ -6675,7 +6682,7 @@ Au值 = 纯度 × 10 后取整数</div>
           : "印尼结果已按产品路径接入。请先打开地图并确认 READY，再下载 KML。";
         setRecognitionStatus(coordinateConsumerReplayBrowserMode
           ? "历史结果消费者验证：UNVERIFIED"
-          : "R7 结果已接入，仍为待核对状态", "warning");
+          : "R8 新识别结果已接入，仍为待核对状态", "warning");
         showMessage("受控结果保持 REVIEW_REQUIRED / UNVERIFIED；地图和 KML 必须消费同一服务端结果身份。", false, 8000);
       } catch (error) {
         if (coordinateConsumerReplayBrowserMode) {
@@ -6685,7 +6692,7 @@ Au值 = 纯度 × 10 后取整数</div>
           coordinateThreeCaseRcBrowserStatus.textContent = `接收失败：${code}；本次隔离验证已停止。`;
         } else {
           coordinateThreeCaseRcBrowserStatus.textContent = `接收失败：${String(error?.message || "R7_HANDOFF_RECEIVE_FAILED")}`;
-          coordinateThreeCaseRcReceive.disabled = false;
+          await failCoordinateR8();
         }
       }
     }
@@ -6739,7 +6746,7 @@ Au值 = 纯度 × 10 后取整数</div>
     function initializeCoordinateThreeCaseRcBrowserMode() {
       if (!controlledCoordinateConsumerBrowserMode) return;
       coordinateThreeCaseRcBrowserPanel.hidden = false;
-      coordinateUploadPanel.hidden = true;
+      coordinateUploadPanel.hidden = coordinateConsumerReplayBrowserMode;
       imageInput.disabled = true;
       coordinateThreeCaseRcAuthenticate.addEventListener("click", authenticateCoordinateThreeCaseRcBrowser);
       coordinateThreeCaseRcReceive.addEventListener("click", receiveCoordinateThreeCaseRcBrowserResult);
@@ -6747,12 +6754,17 @@ Au值 = 纯度 × 10 后取整数</div>
         coordinateControlledConsumerTitle.textContent = "历史结果消费者验证（零模型）";
         coordinateControlledConsumerDescription.textContent = "仅验证保存几何经过真实产品地图与 KML 的消费链；不执行识别、不扣业务配额，也不代表普通用户全链通过。";
         coordinateThreeCaseRcReceive.textContent = "接收历史结果";
+      } else {
+        coordinateControlledConsumerTitle.textContent = "R8 单图完整路径";
+        coordinateControlledConsumerDescription.textContent = "终端放行后仅上传原印尼图一次；新识别结果直接用于现有地图和 KML，不重复识别。";
+        indonesiaStructuredProductModeControl.hidden = true;
       }
       coordinateThreeCaseRcBrowserStatus.textContent = "等待管理员在本浏览器中完成一次身份验证。";
     }
     judgeImageInput.addEventListener("change", handleJudgeImageChange);
     judgeImageInput.multiple = false;
     window.addEventListener("pageshow", () => {
+      if (controlledCoordinateConsumerBrowserMode) return;
       restoreHandwrittenReviewGuard();
       setTimeout(restoreHandwrittenReviewGuard, 0);
       setTimeout(() => {
@@ -8430,6 +8442,8 @@ Au值 = 纯度 × 10 后取整数</div>
       const current = getFinalizedCoordinateIdentity(result);
       const expected = activeCoordinateThreeCaseRcHandoff?.resultIdentity;
       return coordinateThreeCaseRcBrowserMode
+        && !coordinateR8Stopped
+        && Date.now() < Date.parse(String(activeCoordinateThreeCaseRcHandoff?.expiresAt || ""))
         && activeCoordinateThreeCaseRcHandoff?.runId === COORDINATE_THREE_CASE_RC_R7_RUN_ID
         && activeCoordinateThreeCaseRcHandoff?.caseId === "indonesia"
         && current?.resultId === expected?.resultId
@@ -9500,6 +9514,10 @@ Au值 = 纯度 × 10 后取整数</div>
     }
 
     async function openSpatialResult() {
+      if (coordinateThreeCaseRcBrowserMode) {
+        if (!isActiveCoordinateThreeCaseRcR7Identity() || activeCoordinateThreeCaseRcHandoff.mapAttempted) return;
+        activeCoordinateThreeCaseRcHandoff.mapAttempted = true;
+      }
       if (stopBlockedCoordinateAction("map")) return null;
       if (shouldUseProvisionalCoordinateResult("map")) return openProvisionalSpatialResult();
       if (agenticCoordinateController?.enabled) return openAgenticSpatialResult();
@@ -9556,6 +9574,7 @@ Au值 = 纯度 × 10 后取整数</div>
           if (isActiveCoordinateConsumerReplayIdentity()) {
             await failCoordinateConsumerReplay("MAP_FAILED", "MAP_READY_CONTRACT_FAILED");
           }
+          if (coordinateThreeCaseRcBrowserMode) await failCoordinateR8();
           showPage("coordinate", "", true);
           showMessage(controlledMapRequired
             ? "受控地图未形成 OpenFreeMap READY 的同一结果身份，已停止后续流程。"
@@ -9580,6 +9599,7 @@ Au值 = 纯度 × 10 后取整数</div>
         if (isActiveCoordinateConsumerReplayIdentity()) {
           await failCoordinateConsumerReplay("MAP_FAILED", "MAP_PRODUCT_PATH_FAILED");
         }
+        if (coordinateThreeCaseRcBrowserMode) await failCoordinateR8();
         if (pages.spatialResult?.classList.contains("active")) {
           spatialMapFailure.hidden = false;
           spatialResultDiagnostic.hidden = true;
@@ -16073,6 +16093,7 @@ ${placemarks}
       try {
         return await downloadKmlInternal();
       } catch (error) {
+        if (coordinateThreeCaseRcBrowserMode) await failCoordinateR8();
         clearKmlGenerationProgress();
         console.error("KML generation or download failed:", error);
         if (coordinateConsumerReplayBrowserMode && activeCoordinateThreeCaseRcHandoff?.replayOnly === true
@@ -16083,18 +16104,25 @@ ${placemarks}
           code: "KML_DOWNLOAD_FAILED",
           title: "KML 生成失败",
           reason: sanitizeUserFacingTechMessage(error?.message) || "生成或下载 KML 文件时发生异常。",
-          suggestion: coordinateConsumerReplayBrowserMode
+          suggestion: controlledCoordinateConsumerBrowserMode
             ? "本次隔离验证已停止，请关闭入口；不得重试。"
             : "请重试；如果仍然失败，请复制识别详情联系管理员。"
         });
         return null;
       } finally {
+        if (coordinateThreeCaseRcBrowserMode && activeCoordinateThreeCaseRcHandoff?.downloadAttempted
+          && !activeCoordinateThreeCaseRcHandoff?.kmlDownloadTriggered) await failCoordinateR8();
         clearKmlGenerationProgress();
         setKmlGenerationInProgress(false);
       }
     }
 
     async function downloadKmlInternal() {
+      if (coordinateThreeCaseRcBrowserMode) {
+        if (!isActiveCoordinateThreeCaseRcR7Identity() || !activeCoordinateThreeCaseRcHandoff.mapReady
+          || activeCoordinateThreeCaseRcHandoff.downloadAttempted) return;
+        activeCoordinateThreeCaseRcHandoff.downloadAttempted = true;
+      }
       await loadUserConfig();
 
       if (stopBlockedCoordinateAction("kml")) return null;
@@ -17040,7 +17068,80 @@ ${placemarks}
       }
     }
 
+    async function failCoordinateR8() {
+      coordinateR8Stopped = true;
+      imageInput.disabled = true;
+      if (activeCoordinateThreeCaseRcHandoff) activeCoordinateThreeCaseRcHandoff.failed = true;
+      if (coordinateR8FailureReported || !coordinateThreeCaseRcCsrfToken) return;
+      coordinateR8FailureReported = true;
+      try {
+        await fetch("/api/coordinate-products/three-case-rc/browser-handoff/failure", {
+          method: "POST", credentials: "same-origin", headers: controlledConsumerCsrfHeaders(),
+          signal: AbortSignal.timeout(10000)
+        });
+      } catch { /* Unknown delivery is not retried. The client deadline still closes the run. */ }
+    }
+
+    async function pollCoordinateR8Upload(sessionDeadline) {
+      let deadline = sessionDeadline;
+      try {
+        while (!coordinateR8Stopped && Number.isFinite(deadline) && Date.now() < deadline) {
+          const response = await fetch(controlledConsumerPath("status"), {
+            method: "POST", headers: controlledConsumerCsrfHeaders(), credentials: "same-origin",
+            signal: AbortSignal.timeout(10000)
+          });
+          const status = await response.json();
+          if (!response.ok || status.stage === "FAILED") throw new Error(status.code || "RC_R8_STATUS_FAILED");
+          deadline = Math.min(deadline, Date.parse(String(status.expiresAt || "")));
+          coordinateR8UploadAllowed = status.stage === "WAITING_UPLOAD" && !coordinateR8UploadAttempted;
+          imageInput.disabled = !coordinateR8UploadAllowed;
+          if (coordinateR8UploadAllowed) coordinateThreeCaseRcBrowserStatus.textContent = "已放行：请用上方上传图片按钮选择原印尼图片一次。";
+          if (status.ready) {
+            imageInput.disabled = true;
+            await receiveCoordinateThreeCaseRcBrowserResult();
+            return;
+          }
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+        throw new Error("RC_R8_DEADLINE_EXCEEDED");
+      } catch {
+        await failCoordinateR8();
+        coordinateThreeCaseRcBrowserStatus.textContent = "R8 已停止或到期；不要重复认证、上传或刷新。请报告当前提示。";
+      }
+    }
+
+    async function uploadCoordinateR8Image() {
+      const file = imageInput.files[0];
+      if (!file || !coordinateR8UploadAllowed || coordinateR8UploadAttempted || coordinateR8Stopped) return;
+      coordinateR8UploadAttempted = true;
+      coordinateR8UploadAllowed = false;
+      imageInput.disabled = true;
+      try {
+        const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+        const hash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+        if (hash !== "41f2b2117667fb92f6a4eb703822b1893e29c985be2e14f7b20fbda103b66cf2") throw new Error("RC_R8_SAMPLE_MISMATCH");
+        coordinateR8RequestId = createRecognitionRequestId();
+        // Existing usage-session endpoint; no replay quota bypass and no local recovery.
+        await prepareCoordinateUsageSession(COORDINATE_THREE_CASE_RC_R7_VISITOR_ID);
+        const form = new FormData();
+        form.append("image", file);
+        form.append("visitorId", COORDINATE_THREE_CASE_RC_R7_VISITOR_ID);
+        const response = await fetch("/api/recognize-coordinates/jobs", {
+          method: "POST", credentials: "same-origin", body: form,
+          headers: controlledConsumerCsrfHeaders({ "x-recognition-request-id": coordinateR8RequestId }),
+          signal: AbortSignal.timeout(30000)
+        });
+        const accepted = await response.json();
+        if (response.status !== 202 || accepted.success !== true || accepted.requestId !== coordinateR8RequestId) throw new Error("RC_R8_UPLOAD_NOT_ACCEPTED");
+        coordinateThreeCaseRcBrowserStatus.textContent = "新图已提交，正在识别；请勿重复上传。结果形成后会自动接入地图与 KML。";
+      } catch {
+        await failCoordinateR8();
+        coordinateThreeCaseRcBrowserStatus.textContent = "R8 上传失败，已停止；请勿重试或刷新，报告此提示。";
+      }
+    }
+
     async function recognizeImage() {
+      if (coordinateThreeCaseRcBrowserMode) return uploadCoordinateR8Image();
       const file = imageInput.files[0];
       const currentVisitorId = ensureVisitorId();
       const pendingCoordinateRecognitionJob = getPendingCoordinateRecognitionJob();

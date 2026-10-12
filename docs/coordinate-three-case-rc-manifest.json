@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "batchId": "coordinate-three-case-rc-20261011-v7",
-  "runId": "coordinate-three-case-rc-20261011-r7",
+  "batchId": "coordinate-three-case-rc-20261012-v8",
+  "runId": "coordinate-three-case-rc-20261012-r8",
   "projectRef": "thjojitdafxfarhxhoyo",
   "serviceName": "coordinate-kml-tool-rc",
   "model": "qwen3.8-flash",
-  "runWindowSeconds": 1800,
+  "runWindowSeconds": 900,
   "claimTtlSeconds": 600,
   "maxConcurrentDispatches": 1,
   "automaticRetries": 0,
@@ -18,31 +18,10 @@
       "budgetPool": "INDONESIA_HISTORICAL_6_CALL_5_CNY",
       "reserveCny": 0.816,
       "maxVisionCalls": 1
-    },
-    {
-      "caseId": "mgrs",
-      "imageSha256": "af999328e3232af304e03901c5e8d58cad794ea588ee31709aef6668974f4004",
-      "productMode": "",
-      "budgetPool": "MGRS_BFTM_SHARED_2_CNY",
-      "reserveCny": 1,
-      "maxVisionCalls": 1
-    },
-    {
-      "caseId": "bftm",
-      "imageSha256": "4567ce9889c47d65414b19e543c06b5322b86c53b76bb53e87da761bc0988e1d",
-      "productMode": "",
-      "budgetPool": "MGRS_BFTM_SHARED_2_CNY",
-      "reserveCny": 1,
-      "maxVisionCalls": 1
     }
   ],
-  "nonIndonesiaBudget": {
-    "historicalBatchId": "coordinate-three-case-rc-20261011-v1",
-    "caseIds": ["mgrs", "bftm"],
-    "maxDispatched": 4,
-    "totalCostLimitCny": 4,
-    "reservePerDispatchCny": 1
-  },
+  "visitorId": "rc-b-release-20261010-4f125a9",
+  "initializationFreeConvertGrant": 1,
   "indonesiaBudget": {
     "historicalBatchId": "indonesia-ab-20261010-v1",
     "maxAttempts": 6,

@@ -1,14 +1,14 @@
 import crypto from "node:crypto";
 
 export const COORDINATE_THREE_CASE_RC = Object.freeze({
-  batchId: "coordinate-three-case-rc-20261011-v7",
-  runId: "coordinate-three-case-rc-20261011-r7",
-  manifestSha256: "e96d02a62df84b6a68d227bc881e5da25b557daa80d08ab08606d2f852e72a81",
+  batchId: "coordinate-three-case-rc-20261012-v8",
+  runId: "coordinate-three-case-rc-20261012-r8",
+  manifestSha256: "5448e91db16ec517b97bf47b976778c1f9d0cb6004e6056fb762d05070417e1b",
   rcProjectRef: "thjojitdafxfarhxhoyo",
   rcServiceName: "coordinate-kml-tool-rc",
   providerHostname: "dashscope.aliyuncs.com",
   model: "qwen3.8-flash",
-  runWindowSeconds: 1800,
+  runWindowSeconds: 900,
   claimTtlSeconds: 600,
   directOcrCalls: 0,
   automaticRetries: 0,
@@ -19,20 +19,6 @@ export const COORDINATE_THREE_CASE_RC = Object.freeze({
       productMode: "indonesia_utm50s_structured_b",
       budgetPool: "INDONESIA_HISTORICAL_6_CALL_5_CNY",
       reserveCny: 0.816
-    }),
-    mgrs: Object.freeze({
-      caseId: "mgrs",
-      imageSha256: "af999328e3232af304e03901c5e8d58cad794ea588ee31709aef6668974f4004",
-      productMode: "",
-      budgetPool: "MGRS_BFTM_SHARED_2_CNY",
-      reserveCny: 1
-    }),
-    bftm: Object.freeze({
-      caseId: "bftm",
-      imageSha256: "4567ce9889c47d65414b19e543c06b5322b86c53b76bb53e87da761bc0988e1d",
-      productMode: "",
-      budgetPool: "MGRS_BFTM_SHARED_2_CNY",
-      reserveCny: 1
     })
   })
 });
