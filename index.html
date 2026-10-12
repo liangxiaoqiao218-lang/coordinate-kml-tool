@@ -11209,6 +11209,30 @@ Au值 = 纯度 × 10 后取整数</div>
       }, 1200);
     }
 
+    function getMiningFailureMessage(reason) {
+      const messages = {
+        MINING_CONFIG_UNAVAILABLE: "矿地快判专用服务尚未就绪，请联系管理员；请勿重复上传。",
+        MINING_MODEL_UNAVAILABLE: "矿地快判模型不可用或当前服务无权访问，请联系管理员；请勿重复上传。",
+        MINING_ENDPOINT_NOT_FOUND: "矿地快判服务地址不可用，请联系管理员；请勿重复上传。",
+        MINING_PROVIDER_404_UNKNOWN: "矿地快判服务返回 404，具体原因待核查；请勿重复上传。",
+        MINING_PROVIDER_HTTP_ERROR: "矿地快判上游服务返回错误；本次已停止，请勿重复上传。",
+        MINING_PROVIDER_TIMEOUT: "矿地快判等待服务超时；本次已停止，请勿重复上传。",
+        MINING_PROVIDER_NETWORK_ERROR: "矿地快判连接上游服务失败；本次已停止，请勿重复上传。",
+        MINING_USAGE_UNVERIFIED: "服务用量尚未核实；本次已停止，未开始业务扣次，请勿重复上传。",
+        MINING_SETTLEMENT_UNKNOWN: "本次扣次或结果保存状态待核实，请勿重复上传，请联系管理员。",
+        MINING_INTERNAL_ERROR: "矿地快判处理失败；本次已停止，请联系管理员。",
+        image_missing: "未收到图片，请检查选择的图片。",
+        image_invalid: "图片格式不支持，请使用 JPG 或 PNG 图片。",
+        image_too_large: "图片过大，压缩后仍超过上传限制。",
+        timeout: "矿地快判等待超时，处理状态待核实；请勿重复上传。",
+        network_failed: "网络连接中断，处理和扣次状态待核实；请勿重复上传。",
+        config_missing: "矿地快判服务暂未配置，请联系管理员。",
+        server_parse_failed: "矿地快判响应无法解析，处理和扣次状态待核实；请勿重复上传。"
+      };
+      return Object.hasOwn(messages, reason) ? messages[reason]
+        : "矿地快判未完成，处理和扣次状态待核实；请勿重复上传，请联系管理员。";
+    }
+
     async function analyzeMiningImage() {
       let files = selectedJudgeImageFiles.length > 0
         ? selectedJudgeImageFiles
@@ -11286,16 +11310,12 @@ Au值 = 纯度 × 10 后取整数</div>
             try {
               data = await response.clone().json();
             } catch (parseError) {
-              const rawText = await response.text().catch(() => "");
               console.error("AI判读响应 JSON 解析失败：", {
-                status: response.status,
-                message: parseError.message,
-                rawText
+                status: response.status
               });
               data = {
                 success: false,
-                reason: "server_parse_failed",
-                detail: `后端返回内容解析失败：${parseError.message || "未知解析错误"}`
+                reason: "server_parse_failed"
               };
             }
             return { response, data };
@@ -11303,20 +11323,14 @@ Au值 = 纯度 × 10 后取整数</div>
             return {
               response: { ok: false, status: 0 },
               data: {
-                reason: "network_failed",
-                detail: error.message || "网络失败，请检查网络后重试。"
+                reason: "network_failed"
               }
             };
           }
         };
 
-        let { response, data } = await sendJudgeRequest();
-        console.log("AI判读前端收到后端响应", data);
-        if (!response.ok && ["network_failed", "timeout"].includes(data.reason)) {
-          showJudgeProgressVisual("网络波动，正在自动重试...");
-          ({ response, data } = await sendJudgeRequest());
-          console.log("AI判读前端收到后端重试响应", data);
-        }
+        const { response, data } = await sendJudgeRequest();
+        console.log("AI判读前端收到后端响应", { status: response.status, success: data?.success === true });
 
         if (!response.ok && data.reason === "limit_exceeded") {
           clearInterval(progressTimer);
@@ -11342,22 +11356,9 @@ Au值 = 纯度 × 10 后取整数</div>
           return;
         }
 
-        if (!response.ok) {
-          const detail = sanitizeUserFacingTechMessage(data.detail || data.error || "矿地快判失败");
-          const reasonText = {
-            image_missing: "未收到图片，请重新选择图片后上传。",
-            image_invalid: detail || "图片格式不支持，请重新选择 JPG 或 PNG 图片。",
-            image_too_large: detail || "图片过大，请截图后重新上传。",
-            timeout: detail || "识别服务超时，请稍后重试，或截图后重新上传。",
-            aliyun_failed: detail || "识别服务返回错误，请稍后重试。",
-            aliyun_empty: detail || "识别服务返回空结果，请更换图片或稍后重试。",
-            network_failed: "网络请求失败，请检查网络后重试。",
-            config_missing: "识别服务暂未配置，请联系管理员。",
-            server_parse_failed: detail || "后端解析失败，请稍后重试。"
-          };
-          const error = new Error(reasonText[data.reason] || detail || "未知错误，请稍后重试。");
-          error.reason = data.reason || "unknown";
-          error.detail = detail;
+        if (!response.ok || data?.success === false || !(data?.result || data?.analysis || data?.message || data?.content || data?.rawOutput)) {
+          const error = new Error(getMiningFailureMessage(data?.reason));
+          error.reason = data?.reason || "unknown";
           throw error;
         }
 
@@ -11411,12 +11412,10 @@ Au值 = 纯度 × 10 后取整数</div>
         if (!String(judgeResult.value || "").trim()) {
           clearJudgeDecisionCard();
         }
-        const message = /图片|格式|JPG|JPEG|截图|处理|标准化|过大|超时|阿里云|网络|配置|未知/.test(error.message || "")
-          ? error.message
-          : "网络失败或服务暂时不可用，请稍后重试。";
+        const message = getMiningFailureMessage(error.reason);
         showJudgeMessage(message, true);
         trackEvent("ai_judge_fail", {
-          message: error.message,
+          message,
           judgeType: judgeType.value
         });
       }

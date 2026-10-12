@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import {
   MINING_JUDGEABILITY_CONTRACT_VERSION,
@@ -261,4 +262,226 @@ test("frontend uses a fixed allowlist instead of provider safe_message", () => {
   const handler = html.slice(start, end);
   assert.match(handler, /JUDGEABILITY_SAFE_MESSAGES\[primaryReason\]/);
   assert.equal(handler.includes("data.safe_message"), false);
+});
+
+// Incremental acceptance: execute the actual route, transport and browser handler.
+// Only external I/O is replaced. No server startup, network, database or file writes.
+const recoveryServer = fs.readFileSync(path.join(root, "server.js"), "utf8");
+const recoveryHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
+function recoverySection(source, start, end) {
+  const from = source.indexOf(start);
+  const to = source.indexOf(end, from + start.length);
+  assert.ok(from >= 0 && to > from, `Missing production source boundary: ${start}`);
+  return source.slice(from, to);
+}
+
+function miningRecoveryRuntime(options = {}) {
+  const calls = { fetch: 0, charge: 0, caseWrite: 0, adminWrite: 0, usageLog: 0, logs: [], payloads: [] };
+  const consoleStub = Object.fromEntries(["log", "warn", "error"].map(key => [key, (...args) => calls.logs.push(args)]));
+  const data = { records: [], usage: {}, events: [], featureFlags: {} };
+  const output = options.output ?? providerOutput({ body: "【对象类型】\n矿石\n\n【场景分类】\n原矿石\n\n【结论】\n仅作外观初筛。\n\n【等级】\nC\n\n【关键依据】\n可见岩石结构。" });
+  const provider = options.provider ?? {
+    model: "qwen3.8-flash", choices: [{ message: { content: output } }],
+    usage: { prompt_tokens: 1000, completion_tokens: 300 }
+  };
+  const context = vm.createContext({
+    console: consoleStub, process: { env: {} }, Buffer, AbortController, setTimeout, clearTimeout,
+    aliyunApiKey: "synthetic-key", aliyunBaseURL: options.base ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    aliyunMiningModel: options.model ?? "qwen3.8-flash", aliyunVisionModel: "coordinate-model-unchanged",
+    latestProviderModelObservation: "coordinate-observation-unchanged",
+    isFamilyRetryAllowed: () => true, getRecognitionBudget: () => null,
+    getRecognitionDeadlineSignal: () => null,
+    composeAbortSignals: signals => ({ signal: signals[0], cleanup() {} }),
+    fetch: async (url, init) => {
+      calls.fetch++;
+      calls.payloads.push(JSON.parse(init.body));
+      if (options.transportError) throw Object.assign(new Error("untrusted synthetic failure"), { name: options.transportError });
+      return { status: options.status ?? 200, ok: (options.status ?? 200) < 300, json: async () => provider };
+    },
+    upload: { fields: () => null },
+    app: { post: (url, middleware, handler) => { assert.equal(url, "/api/analyze-mining-image"); context.route = handler; } },
+    readAdminData: async () => data, ensureUser: () => ({ visitorId: "offline-only" }),
+    getEffectivePermissions: () => ({ aiJudgeEnabled: true }), updateUserVisitMeta: async () => {},
+    checkUsage: async () => ({ allowed: true }),
+    consumeUsage: async (id, type, req, settings) => {
+      calls.charge++;
+      assert.equal(settings.allowSourceFallback, false);
+      calls.cost = settings.metadata;
+      if (options.chargeThrows) throw new Error("untrusted database error");
+      return options.chargeResult ?? { success: true, source: "free", quota: { free: 2 } };
+    },
+    appendUsageLog: async () => { calls.usageLog++; },
+    writeJudgeCase: async () => { calls.caseWrite++; if (options.caseThrows) throw new Error("untrusted storage error"); return "offline-case"; },
+    writeAdminData: async () => { calls.adminWrite++; },
+    makeId: () => "offline-record", getNowISO: () => "2026-10-12T00:00:00Z",
+    getQuotaExhaustedCode: () => "JUDGE_QUOTA_EXHAUSTED", applyMiningJudgeabilityGate
+  });
+  vm.runInContext([
+    recoverySection(recoveryServer, "function extractProviderMessageText(", "function buildProviderMessageDiagnostic("),
+    recoverySection(recoveryServer, "function getAliyunChatCompletionsUrl(", "async function callAliyunProductionLayoutQualificationProbe("),
+    recoverySection(recoveryServer, "async function callAliyunVision(", "function getHandwrittenDmsTranscriptionPrompt("),
+    recoverySection(recoveryServer, "function normalizeJudgeOutput(", 'app.get("/api/config"'),
+    recoverySection(recoveryServer, 'app.post("/api/analyze-mining-image"', 'app.post("/api/regression/parse-coordinate-text"')
+  ].join("\n"), context);
+  return {
+    context, calls, data,
+    async run() {
+      const req = { headers: {}, body: { visitorId: "offline-only" }, get: () => "offline-only",
+        files: { images: [{ mimetype: "image/jpeg", size: 8, originalname: "judge-upload.jpg", buffer: Buffer.from("offline") }] } };
+      const result = { statusCode: 200, body: null };
+      const res = { status(code) { result.statusCode = code; return this; }, json(body) { result.body = body; return this; } };
+      await context.route(req, res);
+      return result;
+    }
+  };
+}
+
+test("mining recovery: real route uses dedicated model once and settles once", async () => {
+  const runtime = miningRecoveryRuntime();
+  const result = await runtime.run();
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.success, true);
+  assert.match(result.body.result, /仅作外观初筛/);
+  assert.equal(runtime.calls.fetch, 1);
+  assert.equal(runtime.calls.charge, 1);
+  assert.equal(runtime.calls.caseWrite, 1);
+  assert.equal(runtime.calls.adminWrite, 1);
+  assert.equal(runtime.calls.usageLog, 1);
+  const payload = runtime.calls.payloads[0];
+  assert.equal(payload.model, "qwen3.8-flash");
+  assert.equal(payload.enable_thinking, false);
+  assert.equal(payload.max_tokens, 360);
+  assert.equal(payload.messages[0].content.filter(item => item.type === "image_url").length, 1);
+  assert.equal(runtime.context.latestProviderModelObservation, "coordinate-observation-unchanged");
+  assert.equal(runtime.calls.cost.estimated_cost_cny, 0.00161);
+  assert.equal(runtime.calls.cost.provider_model_match, true);
+});
+
+test("mining recovery: missing dedicated model and wrong endpoint fail before I/O", async () => {
+  for (const options of [{ model: "" }, { model: "qwen-vl-plus" }, { base: "https://example.invalid/v1" }]) {
+    const runtime = miningRecoveryRuntime(options);
+    const result = await runtime.run();
+    assert.equal(result.body.reason, "MINING_CONFIG_UNAVAILABLE");
+    assert.equal(runtime.calls.fetch, 0);
+    assert.equal(runtime.calls.charge, 0);
+    assert.equal(runtime.calls.adminWrite, 0);
+  }
+});
+
+test("mining recovery: 404 classifications preserve no raw Provider error", async () => {
+  for (const [code, reason] of [
+    ["model_not_found", "MINING_MODEL_UNAVAILABLE"], ["endpoint_not_found", "MINING_ENDPOINT_NOT_FOUND"],
+    ["untrusted-code", "MINING_PROVIDER_404_UNKNOWN"]
+  ]) {
+    const runtime = miningRecoveryRuntime({ status: 404, provider: { error: { code, message: "PRIVATE_SYNTHETIC_MARKER" } } });
+    const result = await runtime.run();
+    assert.equal(result.body.reason, reason);
+    assert.equal(result.body.quotaStatus, "NOT_ATTEMPTED");
+    assert.equal(runtime.calls.fetch, 1);
+    assert.equal(runtime.calls.charge, 0);
+    assert.equal(runtime.calls.caseWrite, 0);
+    assert.equal(runtime.calls.adminWrite, 0);
+    assert.equal(JSON.stringify([result, runtime.calls.logs]).includes("PRIVATE_SYNTHETIC_MARKER"), false);
+    assert.equal(JSON.stringify([result, runtime.calls.logs]).includes("untrusted-code"), false);
+  }
+});
+
+test("mining recovery: transport and other HTTP failures never retry or settle", async () => {
+  for (const [options, reason] of [
+    [{ transportError: "AbortError" }, "MINING_PROVIDER_TIMEOUT"],
+    [{ transportError: "TypeError" }, "MINING_PROVIDER_NETWORK_ERROR"],
+    [{ status: 429 }, "MINING_PROVIDER_HTTP_ERROR"], [{ status: 500 }, "MINING_PROVIDER_HTTP_ERROR"]
+  ]) {
+    const runtime = miningRecoveryRuntime(options);
+    const result = await runtime.run();
+    assert.equal(result.body.reason, reason);
+    assert.equal(runtime.calls.fetch, 1);
+    assert.equal(runtime.calls.charge, 0);
+  }
+});
+
+test("mining recovery: actual visibility gate still prevents charge and persistence", async () => {
+  const runtime = miningRecoveryRuntime({ output: providerOutput({ status: "FAILED", reason: "ANNOTATION_OCCLUDED" }) });
+  const result = await runtime.run();
+  assert.equal(result.statusCode, 422);
+  assert.equal(result.body.reason, "JUDGEABILITY_FAILED");
+  assert.equal(runtime.calls.fetch, 1);
+  assert.equal(runtime.calls.charge, 0);
+  assert.equal(runtime.calls.caseWrite, 0);
+  assert.equal(runtime.calls.adminWrite, 0);
+});
+
+test("mining recovery: unknown settlement is explicit with no compensation or retry", async () => {
+  for (const options of [{ chargeThrows: true }, { chargeResult: { success: false } }, { caseThrows: true }]) {
+    const runtime = miningRecoveryRuntime(options);
+    const result = await runtime.run();
+    assert.equal(result.body.reason, "MINING_SETTLEMENT_UNKNOWN");
+    assert.equal(result.body.quotaStatus, "UNKNOWN");
+    assert.equal(runtime.calls.fetch, 1);
+    assert.equal(runtime.calls.charge, 1);
+    assert.equal(runtime.calls.adminWrite, 0);
+  }
+});
+
+test("mining recovery: usage must be observed and pricing bound stays within reservation", async () => {
+  const runtime = miningRecoveryRuntime({ provider: { choices: [{ message: { content: providerOutput() } }] } });
+  const result = await runtime.run();
+  assert.equal(result.body.reason, "MINING_USAGE_UNVERIFIED");
+  assert.equal(runtime.calls.charge, 0);
+  const maximal = runtime.context.buildMiningAiCostMetadata({ input_tokens: 991808, output_tokens: 360 }, "qwen3.8-flash");
+  assert.ok(maximal.estimated_cost_cny <= 0.816);
+  for (const usage of [{}, { prompt_tokens: -1, completion_tokens: 1 }, { prompt_tokens: 10, completion_tokens: 361 }]) {
+    assert.throws(() => runtime.context.buildMiningAiCostMetadata(usage), /MINING_USAGE_UNVERIFIED/);
+  }
+});
+
+test("mining recovery: shared coordinate transport keeps default behavior", async () => {
+  const runtime = miningRecoveryRuntime({ status: 404, provider: { error: { code: "model_not_found" } } });
+  await assert.rejects(runtime.context.callAliyunVision({ modelName: "coordinate-model-unchanged", prompt: "offline", imageItems: [] }), error => {
+    assert.equal(error.code, "ALIYUN_HTTP_ERROR");
+    assert.equal(error.reason, "PROVIDER_HTTP_ERROR");
+    assert.equal(error.miningReason, undefined);
+    return true;
+  });
+  assert.equal(runtime.calls.payloads[0].model, "coordinate-model-unchanged");
+  const success = miningRecoveryRuntime();
+  await success.context.callAliyunVision({ modelName: "coordinate-model-unchanged", prompt: "offline", imageItems: [] });
+  assert.equal(success.context.latestProviderModelObservation.evidenceType, "PROVIDER_RESPONSE_MODEL");
+  assert.match(recoveryServer, /options\.allowSourceFallback !== false && freshStatus\.allowed/);
+});
+
+async function runMiningBrowserFailure(mode) {
+  const seen = { fetch: 0, messages: [], history: 0 };
+  const context = vm.createContext({
+    console: { log() {}, warn() {}, error() {} },
+    selectedJudgeImageFiles: [{ size: 100, type: "image/jpeg" }], judgeImageInput: { files: [] },
+    loadUserConfig: async () => {}, canUse: () => true, startJudgeProgress: () => 1,
+    clearInterval() {}, compressJudgeImage: async file => file, trackEvent() {},
+    FormData: class { append() {} }, judgeType: { value: "mine-land" }, visitorId: "offline", userCode: "offline",
+    getSourceHeaders: headers => headers, judgeResult: { value: "" }, hideJudgeProgressVisual() {}, clearJudgeDecisionCard() {},
+    showJudgeMessage: message => seen.messages.push(message),
+    saveJudgeResultToRecent: () => { seen.history++; },
+    fetch: async () => {
+      seen.fetch++;
+      if (mode === "network") throw new Error("PRIVATE_SYNTHETIC_MARKER");
+      return { ok: mode === "parse", status: mode === "parse" ? 200 : 502,
+        clone: () => ({ json: async () => {
+          if (mode === "parse") throw new Error("PRIVATE_SYNTHETIC_MARKER");
+          return { success: false, reason: mode, detail: "PRIVATE_SYNTHETIC_MARKER" };
+        } }) };
+    }
+  });
+  vm.runInContext(recoverySection(recoveryHtml, "    function getMiningFailureMessage(", "    async function copyText("), context);
+  await context.analyzeMiningImage();
+  return seen;
+}
+
+test("mining recovery: actual browser entry never retries failure and renders fixed text", async () => {
+  for (const reason of ["network", "parse", "timeout", "MINING_MODEL_UNAVAILABLE", "MINING_PROVIDER_404_UNKNOWN", "MINING_SETTLEMENT_UNKNOWN", "untrusted"]) {
+    const seen = await runMiningBrowserFailure(reason);
+    assert.equal(seen.fetch, 1, reason);
+    assert.equal(seen.history, 0);
+    assert.ok(seen.messages.some(message => /请勿重复上传/.test(message)));
+    assert.equal(JSON.stringify(seen).includes("PRIVATE_SYNTHETIC_MARKER"), false);
+  }
 });

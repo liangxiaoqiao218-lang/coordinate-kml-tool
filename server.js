@@ -235,6 +235,8 @@ const COORDINATE_IMAGE_INVALID_CODE = "COORDINATE_IMAGE_INVALID";
 const aliyunApiKey = process.env.ALIYUN_API_KEY || process.env.DASHSCOPE_API_KEY || "";
 const aliyunBaseURL = process.env.ALIYUN_BASE_URL || process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const aliyunVisionModel = process.env.ALIYUN_VISION_MODEL || process.env.DASHSCOPE_VISION_MODEL || "qwen3.8-flash";
+// Mining is independently bound; never inherit or change coordinate model aliases.
+const aliyunMiningModel = String(process.env.ALIYUN_MINING_MODEL || "").trim();
 const aliyunOcrModel = process.env.ALIYUN_OCR_MODEL || process.env.DASHSCOPE_OCR_MODEL || "qwen-vl-ocr-latest";
 const agenticCoordinateApi = createAgenticCoordinateApi({
   modelName: aliyunVisionModel,
@@ -2860,7 +2862,7 @@ async function consumeUsage(userId, type, req = null, options = {}) {
 
   const freshStatus = await checkUsage(userId, featureType);
 
-  if (freshStatus.allowed && freshStatus.source !== status.source) {
+  if (options.allowSourceFallback !== false && freshStatus.allowed && freshStatus.source !== status.source) {
     return consumeUsage(userId, featureType, req, options);
   }
 
@@ -8208,6 +8210,46 @@ function getAliyunChatCompletionsUrl() {
   return base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
 }
 
+function getMiningProviderConfigFailure() {
+  if (!aliyunApiKey || aliyunMiningModel !== "qwen3.8-flash"
+    || getAliyunChatCompletionsUrl() !== "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions") {
+    return "MINING_CONFIG_UNAVAILABLE";
+  }
+  return "";
+}
+
+function classifyMiningProviderFailure(status, data = {}) {
+  // Never retain the Provider body, arbitrary codes, messages, URLs or headers.
+  const code = String(data?.error?.code || data?.code || "").toLowerCase();
+  if (Number(status) === 404) {
+    if (["model_not_found", "model_not_supported", "invalidmodel", "invalidmodel.notfound"].includes(code)) {
+      return "MINING_MODEL_UNAVAILABLE";
+    }
+    if (["url_not_found", "endpoint_not_found"].includes(code)) return "MINING_ENDPOINT_NOT_FOUND";
+    return "MINING_PROVIDER_404_UNKNOWN";
+  }
+  return "MINING_PROVIDER_HTTP_ERROR";
+}
+
+function buildMiningAiCostMetadata(usage = {}, observedModel = "") {
+  const input = Number(usage?.prompt_tokens ?? usage?.input_tokens);
+  const output = Number(usage?.completion_tokens ?? usage?.output_tokens);
+  if (!Number.isSafeInteger(input) || input <= 0 || input > 991808
+    || !Number.isSafeInteger(output) || output < 0 || output > 360) {
+    const error = new Error("MINING_USAGE_UNVERIFIED");
+    error.miningReason = "MINING_USAGE_UNVERIFIED";
+    throw error;
+  }
+  // Beijing qwen3.8-flash non-thinking pricing, independent of coordinate pricing.
+  return {
+    kind: "ai_cost", provider: "aliyun", model: aliyunMiningModel,
+    provider_model_match: observedModel === aliyunMiningModel,
+    prompt_tokens: input, completion_tokens: output, total_tokens: input + output,
+    estimated_cost_cny: Number(((input * 0.8 + output * 2.7) / 1000000).toFixed(6)),
+    pricing: { region: "beijing", input_token_price_per_1k_cny: 0.0008, output_token_price_per_1k_cny: 0.0027 }
+  };
+}
+
 async function callAliyunProductionLayoutQualificationProbe({ imageDataUrl, modelName }) {
   if (!aliyunApiKey) throw new Error("PROVIDER_UNAVAILABLE");
   const controller = new AbortController();
@@ -8257,7 +8299,8 @@ async function callAliyunVision({
   attempt = 1,
   lowValue = false,
   familyEvidence = false,
-  minRequiredMs = 500
+  minRequiredMs = 500,
+  providerErrorScope = ""
 }) {
   if (!aliyunApiKey) {
     console.error("[Aliyun] 缺少环境变量：ALIYUN_API_KEY 或 DASHSCOPE_API_KEY");
@@ -8294,14 +8337,13 @@ async function callAliyunVision({
   const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
   const combinedAbort = composeAbortSignals([controller.signal, getRecognitionDeadlineSignal()]);
   console.log("[Aliyun] 请求开始：", {
-    url: requestUrl,
+    ...(providerErrorScope === "mining_judge" ? { scope: "mining_judge" } : { url: requestUrl, baseURL: aliyunBaseURL }),
     model: modelName,
     imageCount: Array.isArray(imageItems) ? imageItems.length : 0,
     startedAt: new Date(startedAt).toISOString(),
     timeoutMs: effectiveTimeoutMs,
     hasAliyunApiKey: Boolean(process.env.ALIYUN_API_KEY),
-    hasDashscopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY),
-    baseURL: aliyunBaseURL
+    hasDashscopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY)
   });
 
   const requestBody = {
@@ -8447,14 +8489,19 @@ async function callAliyunVision({
     error.code = "ALIYUN_HTTP_ERROR";
     error.reason = classification;
     error.durationMs = endedAt - startedAt;
+    if (providerErrorScope === "mining_judge") {
+      error.miningReason = classifyMiningProviderFailure(response.status, data);
+    }
     throw error;
   }
 
-  latestProviderModelObservation = Object.freeze({
-    model: String(data?.model || modelName || "").trim(),
-    observedAt: new Date().toISOString(),
-    evidenceType: "PROVIDER_RESPONSE_MODEL"
-  });
+  if (providerErrorScope !== "mining_judge") {
+    latestProviderModelObservation = Object.freeze({
+      model: String(data?.model || modelName || "").trim(),
+      observedAt: new Date().toISOString(),
+      evidenceType: "PROVIDER_RESPONSE_MODEL"
+    });
+  }
 
   return data;
 }
@@ -13399,14 +13446,18 @@ app.post("/api/analyze-mining-image", upload.fields([
   console.log("AI判读环境变量检查：", {
     hasAliyunApiKey: Boolean(process.env.ALIYUN_API_KEY),
     hasDashscopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY),
-    aliyunBaseURL,
-    aliyunVisionModel,
-    aliyunOcrModel,
+    miningModelReady: aliyunMiningModel === "qwen3.8-flash",
+    miningConfigReady: !getMiningProviderConfigFailure(),
     hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
     hasSupabaseServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
   });
 
+  let miningSettlementStarted = false;
   try {
+    const configFailure = getMiningProviderConfigFailure();
+    if (configFailure) {
+      return res.status(503).json({ success: false, reason: configFailure, quotaStatus: "NOT_ATTEMPTED" });
+    }
     const visitorId = String(req.get("x-visitor-id") || req.body?.visitorId || "").trim();
     const judgeType = String(req.body?.judgeType || "mine-land").trim();
     const data = await readAdminData();
@@ -13750,19 +13801,21 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
     const aliyunStartedAt = Date.now();
     console.log("AI判读调用阿里云开始：", {
       startedAt: new Date(aliyunStartedAt).toISOString(),
-      model: aliyunVisionModel,
+      model: aliyunMiningModel,
       fileCount: judgeImageFiles.length,
       mimeTypes: judgeImageFiles.map(file => file.mimetype),
       sizes: judgeImageFiles.map(file => file.size)
     });
 
     const response = await callAliyunVision({
-      modelName: aliyunVisionModel,
+      modelName: aliyunMiningModel,
       prompt,
       imageItems,
       temperature: 0.3,
       maxTokens: 360,
-      timeoutMs: 35000
+      timeoutMs: 35000,
+      enableThinking: false,
+      providerErrorScope: "mining_judge"
     });
 
     const aliyunEndedAt = Date.now();
@@ -13844,10 +13897,10 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
     data.records.push(record);
     data.usage[visitorId] = data.usage[visitorId] || {};
     data.usage[visitorId].aiJudgeCount = Number(data.usage[visitorId].aiJudgeCount || 0) + 1;
-    const aiCostMetadata = buildAiCostMetadata(response?.usage || {}, {
-      model: response?.model || aliyunVisionModel
-    });
+    const aiCostMetadata = buildMiningAiCostMetadata(response?.usage, response?.model);
+    miningSettlementStarted = true;
     const usageResult = await consumeUsage(visitorId, "judge", req, {
+      allowSourceFallback: false,
       note: `AI judge cost estimate: ${aiCostMetadata.estimated_cost_cny} CNY`,
       metadata: aiCostMetadata
     });
@@ -13864,7 +13917,8 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
     if (!usageResult.success) {
       return res.status(500).json({
         success: false,
-        reason: usageResult.reason || "db_error",
+        reason: "MINING_SETTLEMENT_UNKNOWN",
+        quotaStatus: "UNKNOWN",
         error: "JUDGE_QUOTA_CONSUME_FAILED"
       });
     }
@@ -13912,60 +13966,31 @@ A / B / C / D，并解释一句。A=强证据；B=有线索但需验证；C=可�
       resultLength: String(responsePayload.result || "").length,
       hasAnalysis: Boolean(responsePayload.analysis),
       hasMessage: Boolean(responsePayload.message),
-      reason: responsePayload.reason || null
+      reason: responsePayload.reason || null,
+      model: aliyunMiningModel,
+      providerModelMatch: aiCostMetadata.provider_model_match,
+      promptTokens: aiCostMetadata.prompt_tokens,
+      completionTokens: aiCostMetadata.completion_tokens,
+      estimatedCostCny: aiCostMetadata.estimated_cost_cny,
+      quotaSource: usageResult.source,
+      quota: usageResult.quota
     });
 
     res.json(responsePayload);
   } catch (error) {
-    const errorMessage = getAliyunErrorMessage(error);
-    const aliyunStatus = error.response?.status || error.status || null;
-    const aliyunData = error.response?.data || error.details || null;
-    const aliyunDetail = error.response?.data?.message
-      || error.details?.error?.message
-      || error.details?.message
-      || error.message
-      || "未知错误";
-
-    console.error("[Aliyun] 请求失败");
-    if (error.response) {
-      console.error("status:", error.response.status);
-      console.error("data:", JSON.stringify(error.response.data || {}).slice(0, 2000));
-    } else {
-      console.error("status:", aliyunStatus || "无HTTP状态");
-      console.error("data:", aliyunData ? JSON.stringify(aliyunData).slice(0, 2000) : "无响应数据");
-      console.error("error:", error.message);
-    }
-
-    console.error("阿里云 AI 判读失败：", {
-      message: error.message,
-      code: error.code,
-      status: error.status,
-      details: error.details,
-      formatted: errorMessage,
-      durationMs: error.durationMs,
-      requestId: error.requestId,
-      uploadedFileCount: uploadedFiles.length,
-      fileNames: uploadedFiles.map(file => file.originalname || "image"),
-      mimeTypes: uploadedFiles.map(file => file.mimetype),
-      sizes: uploadedFiles.map(file => file.size)
-    });
-    const reason = error.reason === "timeout" || error.code === "ALIYUN_TIMEOUT"
-      ? "timeout"
-      : error.code === "ALIYUN_API_KEY_MISSING"
-        ? "config_missing"
-        : error.status
-          ? "aliyun_failed"
-          : "network_failed";
-    res.status(500).json({
-      success: false,
-      error: "AI判读失败",
-      reason,
-      detail: aliyunDetail,
-      status: aliyunStatus || undefined,
-      code: error.code || undefined,
-      durationMs: error.durationMs || undefined,
-      requestId: error.requestId || undefined
-    });
+    const allowedReasons = new Set([
+      "MINING_MODEL_UNAVAILABLE", "MINING_ENDPOINT_NOT_FOUND", "MINING_PROVIDER_404_UNKNOWN",
+      "MINING_PROVIDER_HTTP_ERROR", "MINING_USAGE_UNVERIFIED"
+    ]);
+    const reason = miningSettlementStarted ? "MINING_SETTLEMENT_UNKNOWN"
+      : allowedReasons.has(error.miningReason) ? error.miningReason
+        : error.code === "ALIYUN_TIMEOUT" ? "MINING_PROVIDER_TIMEOUT"
+          : error.code === "ALIYUN_NETWORK_ERROR" ? "MINING_PROVIDER_NETWORK_ERROR"
+            : "MINING_INTERNAL_ERROR";
+    const status = Number.isInteger(error.status) ? error.status : null;
+    const quotaStatus = miningSettlementStarted ? "UNKNOWN" : "NOT_ATTEMPTED";
+    console.error("AI判读失败：", { reason, status, quotaStatus, model: aliyunMiningModel });
+    res.status(502).json({ success: false, reason, status, quotaStatus });
   }
 });
 
