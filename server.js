@@ -11096,6 +11096,26 @@ function buildMiningEvidenceView(text, options = {}) {
   const judgments = lines(sections["专业判断"]);
   const limitations = lines(sections["证据限制"] || sections["主要风险"]);
   const actions = lines(sections["下一步行动"] || sections["补证动作"] || sections["下一步"]);
+  // Keep qualifications verbatim. Keywords may withhold a category, never assign a new one.
+  const classificationNotes = [...new Set([
+    ...lines(sections["分类说明"]),
+    ...[["对象类型", objectType], ["场景分类", sceneType]]
+      .filter(([name, value]) => sections[name] && sections[name] !== value && sections[name] !== "未确定")
+      .flatMap(([name]) => lines(sections[name]).map(value => name + "原描述：" + value))
+  ])];
+  const uncertainty = /无法|不能|难以|不确定|未确认|未确定|尚未|待核|待确认|疑似|可能|不明|不足以|难判断/;
+  const classificationUncertaintyIn = (value, categoryField = false) => String(value || "")
+    .replace(/(?:对象类型|场景分类)原描述：/g, "").split(/[。；，,\n]/).some(sentence => {
+      if (!uncertainty.test(sentence)) return false;
+      const originOrCategory = /成因|分类|对象类型|场景类型|天然|人为/.test(sentence);
+      const attributeLimit = /深度|厚度|含金|品位|储量|经济价值|矿石价值|矿物成分|安全|稳定性|尺寸|规模|年代/.test(sentence);
+      if (attributeLimit && !originOrCategory) return false;
+      return categoryField || /天然|自然形成|人为|人工|侵蚀|开挖|挖掘|采坑|成因|对象|场景|分类/.test(sentence);
+    });
+  const classificationUncertain = sections["分类确定性"] === "待核对"
+    || [sections["对象类型"], sections["场景分类"], ...classificationNotes].some(value => classificationUncertaintyIn(value, true))
+    || [...features, ...judgments, ...limitations].some(value => classificationUncertaintyIn(value));
+  if (classificationUncertain) issues.push("分类带有不确定性，不能将候选标签作为已确认事实");
   for (const [name, values] of [["可见特征", features], ["证据限制", limitations], ["补证动作", actions]]) {
     if (!values.length) issues.push(name + "未返回");
   }
@@ -11110,10 +11130,10 @@ function buildMiningEvidenceView(text, options = {}) {
   if (!limitations.includes(scope)) limitations.unshift(scope);
   const imageReadability = sections["图像可判读性"] || "未单独记录；旧“判读可信度”不作为矿业结论可信度。";
   return {
-    status: conflict ? "分类冲突，待核对" : issues.length ? "结果不完整，待核对" : "外观描述，待核对",
+    status: conflict ? "分类冲突，待核对" : classificationUncertain ? "分类待核对" : issues.length ? "结果不完整，待核对" : "外观描述，待核对",
     objectType: objectType || "未确定",
     sceneType: sceneType || "未确定",
-    conflict, imageReadability, features, judgments, limitations, actions,
+    conflict, classificationUncertain, classificationNotes, imageReadability, features, judgments, limitations, actions,
     notes, issues: [...new Set(issues)]
   };
 }
@@ -11124,6 +11144,8 @@ function formatMiningEvidenceView(view) {
     block("结果状态", view.status),
     block("对象类型", view.objectType),
     block("场景分类", view.sceneType),
+    view.classificationUncertain ? block("分类确定性", "待核对") : "",
+    view.classificationNotes.length ? block("分类说明", view.classificationNotes) : "",
     block("图像可判读性", view.imageReadability),
     block("可见事实", view.features),
     block("专业判断", view.judgments.length ? view.judgments : ["本记录未单独提供证据支持的专业判断；不从旧评分或背景关键词补写。"]),

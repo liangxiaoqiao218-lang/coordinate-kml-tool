@@ -5152,15 +5152,22 @@
     /* MINING_CONFIRMED_LAYOUT_START
        2026-10-08 approved upload v3 / summary v1 / detail v2.
        Presentation only; retain the 945699c evidence contract and submission path. */
+    body:has(#judgePage.active) { min-height: 100vh; min-height: 100svh; }
+    body:has(#judgePage.active) > .page { flex: 1 0 auto; display: flex; flex-direction: column; }
+    body:has(#judgePage.active) > .site-footer { flex: 0 0 auto; margin-top: auto; }
     #judgePage { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif; }
+    #judgePage.active { display: flex; flex-direction: column; flex: 1 0 auto; min-width: 0; }
     #judgePage .page-nav { position: static; top: auto; z-index: auto; }
     #judgePage .judge-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
     #judgePage h1 { margin: 0; font-size: clamp(24px, 6vw, 30px); line-height: 1.25; }
     #judgePage .judge-title-row .quota-entry-row { margin: 0; flex: 0 0 auto; }
     #judgePage .intro { margin: 0 0 6px; font-size: 16px; font-weight: 500; line-height: 1.5; }
     #judgePage .judge-scope-note { margin: 0 0 16px; color: #475569; font-size: 14px; line-height: 1.5; font-weight: 500; }
-    #judgePage .judge-panel { display: grid; gap: 14px; padding: 0; border: 0; background: transparent; box-shadow: none; }
-    #judgePage .judge-upload-layer { min-width: 0; padding: 0; border: 0; background: transparent; }
+    #judgePage .judge-panel { display: grid; align-content: start; gap: 14px; padding: 0; border: 0; background: transparent; box-shadow: none; }
+    #judgePage .judge-upload-layer { display: grid; align-content: start; gap: 8px; min-width: 0; padding: 0; border: 0; background: transparent; }
+    #judgePage .judge-upload-layer:has(.judge-progress-visual.active),
+    #judgePage .judge-upload-layer:has(.message.error) { min-height: 112px; }
+    #judgePage .judge-upload-layer:has(.judge-progress-visual.active) .judge-quick-upload { visibility: hidden; }
     #judgePage .judge-upload-controls { min-width: 0; }
     #judgePage .judge-upload-card { min-height: 112px; padding: 13px; margin: 0; box-shadow: none; }
     #judgePage .judge-upload-title { font-size: 18px; font-weight: 700; line-height: 1.5; }
@@ -5181,21 +5188,40 @@
     #judgePage .judge-change-image { display: block; width: 100%; }
     #judgePage .judge-key-judgment { margin: 5px 0 0; font-size: 15px; line-height: 1.5; }
     #judgePage .judge-summary-evidence,
-    #judgePage .judge-summary-action { margin-top: 8px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+    #judgePage .judge-summary-action { margin-top: 8px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
     #judgePage .judge-summary-evidence span,
     #judgePage .judge-summary-action span { font-weight: 700; }
-    #judgePage .judge-key-judgment { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+    #judgePage .judge-summary-field p { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #judgePage .judge-summary-field > strong { font-size: 14px; }
+    #judgePage .judge-summary-fold > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: #166534; font-size: 14px; }
+    #judgePage .judge-summary-fold .when-open { display: none; }
+    #judgePage .judge-summary-fold[open] .when-open { display: inline; }
+    #judgePage .judge-summary-fold[open] .when-closed { display: none; }
+    #judgePage .judge-summary-field:has(.judge-summary-fold[open]) > .judge-summary-preview { display: none; }
+    #judgePage .judge-summary-fold > summary:focus-visible { outline: 2px solid #166534; outline-offset: 2px; border-radius: 4px; }
+    #judgePage .judge-assessment { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e2e8f0; font-size: 14px; line-height: 1.5; }
+    #judgePage .judge-assessment p { margin: 4px 0; }
+    #judgePage .judge-palette { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; list-style: none; }
+    #judgePage .judge-palette li { padding: 4px 8px; border: 1px solid; border-radius: 8px; color: #16352a; }
+    #judgePage .judge-decision-card[data-score-band="0-40"],
+    #judgePage .judge-palette [data-score-band="0-40"] { background: #f8fafc; border-color: #cbd5e1; }
+    #judgePage .judge-decision-card[data-score-band="40-60"],
+    #judgePage .judge-palette [data-score-band="40-60"] { background: #f3faf6; border-color: #d7eadf; }
+    #judgePage .judge-decision-card[data-score-band="60-80"],
+    #judgePage .judge-palette [data-score-band="60-80"] { background: #e8f7ee; border-color: #bfe2cb; }
+    #judgePage .judge-decision-card[data-score-band="80-100"],
+    #judgePage .judge-palette [data-score-band="80-100"] { background: #ddf5e8; border-color: #a9d8bb; }
     #judgePage .judge-metrics-unavailable { margin-top: 8px; color: #64748b; font-size: 12px; line-height: 1.5; }
     #judgePage .judge-evidence-context { margin-top: 12px; color: #475569; }
     #judgePage .judge-evidence-context summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 14px; }
     #judgePage .judge-progress-visual.active { display: flex; color: #166534; background: #f0fdf4; border-color: #bbf7d0; font-size: 16px; font-weight: 500; }
-    #judgePage .message { font-size: 16px; font-weight: 500; line-height: 1.5; }
+    #judgePage .message { margin: 0; font-size: 16px; font-weight: 500; line-height: 1.5; }
     #judgePage .message.error { color: #785b24; background: #fffbeb; border-color: #f1e4bd; }
     #judgePage .judge-result-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
     #judgePage .judge-result-wrap:has(.judge-detail-placeholder) { display: none; }
     #judgePage .judge-layer-title { margin: 0 0 8px; color: #0f172a; font-size: 18px; font-weight: 700; line-height: 1.5; }
     #judgePage .judge-summary-layer { padding: 0; border: 0; background: transparent; box-shadow: none; }
-    #judgePage .judge-decision-card { padding: 13px; border: 1px solid #cbd5e1; border-radius: 14px; background: #fff; box-shadow: none; }
+    #judgePage .judge-decision-card { padding: 13px; border: 1px solid #cbd5e1; border-radius: 14px; background: #f8fafc; box-shadow: none; }
     #judgePage .judge-decision-card[hidden] { display: none; }
     #judgePage .judge-official-card { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
     #judgePage .judge-decision-card .judge-official-head { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; align-items: center; padding: 0; border: 0; }
@@ -10529,6 +10555,26 @@ function buildMiningEvidenceView(text, options = {}) {
   const judgments = lines(sections["专业判断"]);
   const limitations = lines(sections["证据限制"] || sections["主要风险"]);
   const actions = lines(sections["下一步行动"] || sections["补证动作"] || sections["下一步"]);
+  // Keep qualifications verbatim. Keywords may withhold a category, never assign a new one.
+  const classificationNotes = [...new Set([
+    ...lines(sections["分类说明"]),
+    ...[["对象类型", objectType], ["场景分类", sceneType]]
+      .filter(([name, value]) => sections[name] && sections[name] !== value && sections[name] !== "未确定")
+      .flatMap(([name]) => lines(sections[name]).map(value => name + "原描述：" + value))
+  ])];
+  const uncertainty = /无法|不能|难以|不确定|未确认|未确定|尚未|待核|待确认|疑似|可能|不明|不足以|难判断/;
+  const classificationUncertaintyIn = (value, categoryField = false) => String(value || "")
+    .replace(/(?:对象类型|场景分类)原描述：/g, "").split(/[。；，,\n]/).some(sentence => {
+      if (!uncertainty.test(sentence)) return false;
+      const originOrCategory = /成因|分类|对象类型|场景类型|天然|人为/.test(sentence);
+      const attributeLimit = /深度|厚度|含金|品位|储量|经济价值|矿石价值|矿物成分|安全|稳定性|尺寸|规模|年代/.test(sentence);
+      if (attributeLimit && !originOrCategory) return false;
+      return categoryField || /天然|自然形成|人为|人工|侵蚀|开挖|挖掘|采坑|成因|对象|场景|分类/.test(sentence);
+    });
+  const classificationUncertain = sections["分类确定性"] === "待核对"
+    || [sections["对象类型"], sections["场景分类"], ...classificationNotes].some(value => classificationUncertaintyIn(value, true))
+    || [...features, ...judgments, ...limitations].some(value => classificationUncertaintyIn(value));
+  if (classificationUncertain) issues.push("分类带有不确定性，不能将候选标签作为已确认事实");
   for (const [name, values] of [["可见特征", features], ["证据限制", limitations], ["补证动作", actions]]) {
     if (!values.length) issues.push(name + "未返回");
   }
@@ -10543,10 +10589,10 @@ function buildMiningEvidenceView(text, options = {}) {
   if (!limitations.includes(scope)) limitations.unshift(scope);
   const imageReadability = sections["图像可判读性"] || "未单独记录；旧“判读可信度”不作为矿业结论可信度。";
   return {
-    status: conflict ? "分类冲突，待核对" : issues.length ? "结果不完整，待核对" : "外观描述，待核对",
+    status: conflict ? "分类冲突，待核对" : classificationUncertain ? "分类待核对" : issues.length ? "结果不完整，待核对" : "外观描述，待核对",
     objectType: objectType || "未确定",
     sceneType: sceneType || "未确定",
-    conflict, imageReadability, features, judgments, limitations, actions,
+    conflict, classificationUncertain, classificationNotes, imageReadability, features, judgments, limitations, actions,
     notes, issues: [...new Set(issues)]
   };
 }
@@ -10557,6 +10603,8 @@ function formatMiningEvidenceView(view) {
     block("结果状态", view.status),
     block("对象类型", view.objectType),
     block("场景分类", view.sceneType),
+    view.classificationUncertain ? block("分类确定性", "待核对") : "",
+    view.classificationNotes.length ? block("分类说明", view.classificationNotes) : "",
     block("图像可判读性", view.imageReadability),
     block("可见事实", view.features),
     block("专业判断", view.judgments.length ? view.judgments : ["本记录未单独提供证据支持的专业判断；不从旧评分或背景关键词补写。"]),
@@ -10571,6 +10619,19 @@ function cleanupJudgeHistoryStorage() {
   // Preserve existing history; no score is consumed by the evidence-only UI.
 }
 function buildJudgeOfficialCardMeta(text) { return buildMiningEvidenceView(text); }
+function renderJudgeSummaryField(label, values, className) {
+  const items = values.map(value => String(value || "").trim()).filter(Boolean);
+  const body = items.map(value => "<p>" + escapeHtml(value) + "</p>").join("");
+  const first = items[0] || "";
+  if (items.length <= 1 && first.length <= 88) {
+    return '<div class="judge-summary-field ' + className + '"><strong>' + escapeHtml(label) + "</strong>" + body + "</div>";
+  }
+  const preview = first.length <= 88 ? first : (first.match(/^.{1,88}?[。！？]/u)?.[0] || "");
+  return '<div class="judge-summary-field ' + className + '"><strong>' + escapeHtml(label) + "</strong>"
+    + (preview ? '<p class="judge-summary-preview">' + escapeHtml(preview) + "</p>" : "")
+    + '<details class="judge-summary-fold"><summary><span class="when-closed">展开' + escapeHtml(label)
+    + '全文</span><span class="when-open">收起' + escapeHtml(label) + "</span></summary>" + body + "</details></div>";
+}
 function renderJudgeDecisionCard(text, comparison = null) {
   if (!judgeDecisionCard || !String(text || "").trim()) { clearJudgeDecisionCard(); return null; }
   const view = buildJudgeOfficialCardMeta(text);
@@ -10584,13 +10645,28 @@ function renderJudgeDecisionCard(text, comparison = null) {
     <div class="judge-official-card"><div class="judge-official-head${imageSrc ? "" : " without-image"}">
       ${imageSrc ? `<div class="judge-export-image-wrap"><button type="button" class="judge-image-open" onclick="openImageModal(this.querySelector('img').src)" aria-label="放大查看本次图片"><img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" /></button><button type="button" class="judge-change-image" onclick="chooseJudgeReplacement()">更换图片</button></div>` : ""}
       <div class="judge-official-content">
-        <div class="judge-official-object-type">${escapeHtml(view.conflict ? "分类待核对" : view.objectType + " · " + view.sceneType)}</div>
+        <div class="judge-official-object-type">${escapeHtml(view.conflict || view.classificationUncertain ? "分类待核对" : view.objectType + " · " + view.sceneType)}</div>
         <div class="judge-official-verdict">${escapeHtml(view.status)}</div>
-        <p class="judge-key-judgment">${escapeHtml(view.conflict ? "对象与场景存在冲突，先核对原图。" : judgment)}</p>
+        ${renderJudgeSummaryField("判断", [view.conflict ? "对象与场景存在冲突，先核对原图。" : judgment], "judge-key-judgment")}
       </div></div>
-      <div class="judge-summary-evidence"><span>${legacySource ? "历史描述（未核）" : "依据"}</span> ${escapeHtml(view.features[0] || "未返回可见依据")}</div>
-      <div class="judge-summary-action"><span>下一步</span> ${escapeHtml(view.actions[0] || "补充目标近景、比例尺及周边环境后再核对。")}</div>
-      <div class="judge-metrics-unavailable">评分 / 等级：未评估 · 结论可信度：未校准</div>
+      ${view.classificationUncertain ? '<p class="judge-official-note">分类尚未确认；详情中的分类限制同样适用于摘要。</p>' : ""}
+      ${renderJudgeSummaryField(legacySource ? "历史描述（未核）" : "依据", view.features.length ? view.features : ["未返回可见依据"], "judge-summary-evidence")}
+      ${renderJudgeSummaryField("下一步", view.actions.length ? view.actions : ["补充目标近景、比例尺及周边环境后再核对。"], "judge-summary-action")}
+      <div class="judge-assessment">
+        <p><strong>评估对象</strong> 照片可见线索及其补证要求，不是含金性、品位或开采价值。</p>
+        <details class="judge-summary-fold"><summary><span class="when-closed">查看评分、等级与证据边界</span><span class="when-open">收起评估说明</span></summary>
+          <p>本次不生成矿产潜力分或投入等级：尚无可核查、经过校准的计分规则。当前判断及依据见上方，具体限制见详情。</p>
+          <p>图片清晰仅说明可观察条件，不能作为矿业结论的高可信度。</p>
+          <p>已确认的四档配色如下，仅表示原分数区间的视觉约定；当前结果保持中性，不套入等级。</p>
+          <ul class="judge-palette">
+            <li data-score-band="0-40">灰白 · 0 ≤ 分数 &lt; 40</li>
+            <li data-score-band="40-60">微浅绿 · 40 ≤ 分数 &lt; 60</li>
+            <li data-score-band="60-80">浅绿 · 60 ≤ 分数 &lt; 80</li>
+            <li data-score-band="80-100">柔和薄荷绿 · 80 ≤ 分数 ≤ 100</li>
+          </ul>
+          <p>缺分数、越界或缺规则依据均不选档，不补零；各档业务含义仍待同一评分规则明确。</p>
+        </details>
+      </div>
       <div class="judge-official-note">${legacySource ? "历史描述和动作尚未逐项核对；" : ""}外观线索不代表含矿、品位或价值；证据限制见详情。</div></div>`;
   updateJudgeUploadControls();
   return view;

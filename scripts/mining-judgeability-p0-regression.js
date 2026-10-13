@@ -919,8 +919,8 @@ test("mining value UI: historical records keep provenance and four layers withou
     context.renderJudgeDecisionCard(normalized, { image: "data:image/jpeg;base64,EXISTING" });
     context.renderJudgeDetail(normalized);
     const card = context.judgeDecisionCard.innerHTML;
-    assert.match(card, /评分 \/ 等级：未评估/);
-    assert.match(card, /结论可信度：未校准/);
+    assert.match(card, /评估对象/);
+    assert.match(card, /尚无可核查、经过校准的计分规则/);
     assert.match(card, /历史描述（未核）/);
     assert.match(card, /历史描述和动作尚未逐项核对/);
     assert.match(card, /下一步/);
@@ -1000,7 +1000,7 @@ test("mining value UI: paragraph animation is short cancellable and respects red
 test("mining value UI: scoped layout and scripts remain parseable without execution", () => {
   const css = recoverySection(recoveryHtml, "    /* MINING_CONFIRMED_LAYOUT_START", "    /* MINING_CONFIRMED_LAYOUT_END");
   for (const [, selectors] of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    for (const selector of selectors.split(/,(?![^()]*\))/)) assert.ok(selector.trim().startsWith("#judgePage"));
+    for (const selector of selectors.split(/,(?![^()]*\))/)) assert.ok(selector.trim().startsWith("#judgePage") || selector.trim().startsWith("body:has(#judgePage.active)"));
   }
   assert.match(css, /#judgePage \.page-nav \{ position: static;/);
   assert.match(css, /max-height: none; overflow: visible/);
@@ -1024,4 +1024,161 @@ test("mining value UI: shared parser parity prompt boundaries and frozen provide
   assert.match(prompt, /temperature: 0\.3/);
   assert.match(prompt, /modelName: aliyunMiningModel/);
   assert.match(prompt, /timeoutMs: 35000/);
+});
+
+// This follow-up is new affected-path coverage, not a rerun of the 12 accepted cases.
+// The pit contradiction is a USER-QUOTED SYNTHETIC fixture, not a recovered Provider result.
+const mobilePitContradiction = [
+  "【对象类型】\n地表环境", "【场景分类】\n人工采坑",
+  "【可见事实】\n可见土壁、石块及根系。",
+  "【专业判断】\n无法判断是天然侵蚀还是人为挖掘。",
+  "【证据限制】\n缺少周边连续地形及开挖记录。",
+  "【补证动作】\n在安全位置补拍剖面与周边的关系。"
+].join("\n\n");
+
+test("mining mobile followup: uncertain origin is retained in summary detail and normalized copy", () => {
+  const { context, backend, effects } = miningQualityContext();
+  const text = backend.normalizeJudgeOutput(mobilePitContradiction);
+  const view = context.buildMiningEvidenceView(text);
+  assert.equal(view.classificationUncertain, true);
+  assert.equal(view.sceneType, "人工采坑"); // keep original candidate; do not fabricate a replacement class
+  assert.equal(view.status, "分类待核对");
+  assert.equal(backend.normalizeJudgeOutput(text), text);
+  context.judgeResult.value = text;
+  context.renderJudgeDecisionCard(text);
+  context.renderJudgeDetail(text);
+  assert.match(context.judgeDecisionCard.innerHTML, /judge-official-object-type">分类待核对</);
+  assert.doesNotMatch(context.judgeDecisionCard.innerHTML, /judge-official-object-type">地表环境 · 人工采坑</);
+  for (const content of [context.judgeDecisionCard.innerHTML, context.judgeResult.innerHTML, context.buildJudgeCopyText()]) {
+    assert.ok(content.includes("无法判断是天然侵蚀还是人为挖掘。"));
+  }
+  assert.deepEqual(effects, { network: 0, historyWrites: 0 });
+});
+
+test("mining mobile followup: inline and multiline category qualifications survive normalization", () => {
+  const { context, backend, effects } = miningQualityContext();
+  for (const value of ["人工采坑。成因尚未确认。", "人工采坑\n无法判断天然或人为成因。", "人工采坑（待确认）", "人工采坑。无法确认。", "人工采坑。疑似。"]) {
+    const input = mobilePitContradiction.replace("【场景分类】\n人工采坑", "【场景分类】\n" + value);
+    const normalized = backend.normalizeJudgeOutput(input);
+    assert.equal(backend.normalizeJudgeOutput(normalized), normalized);
+    assert.equal(context.formatMiningEvidenceView(context.buildMiningEvidenceView(input)), normalized);
+    assert.equal(context.buildMiningEvidenceView(normalized).classificationUncertain, true);
+    assert.ok(normalized.includes("分类说明"));
+    assert.ok(normalized.includes(value.split("\n").at(-1)));
+  }
+  assert.deepEqual(effects, { network: 0, historyWrites: 0 });
+});
+
+test("mining mobile followup: mineral value uncertainty does not reclassify the scene", () => {
+  const { context } = miningQualityContext();
+  const value = riverbankMaterial.text.replace("【证据限制】", "【证据限制】\n无法判断含金性或经济价值。人工采坑的深度无法判断。");
+  const view = context.buildMiningEvidenceView(value);
+  assert.equal(view.classificationUncertain, false);
+  assert.equal(view.sceneType, "人工采坑");
+  assert.ok(view.limitations.some(item => item.includes("无法判断含金性或经济价值。")));
+});
+
+test("mining mobile followup: classification limitations in visible facts also qualify the summary", () => {
+  const { context, backend, effects } = miningQualityContext();
+  const input = mobilePitContradiction.replace("【专业判断】\n无法判断是天然侵蚀还是人为挖掘。", "无法判断是天然侵蚀还是人为挖掘。\n\n【专业判断】\n需要核对坑壁与周边地形的关系。");
+  assert.equal(context.buildMiningEvidenceView(input).classificationUncertain, true);
+  const text = backend.normalizeJudgeOutput(input);
+  assert.equal(backend.normalizeJudgeOutput(text), text);
+  assert.equal(context.formatMiningEvidenceView(context.buildMiningEvidenceView(input)), text);
+  context.renderJudgeDecisionCard(text);
+  context.renderJudgeDetail(text);
+  assert.match(context.judgeDecisionCard.innerHTML, /judge-official-object-type">分类待核对</);
+  assert.ok(context.judgeResult.innerHTML.includes("无法判断是天然侵蚀还是人为挖掘。"));
+  assert.deepEqual(effects, { network: 0, historyWrites: 0 });
+});
+
+test("mining mobile followup: short fields stay complete and long fields have full-text disclosures", () => {
+  const { context, effects } = miningQualityContext();
+  const short = "需要补拍带比例尺的剖面与周边关系。";
+  const shortHtml = context.renderJudgeSummaryField("下一步", [short], "judge-summary-action");
+  assert.ok(shortHtml.includes(short));
+  assert.doesNotMatch(shortHtml, /<details|…/);
+  const long = "这是完整的首句。" + "后续证据必须逐项保留，不得用省略号代替原文。".repeat(8);
+  const last = "末项：检查边坡和积水条件，不进入未确认安全的坑内。";
+  for (const label of ["判断", "依据", "下一步"]) {
+    const html = context.renderJudgeSummaryField(label, [long, last], "judge-summary-field-test");
+    assert.ok(html.includes(long));
+    assert.ok(html.includes(last));
+    assert.ok(html.includes("展开" + label + "全文"));
+    assert.ok(html.includes("收起" + label));
+    assert.match(html, /<details class="judge-summary-fold"><summary>/);
+    assert.doesNotMatch(html, /onclick|fetch\(|…/);
+  }
+  const noSentence = "长文本没有句号但必须能读完".repeat(15);
+  assert.ok(context.renderJudgeSummaryField("判断", [noSentence], "").includes(noSentence));
+  assert.deepEqual(effects, { network: 0, historyWrites: 0 });
+});
+
+test("mining mobile followup: disclosures escape text instead of interpreting source markup", () => {
+  const { context } = miningQualityContext();
+  const value = '<img src=x onerror="alert(1)">' + "原文".repeat(90);
+  const html = context.renderJudgeSummaryField("依据", [value], "judge-summary-evidence");
+  assert.doesNotMatch(html, /<img|<script/);
+  assert.match(html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
+});
+
+test("mining mobile followup: existing processed results keep all evidence and explicit assessment scope", () => {
+  const { context, backend, effects } = miningQualityContext();
+  for (const fixture of miningQualityCases) {
+    const normalized = backend.normalizeJudgeOutput(fixture.text);
+    assert.equal(backend.normalizeJudgeOutput(normalized), normalized);
+    const view = context.buildMiningEvidenceView(normalized);
+    context.renderJudgeDecisionCard(normalized);
+    const html = context.judgeDecisionCard.innerHTML;
+    for (const field of [...view.features, ...view.actions]) assert.ok(html.includes(context.escapeHtml(field)));
+    assert.match(html, /评估对象/);
+    assert.match(html, /照片可见线索及其补证要求/);
+    assert.match(html, /尚无可核查、经过校准的计分规则/);
+    assert.doesNotMatch(html, /(?:45|65)分|grade-[ABCD]|评分 \/ 等级：未评估|结论可信度：未校准/);
+    assert.match(html, /图片清晰仅说明可观察条件/);
+  }
+  assert.deepEqual(effects, { network: 0, historyWrites: 0 });
+});
+
+test("mining mobile followup: exact approved four-color legend never assigns an uncalibrated grade", () => {
+  const css = recoverySection(recoveryHtml, "    /* MINING_CONFIRMED_LAYOUT_START", "    /* MINING_CONFIRMED_LAYOUT_END");
+  for (const [band, bg, border] of [
+    ["0-40", "#f8fafc", "#cbd5e1"], ["40-60", "#f3faf6", "#d7eadf"],
+    ["60-80", "#e8f7ee", "#bfe2cb"], ["80-100", "#ddf5e8", "#a9d8bb"]
+  ]) assert.ok(css.includes(`[data-score-band="${band}"] { background: ${bg}; border-color: ${border}; }`));
+  const { context } = miningQualityContext();
+  context.renderJudgeDecisionCard(mobilePitContradiction);
+  const html = context.judgeDecisionCard.innerHTML;
+  for (const word of ["灰白", "微浅绿", "浅绿", "柔和薄荷绿", "缺分数、越界或缺规则依据均不选档"]) assert.ok(html.includes(word));
+  assert.equal((html.match(/<li data-score-band=/g) || []).length, 4);
+  assert.equal((html.match(/data-score-band=/g) || []).length, 4); // legend only, never the result card
+  assert.doesNotMatch(context.judgeDecisionCard.className, /grade|score/);
+  assert.match(css, /\.judge-decision-card \{[^}]*background: #f8fafc/);
+});
+
+test("mining mobile followup: four-state layout is scoped flexible flow without clipped text or sticky navigation", () => {
+  const css = recoverySection(recoveryHtml, "    /* MINING_CONFIRMED_LAYOUT_START", "    /* MINING_CONFIRMED_LAYOUT_END");
+  assert.match(css, /body:has\(#judgePage.active\) > \.page \{ flex: 1 0 auto; display: flex; flex-direction: column;/);
+  assert.match(css, /body:has\(#judgePage.active\) > \.site-footer \{ flex: 0 0 auto; margin-top: auto;/);
+  assert.match(css, /min-height: 100svh/);
+  assert.match(css, /judge-upload-layer:has\(\.judge-progress-visual.active\)/);
+  assert.match(css, /judge-upload-layer:has\(\.message.error\)/);
+  assert.match(css, /\.page-nav \{ position: static/);
+  assert.match(css, /\.judge-summary-field:has\(\.judge-summary-fold\[open\]\) > \.judge-summary-preview \{ display: none;/);
+  assert.doesNotMatch(css, /line-clamp|height:\s*(?:[3-9]\d\d|\d{4,})px|position:\s*(?:fixed|sticky)/);
+  const summaryCss = css.slice(css.indexOf("#judgePage .judge-key-judgment"));
+  assert.doesNotMatch(summaryCss, /text-overflow:\s*ellipsis/); // unrelated filename overflow is not summary text
+  for (const [, selectors] of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    for (const selector of selectors.split(/,(?![^()]*\))/)) assert.ok(selector.trim().startsWith("#judgePage") || selector.trim().startsWith("body:has(#judgePage.active)"));
+  }
+});
+
+test("mining mobile followup: frontend backend parser remains identical and inline scripts parse", () => {
+  const marker = "// Mining evidence presentation only:";
+  assert.equal(recoverySection(recoveryServer, marker, "function normalizeJudgeOutput(").trim(),
+    recoverySection(recoveryHtml, marker, "function cleanupJudgeHistoryStorage(").trim());
+  for (const [, attrs, source] of recoveryHtml.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+    if (/\bsrc=|application\/ld\+json|\btype=["']module/.test(attrs) || !source.trim()) continue;
+    new vm.Script(source);
+  }
 });
