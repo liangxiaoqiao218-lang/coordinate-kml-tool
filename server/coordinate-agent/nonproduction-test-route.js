@@ -1,15 +1,22 @@
 import express from 'express';
 
 export const COORDINATE_AGENT_NONPRODUCTION_ROUTE_PREFIX = '/api/nonproduction/coordinate-agent/v1';
-export const COORDINATE_AGENT_SHADOW_BOUNDARY = Object.freeze({
-  schemaVersion: 'coordinate-agent-shadow-boundary/v1',
-  shadowOnly: true,
-  providerMode: 'replay',
-  affectsParser: false,
-  affectsCoordinates: false,
-  affectsMap: false,
-  affectsKml: false,
-});
+export function createCoordinateAgentShadowBoundary(providerMode = 'replay') {
+  if (!['replay', 'controlled_real_provider'].includes(providerMode)) {
+    throw new Error('Coordinate Agent shadow provider mode is invalid');
+  }
+  return Object.freeze({
+    schemaVersion: 'coordinate-agent-shadow-boundary/v1',
+    shadowOnly: true,
+    providerMode,
+    affectsParser: false,
+    affectsCoordinates: false,
+    affectsMap: false,
+    affectsKml: false,
+  });
+}
+
+export const COORDINATE_AGENT_SHADOW_BOUNDARY = createCoordinateAgentShadowBoundary('replay');
 
 function assertCaseRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -24,7 +31,11 @@ function assertCaseRequest(value) {
   return caseId;
 }
 
-export function createCoordinateAgentNonProductionRouter({ enabled = false, evaluateCase } = {}) {
+export function createCoordinateAgentNonProductionRouter({
+  enabled = false,
+  evaluateCase,
+  boundary = COORDINATE_AGENT_SHADOW_BOUNDARY,
+} = {}) {
   if (enabled !== true) throw new Error('Coordinate Agent non-production route is disabled');
   if (typeof evaluateCase !== 'function') throw new Error('evaluateCase is required');
 
@@ -37,7 +48,7 @@ export function createCoordinateAgentNonProductionRouter({ enabled = false, eval
       res.status(200).json({
         schemaVersion: 'coordinate-agent-nonproduction-response/v1',
         caseId,
-        boundary: COORDINATE_AGENT_SHADOW_BOUNDARY,
+        boundary,
         result,
       });
     } catch (error) {
@@ -54,21 +65,29 @@ export function createCoordinateAgentShadowApp({
   enabled = false,
   evaluateCase,
   runtimeIdentity = Object.freeze({ commit: null, branch: null }),
+  providerMode = 'replay',
+  getQualificationStatus = null,
 } = {}) {
   if (enabled !== true) throw new Error('Coordinate Agent shadow app is disabled');
+  const boundary = createCoordinateAgentShadowBoundary(providerMode);
   const app = express();
   app.disable('x-powered-by');
   app.get(`${COORDINATE_AGENT_NONPRODUCTION_ROUTE_PREFIX}/health`, (_req, res) => {
     res.status(200).json({
       schemaVersion: 'coordinate-agent-shadow-health/v1',
       status: 'READY',
-      boundary: COORDINATE_AGENT_SHADOW_BOUNDARY,
+      boundary,
       runtimeIdentity,
     });
   });
+  if (typeof getQualificationStatus === 'function') {
+    app.get(`${COORDINATE_AGENT_NONPRODUCTION_ROUTE_PREFIX}/qualification`, (_req, res) => {
+      res.status(200).json(getQualificationStatus());
+    });
+  }
   app.use(
     COORDINATE_AGENT_NONPRODUCTION_ROUTE_PREFIX,
-    createCoordinateAgentNonProductionRouter({ enabled: true, evaluateCase }),
+    createCoordinateAgentNonProductionRouter({ enabled: true, evaluateCase, boundary }),
   );
   return app;
 }

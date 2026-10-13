@@ -21,6 +21,25 @@ function chooseTerminalState(candidate, board) {
     : AGENT_STATE.FAILED_CLOSED;
 }
 
+function safeFailureDiagnostic(error) {
+  const code = String(error?.code || 'AGENT_ADAPTER_ERROR').slice(0, 120);
+  const transport = code.startsWith('DASHSCOPE_');
+  const structuredOutput = code.startsWith('PROVIDER_STRUCTURED_OUTPUT_');
+  const schema = code === 'COORDINATE_AGENT_SCHEMA_VALIDATION_FAILED';
+  const path = typeof error?.path === 'string' ? error.path.slice(0, 240) : null;
+  return Object.freeze({
+    category: transport ? 'transport' : structuredOutput ? 'structured_output' : schema ? 'schema' : 'adapter',
+    code,
+    path,
+    field: typeof error?.field === 'string'
+      ? error.field.slice(0, 120)
+      : path?.split('.').at(-1)?.replace(/\[\d+\]$/u, '') || null,
+    expectedType: typeof error?.expectedType === 'string' ? error.expectedType.slice(0, 160) : null,
+    actualType: typeof error?.actualType === 'string' ? error.actualType.slice(0, 80) : null,
+    httpStatus: Number.isInteger(error?.status) ? error.status : null,
+  });
+}
+
 function candidatePoints(candidate) {
   return (candidate?.groups || []).flatMap(group => group.points || []);
 }
@@ -42,11 +61,140 @@ function downgradeCandidateForReview(candidate) {
   });
 }
 
+function promoteProjectedCandidate(candidate, transformedPoints) {
+  let index = 0;
+  return validateCoordinateCandidate({
+    ...candidate,
+    resultStatus: 'usable',
+    groups: candidate.groups.map(group => ({
+      ...group,
+      points: group.points.map(point => {
+        const transformed = transformedPoints[index];
+        index += 1;
+        return {
+          ...point,
+          latitude: transformed.latitude,
+          longitude: transformed.longitude,
+          needsReview: false,
+        };
+      }),
+    })),
+  });
+}
+
+function buildProjectedPromotionGate({ candidate, points, providerEvidence, output }) {
+  const pointCount = points.length;
+  const transformedPointCount = Number(output?.transformedPointCount || 0);
+  const roundTripVerifiedPointCount = Number(output?.roundTripVerifiedPointCount || 0);
+  const blockingUncertaintyCount = providerEvidence.uncertainties
+    .filter(item => item.blocking === true).length;
+  const reviewItemCount = providerEvidence.reviewItems.length;
+  const transformationComplete = output?.valid === true
+    && pointCount > 0
+    && transformedPointCount === pointCount;
+  const roundTripComplete = pointCount > 0
+    && roundTripVerifiedPointCount === pointCount
+    && output?.inverseStatus === 'passed';
+  const spatialVerified = output?.spatialStatus === 'passed';
+  const geometryStatus = candidate.geometryType === 'Unknown' ? 'unknown' : 'identified';
+  const eligible = transformationComplete
+    && roundTripComplete
+    && spatialVerified
+    && blockingUncertaintyCount === 0
+    && reviewItemCount === 0
+    && geometryStatus === 'identified';
+  return Object.freeze({
+    geometryStatus,
+    blockingUncertaintyCount,
+    reviewItemCount,
+    pointCount,
+    transformedPointCount,
+    roundTripVerifiedPointCount,
+    transformationComplete,
+    roundTripComplete,
+    spatialVerified,
+    eligible,
+  });
+}
+
+async function prepareProjectedCandidate({ candidate, board, toolRegistry, imageRef, requestId }) {
+  if (candidate?.coordinateSystem?.kind !== 'projected'
+    || candidate.coordinateSystem.status !== 'identified') {
+    return Object.freeze({ candidate, toolCallCount: 0, projectionVerified: false });
+  }
+  const points = candidatePoints(candidate);
+  const providerEvidence = board.snapshot();
+  const action = {
+    id: 'safety-projection-transform',
+    toolName: GENERIC_TOOL_NAMES.PROJECTED_COORDINATE_TRANSFORM_CHECK,
+    args: {
+      coordinateSystem: {
+        name: candidate.coordinateSystem.name,
+        epsg: candidate.coordinateSystem.epsg,
+      },
+      // The provider-neutral candidate contract defines x as easting and y as northing.
+      axisOrder: 'easting_northing',
+      points: points.map(point => ({ x: point.x, y: point.y })),
+    },
+  };
+  let output;
+  try {
+    output = await toolRegistry.execute(action, { imageRef, requestId, safetyVerification: true });
+  } catch (error) {
+    board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: false, error: error?.message });
+    board.addUncertainty({
+      code: 'PROJECTED_TRANSFORM_EXECUTION_FAILED',
+      message: 'The explicit projected coordinate candidate could not complete deterministic transformation',
+      blocking: true,
+    });
+    return Object.freeze({ candidate: downgradeCandidateForReview(candidate), toolCallCount: 1, projectionVerified: false });
+  }
+
+  const promotionGate = buildProjectedPromotionGate({ candidate, points, providerEvidence, output });
+  output = Object.freeze({ ...output, promotionGate });
+  board.addToolResult({ actionId: action.id, toolName: action.toolName, ok: true, output });
+  const canPromote = promotionGate.eligible;
+  if (!canPromote) {
+    board.addUncertainty({
+      code: String(output?.failureCode || 'PROJECTED_DETERMINISTIC_VERIFICATION_FAILED'),
+      message: 'The projected coordinate candidate did not satisfy every deterministic CRS, axis, transformation, and round-trip gate',
+      blocking: true,
+    });
+    return Object.freeze({ candidate: downgradeCandidateForReview(candidate), toolCallCount: 1, projectionVerified: false });
+  }
+  return Object.freeze({
+    candidate: promoteProjectedCandidate(candidate, output.transformedPoints),
+    toolCallCount: 1,
+    projectionVerified: true,
+  });
+}
+
 async function runDeterministicCandidateVerification({ candidate, board, toolRegistry, imageRef, requestId }) {
   if (!candidate?.success) return Object.freeze({ candidate, toolCallCount: 0 });
+  const projectedPreparation = await prepareProjectedCandidate({
+    candidate,
+    board,
+    toolRegistry,
+    imageRef,
+    requestId,
+  });
+  candidate = projectedPreparation.candidate;
   const points = candidatePoints(candidate);
-  let toolCallCount = 0;
+  let toolCallCount = projectedPreparation.toolCallCount;
   let verified = points.length > 0;
+
+  const coordinateIdentityVerified = (
+    candidate.coordinateSystem?.kind === 'geographic'
+    && candidate.coordinateSystem?.status === 'identified'
+  ) || projectedPreparation.projectionVerified;
+  if (!coordinateIdentityVerified) {
+    verified = false;
+    board.addUncertainty({
+      code: 'DETERMINISTIC_GEOGRAPHIC_CRS_UNAVAILABLE',
+      message: 'Candidate authorization requires an explicitly identified geographic CRS or a fully verified projected-to-geographic conversion',
+      blocking: true,
+    });
+  }
 
   if (points.length === 0) {
     board.addUncertainty({
@@ -142,6 +290,7 @@ export class CoordinateIntelligenceAgentKernel {
     let iterations = 0;
     let candidate = null;
     let pendingToolResults = [];
+    const diagnostics = [];
 
     state.transition(AGENT_STATE.OBSERVING, 'begin_whole_image_observation');
     while (!state.terminal && iterations < this.maxIterations) {
@@ -168,12 +317,21 @@ export class CoordinateIntelligenceAgentKernel {
         providerCallCount += 1;
       } catch (error) {
         providerCallCount += 1;
+        const diagnostic = safeFailureDiagnostic(error);
+        diagnostics.push(diagnostic);
         evidence.addUncertainty({
-          code: 'AGENT_TURN_INVALID',
-          message: String(error?.message || 'The agent turn failed strict validation'),
+          code: diagnostic.category === 'transport' ? 'PROVIDER_TRANSPORT_FAILED' : 'AGENT_TURN_INVALID',
+          message: diagnostic.category === 'transport'
+            ? `Provider transport failed (${diagnostic.code}${diagnostic.httpStatus ? ` HTTP ${diagnostic.httpStatus}` : ''})`
+            : diagnostic.category === 'schema' || diagnostic.category === 'structured_output'
+              ? String(error?.message || `Agent turn failed strict validation at ${diagnostic.path || 'unknown path'}`)
+              : `Agent adapter failed at ${diagnostic.path || 'unknown path'}`,
           blocking: true,
         });
-        state.transition(AGENT_STATE.FAILED_CLOSED, 'provider_or_turn_validation_failed');
+        state.transition(
+          AGENT_STATE.FAILED_CLOSED,
+          diagnostic.category === 'transport' ? 'provider_transport_failed' : 'agent_turn_validation_failed',
+        );
         break;
       }
       try {
@@ -261,6 +419,7 @@ export class CoordinateIntelligenceAgentKernel {
         providerCallCount,
         toolCallCount,
         stateHistory: snapshot.history,
+        diagnostics: Object.freeze(diagnostics),
       }),
     });
   }

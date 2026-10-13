@@ -22,7 +22,7 @@ function geographicCandidate({ status = 'usable', needsReview = false } = {}) {
     displayText: 'P1 | source row',
     coordinateSystem: { kind: 'geographic', name: 'WGS 84', epsg: '4326', status: 'identified' },
     geometryType: 'Point',
-    groups: [{ name: 'Observed table', points: [{ label: 'P1', sourceText: 'P1 | source row', latitude: 10, longitude: 20, needsReview }] }],
+    groups: [{ name: 'Observed table', points: [{ label: 'P1', sourceText: 'P1 | source row', x: null, y: null, latitude: 10, longitude: 20, needsReview }] }],
     warnings: needsReview ? ['Direction evidence requires review'] : [],
   };
 }

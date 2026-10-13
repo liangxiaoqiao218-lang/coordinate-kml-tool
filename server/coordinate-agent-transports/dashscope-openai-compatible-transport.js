@@ -1,4 +1,16 @@
 const TRANSPORT_NAME = 'dashscope-openai-compatible/v1';
+export const DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS = 90_000;
+export const MIN_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS = 1_000;
+export const MAX_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS = 180_000;
+
+export function normalizeCoordinateAgentProviderTimeoutMs(value) {
+  const numeric = Number(value);
+  const requested = Number.isFinite(numeric) ? Math.trunc(numeric) : DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS;
+  return Math.min(
+    MAX_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
+    Math.max(MIN_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS, requested),
+  );
+}
 
 function chatCompletionsUrl(endpoint) {
   const base = String(endpoint || '').trim().replace(/\/+$/, '');
@@ -8,6 +20,13 @@ function chatCompletionsUrl(endpoint) {
 
 function jsonText(value) {
   return JSON.stringify(value, null, 2);
+}
+
+function decodedBase64Bytes(value) {
+  const text = String(value || '');
+  if (!text) return 0;
+  const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((text.length * 3) / 4) - padding);
 }
 
 function userInstruction(request) {
@@ -98,7 +117,7 @@ export class DashScopeOpenAICompatibleTransport {
     getAccessToken,
     endpoint,
     model,
-    timeoutMs = 55_000,
+    timeoutMs = DEFAULT_COORDINATE_AGENT_PROVIDER_TIMEOUT_MS,
     maxTokens = 8_000,
     highResolutionImages = false,
   } = {}) {
@@ -109,7 +128,7 @@ export class DashScopeOpenAICompatibleTransport {
     this.#endpoint = chatCompletionsUrl(endpoint);
     this.#model = String(model || '').trim();
     if (!this.#model) throw new Error('DashScope model is required');
-    this.#timeoutMs = Math.min(55_000, Math.max(1_000, Number(timeoutMs) || 55_000));
+    this.#timeoutMs = normalizeCoordinateAgentProviderTimeoutMs(timeoutMs);
     this.#maxTokens = maxTokens;
     this.#highResolutionImages = highResolutionImages === true;
   }
@@ -117,11 +136,18 @@ export class DashScopeOpenAICompatibleTransport {
   async complete(request) {
     const accessToken = String(await this.#getAccessToken() || '').trim();
     if (!accessToken) throw new Error('DashScope access token is unavailable');
+    const buildStartedAt = Date.now();
     const requestBody = mapCoordinateAgentRequestToDashScope(request, {
       model: this.#model,
       maxTokens: this.#maxTokens,
       highResolutionImages: this.#highResolutionImages,
     });
+    const requestBodyJson = JSON.stringify(requestBody);
+    const requestBuildDurationMs = Date.now() - buildStartedAt;
+    const requestBodyBytes = Buffer.byteLength(requestBodyJson);
+    const imageBytes = (request.assets || [])
+      .reduce((total, asset) => total + decodedBase64Bytes(asset.bytesBase64), 0);
+    const schemaBytes = Buffer.byteLength(JSON.stringify(request.responseSchema || {}));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
     const startedAt = Date.now();
@@ -134,7 +160,7 @@ export class DashScopeOpenAICompatibleTransport {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: requestBodyJson,
         signal: controller.signal,
       });
       payload = await response.json().catch(() => ({}));
@@ -143,6 +169,21 @@ export class DashScopeOpenAICompatibleTransport {
         ? 'DashScope transport timed out'
         : 'DashScope transport network failure');
       normalized.code = error?.name === 'AbortError' ? 'DASHSCOPE_TIMEOUT' : 'DASHSCOPE_NETWORK_ERROR';
+      this.#telemetry.push(Object.freeze({
+        transport: TRANSPORT_NAME,
+        model: this.#model,
+        ok: false,
+        httpStatus: null,
+        durationMs: Date.now() - startedAt,
+        timeoutMs: this.#timeoutMs,
+        requestBuildDurationMs,
+        requestBodyBytes,
+        imageBytes,
+        schemaBytes,
+        usageObserved: false,
+        usage: null,
+        errorCode: normalized.code,
+      }));
       throw normalized;
     } finally {
       clearTimeout(timer);
@@ -155,8 +196,14 @@ export class DashScopeOpenAICompatibleTransport {
       ok: response.ok,
       httpStatus: Number(response.status),
       durationMs: Date.now() - startedAt,
+      timeoutMs: this.#timeoutMs,
+      requestBuildDurationMs,
+      requestBodyBytes,
+      imageBytes,
+      schemaBytes,
       usageObserved: usage !== null,
       usage,
+      errorCode: response.ok ? null : 'DASHSCOPE_HTTP_ERROR',
     }));
     if (!response.ok) {
       const error = new Error('DashScope transport HTTP failure');
