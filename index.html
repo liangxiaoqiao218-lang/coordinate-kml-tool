@@ -5242,6 +5242,64 @@
     #judgePage .judge-detail-content ul { margin: 0; color: #334155; font-size: 16px; font-weight: 500; line-height: 1.5; }
     #judgePage .judge-detail-content ul { padding-left: 20px; }
     #judgePage .judge-detail-content li { margin: 4px 0; font-size: 16px; font-weight: 500; line-height: 1.5; }
+/* Scoped presentation delta. No height filler, no changes to request state. */
+body:has(#judgePage.active) > .page { flex: 0 0 auto; }
+body:has(#judgePage.active) > .site-footer { margin-top: 24px; }
+#judgePage.active { flex: 0 0 auto; }
+#judgePage .judge-upload-layer:has(.judge-progress-visual.active),
+#judgePage .judge-upload-layer:has(.message.error) { min-height: 0; }
+#judgePage .judge-upload-layer { gap: 0; }
+#judgePage .judge-upload-layer:has(.judge-wait-image) {
+  grid-template-columns: 92px minmax(0, 1fr); gap: 8px 12px;
+  padding: 12px; border: 1px solid #d7eadf; border-radius: 14px; background: #f7fbf9;
+}
+#judgePage .judge-upload-layer:has(.judge-wait-image) .judge-upload-controls { display: contents; }
+#judgePage .judge-upload-layer:has(.judge-wait-image) #judgeImagePreview { display: contents !important; }
+#judgePage .judge-wait-image { grid-column: 1; grid-row: 1 / 4; width: 92px; height: 112px; padding: 0; border: 0; background: none; box-shadow: none; }
+#judgePage .judge-wait-image img { width: 92px; height: 112px; object-fit: cover; border-radius: 10px; display: block; }
+#judgePage .judge-wait-filename { grid-column: 2; grid-row: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: #475569; }
+#judgePage .judge-upload-layer:has(.judge-wait-image) .judge-progress-visual { grid-column: 2; grid-row: 2; margin: 0; padding: 0; border: 0; background: none; align-items: flex-start; font-size: 15px; line-height: 1.6; }
+#judgePage .judge-upload-layer:has(.judge-wait-image) .judge-progress-icon { margin-top: 3px; }
+#judgePage .judge-upload-layer:has(.judge-wait-image) .message { grid-column: 2; grid-row: 3; margin: 0; font-size: 14px; padding: 0; }
+#judgePage .judge-upload-layer:has(.judge-wait-image) .message.error { padding: 8px; border-radius: 8px; }
+#judgePage .judge-upload-layer:has(.judge-wait-image) .judge-quick-upload { grid-column: 2; grid-row: 2; justify-self: start; }
+#judgePage .judge-upload-layer:has(.judge-progress-visual.active) .judge-quick-upload { display: none; }
+#judgePage .judge-upload-layer:has(.message.error) .judge-quick-upload { grid-row: 2; }
+#judgePage .judge-layer-title { font-size: 16px; margin-bottom: 8px; }
+#judgePage .judge-decision-card .judge-official-head { align-items: start; }
+#judgePage .judge-decision-card { background: #f8fafc; }
+#judgePage .judge-official-card { gap: 0; }
+#judgePage { font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+#judgePage .judge-conclusion {
+  display: block; width: 100%; padding: 0; margin: 0; min-height: 0; text-align: left;
+  border: 0; background: transparent; color: #0f172a; box-shadow: none; font-size: 16px; line-height: 1.5; font-weight: 700;
+}
+#judgePage .judge-conclusion span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#judgePage .judge-keywords { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+#judgePage .judge-keywords span { padding: 3px 7px; border-radius: 6px; background: #edf1f4; color: #475569; font-size: 12px; font-weight: 400; line-height: 1.5; }
+#judgePage .judge-compact-metrics { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid #dfe5ea; color: #475569; font-size: 14px; font-weight: 400; }
+#judgePage .judge-summary-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }
+#judgePage .judge-summary-limit { margin: 0; color: #64748b; font-size: 12px; line-height: 1.5; font-weight: 400; }
+#judgePage .judge-detail-content, #judgePage .judge-detail-content p,
+#judgePage .judge-detail-content ul, #judgePage .judge-detail-content ol,
+#judgePage .judge-detail-content li { font-size: 16px; line-height: 1.7; font-weight: 400; color: #334155; }
+#judgePage .judge-detail-content p { margin: 0 0 8px; }
+#judgePage .judge-detail-content ul, #judgePage .judge-detail-content ol { margin: 0; padding-left: 21px; }
+#judgePage .judge-detail-content li { margin: 0 0 8px; padding-left: 2px; }
+#judgePage .judge-detail-content section + section { margin-top: 18px; padding-top: 18px; }
+#judgePage .judge-detail-content h3 { margin-bottom: 8px; font-size: 16px; font-weight: 700; }
+#judgePage .judge-detail-content .judge-detail-meta { margin-top: 10px; font-size: 14px; line-height: 1.6; color: #64748b; }
+#judgePage .judge-detail-wrap:focus { outline: none; }
+#judgePage .judge-detail-wrap:focus-visible, #judgePage .judge-conclusion:focus-visible { outline: 2px solid #166534; outline-offset: 3px; }
+@media (max-width: 600px) {
+  body:has(#judgePage.active) > .page { width: 100%; padding: 16px; }
+  body:has(#judgePage.active) > .site-footer { width: calc(100% - 32px); }
+  #judgePage .page-nav { margin-bottom: 18px; }
+  #judgePage .judge-title-row { margin-bottom: 10px; }
+  #judgePage .intro { margin-bottom: 6px; }
+  #judgePage .judge-scope-note { margin-bottom: 16px; }
+}
+
     /* MINING_CONFIRMED_LAYOUT_END */
   </style>
   <script src="pricing-config.js"></script>
@@ -5549,13 +5607,13 @@
           <div id="judgeSummaryLayerTitle" class="judge-layer-title">结果摘要</div>
           <div id="judgeDecisionCard" class="judge-decision-card" hidden></div>
           </section>
-          <div class="judge-detail-wrap">
+          <div id="judgeDetailPanel" class="judge-detail-wrap" tabindex="-1" hidden>
             <div class="judge-detail-title">快判详情</div>
             <article id="judgeResult" class="judge-detail-content" aria-label="快判详情">
               <p class="judge-detail-placeholder">结构初筛结果会显示在这里。</p>
             </article>
             <div class="judge-result-tools">
-              <button type="button" class="icon-button" onclick="clearJudgeResult()" title="清除判读结果" aria-label="清除判读结果">&times;</button>
+              <button type="button" class="icon-button" onclick="closeJudgeDetail()" title="关闭详情" aria-label="关闭详情">&times;</button>
               <button type="button" class="icon-button" onclick="copyJudgeResult()" title="复制判读结果" aria-label="复制判读结果">&#10697;</button>
             </div>
           </div>
@@ -9752,6 +9810,17 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeImageInput.files = transfer.files;
     }
 
+    function renderJudgeUploadPreview() {
+  if (!judgeImagePreview) return;
+  const image = selectedJudgeImageUrls[0] || currentJudgeImageDataUrl;
+  const show = selectedJudgeImageFiles.length > 0 && judgeDecisionCard.hidden && image;
+  judgeImagePreview.style.display = show ? 'contents' : 'none';
+  if (!show) { judgeImagePreview.innerHTML = ''; return; }
+  // Reuse the selected local image. This neither selects nor uploads a file.
+  const fileName = selectedJudgeImageFiles[0].name || '已选图片';
+  judgeImagePreview.innerHTML = `<button type="button" class="judge-wait-image" aria-label="放大查看已选图片" onclick="openImageModal(this.querySelector('img').src)"><img src="${escapeHtml(image)}" alt="已选图片" /></button><p class="judge-wait-filename" title="${escapeHtml(fileName)}">${escapeHtml(fileName)}</p>`;
+}
+
     function updateJudgeUploadControls() {
       const count = selectedJudgeImageFiles.length;
 
@@ -9773,6 +9842,7 @@ Au值 = 纯度 × 10 后取整数</div>
         judgeQuickUpload.disabled = judgeRequestInFlight || judgeSubmissionBlocked;
       }
       if (judgeImageInput) judgeImageInput.disabled = judgeRequestInFlight || judgeSubmissionBlocked;
+      renderJudgeUploadPreview();
     }
 
     function chooseJudgeReplacement() {
@@ -9862,6 +9932,7 @@ Au值 = 纯度 × 10 后取整数</div>
       // Only the summary owns a thumbnail; the upload area keeps no duplicate image.
       judgeImagePreview.style.display = "none";
       judgeImagePreview.innerHTML = "";
+      renderJudgeUploadPreview();
       let imageDataUrls = [];
       try {
         imageDataUrls = await Promise.all(selectedJudgeImageFiles.map(fileToDataUrl));
@@ -10453,40 +10524,62 @@ Au值 = 纯度 × 10 后取整数</div>
       judgeResult.addEventListener("wheel", cancelJudgeDetailAnimation, { once: true, passive: true });
     }
 
-    function renderJudgeDetail(text) {
-      cancelJudgeDetailAnimation();
-      if (!judgeResult) {
-        return;
-      }
+function judgeReadableItems(values, actions = false) {
+  // Split at existing punctuation only; retain every character and qualifier.
+  return values.flatMap(value => String(value || '').split(actions ? /(?<=[。；;])|(?<=，)(?=并)/u : /(?<=[。；;])/u))
+    .map(value => value.trim()).filter(Boolean);
+}
 
-      const rawText = String(text || "").trim();
-      if (!rawText) {
-        judgeResult.innerHTML = '<p class="judge-detail-placeholder">结构初筛结果会显示在这里。</p>';
-        return;
-      }
+function renderJudgeDetail(text) {
+  cancelJudgeDetailAnimation();
+  if (!judgeResult) return;
+  const wrap = judgeResult.closest('.judge-detail-wrap');
+  const rawText = String(text || '').trim();
+  // A result always presents its separate detail panel without an extra click.
+  if (wrap) wrap.hidden = !rawText;
+  if (!rawText) {
+    judgeResult.innerHTML = '<p class="judge-detail-placeholder">结构初筛结果会显示在这里。</p>';
+    return;
+  }
+  const view = buildMiningEvidenceView(rawText);
+  const list = (values, ordered = false) => {
+    const items = judgeReadableItems(values, ordered);
+    const tag = ordered ? 'ol' : 'ul';
+    return items.length ? `<${tag}>${items.map(value => `<li>${escapeJudgeDetailHtml(value)}</li>`).join('')}</${tag}>` : '';
+  };
+  const paragraphs = values => judgeReadableItems(values).map(value => `<p>${escapeJudgeDetailHtml(value)}</p>`).join('');
+  const meta = value => `<p class="judge-detail-meta">${escapeJudgeDetailHtml(value)}</p>`;
+  const section = (name, body) => `<section><h3>${name}</h3>${body}</section>`;
+  // Classification qualifiers move to details; never silently turn them into a label.
+  const classification = view.conflict ? '对象与场景存在冲突，分类尚不能确认。'
+    : view.classificationUncertain ? '分类尚未确认。' : `对象：${view.objectType}；场景：${view.sceneType}。`;
+  const recordedReadability = /【图像可判读性】/.test(rawText) && !view.imageReadability.startsWith('未单独记录');
+  const internalIssues = /^(对象类型缺失或不明确|场景分类缺失或不明确|分类带有不确定性，不能将候选标签作为已确认事实)$/;
+  const otherIssues = view.issues.filter(value => !internalIssues.test(value));
+  judgeResult.innerHTML = section('看到什么', list(view.features) || '<p>本记录未提供可见事实。</p>')
+    + section('如何判断', paragraphs(view.judgments.length ? view.judgments : ['本记录未单独提供证据支持的专业判断。'])
+      + meta(classification) + paragraphs(view.classificationNotes))
+    + section('还不能确定什么', list(view.limitations)
+      + (recordedReadability ? meta('图片条件：' + view.imageReadability) : '')
+      + view.notes.map(meta).join('') + (otherIssues.length ? meta('待核对：' + otherIssues.join('；')) : ''))
+    + section('下一步怎么做', list(view.actions, true) || '<p>本记录未提供下一步动作。</p>');
+}
 
-      // Classification and status are already shown in the compact summary.
-      // Keep all evidence, limitations, readability and source notes in the detail.
-      const sections = parseJudgeDetailSections(formatMiningEvidenceView(buildMiningEvidenceView(rawText)))
-        .filter(section => !["结果状态", "对象类型", "场景分类"].includes(section.title));
-      if (!sections.length) {
-        judgeResult.innerHTML = `<p>${escapeJudgeDetailHtml(rawText)}</p>`;
-        return;
-      }
+function openJudgeDetail() {
+  const wrap = judgeResult?.closest('.judge-detail-wrap');
+  if (!wrap || !String(judgeResult.value || '').trim()) return;
+  wrap.hidden = false;
+  wrap.focus({ preventScroll: true });
+  wrap.scrollIntoView({ block: 'start', behavior: 'auto' });
+  revealJudgeDetail();
+}
 
-      const renderSection = section => {
-        const title = `<h3>${escapeJudgeDetailHtml(section.title)}</h3>`;
-        const useList = section.items.length > 1 || /依据|风险|下一步|建议|观察/.test(section.title);
-        const body = useList
-          ? `<ul>${section.items.map(item => `<li>${escapeJudgeDetailHtml(item)}</li>`).join("")}</ul>`
-          : `<p>${escapeJudgeDetailHtml(section.items[0])}</p>`;
-        return `<section>${title}${body}</section>`;
-      };
-      const secondary = ["图像可判读性", "来源说明", "待核对事项"];
-      judgeResult.innerHTML = sections.filter(section => !secondary.includes(section.title)).map(renderSection).join("")
-        + '<details class="judge-evidence-context"><summary>图片条件与待核对项</summary>'
-        + sections.filter(section => secondary.includes(section.title)).map(renderSection).join("") + "</details>";
-    }
+function closeJudgeDetail() {
+  cancelJudgeDetailAnimation();
+  const wrap = judgeResult?.closest('.judge-detail-wrap');
+  if (wrap) wrap.hidden = true;
+  judgeDecisionCard.querySelector('.judge-conclusion')?.focus({ preventScroll: true });
+}
 
     function handleJudgeabilityFailure(data = {}) {
       const primaryReason = String(data?.judgeability?.primary_reason || "");
@@ -10632,42 +10725,40 @@ function renderJudgeSummaryField(label, values, className) {
     + '<details class="judge-summary-fold"><summary><span class="when-closed">展开' + escapeHtml(label)
     + '全文</span><span class="when-open">收起' + escapeHtml(label) + "</span></summary>" + body + "</details></div>";
 }
+function judgePresentationKeywords(view) {
+  // Literal visible-feature excerpts, not new object classification or assessment.
+  const phrases = ['上下分层', '黄褐色积水', '灰黑色物质', '河岸分层', '可见砾石', '覆盖层', '排水沟'];
+  const clauses = view.features.flatMap(value => value.split(/[。；;，]/u));
+  return phrases.filter(phrase => clauses.some(clause => clause.includes(phrase)
+    && !/不|无|未|难以|疑似|可能/.test(clause))).slice(0, 3);
+}
+
 function renderJudgeDecisionCard(text, comparison = null) {
-  if (!judgeDecisionCard || !String(text || "").trim()) { clearJudgeDecisionCard(); return null; }
+  if (!judgeDecisionCard || !String(text || '').trim()) { clearJudgeDecisionCard(); return null; }
   const view = buildJudgeOfficialCardMeta(text);
   const imageSrc = comparison?.image ?? comparison?.item?.image ?? getCurrentJudgeImageDataUrl();
-  const legacySource = view.notes.some(note => note.includes("历史记录为加工后文本"));
-  const judgment = view.judgments[0] && !view.judgments[0].startsWith("本记录未单独")
-    ? view.judgments[0] : "仅有外观证据，尚不足以形成矿业结论。";
+  const judgment = view.judgments[0] && !view.judgments[0].startsWith('本记录未单独')
+    ? view.judgments[0] : '仅有外观证据，尚不足以形成矿业结论。';
+  // Full judgment stays in details. The whole two-line excerpt is an accessible link.
+  const firstClause = judgment.match(/^[^，,。；;！？!?]+[。！？!?]?/)?.[0] || judgment;
+  // Keep a compound qualified judgment intact if its later clause limits its meaning.
+  const excerpt = /但|然而|不过|尚不能|无法|不能|未确认|不确定/.test(judgment) ? judgment : firstClause;
+  const conclusion = view.conflict ? '对象与场景存在冲突，分类尚不能确认。' : excerpt;
+  const keywords = judgePresentationKeywords(view);
   judgeDecisionCard.hidden = false;
-  judgeDecisionCard.className = "judge-decision-card";
-  judgeDecisionCard.innerHTML = `
-    <div class="judge-official-card"><div class="judge-official-head${imageSrc ? "" : " without-image"}">
-      ${imageSrc ? `<div class="judge-export-image-wrap"><button type="button" class="judge-image-open" onclick="openImageModal(this.querySelector('img').src)" aria-label="放大查看本次图片"><img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" /></button><button type="button" class="judge-change-image" onclick="chooseJudgeReplacement()">更换图片</button></div>` : ""}
-      <div class="judge-official-content">
-        <div class="judge-official-object-type">${escapeHtml(view.conflict || view.classificationUncertain ? "分类待核对" : view.objectType + " · " + view.sceneType)}</div>
-        <div class="judge-official-verdict">${escapeHtml(view.status)}</div>
-        ${renderJudgeSummaryField("判断", [view.conflict ? "对象与场景存在冲突，先核对原图。" : judgment], "judge-key-judgment")}
-      </div></div>
-      ${view.classificationUncertain ? '<p class="judge-official-note">分类尚未确认；详情中的分类限制同样适用于摘要。</p>' : ""}
-      ${renderJudgeSummaryField(legacySource ? "历史描述（未核）" : "依据", view.features.length ? view.features : ["未返回可见依据"], "judge-summary-evidence")}
-      ${renderJudgeSummaryField("下一步", view.actions.length ? view.actions : ["补充目标近景、比例尺及周边环境后再核对。"], "judge-summary-action")}
-      <div class="judge-assessment">
-        <p><strong>评估对象</strong> 照片可见线索及其补证要求，不是含金性、品位或开采价值。</p>
-        <details class="judge-summary-fold"><summary><span class="when-closed">查看评分、等级与证据边界</span><span class="when-open">收起评估说明</span></summary>
-          <p>本次不生成矿产潜力分或投入等级：尚无可核查、经过校准的计分规则。当前判断及依据见上方，具体限制见详情。</p>
-          <p>图片清晰仅说明可观察条件，不能作为矿业结论的高可信度。</p>
-          <p>已确认的四档配色如下，仅表示原分数区间的视觉约定；当前结果保持中性，不套入等级。</p>
-          <ul class="judge-palette">
-            <li data-score-band="0-40">灰白 · 0 ≤ 分数 &lt; 40</li>
-            <li data-score-band="40-60">微浅绿 · 40 ≤ 分数 &lt; 60</li>
-            <li data-score-band="60-80">浅绿 · 60 ≤ 分数 &lt; 80</li>
-            <li data-score-band="80-100">柔和薄荷绿 · 80 ≤ 分数 ≤ 100</li>
-          </ul>
-          <p>缺分数、越界或缺规则依据均不选档，不补零；各档业务含义仍待同一评分规则明确。</p>
-        </details>
-      </div>
-      <div class="judge-official-note">${legacySource ? "历史描述和动作尚未逐项核对；" : ""}外观线索不代表含矿、品位或价值；证据限制见详情。</div></div>`;
+  judgeDecisionCard.className = 'judge-decision-card';
+  judgeDecisionCard.removeAttribute('data-score-band');
+  // The current evidence contract has no validated score/grade. Never parse a legacy
+  // numeric value into a score, or choose a band without an approved scoring contract.
+  judgeDecisionCard.innerHTML = `<div class="judge-official-card">
+    <div class="judge-official-head${imageSrc ? '' : ' without-image'}">
+      ${imageSrc ? `<div class="judge-export-image-wrap"><button type="button" class="judge-image-open" onclick="openImageModal(this.querySelector('img').src)" aria-label="放大查看本次图片"><img class="judge-export-image" src="${escapeHtml(imageSrc)}" alt="被判读图片" /></button><button type="button" class="judge-change-image" onclick="chooseJudgeReplacement()">更换图片</button></div>` : ''}
+      <div class="judge-official-content"><button type="button" class="judge-conclusion" onclick="openJudgeDetail()" aria-controls="judgeDetailPanel" aria-label="查看主结论全文"><span>${escapeHtml(conclusion)}</span></button>
+      ${keywords.length ? `<div class="judge-keywords">${keywords.map(word => `<span>${escapeHtml(word)}</span>`).join('')}</div>` : ''}</div>
+    </div>
+    <div class="judge-compact-metrics"><span>暂未评分</span><span>等级未定</span></div>
+    <div class="judge-summary-bottom"><p class="judge-summary-limit">${view.classificationUncertain ? '分类未确认；' : ''}照片不能确定含金性与价值。</p></div>
+  </div>`;
   updateJudgeUploadControls();
   return view;
 }
