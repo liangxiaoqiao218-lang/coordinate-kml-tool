@@ -4,3 +4,5 @@ export * from "./schemas.js";
 export * from "./state-machine.js";
 export * from "./provider-interface.js";
 export * from "./product-mapping.js";
+export * from "./alipay-adapter.js";
+export * from "./payment-orchestrator.js";
