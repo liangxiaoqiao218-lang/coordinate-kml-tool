@@ -161,6 +161,49 @@ export function assertPaymentOrderContract(value) {
   return value;
 }
 
+// Configure readOrder at server composition time. There is deliberately no
+// public hydrate(rawJson) entry: only a row returned by this fixed store reader
+// can acquire in-process order provenance. This does not authenticate a store.
+export function createTrustedStoredPaymentOrderReader({ readOrder } = {}) {
+  paymentContractAssert(typeof readOrder === "function", PAYMENT_ERROR_CODES.INVALID_REQUEST, "trusted store reader required");
+  return Object.freeze({
+    async load(orderId) {
+      const id = paymentIdentifier(orderId, "orderId");
+      const raw = await readOrder(id);
+      if (raw == null) return null;
+      const row = copy(raw);
+      paymentContractAssert(row.schemaVersion === PAYMENT_ORDER_SCHEMA_VERSION && row.orderId === id,
+        PAYMENT_ERROR_CODES.ORDER_MISMATCH, "stored order identity mismatch");
+      paymentContractAssert(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(row.userId || ""),
+        PAYMENT_ERROR_CODES.IDENTITY_PROVENANCE_INVALID, "stored authenticated UUID required");
+      paymentContractAssert(["CREATED", "PENDING", "PAID"].includes(row.status),
+        PAYMENT_ERROR_CODES.INVALID_STATE_TRANSITION, "stored status outside notification scope");
+      paymentContractAssert(Number.isSafeInteger(row.stateVersion) && row.stateVersion >= 0,
+        PAYMENT_ERROR_CODES.INVALID_REQUEST, "stored state version required");
+      paymentContractAssert(row.refundedAmountMinor === 0, PAYMENT_ERROR_CODES.INVALID_REQUEST, "refund handling outside notification scope");
+      const identity = createVerifiedPaymentIdentity({ userId: row.userId, verification: "trusted_service" });
+      const base = createPaymentOrderContract({ identity, authority: { ...row, status: "CREATED" } });
+      const paidAt = paymentTimestamp(row.paidAt, "paidAt", { nullable: true });
+      const providerOrderId = row.providerOrderId == null ? null : paymentIdentifier(row.providerOrderId, "providerOrderId");
+      paymentContractAssert(row.status !== "PAID" || (providerOrderId !== null && paidAt !== null),
+        PAYMENT_ERROR_CODES.STATE_APPLICATION_REQUIRED, "stored PAID order requires transaction and paid time");
+      const order = deepFreeze({
+        ...base,
+        status: row.status,
+        stateVersion: row.stateVersion,
+        providerOrderId,
+        providerStatus: row.providerStatus == null ? null : paymentIdentifier(row.providerStatus, "providerStatus"),
+        paidAt,
+        updatedAt: paymentTimestamp(row.updatedAt, "updatedAt"),
+        appId: paymentIdentifier(row.appId, "appId"),
+        sellerId: paymentIdentifier(row.sellerId, "sellerId")
+      });
+      paymentOrders.add(order);
+      return order;
+    }
+  });
+}
+
 export function createNormalizedProviderResult(value = {}) {
   const result = {
     schemaVersion: PAYMENT_PROVIDER_RESULT_SCHEMA_VERSION,
